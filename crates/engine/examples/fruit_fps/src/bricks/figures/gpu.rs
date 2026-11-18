@@ -3,19 +3,20 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Cull, Error, ErrorCode, Expected,
-    FIRST_NAMED_LOCATION, GeometryStream, Material, MaterialHandle, TextureHandle, TextureRef, Var,
-    gpu_struct,
+    FIRST_NAMED_LOCATION, GeometryStream, Material, MaterialHandle, Sampler, TextureHandle,
+    TextureRef, Var, gpu_struct,
 };
 use engine_render::{
     Allocation, BatchGroup, Bind, Buffer, DepthUse, Draw, GpuPart, GroupEntry, Install, Lifetime,
-    PerBatch, Pipeline, Prepare, RenderPipeline, Scene, Variant, VertexLayout, wgpu,
+    PerBatch, Pipeline, Prepare, RenderPipeline, Scene, Texture, Variant, VertexLayout, wgpu,
 };
 
 use super::play::FigureDrawing;
 use super::shaders::figures::{figure, ground, light, material, reveal};
 use super::{JOINTS, WEIGHTS};
 use crate::names::COLOR_PASS;
-use crate::play::light::{Light, Lighting};
+use crate::play::light::{Light, LightField, Lighting};
+use crate::play::puppet::PuppetFile;
 
 gpu_struct! {
     pub struct FigureLight {
@@ -25,8 +26,16 @@ gpu_struct! {
         pub ground: [f32; 4],
         pub horizon: [f32; 4],
         pub fog: [f32; 4],
+        pub field: [f32; 4],
+        pub field_shape: [f32; 4],
     }
 }
+
+const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
+    width: 1,
+    height: 1,
+    depth_or_array_layers: 1,
+};
 
 const ROW_BYTES: u64 = 48;
 
@@ -77,6 +86,8 @@ pub(super) struct FiguresGpu {
     lights: Option<Lights>,
     held: BTreeMap<MaterialHandle, Held>,
     synced: Option<u64>,
+    unlit: Texture<Self>,
+    field_bound: Option<Option<TextureRef>>,
 }
 
 fn pipeline<'a>(vertex: engine_core::Entry, vertices: &'a [VertexLayout]) -> RenderPipeline<'a> {
@@ -213,7 +224,10 @@ impl GpuPart for FiguresGpu {
         Query<'static, 'static, (Entity, &'static Light)>,
         Option<Res<'static, AssetResidency>>,
         Option<Res<'static, AssetLibrary>>,
-        Option<Res<'static, Lighting>>,
+        (
+            Option<Res<'static, Lighting>>,
+            Query<'static, 'static, &'static PuppetFile>,
+        ),
     );
     const NAME: &'static str = "figures";
 
@@ -221,6 +235,11 @@ impl GpuPart for FiguresGpu {
         let light = cx.buffer("figures_light", Lifetime::Kept);
         let palette = cx.buffer("figures_palette", Lifetime::Kept);
         let group = cx.batch_group(material::MODULE, 1, &[])?;
+        let unlit = cx.texture(
+            "figures_unlit_field",
+            wgpu::TextureFormat::Rgba8Unorm,
+            Lifetime::Kept,
+        );
         let scene = Scene::named(COLOR_PASS);
         let lit = (light::FIGURE_LIGHT, Bind::Buffer(light));
         let figure = cx.render_pipeline(
@@ -246,14 +265,22 @@ impl GpuPart for FiguresGpu {
             lights: None,
             held: BTreeMap::new(),
             synced: None,
+            unlit,
+            field_bound: None,
         })
     }
 
     fn prepare(
         &mut self,
-        (book, lights, residency, library, lighting): SystemParamItem<'_, '_, Self::Reads>,
+        (book, lights, residency, library, (lighting, files)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let field = lighting.as_deref().and_then(|lighting| lighting.field);
+        let bound = self.bind_field(field.map(|field| field.map), cx);
+        let floor = files
+            .iter()
+            .find_map(PuppetFile::book)
+            .map_or(0.0, |book| book.table.shade.indirect_floor);
         if let (Some(residency), Some(library)) = (residency, library) {
             self.sync(&residency, &library, cx);
         }
@@ -273,7 +300,11 @@ impl GpuPart for FiguresGpu {
                 cx.report(problem);
             }
         }
-        let shown = scene_lit(light_of(&listed), lighting.as_deref());
+        let shown = fielded(
+            scene_lit(light_of(&listed), lighting.as_deref()),
+            field.filter(|_| bound.is_some()),
+            floor,
+        );
         let bytes = size_of::<FigureLight>() as u64;
         if cx.allocate_buffer(self.light, bytes) == Allocation::Fresh || self.sent != Some(shown) {
             cx.write(self.light, 0, &[shown]);
@@ -291,9 +322,64 @@ impl GpuPart for FiguresGpu {
     }
 }
 
+fn fielded(shown: FigureLight, field: Option<LightField>, floor: f32) -> FigureLight {
+    let Some(field) = field else {
+        return shown;
+    };
+    let [min_x, min_z, max_x, max_z] = field.rect;
+    let across = |low: f32, high: f32| if high > low { 1.0 / (high - low) } else { 0.0 };
+    FigureLight {
+        field: [min_x, min_z, across(min_x, max_x), across(min_z, max_z)],
+        field_shape: [field.height_m, field.scale, 1.0, floor],
+        ..shown
+    }
+}
+
 impl FiguresGpu {
+    fn bind_field(
+        &mut self,
+        wanted: Option<TextureRef>,
+        cx: &mut Prepare<'_, Self>,
+    ) -> Option<TextureRef> {
+        if cx.allocate(self.unlit, TEXEL, 1) == Allocation::Fresh {
+            let layout = wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            };
+            cx.write_texture(self.unlit, wgpu::Origin3d::ZERO, &[0_u8; 4], layout, TEXEL);
+            self.field_bound = None;
+        }
+        let shown = wanted.filter(|map| cx.texture_resident(map.texture));
+        if self.field_bound != Some(shown) {
+            self.field_bound = Some(shown);
+            for handle in std::mem::take(&mut self.held).into_keys() {
+                cx.clear_batch(self.group, Some(handle));
+            }
+            self.synced = None;
+        }
+        shown
+    }
+
+    fn field_entries(&self) -> [(Var, GroupEntry<Self>); 2] {
+        let (texture, sampler) = match self.field_bound.flatten() {
+            Some(map) => (GroupEntry::Asset(map.texture), map.sampler),
+            None => (GroupEntry::Texture(self.unlit), Sampler::CLAMP),
+        };
+        [
+            (material::FIGURE_FIELD_MAP, texture),
+            (
+                material::FIGURE_FIELD_SAMPLER,
+                GroupEntry::AssetSampler(sampler),
+            ),
+        ]
+    }
+
     pub(super) fn draw_figures(&self, draw: &mut Draw<'_, Self, Scene>) {
         draw.batches(&self.figure, 0..0);
+    }
+
+    pub(super) fn draw_revealed(&self, draw: &mut Draw<'_, Self, Scene>) {
         draw.batches(&self.revealed, 0..0);
     }
 
@@ -364,11 +450,12 @@ impl FiguresGpu {
                         .got(format!("{:?}", material.alpha_mode())),
                 );
             }
-            let mut entries = Vec::with_capacity(2 * MAPS.len());
+            let mut entries = Vec::with_capacity(2 * MAPS.len() + 2);
             for ((_, texture, sampler), map) in MAPS.iter().zip(&maps) {
                 entries.push((*texture, GroupEntry::Asset(map.texture)));
                 entries.push((*sampler, GroupEntry::AssetSampler(map.sampler)));
             }
+            entries.extend(self.field_entries());
             let variant = Variant {
                 cull: face(material.cull()),
                 ..Variant::default()

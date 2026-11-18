@@ -25,6 +25,9 @@ pub struct PlayerNumbers {
     pub hard_landing_mps: f32,
     pub walk_is_silent: bool,
     pub push_apart_mps: f32,
+    pub slow_jump_share: f32,
+    pub barrier_column_m: f32,
+    pub surface_kinds: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -35,11 +38,20 @@ pub struct SpectateNumbers {
     pub rise_m: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Spin {
+    Up,
+    Down,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     Key(String),
     Mouse(MouseButton),
+    Wheel(Spin),
 }
+
+const WHEEL: [(&str, Spin); 2] = [("WheelUp", Spin::Up), ("WheelDown", Spin::Down)];
 
 const MOUSE: [(&str, MouseButton); 5] = [
     ("MouseLeft", MouseButton::Left),
@@ -52,10 +64,21 @@ const MOUSE: [(&str, MouseButton); 5] = [
 impl<'de> Deserialize<'de> for Input {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
+        if let Some(&(_, spin)) = WHEEL.iter().find(|(known, _)| *known == name) {
+            return Ok(Input::Wheel(spin));
+        }
         Ok(MOUSE
             .iter()
             .find(|(known, _)| *known == name)
             .map_or(Input::Key(name), |&(_, button)| Input::Mouse(button)))
+    }
+}
+
+fn spun(devices: &Devices, spin: Spin) -> f32 {
+    let up = devices.mouse.wheel_notches.y;
+    match spin {
+        Spin::Up => engine::math::max(up, 0.0),
+        Spin::Down => engine::math::max(-up, 0.0),
     }
 }
 
@@ -75,6 +98,9 @@ pub struct KeyMap {
     pub scope: Binding,
     pub reload: Binding,
     pub drop: Binding,
+    pub next_item: Binding,
+    pub previous_item: Binding,
+    pub ready: Binding,
     pub primary: Binding,
     pub sidearm: Binding,
     pub melee: Binding,
@@ -95,6 +121,7 @@ impl KeyMap {
         binding.iter().any(|input| match input {
             Input::Key(code) => devices.keyboard.held.contains(code),
             Input::Mouse(button) => devices.mouse.buttons.held.contains(button),
+            Input::Wheel(_) => false,
         })
     }
 
@@ -102,7 +129,20 @@ impl KeyMap {
         binding.iter().any(|input| match input {
             Input::Key(code) => devices.keyboard.pressed.contains(code),
             Input::Mouse(button) => devices.mouse.buttons.pressed.contains(button),
+            Input::Wheel(spin) => spun(devices, *spin) > 0.0,
         })
+    }
+
+    pub fn turns(devices: &Devices, binding: &[Input]) -> f32 {
+        (binding.iter())
+            .map(|input| match input {
+                Input::Wheel(spin) => spun(devices, *spin),
+                Input::Key(_) | Input::Mouse(_) => f32::from(u8::from(Self::pressed(
+                    devices,
+                    std::slice::from_ref(input),
+                ))),
+            })
+            .sum()
     }
 }
 

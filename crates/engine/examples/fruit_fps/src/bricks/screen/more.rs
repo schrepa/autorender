@@ -1,9 +1,9 @@
 use engine::prelude::*;
 
-use crate::play::actors::{Actor, Body, Human};
+use crate::play::actors::{Actor, Body, Health, Human};
 use crate::play::arms::{Arms, Drops};
 use crate::play::flow::Flow;
-use crate::play::numbers::{GameNumbers, KeyMap, Numbers};
+use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::paths::Paths;
 use crate::play::powers::{Held, Powers};
 use crate::play::round::Round;
@@ -13,8 +13,8 @@ use crate::rules::{AbilitySlot, Player, View};
 
 use super::ScreenSource;
 use super::facts::Recent;
-use super::live::{character_key, character_name, named, seconds, set, tone};
-use super::menu::{binding_of, spoken_binding};
+use super::live::{character_key, character_name, cooldown_share, named, seconds, set, tone};
+use super::menu::{KeyNames, binding_of, spoken_binding};
 
 const ABILITY_KEYS: [&str; 4] = ["ability_c", "ability_q", "ability_e", "ability_x"];
 const ABILITY_SLOTS: [AbilitySlot; 4] = [
@@ -35,11 +35,12 @@ type InRound<'w> = (
     (Option<Res<'w, Numbers>>, Option<Res<'w, Drops>>),
 );
 
-fn spoken_key(keys: &KeyMap, name: &str, out: &mut String) {
-    match binding_of(keys, name) {
-        Some(binding) => spoken_binding(binding, out),
-        None => out.clear(),
-    }
+fn spoken_key(keys: &[(String, String)], name: &str, out: &mut String) {
+    let spoken = keys
+        .iter()
+        .find(|(known, _)| known == name)
+        .map_or("", |(_, spoken)| spoken.as_str());
+    set(out, spoken);
 }
 
 fn pickup_part(
@@ -59,15 +60,15 @@ fn pickup_part(
         return;
     };
     pickup.active = true;
-    spoken_key(&numbers.keys, "interact", &mut pickup.key);
+    spoken_key(&facts.keys, "interact", &mut pickup.key);
     let weapon = &numbers.weapons.gun(dropped.weapon).name;
     set(&mut pickup.weapon, weapon);
     named(&mut pickup.icon, "weapon_", weapon);
 }
 
-fn cast_part(facts: &mut HudFacts, held: Option<&Held>, numbers: Option<&GameNumbers>) {
+fn cast_part(facts: &mut HudFacts, held: Option<&Held>) {
     let cast = &mut facts.cast;
-    let (Some(held), Some(numbers)) = (held, numbers) else {
+    let Some(held) = held else {
         cast.active = false;
         cast.key.clear();
         cast.icon.clear();
@@ -78,19 +79,39 @@ fn cast_part(facts: &mut HudFacts, held: Option<&Held>, numbers: Option<&GameNum
         .position(|slot| *slot == held.ability)
         .unwrap_or(0);
     cast.active = true;
-    spoken_key(&numbers.keys, ABILITY_KEYS[index], &mut cast.key);
+    spoken_key(&facts.keys, ABILITY_KEYS[index], &mut cast.key);
     named(&mut cast.icon, "ability_", &held.name);
 }
 
-fn spectate_part(facts: &mut HudFacts, view: &View<'_>, watching: Option<&Player>) {
+type Watchee<'a> = (&'a Actor, Option<&'a Health>, Option<&'a Arms>);
+
+fn spectate_part(
+    facts: &mut HudFacts,
+    view: &View<'_>,
+    watching: Option<(&Player, Option<Watchee<'_>>)>,
+    numbers: Option<&GameNumbers>,
+) {
     let spectate = &mut facts.spectate;
     spectate.active = watching.is_some();
-    let Some(player) = watching else {
+    let Some((player, body)) = watching else {
         spectate.name.clear();
         spectate.icon.clear();
         spectate.color.clear();
+        spectate.weapon_icon.clear();
+        spectate.health = 0.0;
         return;
     };
+    let (health, arms) = body.map_or((None, None), |(_, health, arms)| (health, arms));
+    spectate.health = health.map_or(0.0, |health| health.health);
+    match arms.zip(numbers) {
+        Some((arms, numbers)) => {
+            let shown = arms
+                .loadout
+                .view(&numbers.weapons, crate::weapons::Stance::Stand);
+            named(&mut spectate.weapon_icon, "weapon_", shown.name);
+        }
+        None => spectate.weapon_icon.clear(),
+    }
     set(&mut spectate.name, character_name(view.catalog, player));
     named(
         &mut spectate.icon,
@@ -103,6 +124,8 @@ fn spectate_part(facts: &mut HudFacts, view: &View<'_>, watching: Option<&Player
 pub(super) fn fill_more(
     (round, watched, paths, powers, recent, (numbers, drops)): InRound,
     humans: Query<Mine<'_>, With<Human>>,
+    others: Query<Watchee<'_>>,
+    time: Res<FixedTime>,
     mut facts: ResMut<HudFacts>,
 ) {
     if recent.shows_demo() {
@@ -119,8 +142,11 @@ pub(super) fn fill_more(
         .as_deref()
         .filter(|watched| watched.watch == Watch::Teammate)
         .and_then(|watched| watched.slot)
-        .and_then(|slot| view.players.get(slot as usize));
-    spectate_part(facts, &view, watching);
+        .and_then(|slot| {
+            let body = others.iter().find(|(actor, _, _)| actor.slot == slot);
+            Some((view.players.get(slot as usize)?, body))
+        });
+    spectate_part(facts, &view, watching, game);
     let place = paths
         .as_deref()
         .zip(body)
@@ -140,21 +166,31 @@ pub(super) fn fill_more(
     cast_part(
         facts,
         powers.as_deref().and_then(|powers| powers.held(actor.slot)),
-        game,
     );
+    let until = powers
+        .as_deref()
+        .and_then(|powers| powers.weapon_down_until(actor.slot));
+    facts.weapon.down_left = until.map_or(0.0, |until| {
+        until.saturating_sub(time.tick) as f32 * time.delta_seconds
+    });
     let Some(powered) = powers
         .as_deref()
         .and_then(|powers| powers.actor(actor.slot))
     else {
         return;
     };
+    let me = view.players.get(actor.slot as usize);
     for (index, (shown, slot)) in facts.abilities.iter_mut().zip(&powered.slots).enumerate() {
+        shown.equipped = powered.held == Some(ABILITY_SLOTS[index]);
         if index < 3 {
             shown.charges = slot.charges;
             shown.max = slot.max;
             shown.empty = slot.charges == 0;
             shown.cooling = slot.cooldown_ticks > 0;
             shown.cooldown = seconds(slot.cooldown_ticks, view.catalog);
+            shown.cooldown_frac = me.map_or(0.0, |player| {
+                cooldown_share(view.catalog, player, (index, slot.cooldown_ticks))
+            });
         } else {
             shown.ready = slot.ready;
         }
@@ -163,7 +199,7 @@ pub(super) fn fill_more(
 fn card_of(
     card: &mut SelectCard,
     (key, character): (&str, &crate::rules::CharacterNumbers),
-    numbers: &crate::play::numbers::GameNumbers,
+    (numbers, spoken): (&GameNumbers, &KeyNames),
     texts: &std::collections::BTreeMap<String, String>,
     images: &std::collections::BTreeMap<String, String>,
 ) {
@@ -187,7 +223,7 @@ fn card_of(
             texts.get(name.as_str()).map_or("", String::as_str),
         );
         match binding_of(&numbers.keys, ABILITY_KEYS[index]) {
-            Some(binding) => spoken_binding(binding, &mut shown.key),
+            Some(binding) => spoken_binding(binding, spoken, &mut shown.key),
             None => shown.key.clear(),
         }
         shown.ultimate = index == 3;
@@ -218,7 +254,7 @@ pub(super) fn fill_menu((flow, numbers, sources): MenuReads, mut facts: ResMut<H
             card_of(
                 card,
                 (key, character),
-                game,
+                (game, &source.key_names),
                 &loaded.layout.ability_texts,
                 &loaded.select_images,
             );

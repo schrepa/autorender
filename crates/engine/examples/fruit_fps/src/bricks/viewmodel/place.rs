@@ -6,14 +6,15 @@ use super::{FirstPersonWeapon, ViewModelBrick, ViewModelStats};
 use crate::names::CAMERA;
 use crate::play::actors::{Actor, Alive, Body, Motion, Wish};
 use crate::play::arms::Arms;
+use crate::play::camera::TestCamera;
 use crate::play::events::arms::{ArmsEvents, Weapon};
-use crate::play::figures::{BaseLayer, FIGURE, Figure, FigurePlay, HandTarget};
+use crate::play::figures::{BaseLayer, FIELD_AT_CAMERA, FIGURE, Figure, FigurePlay, HandTarget};
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::puppet::{
-    DEVICE, PuppetBook, PuppetFile, PuppetTable, Task, Tasks, ViewModel, ViewPlace, ViewTable,
-    WeaponLook, weapon_key,
+    ActorMuzzle, DEVICE, Muzzles, PuppetBook, PuppetFile, PuppetTable, Task, Tasks, ViewModel,
+    ViewPlace, ViewTable, WeaponLook, weapon_key,
 };
 use crate::play::view::{ViewOffsets, Watched};
 use crate::weapons::{Loadout, Stance};
@@ -261,19 +262,14 @@ fn bobbing(held: &mut Held, table: &PuppetTable, body: &Body, delta: f32) -> Vec
     Vec3::new(bob.side_m * side, bob.up_m * (twice - 1.0) * 0.5, 0.0) * amount
 }
 
-fn kicked(
-    held: &mut Held,
-    table: &PuppetTable,
-    (events, slot, heavy): (&ArmsEvents, u32, bool),
-    delta: f32,
-) {
+fn kicked(held: &mut Held, table: &PuppetTable, (events, slot): (&ArmsEvents, u32), delta: f32) {
     let kick = &table.view.kick;
     let decay = max(1.0 - kick.return_per_second * delta, 0.0);
     held.kick_back *= decay;
     held.kick_angle *= decay;
     for fired in events.shots.iter().filter(|fired| fired.shooter == slot) {
         if fired.weapon == Weapon::Melee {
-            held.swing = Some(heavy);
+            held.swing = Some(fired.heavy);
         } else {
             held.kick_back += kick.back_m;
             held.kick_angle += kick.up_radians;
@@ -370,7 +366,10 @@ fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay
         match held.swing {
             Some(true) => (view.melee.heavy.clone(), 1.0, false, Some(timing.swing.1)),
             Some(false) => (view.melee.light.clone(), 1.0, false, Some(timing.swing.0)),
-            None => (view.melee.light.clone(), 0.0, false, None),
+            None => match &view.equip {
+                Some(equip) => (equip.clone(), 1.0, false, Some(held.equip_total)),
+                None => (view.melee.light.clone(), 0.0, false, None),
+            },
         }
     } else {
         let speed = f32::from(u8::from(held.fired));
@@ -383,6 +382,9 @@ fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay
         fade_seconds: 0.0,
         cue: held.cue,
         fit_seconds,
+        blend: Vec::new(),
+        stride: None,
+        synced: false,
     };
     let wanted = FigurePlay {
         base,
@@ -493,6 +495,7 @@ struct Shown<'a> {
     clip: String,
     raise: f32,
     scale: f32,
+    body_muzzle: Option<ActorMuzzle>,
 }
 
 fn published(
@@ -509,14 +512,21 @@ fn published(
         clip,
         raise,
         scale,
+        body_muzzle,
     } = shown;
     let (root, turn) = (frame.root, frame.turn);
     let eye_turn = about_y(yaw) * about_x(pitch);
-    let muzzle = look
-        .markers
-        .muzzle
-        .map(|at| body.eye + eye_turn * (root + turn * at));
-    let direction = eye_turn * turn * Vec3::Z;
+    let (muzzle, direction) = body_muzzle.map_or_else(
+        || {
+            (
+                look.markers
+                    .muzzle
+                    .map(|at| body.eye + eye_turn * (root + turn * at)),
+                eye_turn * turn * Vec3::Z,
+            )
+        },
+        |carried| (Some(carried.position), carried.direction),
+    );
     let fresh = ViewModel {
         tick,
         slot: Some(slot),
@@ -573,13 +583,36 @@ fn playing(flow: Option<&Flow>) -> bool {
     flow.is_none_or(|flow| flow.stage == Stage::Playing)
 }
 
+type Viewer<'w> = (
+    Option<Res<'w, Watched>>,
+    Option<Res<'w, TestCamera>>,
+    Option<Res<'w, Muzzles>>,
+);
+
+fn body_muzzle(
+    test: Option<&TestCamera>,
+    muzzles: Option<&Muzzles>,
+    slot: u32,
+) -> Option<ActorMuzzle> {
+    muzzles
+        .filter(|_| test.is_some_and(|test| test.outside))
+        .and_then(|muzzles| muzzles.of(slot))
+        .copied()
+}
+
+type Veiled<'w> = (Option<Res<'w, Flow>>, Option<Res<'w, TestCamera>>);
+
+fn shown_now(flow: Option<&Flow>, test: Option<&TestCamera>) -> bool {
+    playing(flow) && !test.is_some_and(|test| test.outside)
+}
+
 pub(super) fn veil(
-    flow: Option<Res<Flow>>,
+    (flow, test): Veiled,
     held: Res<Held>,
     parts: Query<&Node, With<FirstPersonWeapon>>,
     mut spawner: Spawner<ViewModelBrick>,
 ) {
-    if playing(flow.as_deref()) {
+    if shown_now(flow.as_deref(), test.as_deref()) {
         return;
     }
     if let Some(entity) = held.entity
@@ -589,13 +622,18 @@ pub(super) fn veil(
     }
 }
 
+fn camera_lit(mut drawn: Drawn) -> Drawn {
+    drawn.values.floats = FIELD_AT_CAMERA.to_vec();
+    drawn
+}
+
 fn camera_of(scene: &SceneContext) -> Option<Entity> {
     scene.entities.get(CAMERA).copied()
 }
 
 pub(super) fn place(
     (fixed, numbers, scene, files, (arms_events, flow, powers, tasks)): Reads,
-    (humans, watched): (Humans, Option<Res<Watched>>),
+    (humans, (watched, test, muzzles)): (Humans, Viewer),
     mut parts: Parts,
     (mut held, mut view, mut stats, mut moves, mut spawner): Writes,
 ) {
@@ -647,12 +685,7 @@ pub(super) fn place(
     let pitch = wish.pitch_radians + offsets.map_or(0.0, ViewOffsets::pitch_radians);
     swayed(&mut held, table, (yaw, pitch), delta);
     let bobbed = bobbing(&mut held, table, body, delta);
-    kicked(
-        &mut held,
-        table,
-        (&arms_events, actor.slot, wish.scope),
-        delta,
-    );
+    kicked(&mut held, table, (&arms_events, actor.slot), delta);
     reloads(&mut held, reloading(loadout, &numbers));
     let (clip, wanted) = played(&held, &table.view, &timing);
     let scale = table.view.scale;
@@ -696,11 +729,11 @@ pub(super) fn place(
         scale: Vec3::splat(scale),
     };
     let part = Part {
-        drawn: Drawn::new(FIGURE, mesh, material),
+        drawn: camera_lit(Drawn::new(FIGURE, mesh, material)),
         figure: look.files.figure.clone(),
         wanted,
         placed,
-        visible: alive && playing(flow.as_deref()),
+        visible: alive && shown_now(flow.as_deref(), test.as_deref()),
         camera,
     };
     kept(&mut held, &mut parts, (&mut moves, &mut spawner), part);
@@ -711,6 +744,7 @@ pub(super) fn place(
         clip,
         raise,
         scale,
+        body_muzzle: body_muzzle(test.as_deref(), muzzles.as_deref(), actor.slot),
     };
     published(
         &book,

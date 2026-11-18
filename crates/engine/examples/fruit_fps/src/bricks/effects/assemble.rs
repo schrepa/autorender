@@ -3,12 +3,14 @@ use engine::prelude::*;
 use glam::Mat3;
 
 use super::gather::{Setup, Spawns, SprayKind, device_spot, view_direction};
-use super::numbers::{EffectsNumbers, Spray};
+use super::numbers::{BarrierLook, DeviceLook, EffectsNumbers, PropsLook, Spray};
 use super::{
     Device, EffectsDrawing, EffectsFrame, EffectsShow, EffectsStats, Item, ScreenStats, Show,
 };
 use crate::play::actors::{Body, Human, Wish};
-use crate::play::effects::{EffectsFeed, Form, GroundMarks, Look, Shown};
+use crate::play::camera::TestCamera;
+use crate::play::effects::{EffectsFeed, Form, GroundMarks, Look, PropPlace, Shown};
+use crate::play::puppet::DeviceLamp;
 use bevy_ecs::system::SystemParam;
 
 use super::previews::preview_items;
@@ -18,15 +20,19 @@ use crate::play::light::Lighting;
 use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::view::Watched;
+use crate::play::world::{Barrier, BarrierFace};
+use crate::rules::Side;
 use crate::rules::Team;
 
 const TRACER: f32 = 0.0;
 const FLASH: f32 = 1.0;
 const SPRAY: f32 = 2.0;
+const HALO: f32 = 3.0;
 
 const PANEL: f32 = 0.0;
 const GLOWING: f32 = 1.0;
 const BODY: f32 = 2.0;
+const STRAND: f32 = 3.0;
 
 const DECAL: f32 = 0.0;
 const DISC: f32 = 1.0;
@@ -63,8 +69,8 @@ fn frame_of(normal: Vec3) -> (Vec3, Vec3, Vec3) {
 
 fn spray_of(look: &EffectsNumbers, kind: SprayKind) -> (&Spray, [f32; 3]) {
     match kind {
-        SprayKind::Impact(surface) => {
-            let spray = look.impacts.of(surface);
+        SprayKind::Impact(kind) => {
+            let spray = look.impacts.of(kind);
             (spray, spray.color)
         }
         SprayKind::Juice(color) => (&look.juice.spray, color),
@@ -314,13 +320,22 @@ fn smoke_item(look: &EffectsNumbers, centre: Vec3, radius: f32, strength: f32, s
 
 fn sort_shown(
     look: &EffectsNumbers,
-    shown: &[Shown],
+    (shown, meshed): (&[Shown], &[u32]),
     eye: Option<Vec3>,
     out: &mut Sorted,
     stats: &mut EffectsStats,
 ) {
     let traps = &look.traps;
     for (index, thing) in shown.iter().enumerate() {
+        if meshed.contains(&thing.effect)
+            && matches!(
+                thing.look,
+                Look::Projectile | Look::Trap | Look::Sensor | Look::Wall
+            )
+        {
+            stats.meshed += 1;
+            continue;
+        }
         let (centre, radius) = centre_radius(&thing.form);
         let edge = team_color(look, thing.team);
         let zone = |color: [f32; 3]| mark_item(&disc(look, centre, radius, color, DISC));
@@ -392,8 +407,13 @@ fn sort_shown(
             }
             Look::Wire => {
                 stats.glowing += 1;
-                out.solids
-                    .push(solid_item(&glowing(traps.wire_width_m), look));
+                let strand = Solid {
+                    kind: STRAND,
+                    glow: look.props.wire_glow,
+                    edge: look.props.wire_color,
+                    ..glowing(traps.wire_width_m)
+                };
+                out.solids.push(solid_item(&strand, look));
             }
             Look::Projectile => {
                 stats.glowing += 1;
@@ -570,16 +590,55 @@ fn showcase_shown(
     list
 }
 
+fn lamp_glow(device: &DeviceLook, left_seconds: Option<f32>, fuse_seconds: f32) -> f32 {
+    let Some(left) = left_seconds else {
+        return device.dim_glow;
+    };
+    let fast = math::max(device.blink_fast_seconds, 0.01);
+    let fuse = math::max(fuse_seconds, 0.01);
+    let left = math::clamp(left, 0.0, fuse);
+    let slope = (device.blink_slow_seconds - fast) / fuse;
+    let cycles = if slope.abs() < 1.0e-6 {
+        left / fast
+    } else {
+        math::ln(1.0 + slope * left / fast) / slope
+    };
+    let pulse = 0.5 + 0.5 * math::cos(cycles * std::f32::consts::TAU);
+    device.dim_glow + (device.peak_glow - device.dim_glow) * math::pow(pulse, device.pulse_power)
+}
+
+fn halo_item(at: Vec3, color: [f32; 3], size: f32) -> Item {
+    Item {
+        rows: [
+            row(at, 0.0),
+            row(Vec3::ZERO, 1.0),
+            rgb(color, size),
+            [HALO, 0.0, 1.0, 0.0],
+            [0.0; 4],
+            [0.0; 4],
+            [0.0; 4],
+            [0.0; 4],
+        ],
+    }
+}
+
+struct DeviceSeen {
+    spot: Option<(Vec3, Option<u32>)>,
+    lamp: Option<Vec3>,
+    showcase: bool,
+    stand_in: bool,
+}
+
 fn device_items(
     look: &EffectsNumbers,
-    spot: Option<(Vec3, Option<u32>)>,
-    stand_in: bool,
-    fuse: (f32, f32),
+    seen: &DeviceSeen,
+    (fuse_seconds, tick_seconds, alpha): (f32, f32, f32),
     now: f64,
-) -> Vec<Item> {
-    let Some((at, left)) = spot else {
-        return Vec::new();
+) -> (Vec<Item>, Option<(Item, f32)>) {
+    let Some((at, left)) = seen.spot else {
+        return (Vec::new(), None);
     };
+    let stand_in = seen.stand_in;
     let device = &look.device;
     let [width, height, depth] = device.size_m;
     let mut items = Vec::new();
@@ -600,28 +659,240 @@ fn device_items(
     if stand_in {
         items.push(solid_item(&base, look));
     }
-    let (fuse_seconds, tick_seconds) = fuse;
     let left_seconds = match left {
-        Some(ticks) => ticks as f32 * tick_seconds,
-        None => fuse_seconds - (now % f64::from(fuse_seconds)) as f32,
+        Some(ticks) => Some((ticks as f32 - alpha) * tick_seconds),
+        None if seen.showcase => Some(fuse_seconds - (now % f64::from(fuse_seconds)) as f32),
+        None => None,
     };
-    let share = math::clamp(left_seconds / fuse_seconds, 0.0, 1.0);
-    let period =
-        device.blink_fast_seconds + (device.blink_slow_seconds - device.blink_fast_seconds) * share;
-    let lit = (now / f64::from(period)).fract() < f64::from(device.lit_share);
+    let glow = lamp_glow(device, left_seconds, fuse_seconds);
+    let lamp = seen
+        .lamp
+        .unwrap_or(at + Vec3::Y * (height + device.light_size_m * 0.5));
     let light = Solid {
         shape: Boxed {
-            centre: at + Vec3::Y * (height + device.light_size_m * 0.5),
+            centre: lamp,
             half: Vec3::splat(device.light_size_m * 0.5),
             axes: Mat3::IDENTITY,
         },
         kind: GLOWING,
         fill: device.light,
-        glow: if lit { 1.0 } else { 0.0 },
+        glow,
         ..base
     };
     items.push(solid_item(&light, look));
-    items
+    let halo = device.light.map(|value| value * glow * 0.5);
+    (items, Some((halo_item(lamp, halo, device.halo_m), glow)))
+}
+
+struct Raised {
+    face: BarrierFace,
+    friendly: bool,
+    drop: f32,
+    near: Option<Vec3>,
+}
+
+fn barrier_item(look: &BarrierLook, raised: &Raised, seed: f32) -> Item {
+    let [a, b, _, top] = raised.face.corners;
+    let along = (b - a).normalize_or(Vec3::X);
+    let rise = top - a;
+    let start = a - along * look.extend_m;
+    let width = a.distance(b) + 2.0 * look.extend_m;
+    let color = if raised.friendly {
+        look.friendly
+    } else {
+        look.enemy
+    };
+    Item {
+        rows: [
+            row(start, width),
+            row(along, rise.length()),
+            row(rise.normalize_or(Vec3::Y), raised.drop),
+            rgb(color.map(|value| value * look.glow), look.near_boost),
+            raised.near.map_or([0.0; 4], |near| row(near, look.near_m)),
+            [look.cell_m, look.band_m, look.band_mps, look.line_px],
+            [look.fill, look.line, look.edge, look.edge_m],
+            [seed, look.band_share, 0.0, 0.0],
+        ],
+    }
+}
+
+fn nearest(face: &BarrierFace, bodies: &[Vec3], reach: f32) -> Option<Vec3> {
+    let [a, b, _, _] = face.corners;
+    let flat = |point: Vec3| Vec3::new(point.x, 0.0, point.z);
+    let (a, b) = (flat(a), flat(b));
+    bodies
+        .iter()
+        .map(|body| {
+            let at = flat(*body);
+            let along = b - a;
+            let share = math::clamp(
+                (at - a).dot(along) / math::max(along.length_squared(), 1.0e-6),
+                0.0,
+                1.0,
+            );
+            (at.distance(a + along * share), *body)
+        })
+        .filter(|(distance, _)| *distance <= reach)
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, body)| body)
+}
+
+fn showcase_barrier(look: &EffectsNumbers, human: Option<(&Body, &Wish)>, now: f64) -> Vec<Raised> {
+    let Some((body, wish)) = human else {
+        return Vec::new();
+    };
+    let case = &look.showcase;
+    let every = f64::from(case.every_seconds * 2.0);
+    let phase = ((now / every).fract() * every) as f32;
+    let count = (now / every) as u64;
+    let toward = view_direction(wish);
+    let ahead = Vec3::new(toward.x, 0.0, toward.z).normalize_or(Vec3::NEG_Z);
+    let along = ahead.cross(Vec3::Y);
+    let centre = body.feet + ahead * case.distance_m;
+    let [width, height, _] = case.wall_m;
+    let a = centre - along * width * 0.5;
+    let b = centre + along * width * 0.5;
+    let held = case.every_seconds * 1.5;
+    vec![Raised {
+        face: BarrierFace {
+            side: Side::Attack,
+            corners: [a, b, b + Vec3::Y * height, a + Vec3::Y * height],
+            normal: -ahead,
+        },
+        friendly: count.is_multiple_of(2),
+        drop: math::max(phase - held, 0.0) / look.barrier.drop_seconds,
+        near: Some(body.feet + Vec3::Y),
+    }]
+}
+
+fn raised_faces(
+    look: &BarrierLook,
+    barrier: &Barrier,
+    (viewer, bodies): (Option<Side>, &[Vec3]),
+    since_drop: Option<f32>,
+) -> Vec<Raised> {
+    let drop = if barrier.up {
+        Some(0.0)
+    } else {
+        since_drop.map(|seconds| seconds / look.drop_seconds)
+    };
+    let Some(drop) = drop else {
+        return Vec::new();
+    };
+    barrier
+        .faces
+        .iter()
+        .map(|face| Raised {
+            face: *face,
+            friendly: viewer.is_none_or(|side| side == face.side),
+            drop,
+            near: nearest(face, bodies, look.near_m),
+        })
+        .collect()
+}
+
+fn barrier_part(
+    look: &EffectsNumbers,
+    (seen, round): (&Seen<'_, '_>, Option<&Round>),
+    (fixed, alpha): (&FixedTime, f32),
+    showcase: Vec<Raised>,
+    stats: &mut EffectsStats,
+) -> Vec<Item> {
+    let viewer = seen
+        .slot()
+        .zip(round)
+        .and_then(|(slot, round)| round.side_of_slot(slot as usize));
+    let bodies: Vec<Vec3> = seen.bodies.iter().map(|body| body.feet + Vec3::Y).collect();
+    let mut raised = showcase;
+    if let Some(barrier) = seen.barrier.as_deref() {
+        let since = barrier
+            .dropped_tick
+            .map(|tick| (fixed.tick.saturating_sub(tick) as f32 + alpha) * fixed.delta_seconds);
+        raised.extend(raised_faces(
+            &look.barrier,
+            barrier,
+            (viewer, &bodies),
+            since,
+        ));
+    }
+    raised.retain(|face| face.drop < 1.0);
+    stats.barrier_faces = raised.len() as u32;
+    stats.barrier_drop = raised.iter().map(|face| face.drop).fold(0.0, math::max);
+    raised
+        .iter()
+        .enumerate()
+        .map(|(index, face)| barrier_item(&look.barrier, face, index as f32))
+        .collect()
+}
+
+fn trail_item(look: &PropsLook, color: [f32; 3], from: Vec3, to: Vec3) -> Item {
+    Item {
+        rows: [
+            row(from, 0.0),
+            row(to, 1.0),
+            rgb(
+                color.map(|value| value * look.trail_glow),
+                look.trail_width_m,
+            ),
+            [TRACER, 0.0, 1.0, 0.0],
+            [0.0; 4],
+            [0.5, 0.0, 0.0, 0.0],
+            [0.0; 4],
+            [0.0; 4],
+        ],
+    }
+}
+
+fn prop_items(
+    look: &EffectsNumbers,
+    feed: &EffectsFeed,
+    (glows, marks): (&mut Vec<Item>, &mut Vec<Item>),
+    stats: &mut EffectsStats,
+) {
+    let props = &look.props;
+    for prop in &feed.props {
+        match prop.place {
+            PropPlace::Thrown {
+                centre,
+                velocity_mps,
+                resting: false,
+            } if velocity_mps.length_squared() > 0.25 => {
+                stats.trails += 1;
+                let from = centre - velocity_mps * props.trail_seconds;
+                glows.push(trail_item(props, team_color(look, prop.team), from, centre));
+            }
+            PropPlace::Drop {
+                target,
+                fall_starts_tick,
+                impact_tick,
+                ..
+            } if (fall_starts_tick..impact_tick).contains(&feed.tick) => {
+                stats.shadows += 1;
+                let span = (impact_tick - fall_starts_tick) as f32;
+                let share = (feed.tick - fall_starts_tick) as f32 / math::max(span, 1.0);
+                let radius = props.shadow_radius_m;
+                marks.push(mark_item(&Mark {
+                    centre: target,
+                    radius,
+                    half: Vec3::splat(radius),
+                    axes: Mat3::IDENTITY,
+                    color: [0.0; 3],
+                    fill: props.shadow_opacity * share * share,
+                    kind: BLOB,
+                    seed: 0.0,
+                    rim: 0.0,
+                    progress: 0.0,
+                    fade: 1.0,
+                    pattern: (0.0, 0.0),
+                }));
+            }
+            PropPlace::Thrown { .. }
+            | PropPlace::Placed { .. }
+            | PropPlace::Wall { .. }
+            | PropPlace::Wire { .. }
+            | PropPlace::Drop { .. } => {}
+        }
+    }
 }
 
 fn screen_frame(
@@ -701,6 +972,21 @@ fn blob_marks(marks: &GroundMarks, out: &mut Sorted, stats: &mut EffectsStats) {
     }
 }
 
+fn lit_frame(
+    frame: &mut EffectsFrame,
+    lighting: Option<&Lighting>,
+) -> Option<engine_core::TextureRef> {
+    let lighting = lighting.filter(|lighting| lighting.lit)?;
+    frame.sun = row(lighting.to_sun, 1.0);
+    frame.sun_color = rgb(lighting.sun, 0.0);
+    frame.sky_color = rgb(lighting.sky, 0.0);
+    let field = lighting.field?;
+    let [min_x, min_z, max_x, max_z] = field.rect;
+    frame.field = [min_x, min_z, 1.0 / (max_x - min_x), 1.0 / (max_z - min_z)];
+    frame.field_shape = [field.height_m, field.scale, 1.0, 0.0];
+    Some(field.map)
+}
+
 fn span(items: &[Item], start: usize) -> std::ops::Range<u32> {
     start as u32..items.len() as u32
 }
@@ -708,6 +994,9 @@ fn span(items: &[Item], start: usize) -> std::ops::Range<u32> {
 #[derive(SystemParam)]
 pub(super) struct Seen<'w, 's> {
     lighting: Option<Res<'w, Lighting>>,
+    lamp: Option<Res<'w, DeviceLamp>>,
+    barrier: Option<Res<'w, Barrier>>,
+    camera: Option<Res<'w, TestCamera>>,
     watched: Option<Res<'w, Watched>>,
     powers: Option<Res<'w, Powers>>,
     flow: Option<Res<'w, Flow>>,
@@ -735,6 +1024,7 @@ impl Seen<'_, '_> {
         self.flow
             .as_deref()
             .is_none_or(|flow| flow.stage == Stage::Playing)
+            && !self.camera.as_deref().is_some_and(|camera| camera.outside)
     }
 }
 
@@ -785,6 +1075,20 @@ pub(super) fn assemble(
         &mut items,
         &mut sorted.marks,
     );
+    prop_items(look, &feed, (&mut items, &mut sorted.marks), &mut next);
+    next.puffs = spawns.puffs;
+    let seen_device = DeviceSeen {
+        spot: device_spot(round.as_deref(), show.show, human, look),
+        lamp: seen.lamp.as_deref().and_then(|lamp| lamp.position),
+        showcase: matches!(show.show, Show::Device | Show::All),
+        stand_in: devices.iter().any(|device| device.stand_in),
+    };
+    let timing = (parsed.fuse_seconds, fixed.delta_seconds, time.alpha);
+    let (device_solids, halo) = device_items(look, &seen_device, timing, now);
+    if let Some((item, glow)) = halo {
+        items.push(item);
+        next.lamp = glow;
+    }
     let glow = span(&items, 0);
     let mut shown = feed.shown.clone();
     if show.show != Show::Off {
@@ -793,42 +1097,20 @@ pub(super) fn assemble(
     if let Some(ground) = ground.as_deref() {
         blob_marks(ground, &mut sorted, &mut next);
     }
-    sort_shown(look, &shown, eye, &mut sorted, &mut next);
+    let meshed: Vec<u32> = feed.props.iter().map(|prop| prop.effect).collect();
+    sort_shown(look, (&shown, &meshed), eye, &mut sorted, &mut next);
     pooled_marks(look, &spawns, now, &mut sorted, &mut next);
     let start = items.len();
     items.extend(sorted.solids);
     let solid = span(&items, start);
-    let stand_in = devices.iter().any(|device| device.stand_in);
-    let spot = device_spot(round.as_deref(), show.show, human, look);
     let start = items.len();
-    items.extend(device_items(
-        look,
-        spot,
-        stand_in,
-        (parsed.fuse_seconds, fixed.delta_seconds),
-        now,
-    ));
+    items.extend(device_solids);
     let device = span(&items, start);
     let start = items.len();
     items.extend(sorted.smokes);
     let smoke = span(&items, start);
     let (mut frame, mut screen) = screen_frame(look, &feed, show.show, &spawns, now, sorted.cover);
-    if let Some(lighting) = seen.lighting.as_deref().filter(|lighting| lighting.lit) {
-        frame.sun = row(lighting.to_sun, 1.0);
-        frame.sun_color = rgb(lighting.sun, 0.0);
-        frame.sky_color = rgb(lighting.sky, 0.0);
-        if let Some(field) = lighting.field {
-            let [min_x, min_z, max_x, max_z] = field.rect;
-            frame.field = [min_x, min_z, 1.0 / (max_x - min_x), 1.0 / (max_z - min_z)];
-            frame.field_shape = [field.height_m, field.scale, 1.0, 0.0];
-        }
-    }
-    let field = seen
-        .lighting
-        .as_deref()
-        .filter(|lighting| lighting.lit)
-        .and_then(|lighting| lighting.field)
-        .map(|field| field.map);
+    let field = lit_frame(&mut frame, seen.lighting.as_deref());
     let limit = if show.show == Show::NearSight {
         Some(look.showcase.radius_m)
     } else {
@@ -847,8 +1129,24 @@ pub(super) fn assemble(
     let start = items.len();
     items.extend(sorted.marks);
     let marks = span(&items, start);
+    let shown_barrier = if show.show == Show::Barrier || show.show == Show::All {
+        showcase_barrier(look, human, now)
+    } else {
+        Vec::new()
+    };
+    let start = items.len();
+    let sources = (&seen, round.as_deref());
+    let faces = barrier_part(
+        look,
+        sources,
+        (&fixed, time.alpha),
+        shown_barrier,
+        &mut next,
+    );
+    items.extend(faces);
+    let barrier = span(&items, start);
     let screened = frame.flash[3] > 0.0 || frame.damage[3] > 0.0 || frame.cover[3] > 0.0;
-    let ranges = [&glow, &solid, &device, &smoke, &marks];
+    let ranges = [&glow, &solid, &device, &smoke, &marks, &barrier];
     next.draws =
         ranges.iter().filter(|range| !range.is_empty()).count() as u32 + u32::from(screened);
     next.instances = items.len() as u32;
@@ -862,6 +1160,7 @@ pub(super) fn assemble(
         device,
         smoke,
         marks,
+        barrier,
         glow_vertices: QUAD_VERTICES * look.most_sprites(),
         frame,
         screen: screened,

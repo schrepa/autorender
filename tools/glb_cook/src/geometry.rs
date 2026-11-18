@@ -5,6 +5,8 @@ use glam::{Mat3, Mat4, Vec3};
 use gltf::mesh::Mode;
 use serde_json::{Value, json};
 
+use crate::chunks;
+use crate::config::ChunkPlan;
 use crate::fault::Fault;
 use crate::rig::Rig;
 use crate::source::{Source, node_label};
@@ -469,6 +471,64 @@ pub struct Merged {
 pub struct Drawn {
     pub built: Vec<Built>,
     pub widest_object: (String, usize),
+    pub chunks: Option<Value>,
+}
+
+fn chunked(
+    source: &Source,
+    plan: &ChunkPlan,
+    stem: &str,
+    group: &[Part],
+    tally: &mut Tally,
+) -> Result<Vec<Built>, Fault> {
+    let sources: Vec<chunks::Source<'_>> = group
+        .iter()
+        .map(|part| chunks::Source {
+            vertices: &part.vertices,
+            indices: &part.indices,
+            uv1: part.uv1.as_deref(),
+            colors: part.colors.as_deref(),
+        })
+        .collect();
+    tally.vertices += group.iter().map(|part| part.vertices.len()).sum::<usize>();
+    tally.indices += group.iter().map(|part| part.indices.len()).sum::<usize>();
+    let (pieces, folded) = chunks::split(plan, &sources);
+    tally.duplicated += chunks::duplicated(&pieces);
+    tally.folded += folded;
+    let mut built = Vec::new();
+    for (at, piece) in pieces.into_iter().enumerate() {
+        let item = format!(
+            "{stem} chunk {at} (cell {}, {})",
+            piece.cell.0, piece.cell.1
+        );
+        let part = Part {
+            material: group[0].material,
+            vertices: piece.vertices,
+            indices: piece.indices,
+            uv1: piece.uv1,
+            colors: piece.colors,
+            skin: None,
+            influences: 0,
+            normals: group[0].normals,
+            uv: group[0].uv,
+        };
+        let mut mesh = encode(source, &item, std::slice::from_ref(&part))?;
+        mesh.stem = format!("{stem}_c{at}");
+        tally
+            .rows
+            .push((mesh.stem.clone(), mesh.triangles, mesh.vertices));
+        built.push(mesh);
+    }
+    Ok(built)
+}
+
+#[derive(Default)]
+struct Tally {
+    vertices: usize,
+    indices: usize,
+    duplicated: usize,
+    folded: usize,
+    rows: Vec<(String, usize, usize)>,
 }
 
 pub fn map_drawn(
@@ -476,7 +536,7 @@ pub fn map_drawn(
     name: &str,
     scale: f32,
     tolerance: f32,
-    merged: &[&str],
+    (merged, plan): (&[&str], Option<&ChunkPlan>),
 ) -> Result<Drawn, Fault> {
     let mut parts: Vec<Part> = Vec::new();
     let mut widest = (String::new(), 0);
@@ -520,31 +580,46 @@ pub fn map_drawn(
     groups.sort_unstable();
     groups.dedup();
     let mut built = Vec::new();
+    let mut tally = Tally::default();
     for &(material, colored) in &groups {
         let group: Vec<Part> = parts
             .extract_if(.., |part| {
                 part.material == Some(material) && part.colors.is_some() == colored
             })
             .collect();
-        let mut mesh = encode(source, &format!("materials[{material}] group"), &group)?;
         let stem = if groups.len() == 1 {
             name.to_owned()
         } else {
             format!("{name}_{material}")
         };
-        mesh.stem = if colored {
+        let stem = if colored {
             format!("{stem}_detail")
         } else {
             stem
         };
+        if let Some(plan) = plan {
+            built.extend(chunked(source, plan, &stem, &group, &mut tally)?);
+            continue;
+        }
+        let mut mesh = encode(source, &format!("materials[{material}] group"), &group)?;
+        mesh.stem = stem;
         built.push(mesh);
     }
     if built.is_empty() {
         return Err(source.fault("NoMesh", "nodes", "no drawn mesh to cook"));
     }
+    let chunks = plan.map(|plan| {
+        chunks::summary(
+            plan,
+            (tally.vertices, tally.indices),
+            &tally.rows,
+            (tally.duplicated, tally.folded),
+        )
+    });
     Ok(Drawn {
         built,
         widest_object: widest,
+        chunks,
     })
 }
 

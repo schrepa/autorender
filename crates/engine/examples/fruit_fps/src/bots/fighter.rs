@@ -2,13 +2,15 @@ use glam::Vec3;
 
 use super::aim::{
     angle_between, clamp, direction, error_radians, flat, flat_distance, look_angles, max, radians,
-    wrap,
+    sin_cos, wrap,
 };
 use super::debug::{Activity, Why};
 use super::memory::{Source, Track};
-use super::sense::{DeviceSense, Gait, GunClass, Intent, Side, WeaponChoice};
+use super::sense::{
+    CallKind, DeviceSense, Gait, GamePhase, GunClass, Intent, Purchase, Side, WeaponChoice,
+};
 use super::team::{Duty, Step};
-use super::{Brain, Ctx};
+use super::{Brain, Ctx, Gift};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fight {
@@ -88,15 +90,47 @@ fn calm_turn(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3) {
 
 pub fn buy(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
     let tick = ctx.tick;
-    let delay = brain.rng.range(ctx.numbers.play.hesitate_seconds);
+    let play = &ctx.numbers.play;
+    let delay = brain.rng.range(play.hesitate_seconds);
     let due = *brain
         .buy_tick
         .get_or_insert(tick + ctx.numbers.ticks(delay));
-    if tick == due {
-        intent.buy = true;
+    let late = u64::from(ctx.sense.game.ticks_left) <= ctx.numbers.ticks(play.buy_late_seconds);
+    let due = if late { due.min(tick) } else { due };
+    let wait = ctx.numbers.ticks(play.gift_wait_seconds);
+    let gift_to = ctx.sense.buy.gift_to;
+    let mut face = ctx.sense.order.face;
+    let mut share = play.idle_turn_share;
+    match (gift_to, brain.gift) {
+        (Some(_), Gift::Idle) if tick >= due => {
+            intent.buy = Purchase::Gift;
+            brain.gift = Gift::Bought(tick);
+        }
+        (Some(to), Gift::Bought(at)) => {
+            face = to + (ctx.eye - ctx.sense.position) * 0.3;
+            share = 1.0;
+            let (yaw, pitch) = look_angles(ctx.eye, face);
+            let facing = angle_between(brain.aim.yaw, brain.aim.pitch, yaw, pitch)
+                <= radians(play.throw_aim_deg);
+            let holding = ctx.sense.gun.has_primary
+                && ctx.sense.gun.holding == WeaponChoice::Primary
+                && !ctx.sense.carrying_device;
+            if tick >= at + wait && facing && holding {
+                intent.drop_gun = true;
+                brain.gift = Gift::Dropped(tick);
+            }
+        }
+        (None, Gift::Bought(at)) | (_, Gift::Dropped(at)) if tick >= at + wait => {
+            intent.buy = Purchase::Own;
+            brain.gift = Gift::Done;
+        }
+        (None, Gift::Idle) if tick >= due => {
+            intent.buy = Purchase::Own;
+            brain.gift = Gift::Done;
+        }
+        _ => {}
     }
-    let face = ctx.sense.order.face;
-    calm_turn(brain, ctx, face);
+    turn_to(brain, ctx, face, share);
     switch_primary(ctx, intent);
     brain.mover.reset_progress(tick);
     brain.mind(Activity::Wait, Why::RoundStart, tick);
@@ -469,9 +503,10 @@ fn hunt(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) -> bool {
         return false;
     }
     let far_from_post = flat_distance(ctx.sense.position, order.goal) > play.walk_near_m;
-    let pushes = matches!(order.step, Step::Execute | Step::Retake | Step::Hunt)
+    let pushes = (matches!(order.step, Step::Execute | Step::Retake | Step::Hunt)
         || order.duty == Duty::Entry
-        || brain.fight.over_peek;
+        || brain.fight.over_peek)
+        && !order.wait_contact;
     if !pushes && far_from_post && ctx.tick >= order.go_tick {
         return false;
     }
@@ -647,8 +682,12 @@ fn follow(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         brain.debug.why = Why::Stuck;
     }
     if !steering.arrived {
-        intent.wish = steering.wish;
+        intent.wish = around_mates(ctx, steering.wish);
         intent.gait = gait_for(brain, ctx);
+        if intent.gait == Gait::Run && knife_safe(brain, ctx) {
+            intent.switch =
+                (ctx.sense.gun.holding != WeaponChoice::Melee).then_some(WeaponChoice::Melee);
+        }
         moving_look(brain, ctx, steering.ahead, steering.wish);
         let why = if steering.stuck {
             Why::Stuck
@@ -664,6 +703,97 @@ fn follow(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         return;
     }
     arrived(brain, ctx, intent);
+}
+
+fn knife_safe(brain: &Brain, ctx: &Ctx<'_, '_>) -> bool {
+    let play = &ctx.numbers.play;
+    let fresh = ctx.numbers.ticks(ctx.level.memory_seconds);
+    let walk = matches!(
+        brain.order.step,
+        Step::Setup | Step::Rotate | Step::Gather | Step::Wait | Step::Save
+    );
+    let quiet_calls = ctx.sense.calls.iter().all(|call| {
+        ctx.tick.saturating_sub(call.tick) > fresh
+            || !matches!(
+                call.kind,
+                CallKind::Spotted | CallKind::Heard | CallKind::Down | CallKind::Device
+            )
+    });
+    walk && ctx.sense.game.phase == GamePhase::Live
+        && !ctx.sense.carrying_device
+        && ctx.sense.sounds.is_empty()
+        && quiet_calls
+        && brain.memory.visible_count() == 0
+        && brain.memory.lost(ctx.tick, fresh).is_none()
+        && brain.mover.remaining(ctx.sense.position) >= play.knife_path_m
+}
+
+pub fn clear_line(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
+    let play = &ctx.numbers.play;
+    let me = ctx.sense.position;
+    let (sin, cos) = sin_cos(radians(play.line_of_fire_deg));
+    let reach = ctx.numbers.player.radius_m;
+    let blocking = ctx
+        .sense
+        .mates
+        .iter()
+        .filter(|mate| mate.alive && mate.human)
+        .find_map(|mate| {
+            let to = flat(me - mate.position);
+            let ahead = flat(direction(mate.yaw, 0.0)).normalize_or_zero();
+            let along = to.dot(ahead);
+            let off = to - ahead * along;
+            let inside = along > 0.0
+                && along <= play.line_of_fire_m
+                && off.length() <= along * sin / cos + reach;
+            inside.then_some((ahead, off))
+        });
+    let Some((ahead, off)) = blocking else {
+        brain.line_since = None;
+        return;
+    };
+    let since = *brain.line_since.get_or_insert(ctx.tick);
+    let busy = intent.plant || intent.defuse || intent.drop_device;
+    if busy || ctx.tick < since + ctx.numbers.ticks(play.line_of_fire_seconds) {
+        return;
+    }
+    let side = if off.length() > reach * 0.1 {
+        off.normalize_or_zero()
+    } else if ctx.sense.me.is_multiple_of(2) {
+        Vec3::new(-ahead.z, 0.0, ahead.x)
+    } else {
+        Vec3::new(ahead.z, 0.0, -ahead.x)
+    };
+    intent.wish = side;
+    intent.gait = Gait::Run;
+    brain.debug.why = Why::InLine;
+}
+
+fn around_mates(ctx: &Ctx<'_, '_>, wish: Vec3) -> Vec3 {
+    let reach = ctx.numbers.player.radius_m * 4.0;
+    let me = ctx.sense.position;
+    let ahead = ctx
+        .sense
+        .mates
+        .iter()
+        .filter(|mate| mate.alive)
+        .map(|mate| flat(mate.position - me))
+        .filter(|to| {
+            let d = to.length();
+            d < reach && to.dot(wish) > d * 0.5
+        })
+        .min_by(|a, b| a.length().total_cmp(&b.length()));
+    let Some(to) = ahead else {
+        return wish;
+    };
+    let side = Vec3::new(-wish.z, 0.0, wish.x);
+    let lean = side.dot(to);
+    let away = if lean > 0.0 || (lean == 0.0 && ctx.sense.me % 2 == 1) {
+        -side
+    } else {
+        side
+    };
+    (wish + away).normalize_or_zero()
 }
 
 fn moving_look(brain: &mut Brain, ctx: &Ctx<'_, '_>, ahead: Vec3, heading: Vec3) {
@@ -750,7 +880,11 @@ fn arrived(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
 
 pub fn finish(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
     let gun = ctx.sense.gun;
-    let follow = clamp(ctx.dt / max(ctx.level.spray_settle_seconds, ctx.dt), 0.0, 1.0);
+    let follow = clamp(
+        ctx.dt / max(ctx.level.spray_settle_seconds, ctx.dt),
+        0.0,
+        1.0,
+    );
     brain.fight.spray_yaw += (gun.recoil_yaw - brain.fight.spray_yaw) * follow;
     brain.fight.spray_pitch += (gun.recoil_pitch - brain.fight.spray_pitch) * follow;
     intent.yaw = wrap(brain.aim.yaw - brain.fight.spray_yaw);

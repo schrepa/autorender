@@ -115,6 +115,11 @@ impl RoundFacts {
             "first_of_half" => Val::Bool(self.first_of_half),
             "last_of_half" => Val::Bool(self.last_of_half),
             "device" => Val::Text(&self.device),
+            "buying" => Val::Bool(self.buying),
+            "ready" => Val::Bool(self.ready),
+            "ready_left" => Val::Num(self.ready_left),
+            "ready_count" => whole(self.ready_count),
+            "go" => Val::Bool(self.go),
             _ => Val::Unknown,
         })
     }
@@ -132,6 +137,9 @@ impl TeamFacts {
 
 impl PlateFacts {
     fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
+        if path.is_empty() {
+            return Val::Bool(true);
+        }
         leaf(path, |name| match name {
             "icon" => Val::Text(&self.icon),
             "alive" => Val::Bool(self.alive),
@@ -180,6 +188,9 @@ impl FeedLine {
             "mine" => Val::Bool(self.mine),
             "ability" => Val::Text(&self.ability),
             "world" => Val::Bool(self.world),
+            "killer_char" => Val::Text(&self.killer_char),
+            "victim_char" => Val::Text(&self.victim_char),
+            "wall" => Val::Bool(self.wall),
             _ => Val::Unknown,
         })
     }
@@ -195,6 +206,7 @@ impl PlayerFacts {
             "credits" => whole(self.credits),
             "char_name" => Val::Text(&self.char_name),
             "role" => Val::Text(&self.role),
+            "icon" => Val::Text(&self.icon),
             _ => Val::Unknown,
         })
     }
@@ -209,6 +221,8 @@ impl AbilityFacts {
             "empty" => Val::Bool(self.empty),
             "cooling" => Val::Bool(self.cooling),
             "cooldown" => Val::Num(self.cooldown),
+            "cooldown_frac" => Val::Num(self.cooldown_frac),
+            "equipped" => Val::Bool(self.equipped),
             "points" => whole(self.points),
             "points_needed" => whole(self.points_needed),
             "ready" => Val::Bool(self.ready),
@@ -221,11 +235,14 @@ impl WeaponFacts {
     fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
         leaf(path, |name| match name {
             "name" => Val::Text(&self.name),
+            "icon" => Val::Text(&self.icon),
             "mag" => maybe(self.mag),
             "mag_size" => maybe(self.mag_size),
             "reserve" => maybe(self.reserve),
             "low" => Val::Bool(self.low),
             "reload" => self.reload.map_or(Val::Missing, Val::Num),
+            "down" => Val::Bool(self.down),
+            "down_left" => Val::Num(self.down_left),
             _ => Val::Unknown,
         })
     }
@@ -240,6 +257,7 @@ impl ActionFacts {
             "progress" => Val::Num(self.progress),
             "color" => Val::Text(self.color.key()),
             "checkpoint" => Val::Bool(self.checkpoint),
+            "kind" => Val::Text(&self.kind),
             _ => Val::Unknown,
         })
     }
@@ -264,6 +282,9 @@ impl Card {
             "price" => Val::Text(&self.price),
             "owned" => Val::Bool(self.owned),
             "afford" => Val::Bool(self.afford),
+            "focus" => Val::Bool(self.focus),
+            "need" => whole(self.need),
+            "sell" => whole(self.sell_credits),
             "max" => whole(self.max),
             "charges" => whole(self.charges),
             _ => Val::Unknown,
@@ -282,6 +303,7 @@ impl BuyFacts {
             Some(("reward_win", [])) => whole(self.reward_win),
             Some(("reward_loss", [])) => whole(self.reward_loss),
             Some(("team", rest)) => within(&self.team, rest, Mate::value),
+            Some(("signature", rest)) => self.signature.value(rest),
             Some(_) | None => Val::Unknown,
         }
     }
@@ -289,6 +311,9 @@ impl BuyFacts {
 
 impl Mate {
     fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
+        if path.is_empty() {
+            return Val::Bool(true);
+        }
         leaf(path, |name| match name {
             "name" => Val::Text(&self.name),
             "icon" => Val::Text(&self.icon),
@@ -312,6 +337,9 @@ impl MinimapFacts {
 
 impl BoardRow {
     fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
+        if path.is_empty() {
+            return Val::Bool(true);
+        }
         leaf(path, |name| match name {
             "name" => Val::Text(&self.name),
             "icon" => Val::Text(&self.icon),
@@ -360,7 +388,14 @@ fn listed<'a, T>(
     }
 }
 
-const SLIDERS: [&str; 5] = ["sensitivity", "fov", "master", "effects", "interface"];
+const SLIDERS: [&str; 6] = [
+    "sensitivity",
+    "fov",
+    "master",
+    "effects",
+    "interface",
+    "render_scale",
+];
 
 impl Slider {
     fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
@@ -389,6 +424,13 @@ impl SettingsFacts {
             Some(("invert", [])) => Val::Bool(self.invert),
             Some(("keys", rest)) => listed(&self.keys, rest, KeyRow::value),
             Some((name, rest)) => {
+                if let Some(level) = name.strip_prefix("bots_") {
+                    return if rest.is_empty() {
+                        Val::Bool(level == self.level)
+                    } else {
+                        Val::Unknown
+                    };
+                }
                 if let Some(index) = name
                     .strip_prefix("crosshair_")
                     .and_then(|at| at.parse::<usize>().ok())
@@ -526,6 +568,11 @@ impl HudFacts {
                 "me" => Some(&minimap.me),
                 "players" => Some(&minimap.players),
                 "device" => Some(&minimap.device),
+                "planted" => Some(&minimap.planted),
+                "orbs" => Some(&minimap.orbs),
+                "enemies" => Some(&minimap.enemies),
+                "smokes" => Some(&minimap.smokes),
+                "utility" => Some(&minimap.utility),
                 _ => None,
             },
             Some(_) | None => None,
@@ -538,6 +585,12 @@ impl HudFacts {
         };
         match name {
             "round" => self.round.value(rest),
+            "keys" => leaf(rest, |name| {
+                self.keys
+                    .iter()
+                    .find(|(known, _)| known == name)
+                    .map_or(Val::Unknown, |(_, spoken)| Val::Text(spoken))
+            }),
             "score" => match picked(&self.score, rest) {
                 Ok((Some(score), [])) => whole(*score),
                 Ok((None, [])) => Val::Missing,
@@ -579,6 +632,8 @@ impl HudFacts {
                 "name" => Val::Text(&self.spectate.name),
                 "icon" => Val::Text(&self.spectate.icon),
                 "color" => Val::Text(&self.spectate.color),
+                "health" => Val::Num(self.spectate.health),
+                "weapon_icon" => Val::Text(&self.spectate.weapon_icon),
                 _ => Val::Unknown,
             }),
             "place" => leaf(rest, |name| match name {
@@ -588,7 +643,31 @@ impl HudFacts {
             }),
             "scope" if rest.is_empty() => whole(self.scope),
             "pickup" => self.pickup.value(rest),
+            "point" => leaf(rest, |name| match name {
+                "active" => Val::Bool(self.point.active),
+                "reason" => Val::Text(&self.point.reason),
+                _ => Val::Unknown,
+            }),
             "cast" => self.cast.value(rest),
+            "orb" => leaf(rest, |name| match name {
+                "hint" => Val::Bool(self.orb.hint),
+                "channel" => Val::Bool(self.orb.channel),
+                "progress" => Val::Num(self.orb.progress),
+                _ => Val::Unknown,
+            }),
+            "statuses" => within(&self.statuses, rest, |status, rest| {
+                if rest.is_empty() {
+                    return Val::Bool(true);
+                }
+                leaf(rest, |name| match name {
+                    "kind" => Val::Text(&status.kind),
+                    "label" => Val::Text(&status.label),
+                    "icon" => Val::Text(&status.icon),
+                    "left" => Val::Num(status.left),
+                    _ => Val::Unknown,
+                })
+            }),
+            "blind" if rest.is_empty() => Val::Num(self.blind),
             _ => Val::Unknown,
         }
     }

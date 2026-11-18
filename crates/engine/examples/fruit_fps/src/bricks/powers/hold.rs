@@ -1,13 +1,14 @@
 use engine::prelude::*;
 
-use super::apply::{Row, power_actor};
+use super::apply::{Row, entity_of, power_actor};
 use super::cast::Asked;
-use super::{Parts, Relay};
+use super::{CastAt, Parts, Relay, TestSlot};
 use crate::abilities::{self, AbilitySpec, Aim, Event, Preview, needs_aim};
-use crate::play::events::powers::{Cast, Hold, HoldChange, PowerEvents, Refused};
+use crate::play::events::powers::{Cast, Hold, HoldChange, PowerEvents, Refusal, Refused};
 use crate::play::powers::{Held, Powers};
 use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, AbilityUse};
+use crate::weapons::forward;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Move {
@@ -24,6 +25,16 @@ pub(super) struct Casting<'a> {
     pub(super) fallen: &'a [u32],
     pub(super) free: bool,
     pub(super) tick: u64,
+    pub(super) cast_at: Option<CastAt>,
+}
+
+fn test_slot(slot: TestSlot) -> AbilitySlot {
+    match slot {
+        TestSlot::C => AbilitySlot::C,
+        TestSlot::Q => AbilitySlot::Q,
+        TestSlot::E => AbilitySlot::E,
+        TestSlot::X => AbilitySlot::X,
+    }
 }
 
 struct Seat<'a> {
@@ -97,7 +108,7 @@ impl Casting<'_> {
     }
 
     fn release(powers: &mut Powers, events: &mut PowerEvents, slot: u32, change: Hold) {
-        if let Some(index) = powers.held.iter().position(|held| held.slot == slot) {
+        if let Ok(index) = powers.held.binary_search_by_key(&slot, |held| held.slot) {
             let held = powers.held.remove(index);
             events.holds.push(HoldChange {
                 slot,
@@ -121,6 +132,14 @@ impl Casting<'_> {
             direction: caster.view,
         };
         ticked.extend(powers.effects.cast(caster, spec, aim, self.tick));
+        let until = self.tick + 1 + u64::from(spec.recover_ticks);
+        match powers
+            .recovering
+            .binary_search_by_key(&slot, |(held, _)| *held)
+        {
+            Ok(index) => powers.recovering[index].1 = until,
+            Err(index) => powers.recovering.insert(index, (slot, until)),
+        }
         events.casts.push(Cast { slot, ability });
         if !self.free {
             events.accepted.push(AbilityUse {
@@ -130,8 +149,67 @@ impl Casting<'_> {
         }
     }
 
+    fn placed_cast(
+        &self,
+        rows: &Query<Row<'_>>,
+        order: &[(u32, Entity)],
+        (powers, events, ticked): (&mut Powers, &mut PowerEvents, &mut Vec<Event>),
+    ) {
+        let Some(request) = self.cast_at else {
+            return;
+        };
+        let Some(Ok((_, actor, wish, body, health, _, _, offsets, alive, _))) =
+            entity_of(order, request.slot).map(|entity| rows.get(entity))
+        else {
+            return;
+        };
+        let ability = test_slot(request.ability);
+        let seat = Seat {
+            slot: actor.slot,
+            character: &actor.character,
+            alive: alive && health.health > 0.0,
+            aims: false,
+            pressed: Some(ability),
+            held: None,
+            fire: false,
+            switched: false,
+        };
+        let Some(spec) = self.checked(&seat, ability, events) else {
+            return;
+        };
+        let mut caster = power_actor(actor, body, wish, offsets, self.parts);
+        let eye = glam::Vec3::from_array(request.eye);
+        caster.feet = eye - (body.eye - body.feet);
+        caster.eye = eye;
+        caster.view = forward(request.yaw_deg.to_radians(), request.pitch_deg.to_radians());
+        self.cast(&caster, spec, ability, (powers, events, ticked));
+    }
+
+    fn inside_buy_zone(
+        &self,
+        arena: &Arena,
+        powers: &Powers,
+        caster: &abilities::Actor,
+        spec: &AbilitySpec,
+    ) -> bool {
+        let Some(zone) = self.asked.buy_zone(caster.id.0) else {
+            return true;
+        };
+        if !needs_aim(spec) {
+            return true;
+        }
+        let aim = Aim {
+            origin: caster.eye,
+            direction: caster.view,
+        };
+        powers
+            .landing(arena, caster, spec, aim)
+            .is_some_and(|preview| preview.valid && arena.zone(zone, preview.at))
+    }
+
     pub(super) fn run(
         &self,
+        arena: &Arena,
         rows: &Query<Row<'_>>,
         order: &[(u32, Entity)],
         (powers, events, ticked): (&mut Powers, &mut PowerEvents, &mut Vec<Event>),
@@ -154,7 +232,9 @@ impl Casting<'_> {
             let seat = Seat {
                 slot: actor.slot,
                 character: &actor.character,
-                alive: alive && health.health > 0.0 && !self.fallen.contains(&actor.slot),
+                alive: alive
+                    && health.health > 0.0
+                    && self.fallen.binary_search(&actor.slot).is_err(),
                 aims: human && self.relay == Relay::Own,
                 pressed,
                 held: powers.held(actor.slot).map(|held| held.ability),
@@ -166,17 +246,21 @@ impl Casting<'_> {
                 Move::Cancel => Self::release(powers, events, actor.slot, Hold::Cancelled),
                 Move::Equip(ability) => {
                     Self::release(powers, events, actor.slot, Hold::Cancelled);
-                    powers.held.push(Held {
-                        slot: actor.slot,
-                        ability,
-                        name: self
-                            .asked
-                            .spec(&actor.character, ability)
-                            .map(|spec| spec.name.clone())
-                            .unwrap_or_default(),
-                        since: self.tick,
-                        preview: None,
-                    });
+                    let at = powers.held.partition_point(|held| held.slot < actor.slot);
+                    powers.held.insert(
+                        at,
+                        Held {
+                            slot: actor.slot,
+                            ability,
+                            name: self
+                                .asked
+                                .spec(&actor.character, ability)
+                                .map(|spec| spec.name.clone())
+                                .unwrap_or_default(),
+                            since: self.tick,
+                            preview: None,
+                        },
+                    );
                     events.holds.push(HoldChange {
                         slot: actor.slot,
                         ability,
@@ -186,33 +270,56 @@ impl Casting<'_> {
                 Move::Cast(ability) => {
                     if let Some(spec) = self.asked.spec(&actor.character, ability) {
                         let caster = power_actor(actor, body, wish, offsets, self.parts);
-                        self.cast(&caster, spec, ability, (powers, events, ticked));
+                        if self.inside_buy_zone(arena, powers, &caster, spec) {
+                            self.cast(&caster, spec, ability, (powers, events, ticked));
+                        } else {
+                            events.refused.push(Refused {
+                                slot: actor.slot,
+                                ability,
+                                reason: Refusal::OutsideBuyZone,
+                            });
+                        }
                     }
                 }
             }
         }
+        self.placed_cast(rows, order, (powers, events, ticked));
     }
 
     pub(super) fn previews(
         &self,
         arena: &Arena,
         rows: &Query<Row<'_>>,
-        order: &[(u32, Entity)],
+        (order, watched): (&[(u32, Entity)], Option<u32>),
         powers: &mut Powers,
     ) {
+        let viewers: Vec<u32> = order
+            .iter()
+            .filter(|(slot, entity)| {
+                watched == Some(*slot) || rows.get(*entity).is_ok_and(|row| row.9)
+            })
+            .map(|(slot, _)| *slot)
+            .collect();
         let found: Vec<Option<Preview>> = powers
             .held
             .iter()
             .map(|held| {
-                let (_, entity) = order.iter().find(|(slot, _)| *slot == held.slot)?;
-                let (_, actor, wish, body, _, _, _, offsets, _, _) = rows.get(*entity).ok()?;
+                if !viewers.contains(&held.slot) {
+                    return None;
+                }
+                let (_, actor, wish, body, _, _, _, offsets, _, _) =
+                    rows.get(entity_of(order, held.slot)?).ok()?;
                 let spec = self.asked.spec(&actor.character, held.ability)?;
                 let caster = power_actor(actor, body, wish, offsets, self.parts);
                 let aim = Aim {
                     origin: caster.eye,
                     direction: caster.view,
                 };
-                powers.landing(arena, &caster, spec, aim)
+                let mut preview = powers.landing(arena, &caster, spec, aim)?;
+                if let Some(zone) = self.asked.buy_zone(held.slot) {
+                    preview.valid = preview.valid && arena.zone(zone, preview.at);
+                }
+                Some(preview)
             })
             .collect();
         for (held, preview) in powers.held.iter_mut().zip(found) {

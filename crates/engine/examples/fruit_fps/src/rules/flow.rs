@@ -93,7 +93,10 @@ impl Match {
             pending: Vec::new(),
             dropped_by: None,
             overtime_rounds: 0,
+            ready: Vec::new(),
+            in_zone: Vec::new(),
         };
+        game.ready = vec![false; game.players.len()];
         let mut events = Vec::new();
         game.reset_for_half(CreditReason::Start, &mut events);
         game.begin_round(&mut events);
@@ -169,7 +172,7 @@ impl Match {
                 });
             }
             let signature = &mut p.abilities[2];
-            if signature.charges == 0 && signature.max > 0 {
+            if signature.charges != 1 && signature.max > 0 {
                 signature.charges = 1;
                 events.push(Event::Charges {
                     player,
@@ -181,6 +184,7 @@ impl Match {
                 signature.cooldown_ticks = 0;
             }
             self.ledgers[player].close_buying();
+            self.ready[player] = false;
         }
         self.give_device(events);
         let swap = self.catalog.swap_sides_after_round;
@@ -223,10 +227,26 @@ impl Match {
     }
 
     pub(super) fn advance_buy(&mut self, events: &mut Vec<Event>) {
+        let mut humans = (self.players.iter().zip(&self.ready))
+            .filter(|(player, _)| player.control == super::Control::Human)
+            .peekable();
+        if humans.peek().is_some() && humans.all(|(_, ready)| *ready) {
+            self.phase_left = self.phase_left.min(self.catalog.timings.buy_ready);
+        }
         self.phase_left = self.phase_left.saturating_sub(1);
         if self.phase_left == 0 {
             for ledger in &mut self.ledgers {
                 ledger.close_buying();
+            }
+            let sidearm = self.catalog.sidearm;
+            for (player, p) in self.players.iter_mut().enumerate() {
+                if p.alive && p.primary.is_none() && p.sidearm.is_none() {
+                    p.sidearm = Some(sidearm);
+                    events.push(Event::GiveWeapon {
+                        player,
+                        weapon: sidearm,
+                    });
+                }
             }
             let ticks = self.catalog.timings.round;
             self.enter_phase(Phase::Live, ticks, events);
@@ -376,9 +396,6 @@ impl Match {
             } else {
                 self.credit(player, loss, CreditReason::RoundLoss, events);
             }
-        }
-        for player in 0..self.players.len() {
-            self.ultimate_point(player, events);
         }
         let ticks = self.catalog.timings.round_end;
         self.enter_phase(Phase::RoundEnd, ticks, events);

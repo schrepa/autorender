@@ -188,42 +188,6 @@
       "uri": "assets/cooked/mercato_1_orm.bc.ktx2"
     },
     {
-      "id": "mercato_2_base_color",
-      "uri": "assets/cooked/mercato_2_base_color.bc.ktx2"
-    },
-    {
-      "id": "mercato_2_normal",
-      "uri": "assets/cooked/mercato_2_normal.bc.ktx2"
-    },
-    {
-      "id": "mercato_2_orm",
-      "uri": "assets/cooked/mercato_2_orm.bc.ktx2"
-    },
-    {
-      "id": "mercato_3_base_color",
-      "uri": "assets/cooked/mercato_3_base_color.bc.ktx2"
-    },
-    {
-      "id": "mercato_3_normal",
-      "uri": "assets/cooked/mercato_3_normal.bc.ktx2"
-    },
-    {
-      "id": "mercato_3_orm",
-      "uri": "assets/cooked/mercato_3_orm.bc.ktx2"
-    },
-    {
-      "id": "mercato_4_base_color",
-      "uri": "assets/cooked/mercato_4_base_color.bc.ktx2"
-    },
-    {
-      "id": "mercato_4_normal",
-      "uri": "assets/cooked/mercato_4_normal.bc.ktx2"
-    },
-    {
-      "id": "mercato_4_orm",
-      "uri": "assets/cooked/mercato_4_orm.bc.ktx2"
-    },
-    {
       "id": "mercato_5_base_color",
       "uri": "assets/cooked/mercato_5_base_color.bc.ktx2"
     },
@@ -234,18 +198,6 @@
     {
       "id": "mercato_5_orm",
       "uri": "assets/cooked/mercato_5_orm.bc.ktx2"
-    },
-    {
-      "id": "mercato_6_base_color",
-      "uri": "assets/cooked/mercato_6_base_color.bc.ktx2"
-    },
-    {
-      "id": "mercato_6_normal",
-      "uri": "assets/cooked/mercato_6_normal.bc.ktx2"
-    },
-    {
-      "id": "mercato_6_orm",
-      "uri": "assets/cooked/mercato_6_orm.bc.ktx2"
     },
     {
       "id": "mercato_7_base_color",
@@ -260,12 +212,72 @@
       "uri": "assets/cooked/mercato_7_orm.bc.ktx2"
     },
     {
+      "id": "mercato_8_base_color",
+      "uri": "assets/cooked/mercato_8_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_8_normal",
+      "uri": "assets/cooked/mercato_8_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_8_orm",
+      "uri": "assets/cooked/mercato_8_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_13_base_color",
+      "uri": "assets/cooked/mercato_13_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_13_normal",
+      "uri": "assets/cooked/mercato_13_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_13_orm",
+      "uri": "assets/cooked/mercato_13_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_14_base_color",
+      "uri": "assets/cooked/mercato_14_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_14_normal",
+      "uri": "assets/cooked/mercato_14_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_14_orm",
+      "uri": "assets/cooked/mercato_14_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_15_base_color",
+      "uri": "assets/cooked/mercato_15_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_15_normal",
+      "uri": "assets/cooked/mercato_15_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_15_orm",
+      "uri": "assets/cooked/mercato_15_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_light",
+      "uri": "assets/cooked/mercato_light.rgba8.ktx2"
+    },
+    {
+      "id": "macro_breakup",
+      "uri": "assets/cooked/macro_breakup.bc.ktx2"
+    },
+    {
       "id": "icons_atlas",
       "uri": "assets/cooked/icons_atlas.bc.ktx2"
     },
     {
-      "id": "font_atlas",
-      "uri": "assets/cooked/font_atlas.rgba8.ktx2"
+      "id": "fredoka",
+      "uri": "assets/cooked/fredoka.rgba8.ktx2"
+    },
+    {
+      "id": "nunito",
+      "uri": "assets/cooked/nunito.rgba8.ktx2"
     },
     {
       "id": "minimap",
@@ -274,6 +286,10 @@
     {
       "id": "portraits",
       "uri": "assets/cooked/portraits.bc.ktx2"
+    },
+    {
+      "id": "stickers",
+      "uri": "assets/cooked/stickers.bc.ktx2"
     },
     {
       "id": "select_banana",
@@ -294,10 +310,6 @@
     {
       "id": "select_eggplant",
       "uri": "assets/cooked/select_eggplant.bc.ktx2"
-    },
-    {
-      "id": "mercato_light",
-      "uri": "assets/cooked/mercato_light.rgba8.ktx2"
     },
     {
       "id": "title",
@@ -514,6 +526,10 @@
     {
       "id": "sky_panorama",
       "uri": "assets/cooked/sky_panorama.bc.ktx2"
+    },
+    {
+      "id": "mercato_field",
+      "uri": "assets/cooked/mercato_field.rgba8.ktx2"
     }
   ],
   "materials": [
@@ -1109,7 +1125,7 @@
         1.0
       ],
       "normal_scale": 1.0,
-      "cull": "back",
+      "cull": "none",
       "slots": {
         "figure": {
           "module": "figure",
@@ -1140,29 +1156,21 @@
               "min_filter": "linear",
               "mipmap_filter": "linear",
               "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
         "lightmap_scale": 4.0
-      }
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_1",
       "color": [
-        1.0,
-        1.0,
-        1.0,
+        0.04231141,
+        0.114435375,
+        0.3049873,
         1.0
       ],
       "normal_scale": 1.0,
@@ -1197,29 +1205,21 @@
               "min_filter": "linear",
               "mipmap_filter": "linear",
               "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
         "lightmap_scale": 4.0
-      }
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_2",
       "color": [
-        1.0,
-        1.0,
-        1.0,
+        0.02842604,
+        0.14702727,
+        0.07818742,
         1.0
       ],
       "normal_scale": 1.0,
@@ -1229,7 +1229,7 @@
           "module": "figure",
           "maps": {
             "base_color": {
-              "id": "mercato_2_base_color",
+              "id": "mercato_1_base_color",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -1238,7 +1238,7 @@
               "tex_coord": 0
             },
             "normal": {
-              "id": "mercato_2_normal",
+              "id": "mercato_1_normal",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -1247,36 +1247,28 @@
               "tex_coord": 0
             },
             "orm": {
-              "id": "mercato_2_orm",
+              "id": "mercato_1_orm",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
               "min_filter": "linear",
               "mipmap_filter": "linear",
               "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
         "lightmap_scale": 4.0
-      }
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_3",
       "color": [
-        1.0,
-        1.0,
-        1.0,
+        0.013702083,
+        0.1746474,
+        0.18447499,
         1.0
       ],
       "normal_scale": 1.0,
@@ -1286,7 +1278,7 @@
           "module": "figure",
           "maps": {
             "base_color": {
-              "id": "mercato_3_base_color",
+              "id": "mercato_1_base_color",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -1295,7 +1287,7 @@
               "tex_coord": 0
             },
             "normal": {
-              "id": "mercato_3_normal",
+              "id": "mercato_1_normal",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -1304,86 +1296,47 @@
               "tex_coord": 0
             },
             "orm": {
-              "id": "mercato_3_orm",
+              "id": "mercato_1_orm",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
               "min_filter": "linear",
               "mipmap_filter": "linear",
               "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
         "lightmap_scale": 4.0
-      }
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_4",
       "color": [
         1.0,
-        1.0,
-        1.0,
+        0.7605245,
+        0.3515326,
         1.0
       ],
       "normal_scale": 1.0,
+      "emissive": [
+        1.0,
+        0.57758045,
+        0.16202937
+      ],
       "cull": "back",
       "slots": {
         "figure": {
-          "module": "figure",
-          "maps": {
-            "base_color": {
-              "id": "mercato_4_base_color",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "normal": {
-              "id": "mercato_4_normal",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "orm": {
-              "id": "mercato_4_orm",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
-            }
-          }
+          "module": "figure"
         }
       },
-      "lighting": "figure",
       "values": {
+        "emissive_strength": 3.0,
         "lightmap_scale": 4.0
-      }
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_5",
@@ -1408,6 +1361,23 @@
               "mipmap_filter": "linear",
               "tex_coord": 0
             },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
             "normal": {
               "id": "mercato_5_normal",
               "wrap_u": "repeat",
@@ -1425,29 +1395,25 @@
               "min_filter": "linear",
               "mipmap_filter": "linear",
               "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
-        "lightmap_scale": 4.0
-      }
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_6",
       "color": [
-        1.0,
-        1.0,
-        1.0,
+        0.011612245,
+        0.023153367,
+        0.033104766,
         1.0
       ],
       "normal_scale": 1.0,
@@ -1456,48 +1422,23 @@
         "figure": {
           "module": "figure",
           "maps": {
-            "base_color": {
-              "id": "mercato_6_base_color",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "normal": {
-              "id": "mercato_6_normal",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "orm": {
-              "id": "mercato_6_orm",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
             "lightmap": {
               "id": "mercato_light",
-              "tex_coord": 1,
               "wrap_u": "clamp_to_edge",
               "wrap_v": "clamp_to_edge",
               "mag_filter": "linear",
-              "min_filter": "linear"
+              "min_filter": "linear",
+              "tex_coord": 1
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
-        "lightmap_scale": 4.0
-      }
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "mirror": 1.0
+      },
+      "lighting": "figure"
     },
     {
       "id": "mercato_7",
@@ -1522,6 +1463,23 @@
               "mipmap_filter": "linear",
               "tex_coord": 0
             },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
             "normal": {
               "id": "mercato_7_normal",
               "wrap_u": "repeat",
@@ -1539,22 +1497,566 @@
               "min_filter": "linear",
               "mipmap_filter": "linear",
               "tex_coord": 0
-            },
-            "lightmap": {
-              "id": "mercato_light",
-              "tex_coord": 1,
-              "wrap_u": "clamp_to_edge",
-              "wrap_v": "clamp_to_edge",
-              "mag_filter": "linear",
-              "min_filter": "linear"
             }
           }
         }
       },
-      "lighting": "figure",
       "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_8",
+      "color": [
+        0.8796224,
+        0.7379104,
+        0.45641103,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_8_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_8_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_8_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_9",
+      "color": [
+        0.76815116,
+        0.37626213,
+        0.08437621,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_8_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_8_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_8_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_10",
+      "color": [
+        0.7835378,
+        0.3662526,
+        0.2746773,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_8_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_8_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_8_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_11",
+      "color": [
+        0.6444797,
+        0.14126329,
+        0.045186203,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_8_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_8_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_8_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_12",
+      "color": [
+        0.8962694,
+        0.58407843,
+        0.13843161,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_8_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_8_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_8_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_13",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_13_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_13_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_13_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_14",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_14_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "normal": {
+              "id": "mercato_14_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_14_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
         "lightmap_scale": 4.0
-      }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_15",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_15_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "tex_coord": 1
+            },
+            "macro": {
+              "id": "macro_breakup",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_15_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_15_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_curve": 2.0,
+        "lightmap_scale": 4.0,
+        "macro_color": 0.22,
+        "macro_rough": 0.06,
+        "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
     },
     {
       "id": "device",
@@ -2367,6 +2869,37 @@
         "haze": 0.3,
         "turns": 3.0
       }
+    },
+    {
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "id": "mercato_field",
+      "slots": {
+        "field": {
+          "maps": {
+            "field": {
+              "id": "mercato_field",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge"
+            }
+          },
+          "module": "field"
+        }
+      },
+      "values": {
+        "height_m": 1.2,
+        "lightmap_scale": 4.0,
+        "max_x": 45.0,
+        "max_z": 46.0,
+        "min_x": -45.0,
+        "min_z": -44.0
+      }
     }
   ],
   "meshes": [
@@ -2462,38 +2995,38 @@
       }
     },
     {
-      "id": "mercato_0",
+      "id": "mercato_0_detail",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_0.emb"
+        "uri": "assets/cooked/mercato_0_detail.emb"
       }
     },
     {
-      "id": "mercato_1",
+      "id": "mercato_1_detail",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_1.emb"
+        "uri": "assets/cooked/mercato_1_detail.emb"
       }
     },
     {
-      "id": "mercato_2",
+      "id": "mercato_2_detail",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_2.emb"
+        "uri": "assets/cooked/mercato_2_detail.emb"
       }
     },
     {
-      "id": "mercato_3",
+      "id": "mercato_3_detail",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_3.emb"
+        "uri": "assets/cooked/mercato_3_detail.emb"
       }
     },
     {
-      "id": "mercato_4",
+      "id": "mercato_4_detail",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_4.emb"
+        "uri": "assets/cooked/mercato_4_detail.emb"
       }
     },
     {
@@ -2515,6 +3048,62 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_7.emb"
+      }
+    },
+    {
+      "id": "mercato_8",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_8.emb"
+      }
+    },
+    {
+      "id": "mercato_9",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_9.emb"
+      }
+    },
+    {
+      "id": "mercato_10",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_10.emb"
+      }
+    },
+    {
+      "id": "mercato_11",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_11.emb"
+      }
+    },
+    {
+      "id": "mercato_12",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_12.emb"
+      }
+    },
+    {
+      "id": "mercato_13",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_13.emb"
+      }
+    },
+    {
+      "id": "mercato_14",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_14.emb"
+      }
+    },
+    {
+      "id": "mercato_15",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_15.emb"
       }
     },
     {
@@ -3437,46 +4026,46 @@
       }
     },
     {
-      "id": "mercato_0",
+      "id": "mercato_0_detail",
       "drawn": {
-        "kind": "level",
-        "mesh": "mercato_0",
+        "kind": "level_detail",
+        "mesh": "mercato_0_detail",
         "material": "mercato_0"
       },
       "transform": {}
     },
     {
-      "id": "mercato_1",
+      "id": "mercato_1_detail",
       "drawn": {
-        "kind": "level",
-        "mesh": "mercato_1",
+        "kind": "level_detail",
+        "mesh": "mercato_1_detail",
         "material": "mercato_1"
       },
       "transform": {}
     },
     {
-      "id": "mercato_2",
+      "id": "mercato_2_detail",
       "drawn": {
-        "kind": "level",
-        "mesh": "mercato_2",
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail",
         "material": "mercato_2"
       },
       "transform": {}
     },
     {
-      "id": "mercato_3",
+      "id": "mercato_3_detail",
       "drawn": {
-        "kind": "level",
-        "mesh": "mercato_3",
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail",
         "material": "mercato_3"
       },
       "transform": {}
     },
     {
-      "id": "mercato_4",
+      "id": "mercato_4_detail",
       "drawn": {
-        "kind": "level",
-        "mesh": "mercato_4",
+        "kind": "level_detail",
+        "mesh": "mercato_4_detail",
         "material": "mercato_4"
       },
       "transform": {}
@@ -3505,6 +4094,78 @@
         "kind": "level",
         "mesh": "mercato_7",
         "material": "mercato_7"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_8",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_8",
+        "material": "mercato_8"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_9",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_9",
+        "material": "mercato_9"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_10",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_10",
+        "material": "mercato_10"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_11",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_11",
+        "material": "mercato_11"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_12",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_12",
+        "material": "mercato_12"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_13",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_13",
+        "material": "mercato_13"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_14",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_14",
+        "material": "mercato_14"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_15",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_15",
+        "material": "mercato_15"
       },
       "transform": {}
     },
@@ -3542,11 +4203,27 @@
       "screen": {
         "layout": "assets/ui/layout.json",
         "icons": "assets/ui/icons_atlas.json",
-        "font": "assets/ui/font_atlas.json",
+        "fonts": [
+          {
+            "file": "assets/ui/fredoka.json",
+            "texture": "fredoka",
+            "thin_faces": [
+              "regular",
+              "bold"
+            ]
+          },
+          {
+            "file": "assets/ui/nunito.json",
+            "texture": "nunito",
+            "thin_faces": [
+              "regular",
+              "bold"
+            ]
+          }
+        ],
         "minimap": "assets/ui/minimap.json",
         "portraits": "assets/ui/portraits.json",
         "icons_texture": "icons_atlas",
-        "font_texture": "font_atlas",
         "keys": {
           "take": [
             "MouseLeft"
@@ -3565,12 +4242,54 @@
             "Digit8"
           ]
         },
+        "key_names": {
+          "ShiftLeft": "Shift",
+          "ShiftRight": "Shift",
+          "ControlLeft": "Ctrl",
+          "ControlRight": "Ctrl",
+          "AltLeft": "Alt",
+          "AltRight": "Alt",
+          "MetaLeft": "Win",
+          "MetaRight": "Win",
+          "Space": "Space",
+          "Escape": "Esc",
+          "Enter": "Enter",
+          "NumpadEnter": "Enter",
+          "Tab": "Tab",
+          "Backspace": "Backspace",
+          "CapsLock": "Caps",
+          "Backquote": "`",
+          "Minus": "-",
+          "Equal": "=",
+          "BracketLeft": "[",
+          "BracketRight": "]",
+          "Semicolon": ";",
+          "Quote": "'",
+          "Comma": ",",
+          "Period": ".",
+          "Slash": "/",
+          "Backslash": "\\",
+          "ArrowUp": "Up",
+          "ArrowDown": "Down",
+          "ArrowLeft": "Left",
+          "ArrowRight": "Right",
+          "MouseLeft": "Mouse Left",
+          "MouseRight": "Mouse Right",
+          "MouseMiddle": "Mouse Middle",
+          "MouseBack": "Mouse 4",
+          "MouseForward": "Mouse 5",
+          "WheelUp": "Wheel Up",
+          "WheelDown": "Wheel Down"
+        },
         "low": {
           "time_seconds": 10.0,
           "fuse_seconds": 10.0,
           "health": 30.0,
           "magazine_share": 0.25,
-          "buy_seconds": 5.0
+          "buy_seconds": 5.0,
+          "go_seconds": 2.0,
+          "point_seconds": 2.5,
+          "lost_seconds": 3.0
         },
         "feed": {
           "lines": 5,
@@ -3578,17 +4297,24 @@
         },
         "marks": {
           "hit": {
-            "gap_px": 6.0,
-            "length_px": 8.0,
-            "width_px": 2.0,
-            "seconds": 0.25
+            "gap_px": 10.0,
+            "length_px": 12.0,
+            "width_px": 4.0,
+            "seconds": 0.25,
+            "color": "hit_mark",
+            "rim_px": 2.0
           },
           "damage": {
             "gap_px": 150.0,
-            "length_px": 64.0,
-            "width_px": 8.0,
-            "seconds": 1.5
-          }
+            "length_px": 90.0,
+            "width_px": 14.0,
+            "seconds": 1.5,
+            "color": "damage_mark",
+            "rim_px": 4.0
+          },
+          "head_color": "hit_head",
+          "kill_color": "hit_kill",
+          "outline_color": "ink"
         },
         "words": {
           "attackers": "Attackers",
@@ -3612,7 +4338,18 @@
           "mvp_round": "{name}   {kills} kills",
           "mvp_match": "{name}   {kills} kills",
           "mvp_stats": "{kills} kills   {deaths} deaths   {assists} assists   ADR {adr}",
-          "mvp_char": "{character}  {role}"
+          "mvp_char": "{character}  {role}",
+          "signature_free": "1 free each round",
+          "point_kill": "kill",
+          "point_death": "death",
+          "point_plant": "plant",
+          "point_defuse": "defuse",
+          "point_orb": "orb",
+          "status_slowed": "SLOWED",
+          "status_sight": "SIGHT CUT",
+          "status_vulnerable": "VULNERABLE",
+          "status_revealed": "REVEALED",
+          "status_boosted": "BUNCHED UP"
         },
         "pictures": {
           "minimap.png": "minimap",
@@ -3623,7 +4360,8 @@
           "select_watermelon.png": "select_watermelon",
           "select_eggplant.png": "select_eggplant",
           "title.png": "title",
-          "title_1280x720.png": "title_small"
+          "title_1280x720.png": "title_small",
+          "stickers.png": "stickers"
         },
         "sized": {
           "title.png": [
@@ -3635,10 +4373,9 @@
             720.0
           ]
         },
-        "thin_faces": [
-          "regular"
+        "atlases": [
+          "assets/ui/stickers.json"
         ],
-        "atlases": [],
         "menu": {
           "keys": {
             "confirm": [
@@ -3686,10 +4423,18 @@
               "step": 1.0,
               "shown_scale": 1.0,
               "digits": 0,
-              "suffix": " deg"
+              "suffix": ""
             },
             "volume": {
               "min": 0.0,
+              "max": 1.0,
+              "step": 0.05,
+              "shown_scale": 100.0,
+              "digits": 0,
+              "suffix": ""
+            },
+            "render_scale": {
+              "min": 0.25,
               "max": 1.0,
               "step": 0.05,
               "shown_scale": 100.0,
@@ -3778,6 +4523,14 @@
           }
         }
       }
+    },
+    {
+      "drawn": {
+        "kind": "light_field",
+        "material": "mercato_field"
+      },
+      "id": "light_field",
+      "transform": {}
     }
   ]
 }

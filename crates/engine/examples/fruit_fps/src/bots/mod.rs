@@ -1,5 +1,6 @@
 mod abilities;
 mod aim;
+mod buy;
 mod debug;
 mod fighter;
 mod memory;
@@ -13,6 +14,8 @@ mod throws;
 
 use glam::Vec3;
 
+pub use abilities::{ThrowCounts, ThrowState};
+pub use buy::{BuyCall, Cart, Goods, Shop, Wallet, team_carts};
 pub use debug::{Activity, BotDebug, SquadDebug, Why};
 pub use numbers::{
     BotCombat, BotNumbers, BotPlayer, BotRound, BotsTable, Level, LevelNumbers, Levels, PlayNumbers,
@@ -22,11 +25,10 @@ pub use places::{
     LayoutSpawn, LayoutZone, MapLayout, Places, PlacesError, Site, Spot, Zone, ZoneId,
 };
 pub use sense::{
-    AbilitySense, AbilityUse, Block, Call, CallKind, DeviceSense, Gait, GamePhase, GunClass,
-    GunSense, Heard, Intent, MatchSense, Mate, Seen, Sense, Side, Smoke, SoundKind, WeaponChoice,
-    World,
+    AbilitySense, AbilityUse, Block, BuySense, Call, CallKind, DeviceSense, Gait, GamePhase,
+    GunClass, GunSense, Heard, Intent, MatchSense, Mate, Purchase, Seen, Sense, Side, Smoke,
+    SoundKind, WeaponChoice, World,
 };
-pub use abilities::{ThrowCounts, ThrowState};
 pub use team::{
     Approach, Duty, Line, LineKind, Member, Order, Role, Squad, SquadSense, Step, Utility,
 };
@@ -37,6 +39,14 @@ use fighter::{Fight, Glance};
 use memory::{Look, Memory};
 use moving::Mover;
 use rng::Rng;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gift {
+    Idle,
+    Bought(u64),
+    Dropped(u64),
+    Done,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Brain {
@@ -52,6 +62,8 @@ pub struct Brain {
     round: Option<u32>,
     hesitate_until: u64,
     buy_tick: Option<u64>,
+    gift: Gift,
+    line_since: Option<u64>,
     debug: BotDebug,
     last_magazine: u32,
     last_fire: bool,
@@ -88,6 +100,8 @@ impl Brain {
             round: None,
             hesitate_until: 0,
             buy_tick: None,
+            gift: Gift::Idle,
+            line_since: None,
             debug: BotDebug {
                 level,
                 duty: order.duty,
@@ -116,6 +130,7 @@ impl Brain {
         self.utilities.counts = counts;
         self.aim.synced = false;
         self.buy_tick = None;
+        self.gift = Gift::Idle;
         self.hesitate_until = 0;
         self.last_heard_call = None;
         self.debug.why = Why::RoundStart;
@@ -290,6 +305,11 @@ pub fn think(
         .observe(sense, level, numbers, &look, &mut brain.rng, tick);
     if sense.game.phase == GamePhase::Buy {
         fighter::buy(brain, &ctx, &mut intent);
+        if sense.carrying_device && sense.buy.device_asked {
+            intent.drop_device = true;
+            intent.wish = Vec3::ZERO;
+        }
+        fighter::clear_line(brain, &ctx, &mut intent);
     } else {
         let view = (brain.aim.yaw, brain.aim.pitch);
         fighter::act(brain, &ctx, &mut intent);
@@ -297,6 +317,11 @@ pub fn think(
             (brain.aim.yaw, brain.aim.pitch) = view;
         }
         abilities::consider(brain, &ctx, &mut intent);
+        if sense.carrying_device && sense.order.hand_over && brain.memory.visible_count() == 0 {
+            intent.drop_device = true;
+            intent.wish = Vec3::ZERO;
+        }
+        fighter::clear_line(brain, &ctx, &mut intent);
     }
     brain.call(&ctx, &mut intent);
     fighter::finish(brain, &ctx, &mut intent);

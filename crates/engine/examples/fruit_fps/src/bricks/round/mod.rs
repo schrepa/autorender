@@ -6,6 +6,8 @@ mod start;
 mod test;
 
 use engine::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::play::events::round::RoundEvents;
 use crate::play::round::{DeviceSpot, Round};
@@ -20,6 +22,13 @@ settings! {
         pub seed: u64 = 1 => any,
         pub skip_buy: bool = false => any,
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RefundStats {
+    pub primary: Option<u32>,
+    pub armor: Option<u32>,
+    pub charges: [u32; 2],
 }
 
 stats! {
@@ -45,6 +54,9 @@ stats! {
         pub decider: bool,
         pub credits: Vec<u32>,
         pub carried: Vec<Option<String>>,
+        pub armor: Vec<u32>,
+        pub human_refund: RefundStats,
+        pub human_ready: bool,
     }
 }
 
@@ -180,6 +192,22 @@ fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>
             .iter()
             .find(|p| p.control == Control::Human)
             .map_or(0, |p| p.credits);
+        next.armor = (view.players.iter())
+            .map(|p| p.armor.map_or(0, |armor| armor.points))
+            .collect();
+        if let Some(human) = view
+            .players
+            .iter()
+            .position(|p| p.control == Control::Human)
+        {
+            let refund = view.refund(human);
+            next.human_ready = view.ready(human);
+            next.human_refund = RefundStats {
+                primary: refund.primary,
+                armor: refund.armor,
+                charges: refund.charges,
+            };
+        }
         for team in Team::BOTH {
             let alive = view
                 .players

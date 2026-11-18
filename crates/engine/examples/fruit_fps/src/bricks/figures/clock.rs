@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::Error;
-use engine_core::math::{clamp, min};
+use engine_core::math::{clamp, max, min};
 
 use super::files::Rig;
 use crate::play::figures::{BaseLayer, Figure, FigurePlay};
@@ -32,6 +32,8 @@ pub(super) struct LayerClock {
     looping: bool,
     seconds: f32,
     step: f32,
+    end: Option<f32>,
+    synced: bool,
 }
 
 impl LayerClock {
@@ -43,7 +45,21 @@ impl LayerClock {
             looping,
             seconds: 0.0,
             step: 0.0,
+            end: None,
+            synced: false,
         }
+    }
+
+    fn windowed(mut self, window: Option<[f32; 2]>) -> Self {
+        if let Some([start, end]) = window {
+            self.seconds = max(start, 0.0);
+            self.end = Some(max(end, start));
+        }
+        self
+    }
+
+    fn limit(&self, duration: f32) -> f32 {
+        self.end.map_or(duration, |end| min(end, duration))
     }
 
     fn restarts(&self, clip: &str, cue: u32) -> bool {
@@ -57,7 +73,7 @@ impl LayerClock {
             self.seconds = reached.rem_euclid(duration);
             self.step = reached - before;
         } else {
-            self.seconds = min(reached, duration);
+            self.seconds = min(reached, self.limit(duration));
             self.step = self.seconds - before;
         }
     }
@@ -72,7 +88,7 @@ impl LayerClock {
     }
 
     fn done(&self, duration: f32) -> bool {
-        !self.looping && self.seconds >= duration
+        !self.looping && self.seconds >= self.limit(duration)
     }
 }
 
@@ -130,6 +146,22 @@ impl Clocks {
             }
         }
         let base = &play.base;
+        if base.synced
+            && let Some(clock) = &mut self.base
+            && clock.synced
+            && clock.cue == base.cue
+            && clock.clip != base.clip
+        {
+            let before = rig.duration(&clock.clip);
+            let share = if before > 0.0 {
+                clock.seconds / before
+            } else {
+                0.0
+            };
+            clock.clip.clone_from(&base.clip);
+            clock.seconds = share * rig.duration(&base.clip);
+            clock.step = 0.0;
+        }
         match &mut self.base {
             Some(clock) if !clock.restarts(&base.clip, base.cue) => {
                 clock.speed = rate(rig, base);
@@ -148,6 +180,9 @@ impl Clocks {
                 });
             }
         }
+        if let Some(clock) = &mut self.base {
+            clock.synced = base.synced;
+        }
         match (&play.upper, &mut self.upper) {
             (None, _) => self.upper = None,
             (Some(upper), Some(clock)) if !clock.restarts(&upper.clip, upper.cue) => {
@@ -156,12 +191,10 @@ impl Clocks {
                 clock.advance(rig.duration(&upper.clip), delta);
             }
             (Some(upper), Some(_) | None) => {
-                self.upper = Some(LayerClock::started(
-                    &upper.clip,
-                    upper.cue,
-                    upper.speed,
-                    upper.looping,
-                ));
+                self.upper = Some(
+                    LayerClock::started(&upper.clip, upper.cue, upper.speed, upper.looping)
+                        .windowed(upper.window),
+                );
             }
         }
     }

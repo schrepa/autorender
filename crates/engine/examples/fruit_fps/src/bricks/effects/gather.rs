@@ -4,14 +4,14 @@ use engine::prelude::*;
 use super::numbers::{self, EffectsNumbers, Parsed};
 use super::{Device, EffectsBrick, EffectsShow, Show};
 use crate::play::actors::{Actor, Body, Human, Wish};
-use crate::play::effects::{CueLook, EffectsFeed};
+use crate::play::effects::{CueLook, EffectsFeed, PropPlace};
 use crate::play::events::arms::{ArmsEvents, Target, Weapon};
 use crate::play::numbers::Numbers;
 use crate::play::puppet::{Muzzles, ViewModel};
 use crate::play::round::{DeviceSpot, Round};
 use crate::play::view::Watched;
 use crate::play::world::Arena;
-use crate::solids::Surface;
+use crate::solids::Kind;
 
 #[derive(Clone, Debug)]
 pub(super) struct Pool<T> {
@@ -76,7 +76,7 @@ pub(super) struct Flash {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum SprayKind {
-    Impact(Surface),
+    Impact(Option<Kind>),
     Juice([f32; 3]),
     Blast,
 }
@@ -141,6 +141,8 @@ pub(super) struct Spawns {
     arms_seen: Option<u64>,
     feed_seen: Option<u64>,
     device_was: DeviceSpot,
+    resting: Vec<u32>,
+    pub puffs: u32,
 }
 
 impl Spawns {
@@ -195,8 +197,8 @@ impl Spawns {
         });
     }
 
-    fn impact(&mut self, at: Vec3, normal: Vec3, born: f64, surface: Surface) {
-        self.spray(at, normal, born, SprayKind::Impact(surface), 1.0);
+    fn impact(&mut self, at: Vec3, normal: Vec3, born: f64, kind: Option<Kind>) {
+        self.spray(at, normal, born, SprayKind::Impact(kind), 1.0);
         let seed = self.seed();
         self.decals.push(Decal {
             at,
@@ -329,7 +331,7 @@ fn take_arms(
     let human = cast.human.map(|(slot, _, _)| slot);
     for shot in &events.shots {
         if let Some(entry) = shot.pierced {
-            spawns.impact(entry, -shot.direction, now, Surface::Stone);
+            spawns.impact(entry, -shot.direction, now, shot.pierced_kind);
         }
         if shot.weapon != Weapon::Melee {
             let muzzle = origins.muzzle(shot.shooter, human);
@@ -337,9 +339,9 @@ fn take_arms(
         }
         match shot.target {
             Target::Nothing => {}
-            Target::World { surface } => {
+            Target::World => {
                 let normal = shot.normal.try_normalize().unwrap_or(-shot.direction);
-                spawns.impact(shot.end, normal, now, surface);
+                spawns.impact(shot.end, normal, now, shot.kind);
             }
             Target::Actor { slot, .. } => {
                 if let Some(kind) = cast.character(slot).and_then(|(name, _)| juice(look, name)) {
@@ -394,6 +396,23 @@ fn take_feed(
     if feed.human.damage > 0.0 {
         spawns.hurt(look, feed.human.damage, now);
     }
+    let mut resting = Vec::new();
+    for prop in &feed.props {
+        if let PropPlace::Thrown {
+            centre,
+            resting: true,
+            ..
+        } = prop.place
+        {
+            if !spawns.resting.contains(&prop.effect) {
+                let kind = SprayKind::Impact(Some(Kind::named("dirt")));
+                spawns.spray(centre, Vec3::Y, now, kind, look.props.puff_scale);
+                spawns.puffs = spawns.puffs.wrapping_add(1);
+            }
+            resting.push(prop.effect);
+        }
+    }
+    spawns.resting = resting;
 }
 
 fn showcase(
@@ -420,18 +439,18 @@ fn showcase(
         let found = arena
             .filter(|arena| arena.ready())
             .and_then(|arena| arena.solids().ray(body.eye, toward, crate::names::FAR));
-        let (end, normal, surface) = match found {
-            Some(hit) => (hit.point, hit.normal, hit.surface),
-            None => (ahead, -toward, Surface::Dirt),
+        let (end, normal, kind) = match found {
+            Some(hit) => (hit.point, hit.normal, Some(hit.kind)),
+            None => (ahead, -toward, None),
         };
-        let surfaces = [Surface::Stone, Surface::Wood, Surface::Metal, Surface::Dirt];
-        let surface = if show == Show::Impacts {
-            surfaces[step as usize % surfaces.len()]
+        let names: Vec<&String> = look.impacts.kinds.keys().collect();
+        let kind = if show == Show::Impacts && !names.is_empty() {
+            Some(Kind::named(names[step as usize % names.len()]))
         } else {
-            surface
+            kind
         };
         spawns.shot(look, body.eye, None, end, now);
-        spawns.impact(end, normal, now, surface);
+        spawns.impact(end, normal, now, kind);
     }
     if all || show == Show::Juice {
         let colors: Vec<[f32; 3]> = look.juice.colors.values().copied().collect();

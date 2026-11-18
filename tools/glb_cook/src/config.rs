@@ -15,6 +15,22 @@ pub struct Cook {
     pub entries: Vec<Entry>,
     #[serde(default)]
     pub scenes: Vec<SceneVariant>,
+    #[serde(default)]
+    pub scene_parts: Vec<ScenePart>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScenePart {
+    pub id: String,
+    pub scene: String,
+    pub needs: Vec<String>,
+    #[serde(default)]
+    pub textures: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub materials: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub entities: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +60,8 @@ pub struct PictureEntry {
     pub encodings: BTreeMap<String, Encoding>,
     pub mips: bool,
     pub wrap: [Wrap; 2],
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -82,6 +100,17 @@ pub struct BakedMap {
     pub sampling: serde_json::Map<String, serde_json::Value>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueMap {
+    pub picture: String,
+    pub variant: String,
+    pub sampling: serde_json::Map<String, serde_json::Value>,
+    pub when: Vec<String>,
+    #[serde(default)]
+    pub needs: Vec<String>,
+}
+
 pub const BAKED_STREAMS: [&str; 2] = ["uv1", "color"];
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +119,7 @@ pub struct MaterialNames {
     pub slot: String,
     pub module: String,
     pub lighting: String,
+    pub emissive_value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +161,8 @@ pub struct ClipEntry {
     pub clips: BTreeMap<String, String>,
     #[serde(default)]
     pub remove_travel: Vec<String>,
+    pub keys_per_second: Option<f32>,
+    pub tolerance: Option<f32>,
     pub budgets: ClipBudgets,
 }
 
@@ -188,8 +220,18 @@ pub struct MapEntry {
     pub material_sizes: BTreeMap<String, BTreeMap<String, u32>>,
     #[serde(default)]
     pub baked: BTreeMap<String, BakedPlan>,
+    #[serde(default)]
+    pub value_maps: BTreeMap<String, ValueMap>,
     pub merge: Vec<MergeRule>,
+    pub chunks: Option<ChunkPlan>,
     pub budgets: MapBudgets,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChunkPlan {
+    pub cell_m: f32,
+    pub fold_triangles: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,7 +370,58 @@ fn positive(value: f32) -> bool {
     value.is_finite() && value > 0.0
 }
 
+impl MapEntry {
+    pub fn pictures(&self) -> Vec<(String, &str, &str)> {
+        let mut out: Vec<(String, &str, &str)> = self
+            .baked
+            .iter()
+            .flat_map(|(stream, plan)| {
+                plan.maps.iter().map(move |(name, baked)| {
+                    (
+                        format!("baked.{stream}.maps.{name}"),
+                        baked.picture.as_str(),
+                        baked.variant.as_str(),
+                    )
+                })
+            })
+            .collect();
+        out.extend(self.value_maps.iter().map(|(name, held)| {
+            (
+                format!("value_maps.{name}"),
+                held.picture.as_str(),
+                held.variant.as_str(),
+            )
+        }));
+        out
+    }
+}
+
+fn value_map_faults(file: &str, cook: &Cook, map: &MapEntry, faults: &mut Vec<Fault>) {
+    for (slot_map, held) in &map.value_maps {
+        let item = format!("entries.{}.value_maps.{slot_map}", map.name);
+        let found = cook.entries.iter().any(|entry| match entry {
+            Entry::Picture(picture) => {
+                picture.name == held.picture && picture.encodings.contains_key(&held.variant)
+            }
+            Entry::Character(_) | Entry::Clip(_) | Entry::Static(_) | Entry::Map(_) => false,
+        });
+        let baked = map
+            .baked
+            .values()
+            .any(|plan| plan.maps.contains_key(slot_map));
+        if !found
+            || baked
+            || MAP_NAMES.contains(&slot_map.as_str())
+            || held.sampling.contains_key("id")
+            || held.when.is_empty()
+        {
+            faults.push(Fault::new("ValueMap", file, item, format!("picture `{}` variant `{}` must be a picture entry of this cook; the map name must not be a cooked or baked map; the sampling must not name an id; `when` names at least one value", held.picture, held.variant)));
+        }
+    }
+}
+
 fn baked_faults(file: &str, cook: &Cook, map: &MapEntry, faults: &mut Vec<Fault>) {
+    value_map_faults(file, cook, map, faults);
     for (stream, plan) in &map.baked {
         let item = format!("entries.{}.baked.{stream}", map.name);
         if !BAKED_STREAMS.contains(&stream.as_str()) {
@@ -500,28 +593,24 @@ pub fn missing_baked_pictures(cook: &Cook, base: &Path) -> Vec<Fault> {
     let mut faults = Vec::new();
     for entry in &cook.entries {
         let Entry::Map(map) = entry else { continue };
-        for (stream, plan) in &map.baked {
-            for (slot_map, baked) in &plan.maps {
-                let source = cook.entries.iter().find_map(|held| match held {
-                    Entry::Picture(picture) if picture.name == baked.picture => {
-                        Some(&picture.source)
-                    }
-                    Entry::Character(_)
-                    | Entry::Clip(_)
-                    | Entry::Static(_)
-                    | Entry::Map(_)
-                    | Entry::Picture(_) => None,
-                });
-                if let Some(source) = source
-                    && !base.join(source).is_file()
-                {
-                    faults.push(Fault::new(
-                        "BakedPictureMissing",
-                        &base.join(source).display().to_string(),
-                        format!("entries.{}.baked.{stream}.maps.{slot_map}", map.name),
-                        format!("the map `{}` needs picture `{}` and its source is not there; nothing was cooked (bake it, or remove the map from `baked.{stream}.maps` to cook without it)", map.name, baked.picture),
-                    ));
-                }
+        for (item, wanted, _) in map.pictures() {
+            let source = cook.entries.iter().find_map(|held| match held {
+                Entry::Picture(picture) if picture.name == wanted => Some(&picture.source),
+                Entry::Character(_)
+                | Entry::Clip(_)
+                | Entry::Static(_)
+                | Entry::Map(_)
+                | Entry::Picture(_) => None,
+            });
+            if let Some(source) = source
+                && !base.join(source).is_file()
+            {
+                faults.push(Fault::new(
+                    "BakedPictureMissing",
+                    &base.join(source).display().to_string(),
+                    format!("entries.{}.{item}", map.name),
+                    format!("the map `{}` needs picture `{wanted}` and its source is not there; nothing was cooked (make it, or remove `{item}` to cook without it)", map.name),
+                ));
             }
         }
     }
@@ -545,6 +634,30 @@ pub fn read(path: &Path) -> Result<Cook, Vec<Fault>> {
     }
     if !cook.tolerance.is_finite() || cook.tolerance < 0.0 {
         faults.push(Fault::new("Tolerance", &file, "tolerance", cook.tolerance));
+    }
+    for entry in &cook.entries {
+        if let Entry::Map(map) = entry
+            && let Some(plan) = &map.chunks
+            && !positive(plan.cell_m)
+        {
+            let item = format!("entries.{}.chunks.cell_m", map.name);
+            faults.push(Fault::new("ChunkCell", &file, item, plan.cell_m));
+        }
+        let Entry::Clip(clip) = entry else {
+            continue;
+        };
+        if let Some(rate) = clip.keys_per_second
+            && !positive(rate)
+        {
+            let item = format!("entries.{}.keys_per_second", clip.name);
+            faults.push(Fault::new("KeysPerSecond", &file, item, rate));
+        }
+        if let Some(tolerance) = clip.tolerance
+            && !(tolerance.is_finite() && tolerance >= 0.0)
+        {
+            let item = format!("entries.{}.tolerance", clip.name);
+            faults.push(Fault::new("Tolerance", &file, item, tolerance));
+        }
     }
     for (index, scene) in cook.scenes.iter().enumerate() {
         if !identifier(&scene.replaces)
@@ -572,6 +685,26 @@ pub fn read(path: &Path) -> Result<Cook, Vec<Fault>> {
     for entry in &cook.entries {
         if let Entry::Map(map) = entry {
             baked_faults(&file, &cook, map, &mut faults);
+        }
+    }
+    for part in &cook.scene_parts {
+        let known = |name: &String| {
+            cook.entries.iter().any(|entry| match entry {
+                Entry::Picture(picture) => picture.name == *name,
+                Entry::Character(_) | Entry::Clip(_) | Entry::Static(_) | Entry::Map(_) => false,
+            })
+        };
+        let unnamed = [&part.textures, &part.materials, &part.entities]
+            .into_iter()
+            .flatten()
+            .any(|item| !item["id"].is_string());
+        if part.needs.iter().any(|name| !known(name)) || unnamed {
+            faults.push(Fault::new(
+                "ScenePart",
+                &file,
+                format!("scene_parts.{}", part.id),
+                "`needs` names picture entries of this cook and every item has a string `id`",
+            ));
         }
     }
     if faults.is_empty() {

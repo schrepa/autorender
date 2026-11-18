@@ -110,6 +110,11 @@ pub struct RoundFacts {
     pub first_of_half: bool,
     pub last_of_half: bool,
     pub device: String,
+    pub buying: bool,
+    pub ready: bool,
+    pub ready_left: f32,
+    pub ready_count: u32,
+    pub go: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -137,6 +142,9 @@ pub struct FeedLine {
     pub mine: bool,
     pub ability: String,
     pub world: bool,
+    pub killer_char: String,
+    pub victim_char: String,
+    pub wall: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -148,6 +156,7 @@ pub struct PlayerFacts {
     pub credits: u32,
     pub char_name: String,
     pub role: String,
+    pub icon: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -158,19 +167,24 @@ pub struct AbilityFacts {
     pub empty: bool,
     pub cooling: bool,
     pub cooldown: f32,
+    pub cooldown_frac: f32,
     pub points: u32,
     pub points_needed: u32,
     pub ready: bool,
+    pub equipped: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WeaponFacts {
     pub name: String,
+    pub icon: String,
     pub mag: Option<u32>,
     pub mag_size: Option<u32>,
     pub reserve: Option<u32>,
     pub low: bool,
     pub reload: Option<f32>,
+    pub down: bool,
+    pub down_left: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -180,6 +194,7 @@ pub struct ActionFacts {
     pub left: f32,
     pub progress: f32,
     pub color: Tone,
+    pub kind: String,
     pub checkpoint: bool,
 }
 
@@ -191,6 +206,9 @@ pub struct Card {
     pub price: String,
     pub owned: bool,
     pub afford: bool,
+    pub focus: bool,
+    pub need: u32,
+    pub sell_credits: u32,
     pub max: u32,
     pub charges: u32,
     pub points: u32,
@@ -224,13 +242,17 @@ pub struct BuyFacts {
     pub reward_win: u32,
     pub reward_loss: u32,
     pub team: Vec<Mate>,
+    pub signature: Card,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct MapItem {
     pub pos: [f32; 2],
     pub yaw_degrees: f32,
     pub color: Option<Tone>,
+    pub fade: f32,
+    pub radius_m: f32,
+    pub icon: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -238,6 +260,26 @@ pub struct MinimapFacts {
     pub me: Vec<MapItem>,
     pub players: Vec<MapItem>,
     pub device: Vec<MapItem>,
+    pub planted: Vec<MapItem>,
+    pub orbs: Vec<MapItem>,
+    pub enemies: Vec<MapItem>,
+    pub smokes: Vec<MapItem>,
+    pub utility: Vec<MapItem>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OrbFacts {
+    pub hint: bool,
+    pub channel: bool,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StatusFacts {
+    pub kind: String,
+    pub label: String,
+    pub icon: String,
+    pub left: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -321,10 +363,11 @@ pub struct KeyRow {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SettingsFacts {
-    pub sliders: [Slider; 5],
+    pub sliders: [Slider; 6],
     pub crosshair: usize,
     pub crosshair_color: String,
     pub invert: bool,
+    pub level: String,
     pub keys: Vec<KeyRow>,
 }
 
@@ -344,6 +387,14 @@ pub struct SpectateFacts {
     pub name: String,
     pub icon: String,
     pub color: String,
+    pub health: f32,
+    pub weapon_icon: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PointFacts {
+    pub active: bool,
+    pub reason: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -388,6 +439,7 @@ pub struct DamageMark {
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct HudFacts {
+    pub keys: Vec<(String, String)>,
     pub round: RoundFacts,
     pub score: [u32; 2],
     pub teams: [TeamFacts; 2],
@@ -408,6 +460,10 @@ pub struct HudFacts {
     pub scope: u32,
     pub pickup: PickupFacts,
     pub cast: CastFacts,
+    pub point: PointFacts,
+    pub orb: OrbFacts,
+    pub statuses: Vec<StatusFacts>,
+    pub blind: f32,
     pub hit: Option<HitMark>,
     pub damage: Vec<DamageMark>,
     pub phase: Option<Phase>,
@@ -474,6 +530,15 @@ pub struct Stroke {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Case {
+    pub color: Rgba,
+    pub grow: f32,
+    pub offset: [f32; 2],
+    pub doubled: bool,
+    pub rim: Option<(Rgba, f32)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Plate {
     pub fill: Option<Rgba>,
     pub radius: f32,
@@ -527,6 +592,10 @@ pub struct Face {
     pub ascent: f32,
     pub descent: f32,
     pub cap: f32,
+    pub em_px: f32,
+    pub spread_px: f32,
+    pub slot: u32,
+    pub thin: bool,
     pub glyphs: Vec<Option<Glyph>>,
 }
 
@@ -538,10 +607,7 @@ impl Face {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Font {
-    pub em_px: f32,
-    pub spread_px: f32,
     pub faces: Vec<Option<Face>>,
-    pub thin: Vec<bool>,
 }
 
 impl Font {
@@ -566,9 +632,14 @@ pub enum Fit {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Picture {
     pub name: String,
+    pub atlas: String,
     pub size: [f32; 2],
     pub cells: BTreeMap<String, [f32; 4]>,
 }
+
+pub const GLYPH_SLOTS: usize = 2;
+pub const PICTURE_SLOTS: usize = 10;
+pub const BOUND_SLOTS: usize = 1 + GLYPH_SLOTS + PICTURE_SLOTS;
 
 pub const PLATE: u32 = 0;
 pub const ICON: u32 = 1;
@@ -578,6 +649,7 @@ pub const IMAGE: u32 = 3;
 pub const THIN_BELOW_PX: f32 = 28.0;
 pub const THIN_SPAN_PX: f32 = 12.0;
 pub const THIN_BOOST: f32 = 0.2;
+pub const GLYPH_MARGIN_PX: f32 = 1.5;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
@@ -592,6 +664,47 @@ pub struct Quad {
     pub stroke_inset: f32,
     pub scale: f32,
     pub angle: f32,
+    pub case: u32,
+    pub case_grow: f32,
+    pub case_offset: [f32; 2],
+    pub rim: u32,
+    pub rim_grow: f32,
+    pub align: [u32; 2],
+}
+
+impl Quad {
+    pub fn covered(&self) -> f32 {
+        let [_, _, w, h] = self.rect;
+        let framed = self.mode == IMAGE && (self.case != 0 || self.radius > 0.0);
+        if self.mode != PLATE && !framed {
+            return w * h;
+        }
+        let pad = 2.0 * PLATE_PAD * if framed { 1.0 } else { self.scale };
+        let (mut wide, mut tall) = (w, h);
+        if self.case != 0 {
+            let doubled = if framed {
+                self.stroke_inset > 0.5
+            } else {
+                self.uv[1] > 0.5
+            };
+            let [x, y] = self.case_offset;
+            wide = span(w, self.case_grow, (x, doubled));
+            tall = span(h, self.case_grow, (y, doubled));
+        }
+        (wide + pad) * (tall + pad)
+    }
+}
+
+pub const PLATE_PAD: f32 = 1.0;
+
+fn span(size: f32, grow: f32, (offset, doubled): (f32, bool)) -> f32 {
+    let half = size * 0.5;
+    let (far, near) = if doubled {
+        (math::max(offset, 0.0), math::min(offset, 0.0))
+    } else {
+        (offset, offset)
+    };
+    math::max(half, half + grow + far) + math::max(half, half + grow - near)
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -602,7 +715,7 @@ pub struct ScreenDraw {
     pub font: Option<Font>,
     pub icons: Icons,
     pub pictures: Vec<Picture>,
-    pub atlases: Option<[TextureHandle; 11]>,
+    pub atlases: Option<[TextureHandle; BOUND_SLOTS]>,
     pub quads: Vec<Quad>,
     pub revision: u64,
     pub texts: u32,
@@ -665,17 +778,34 @@ impl ScreenDraw {
     }
 
     pub fn plate(&mut self, rect: Area, plate: Plate) {
+        self.cased_plate(rect, plate, None);
+    }
+
+    pub fn cased_plate(&mut self, rect: Area, plate: Plate, case: Option<Case>) {
         let fill = plate.fill.filter(|fill| fill.visible());
         let stroke = plate
             .stroke
             .filter(|stroke| stroke.width > 0.0 && stroke.color.visible());
-        if rect.w <= 0.01 || rect.h <= 0.01 || (fill.is_none() && stroke.is_none()) {
+        let case = case.filter(|case| case.color.visible());
+        if rect.w <= 0.01
+            || rect.h <= 0.01
+            || (fill.is_none() && stroke.is_none() && case.is_none())
+        {
             return;
         }
         let half = math::min(rect.w, rect.h) * 0.5;
         self.quads.push(Quad {
             rect: [rect.x, rect.y, rect.w, rect.h],
-            uv: [1.0 - math::clamp(plate.sweep, 0.0, 1.0), 0.0, 0.0, 0.0],
+            uv: [
+                1.0 - math::clamp(plate.sweep, 0.0, 1.0),
+                if case.is_some_and(|case| case.doubled) {
+                    1.0
+                } else {
+                    0.0
+                },
+                0.0,
+                0.0,
+            ],
             fill: fill.map_or(0, Rgba::packed),
             edge: stroke.map_or(0, |stroke| stroke.color.packed()),
             mode: PLATE,
@@ -684,6 +814,14 @@ impl ScreenDraw {
             stroke_inset: stroke.map_or(0.0, |stroke| stroke.inset),
             scale: plate.soft,
             angle: plate.angle_radians,
+            case: case.map_or(0, |case| case.color.packed()),
+            case_grow: case.map_or(0.0, |case| case.grow),
+            case_offset: case.map_or([0.0; 2], |case| case.offset),
+            rim: case
+                .and_then(|case| case.rim)
+                .map_or(0, |(color, _)| color.packed()),
+            rim_grow: case.and_then(|case| case.rim).map_or(0.0, |(_, grow)| grow),
+            align: [0; 2],
         });
     }
 
@@ -698,15 +836,97 @@ impl ScreenDraw {
         &mut self,
         (name, cell, fit, grey): (&str, Option<&str>, Cover, f32),
         rect: Area,
+        (color, (radius, case)): (Rgba, (f32, Option<Case>)),
+    ) {
+        let Some(index) = self
+            .pictures
+            .iter()
+            .position(|picture| picture.name == name)
+        else {
+            self.icons_missing += 1;
+            return;
+        };
+        let before = self.quads.len();
+        self.picture_quad(index, (cell, fit, grey), rect, color);
+        let case = case.filter(|case| case.color.visible());
+        if let Some(quad) = self.quads.get_mut(before) {
+            let [_, _, w, h] = quad.rect;
+            quad.radius = math::clamp(radius, 0.0, math::min(w, h) * 0.5);
+            if let Some(case) = case {
+                quad.case = case.color.packed();
+                quad.case_grow = case.grow;
+                quad.case_offset = case.offset;
+                if let Some((color, grow)) = case.rim {
+                    quad.rim = color.packed();
+                    quad.rim_grow = grow;
+                }
+                quad.stroke_inset = if case.doubled { 1.0 } else { 0.0 };
+            }
+        }
+    }
+
+    pub fn sticker(&mut self, (atlas, cell): (&str, &str), rect: Area, (color, grey): (Rgba, f32)) {
+        let Some(index) = self
+            .pictures
+            .iter()
+            .position(|picture| picture.atlas == atlas)
+        else {
+            self.icons_missing += 1;
+            return;
+        };
+        self.picture_quad(index, (Some(cell), Cover::Fit, grey), rect, color);
+    }
+
+    pub fn sticker_size(&self, atlas: &str, cell: &str) -> Option<[f32; 2]> {
+        let picture = self
+            .pictures
+            .iter()
+            .find(|picture| picture.atlas == atlas)?;
+        let [_, _, w, h] = *picture.cells.get(cell)?;
+        Some([w, h])
+    }
+
+    pub fn sticker_turned(
+        &mut self,
+        (atlas, cell): (&str, &str),
+        center: Vec2,
+        (scale, angle): (f32, f32),
         color: Rgba,
     ) {
-        let Some((index, picture)) = self
+        let found = self
             .pictures
             .iter()
             .enumerate()
-            .find(|(_, picture)| picture.name == name)
-        else {
+            .find(|(_, picture)| picture.atlas == atlas)
+            .and_then(|(index, picture)| Some((index, *picture.cells.get(cell)?)));
+        let Some((index, [ix, iy, iw, ih])) = found else {
             self.icons_missing += 1;
+            return;
+        };
+        if !color.visible() || iw <= 0.0 || ih <= 0.0 || scale <= 0.0 {
+            return;
+        }
+        let (w, h) = (iw * scale, ih * scale);
+        self.quads.push(Quad {
+            rect: [center.x - w * 0.5, center.y - h * 0.5, w, h],
+            uv: [ix, iy, iw, ih],
+            fill: color.packed(),
+            edge: index as u32,
+            mode: IMAGE,
+            scale,
+            angle,
+            ..Quad::default()
+        });
+    }
+
+    fn picture_quad(
+        &mut self,
+        index: usize,
+        (cell, fit, grey): (Option<&str>, Cover, f32),
+        rect: Area,
+        color: Rgba,
+    ) {
+        let Some(picture) = self.pictures.get(index) else {
             return;
         };
         let [ix, iy, iw, ih] = match cell {
@@ -808,16 +1028,13 @@ impl ScreenDraw {
             stroke_width: 0.0,
             stroke_inset: 0.0,
             scale: k,
-            angle: 0.0,
+            ..Quad::default()
         });
         true
     }
 
     pub fn measure(&self, text: &str, px: f32, weight: Weight) -> f32 {
-        let Some(font) = &self.font else {
-            return 0.0;
-        };
-        let Some(face) = font.face(weight) else {
+        let Some(face) = self.font.as_ref().and_then(|font| font.face(weight)) else {
             return 0.0;
         };
         let advance: f32 = text
@@ -825,7 +1042,7 @@ impl ScreenDraw {
             .filter_map(|character| face.glyph(character))
             .map(|glyph| glyph.advance)
             .sum();
-        advance * px / font.em_px
+        advance * px / face.em_px
     }
 
     pub fn text(&mut self, text: &str, rect: Area, style: TextStyle) {
@@ -834,19 +1051,17 @@ impl ScreenDraw {
         }
         let mut style = style;
         let mut width = self.measure(text, style.px, style.weight);
-        if rect.w > 0.0 && width > rect.w {
-            style.px *= rect.w / width;
-            width = rect.w;
+        if rect.w > 0.0 && width > rect.w && style.px > self.min_text_px {
+            let px = math::max(self.min_text_px, style.px * rect.w / width);
+            width *= px / style.px;
+            style.px = px;
             self.fitted += 1;
         }
-        let Some(font) = &self.font else {
-            return;
-        };
-        let Some(face) = font.face(style.weight) else {
+        let Some(face) = self.font.as_ref().and_then(|font| font.face(style.weight)) else {
             return;
         };
         self.texts += 1;
-        let k = style.px / font.em_px;
+        let k = style.px / face.em_px;
         let baseline = (rect.y + rect.h * 0.5 + face.cap * k * 0.5).round();
         let mut pen = match style.align {
             Align::Left => rect.x,
@@ -855,11 +1070,13 @@ impl ScreenDraw {
         }
         .round();
         let fill = style.color.packed();
-        let boost = if font.thin.get(style.weight.0).copied().unwrap_or(false) {
+        let boost = if face.thin {
             THIN_BOOST * math::clamp((THIN_BELOW_PX - style.px) / THIN_SPAN_PX, 0.0, 1.0)
         } else {
             0.0
         };
+        let reach = (boost + style.grow + style.soft + GLYPH_MARGIN_PX) / k;
+        let trim = math::max(0.0, face.spread_px - reach);
         for character in text.chars() {
             let Some(glyph) = face.glyph(character) else {
                 self.glyphs_missing += 1;
@@ -867,22 +1084,25 @@ impl ScreenDraw {
             };
             if glyph.w > 0.0 && glyph.h > 0.0 {
                 self.glyphs += 1;
+                let across = math::min(trim, glyph.w * 0.5);
+                let down = math::min(trim, glyph.h * 0.5);
+                let (w, h) = (glyph.w - 2.0 * across, glyph.h - 2.0 * down);
                 self.quads.push(Quad {
                     rect: [
-                        pen + glyph.offset_x * k,
-                        baseline + glyph.offset_y * k,
-                        glyph.w * k,
-                        glyph.h * k,
+                        pen + (glyph.offset_x + across) * k,
+                        baseline + (glyph.offset_y + down) * k,
+                        w * k,
+                        h * k,
                     ],
-                    uv: [glyph.x, glyph.y, glyph.w, glyph.h],
+                    uv: [glyph.x + across, glyph.y + down, w, h],
                     fill,
-                    edge: 0,
+                    edge: face.slot,
                     mode: GLYPH,
-                    radius: font.spread_px,
+                    radius: face.spread_px,
                     stroke_width: boost + style.grow,
                     stroke_inset: style.soft,
                     scale: k,
-                    angle: 0.0,
+                    ..Quad::default()
                 });
             }
             pen += glyph.advance * k;
@@ -890,12 +1110,6 @@ impl ScreenDraw {
     }
 
     pub fn covered_pixels(&self) -> u64 {
-        self.quads
-            .iter()
-            .map(|quad| {
-                let pad = if quad.mode == PLATE { 2.0 } else { 0.0 };
-                ((quad.rect[2] + pad) * (quad.rect[3] + pad)) as u64
-            })
-            .sum()
+        self.quads.iter().map(|quad| quad.covered() as u64).sum()
     }
 }

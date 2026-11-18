@@ -4,18 +4,20 @@ use engine::math;
 use glam::Vec2;
 
 use crate::play::screen::{
-    Align, Area, Cover, Fit, HudFacts, Plate, Rgba, ScreenDraw, Shown, Stroke, TextStyle, Tone,
+    Align, Area, Case, Cover, Fit, HudFacts, Plate, Rgba, ScreenDraw, Shown, Stroke, TextStyle,
 };
 
 const KNOB_RING_PX: f32 = 6.0;
+const KNOB_INSET_PX: f32 = 2.0;
+const WHITE: Rgba = Rgba([1.0; 4]);
 
 use super::layout::{
-    Cond, Dir, Element, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint, Piece, Set,
-    StrokeRef, Template,
+    Arc, Cond, Dir, Element, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint, Piece,
+    Set, Shadow, StrokeRef, Template,
 };
 use super::menu::ScopeNumbers;
 use super::paths::Val;
-use super::{MapFrame, MarkNumbers, Marks};
+use super::{MapFrame, Marks};
 
 pub(super) struct Painter<'a> {
     pub draw: &'a mut ScreenDraw,
@@ -42,6 +44,16 @@ struct Look<'a> {
     stroke: Option<&'a StrokeRef>,
     icon: Option<&'a Template>,
     grey: f32,
+    shadows: &'a [Shadow],
+}
+
+fn equal(value: Val<'_>, wanted: &str) -> bool {
+    match value {
+        Val::Text(text) => text == wanted,
+        Val::Num(number) => wanted.parse::<f32>().is_ok_and(|parsed| parsed == number),
+        Val::Bool(flag) => wanted == if flag { "true" } else { "false" },
+        Val::Unknown | Val::Missing => wanted.is_empty(),
+    }
 }
 
 fn whole_number(value: f32, out: &mut String) {
@@ -141,8 +153,15 @@ impl Painter<'_> {
         (1.0 + (pulse.scale - 1.0) * left, pulse.color.as_ref())
     }
 
-    pub(super) fn holds(&self, cond: Option<&Cond>) -> bool {
-        cond.is_none_or(|cond| self.facts.value(&cond.path).truthy() != cond.negated)
+    pub(super) fn holds(&self, conds: &[Cond]) -> bool {
+        conds.iter().all(|cond| {
+            let value = self.facts.value(&cond.path);
+            let met = match &cond.equals {
+                None => value.truthy(),
+                Some(wanted) => equal(value, wanted),
+            };
+            met != cond.negated
+        })
     }
 
     fn color(&self, paint: Option<&Paint>) -> Option<Rgba> {
@@ -164,9 +183,10 @@ impl Painter<'_> {
             stroke: element.look.stroke.as_ref(),
             icon: element.look.icon.as_ref(),
             grey: element.look.grey.unwrap_or(0.0),
+            shadows: element.look.shadows.as_deref().unwrap_or(&[]),
         };
-        for (cond, set) in &element.styles {
-            if self.holds(Some(cond)) {
+        for (conds, set) in &element.styles {
+            if self.holds(conds) {
                 apply(&mut look, set);
             }
         }
@@ -206,8 +226,8 @@ impl Painter<'_> {
         );
     }
 
-    fn shadows(&mut self, element: &Element, area: Area, (radius, s): (f32, f32)) {
-        for shadow in &element.shadows {
+    fn shadow_plates(&mut self, shadows: &[Shadow], area: Area, (radius, s): (f32, f32)) {
+        for shadow in shadows {
             let Some(color) = self.color(Some(&shadow.color)) else {
                 continue;
             };
@@ -218,18 +238,91 @@ impl Painter<'_> {
                 w: area.w + 2.0 * grow,
                 h: area.h + 2.0 * grow,
             };
+            self.draw.plate(
+                moved,
+                Plate {
+                    fill: Some(color),
+                    radius: radius + grow,
+                    stroke: None,
+                    angle_radians: 0.0,
+                    soft: 1.0 + shadow.soft * s,
+                    sweep: 1.0,
+                },
+            );
+        }
+    }
+
+    fn case_of(&self, shadows: &[Shadow], s: f32) -> Option<Case> {
+        if let [pair @ .., last] = shadows
+            && pair.len() == 2
+        {
+            let case = self.case_of(pair, s)?;
+            let color = self.color(Some(&last.color))?;
+            let inside =
+                last.offset == [0.0, 0.0] && last.soft == 0.0 && last.grow * s <= case.grow;
+            return inside.then_some(Case {
+                rim: Some((color, last.grow * s)),
+                ..case
+            });
+        }
+        let (first, rest) = shadows.split_first()?;
+        let color = self.color(Some(&first.color))?;
+        let alike = |other: &Shadow| {
+            other.grow == first.grow
+                && other.soft == 0.0
+                && self.color(Some(&other.color)) == Some(color)
+        };
+        let (offset, doubled) = match rest {
+            [] => (first.offset, false),
+            [second] if alike(second) && second.offset == [0.0, 0.0] => (first.offset, true),
+            [second] if alike(second) && first.offset == [0.0, 0.0] => (second.offset, true),
+            _ => return None,
+        };
+        (first.soft == 0.0).then(|| Case {
+            color,
+            grow: first.grow * s,
+            offset: offset.map(|along| along * s),
+            doubled,
+            rim: None,
+        })
+    }
+
+    fn cased(
+        &mut self,
+        shadows: &[Shadow],
+        area: Area,
+        (fill, radius, stroke): (Option<Rgba>, f32, Option<Stroke>),
+        s: f32,
+    ) {
+        let case = self.case_of(shadows, s);
+        if case.is_none() {
+            self.shadow_plates(shadows, area, (radius, s));
+        }
+        self.draw.cased_plate(
+            area,
+            Plate {
+                fill,
+                radius,
+                stroke,
+                angle_radians: 0.0,
+                soft: 1.0,
+                sweep: 1.0,
+            },
+            case,
+        );
+    }
+
+    fn shadows(&mut self, element: &Element, look: &Look<'_>, area: Area, (radius, s): (f32, f32)) {
+        if matches!(element.kind, Kind::Plate) {
+            self.shadow_plates(look.shadows, area, (radius, s));
+            return;
+        }
+        for shadow in look.shadows {
+            let Some(color) = self.color(Some(&shadow.color)) else {
+                continue;
+            };
+            let grow = shadow.grow * s;
             match &element.kind {
-                Kind::Plate => self.draw.plate(
-                    moved,
-                    Plate {
-                        fill: Some(color),
-                        radius: radius + grow,
-                        stroke: None,
-                        angle_radians: 0.0,
-                        soft: 1.0 + shadow.soft * s,
-                        sweep: 1.0,
-                    },
-                ),
                 Kind::Text(text) => {
                     let px = self.px(text.size, element.unscaled);
                     let mut out = std::mem::take(self.scratch);
@@ -250,13 +343,89 @@ impl Painter<'_> {
                     self.draw.text(&out, placed, style);
                     *self.scratch = out;
                 }
-                Kind::Icon(_)
+                Kind::Plate
+                | Kind::Icon(..)
+                | Kind::Arc(_)
                 | Kind::Image(_)
                 | Kind::Markers(_)
                 | Kind::Bar { .. }
                 | Kind::Pips { .. }
                 | Kind::Flow { .. } => {}
             }
+        }
+    }
+
+    fn icon(&mut self, look: &Look<'_>, area: Area, (fit, atlas): (Fit, Option<&str>)) {
+        let Some(icon) = look.icon else {
+            return;
+        };
+        let color = self.color(look.color);
+        let mut out = std::mem::take(self.scratch);
+        self.render(icon, &mut out);
+        match (atlas, color) {
+            _ if out.is_empty() => {}
+            (Some(atlas), color) => {
+                self.draw
+                    .sticker((atlas, &out), area, (color.unwrap_or(WHITE), look.grey));
+            }
+            (None, Some(color)) => {
+                self.draw.icon(&out, area, (color, fit));
+            }
+            (None, None) => {}
+        }
+        *self.scratch = out;
+    }
+
+    fn arc(&mut self, arc: &Arc, area: Area, s: f32, color: Option<Rgba>) {
+        let side = math::min(area.w, area.h);
+        let ring = Area {
+            x: area.x + (area.w - side) * 0.5,
+            y: area.y + (area.h - side) * 0.5,
+            w: side,
+            h: side,
+        };
+        let width = arc.width * s;
+        let band = |color: Rgba, angle_radians: f32, sweep: f32| Plate {
+            fill: None,
+            radius: side * 0.5,
+            stroke: Some(Stroke {
+                width,
+                inset: 0.0,
+                color,
+            }),
+            angle_radians,
+            soft: 1.0,
+            sweep,
+        };
+        if let Some(track) = arc.track.as_ref().and_then(|track| self.color(Some(track))) {
+            self.draw.plate(ring, band(track, 0.0, 1.0));
+        }
+        let value = number_of(self.facts, &arc.value).unwrap_or(0.0);
+        let max = number_of(self.facts, &arc.max)
+            .filter(|max| *max != 0.0)
+            .unwrap_or(1.0);
+        let share = math::clamp(value / max, 0.0, 1.0);
+        let Some(color) = color.filter(|_| share > 0.0) else {
+            return;
+        };
+        let turn = std::f32::consts::TAU;
+        let start = arc.start_deg.to_radians() - if arc.clockwise { 0.0 } else { share * turn };
+        self.draw.plate(ring, band(color, start, share));
+        if share >= 1.0 {
+            return;
+        }
+        let center = ring.center();
+        let reach = (side - width) * 0.5;
+        for angle in [start, start + share * turn] {
+            let (sin, cos) = math::sin_cos(angle);
+            let at = center + Vec2::new(sin, -cos) * reach;
+            let cap = Area {
+                x: at.x - width * 0.5,
+                y: at.y - width * 0.5,
+                w: width,
+                h: width,
+            };
+            self.plate(cap, Some(color), width * 0.5, None);
         }
     }
 
@@ -307,8 +476,8 @@ impl Painter<'_> {
         }
         if element.unscaled {
             let shift = self.crosshair_shift(area) * spread_px;
-            area.x += shift.x;
-            area.y += shift.y;
+            area.x += shift.x.round();
+            area.y += shift.y.round();
         }
         let s = zoom
             * if element.unscaled {
@@ -325,27 +494,34 @@ impl Painter<'_> {
     }
 
     fn element(&mut self, element: &Element, spread_px: f32) {
-        if !self.holds(element.when.as_ref()) {
+        if !self.holds(&element.when) {
             return;
         }
         let (look, area, s, sweep) = self.framed(element, spread_px);
         let radius = element.radius * s;
-        self.shadows(element, area, (radius, s));
+        let whole = matches!(element.kind, Kind::Plate) && sweep >= 1.0;
+        if !whole {
+            self.shadows(element, &look, area, (radius, s));
+        }
         match &element.kind {
             Kind::Plate => {
                 let fill = self.color(look.fill);
                 let stroke = self.stroke(look.stroke, s);
-                self.draw.plate(
-                    area,
-                    Plate {
-                        fill,
-                        radius,
-                        stroke,
-                        angle_radians: 0.0,
-                        soft: 1.0,
-                        sweep,
-                    },
-                );
+                if whole {
+                    self.cased(look.shadows, area, (fill, radius, stroke), s);
+                } else {
+                    self.draw.plate(
+                        area,
+                        Plate {
+                            fill,
+                            radius,
+                            stroke,
+                            angle_radians: 0.0,
+                            soft: 1.0,
+                            sweep,
+                        },
+                    );
+                }
             }
             Kind::Text(text) => {
                 let Some(color) = self.color(look.color) else {
@@ -368,21 +544,17 @@ impl Painter<'_> {
                 );
                 *self.scratch = out;
             }
-            Kind::Icon(fit) => {
-                let (Some(color), Some(icon)) = (self.color(look.color), look.icon) else {
-                    return;
-                };
-                let mut out = std::mem::take(self.scratch);
-                self.render(icon, &mut out);
-                if !out.is_empty() {
-                    self.draw.icon(&out, area, (color, *fit));
-                }
-                *self.scratch = out;
-            }
+            Kind::Icon(fit, atlas) => self.icon(&look, area, (*fit, atlas.as_deref())),
+            Kind::Arc(arc) => self.arc(arc, area, s, self.color(look.color)),
             Kind::Image(picture) => {
                 let Some(color) = self.color(look.color) else {
                     return;
                 };
+                let case = self.case_of(look.shadows, s);
+                if case.is_none() {
+                    self.shadow_plates(look.shadows, area, (radius, s));
+                }
+                let frame = (radius, case);
                 let mut out = std::mem::take(self.scratch);
                 let mut name = std::mem::take(self.spare);
                 self.render(&picture.image, &mut name);
@@ -405,12 +577,16 @@ impl Painter<'_> {
                     Some((_, key)) => {
                         self.render(key, &mut out);
                         if !out.is_empty() {
-                            self.draw
-                                .image((&name, Some(&out), fit, look.grey), area, color);
+                            self.draw.image(
+                                (&name, Some(&out), fit, look.grey),
+                                area,
+                                (color, frame),
+                            );
                         }
                     }
                     None if !name.is_empty() => {
-                        self.draw.image((&name, None, fit, look.grey), area, color);
+                        self.draw
+                            .image((&name, None, fit, look.grey), area, (color, frame));
                     }
                     None => {}
                 }
@@ -427,7 +603,7 @@ impl Painter<'_> {
             } => {
                 let end = self.bar(
                     area,
-                    radius,
+                    (radius, look.shadows, s),
                     (value, max),
                     (self.color(Some(track)), self.color(look.fill)),
                     *dir,
@@ -444,27 +620,31 @@ impl Painter<'_> {
     fn bar(
         &mut self,
         area: Area,
-        radius: f32,
+        (radius, shadows, s): (f32, &[Shadow], f32),
         (value, max): (&Number, &Number),
         (track, fill): (Option<Rgba>, Option<Rgba>),
         dir: Dir,
     ) -> Vec2 {
         if track.is_some() {
-            self.plate(area, track, radius, None);
+            self.cased(shadows, area, (track, radius, None), s);
+        } else {
+            self.shadow_plates(shadows, area, (radius, s));
         }
         let value = number_of(self.facts, value).unwrap_or(0.0);
         let max = number_of(self.facts, max)
             .filter(|max| *max != 0.0)
             .unwrap_or(1.0);
         let share = math::clamp(value / max, 0.0, 1.0);
+        let across = if share > 0.0 {
+            math::min(area.w, math::max(area.w * share, area.h))
+        } else {
+            0.0
+        };
         let filled = match dir {
-            Dir::LeftToRight => Area {
-                w: area.w * share,
-                ..area
-            },
+            Dir::LeftToRight => Area { w: across, ..area },
             Dir::RightToLeft => Area {
-                x: area.x + area.w * (1.0 - share),
-                w: area.w * share,
+                x: area.x + area.w - across,
+                w: across,
                 ..area
             },
             Dir::BottomToTop => Area {
@@ -480,8 +660,8 @@ impl Painter<'_> {
         };
         self.plate(filled, fill, rounded, None);
         match dir {
-            Dir::LeftToRight => Vec2::new(filled.x + filled.w, area.y + area.h * 0.5),
-            Dir::RightToLeft => Vec2::new(filled.x, area.y + area.h * 0.5),
+            Dir::LeftToRight => Vec2::new(area.x + area.w * share, area.y + area.h * 0.5),
+            Dir::RightToLeft => Vec2::new(area.x + area.w * (1.0 - share), area.y + area.h * 0.5),
             Dir::BottomToTop => Vec2::new(area.x + area.w * 0.5, filled.y),
         }
     }
@@ -499,7 +679,8 @@ impl Painter<'_> {
             self.plate(disc(wide), Some(ring), wide * 0.5, None);
         }
         let fill = self.color(Some(&knob.fill));
-        self.plate(disc(size), fill, size * 0.5, None);
+        let inner = size - KNOB_INSET_PX * s;
+        self.plate(disc(inner), fill, inner * 0.5, None);
     }
 
     fn pips(&mut self, element: &Element, area: Area, s: f32) {
@@ -552,6 +733,7 @@ impl Painter<'_> {
             align,
             padding,
             gap,
+            min_w,
             items,
         } = &element.kind
         else {
@@ -560,21 +742,24 @@ impl Painter<'_> {
         let mut out = std::mem::take(self.scratch);
         let (mut widths, mut shown) = (0.0, 0_u32);
         for item in items {
-            if !self.holds(item.when.as_ref()) {
+            if !self.holds(&item.when) {
                 continue;
             }
             widths += match &item.kind {
-                FlowKind::Text { text, .. } => {
+                FlowKind::Text { text, cap, .. } => {
                     self.render(&text.text, &mut out);
-                    self.draw
-                        .measure(&out, self.px(text.size, false), text.weight)
+                    let wide = self
+                        .draw
+                        .measure(&out, self.px(text.size, false), text.weight);
+                    self.capped(wide, *cap, s)
                 }
                 FlowKind::Icon { w, .. } => w * s,
             };
             shown += 1;
         }
         let (pad, gap) = (padding * s, gap * s);
-        let width = 2.0 * pad + widths + gap * shown.saturating_sub(1) as f32;
+        let content = 2.0 * pad + widths + gap * shown.saturating_sub(1) as f32;
+        let width = math::max(content, min_w * s);
         let x = match align {
             Align::Left => area.x,
             Align::Center => area.x + (area.w - width) * 0.5,
@@ -582,64 +767,98 @@ impl Painter<'_> {
         };
         let fill = self.color(look.fill);
         let stroke = self.stroke(look.stroke, s);
-        self.plate(
-            Area {
-                x,
-                w: width,
-                ..area
-            },
-            fill,
-            element.radius * s,
-            stroke,
-        );
-        let mut at = x + pad;
+        let pill = Area {
+            x,
+            w: width,
+            ..area
+        };
+        self.cased(look.shadows, pill, (fill, element.radius * s, stroke), s);
+        let mut at = x + pad + (width - content) * 0.5;
         for item in items {
-            if !self.holds(item.when.as_ref()) {
+            if !self.holds(&item.when) {
                 continue;
             }
             match &item.kind {
-                FlowKind::Text { text, color } => {
+                FlowKind::Text { text, color, cap } => {
                     self.render(&text.text, &mut out);
                     let px = self.px(text.size, false);
                     let wide = self.draw.measure(&out, px, text.weight);
+                    let room = self.capped(wide, *cap, s);
+                    let place = Area {
+                        x: at,
+                        w: room,
+                        ..area
+                    };
+                    if *cap {
+                        self.key_cap(place, s);
+                    }
                     if let Some(color) = self.color(Some(color)) {
                         let style = TextStyle {
                             px,
                             weight: text.weight,
-                            align: Align::Left,
+                            align: Align::Center,
                             color,
                             grow: 0.0,
                             soft: 0.0,
                         };
-                        self.draw.text(
-                            &out,
-                            Area {
-                                x: at,
-                                w: wide,
-                                ..area
-                            },
-                            style,
-                        );
+                        self.draw.text(&out, place, style);
                     }
-                    at += wide + gap;
+                    at += room + gap;
                 }
-                FlowKind::Icon { icon, w, h, color } => {
+                FlowKind::Icon {
+                    icon,
+                    w,
+                    h,
+                    color,
+                    atlas,
+                } => {
                     let (iw, ih) = (w * s, h * s);
                     self.render(icon, &mut out);
-                    if let Some(color) = self.color(Some(color)) {
-                        let place = Area {
-                            x: at,
-                            y: area.y + (area.h - ih) * 0.5,
-                            w: iw,
-                            h: ih,
-                        };
-                        self.draw.icon(&out, place, (color, Fit::Cell));
+                    let place = Area {
+                        x: at,
+                        y: area.y + (area.h - ih) * 0.5,
+                        w: iw,
+                        h: ih,
+                    };
+                    let tint = self.color(color.as_ref());
+                    match (atlas, tint) {
+                        _ if out.is_empty() => {}
+                        (Some(atlas), tint) => {
+                            self.draw
+                                .sticker((atlas, &out), place, (tint.unwrap_or(WHITE), 0.0));
+                        }
+                        (None, Some(tint)) => {
+                            self.draw.icon(&out, place, (tint, Fit::Cell));
+                        }
+                        (None, None) => {}
                     }
                     at += iw + gap;
                 }
             }
         }
         *self.scratch = out;
+    }
+
+    fn capped(&self, wide: f32, cap: bool, s: f32) -> f32 {
+        match self.layout.key_cap.as_ref().filter(|_| cap) {
+            Some(piece) => math::max(piece.height * s, wide + 2.0 * piece.padding_x * s),
+            None => wide,
+        }
+    }
+
+    fn key_cap(&mut self, place: Area, s: f32) {
+        let layout = self.layout;
+        let Some(piece) = &layout.key_cap else {
+            return;
+        };
+        let h = piece.height * s;
+        let cap = Area {
+            y: place.y + (place.h - h) * 0.5,
+            h,
+            ..place
+        };
+        let fill = self.color(Some(&piece.fill));
+        self.cased(&piece.shadows, cap, (fill, piece.radius * s, None), s);
     }
 
     fn markers(&mut self, markers: &Markers, area: Area, s: f32, color: Option<Rgba>) {
@@ -672,6 +891,40 @@ impl Painter<'_> {
             } else {
                 0.0
             };
+            let kept = 1.0 - math::clamp(item.fade, 0.0, 1.0);
+            let tint = item
+                .color
+                .and_then(|tone| self.layout.tone(tone))
+                .or(color)
+                .map(|tint| tint.faded(kept));
+            if markers.disc {
+                let wide = 2.0 * item.radius_m * map.px_per_m * area.w / map.size[0];
+                let disc = Area {
+                    x: center.x - wide * 0.5,
+                    y: center.y - wide * 0.5,
+                    w: wide,
+                    h: wide,
+                };
+                self.plate(disc, tint, wide * 0.5, None);
+                continue;
+            }
+            let icon = if item.icon.is_empty() {
+                markers.icon.as_str()
+            } else {
+                item.icon.as_str()
+            };
+            if let Some(atlas) = &markers.atlas {
+                if let Some([w, h]) = self.draw.sticker_size(atlas, icon) {
+                    let scale = size / math::max(math::max(w, h), 1.0);
+                    self.draw.sticker_turned(
+                        (atlas, icon),
+                        center,
+                        (scale, angle),
+                        WHITE.faded(kept),
+                    );
+                }
+                continue;
+            }
             if let Some((fill, wide)) = backing {
                 let disc = Area {
                     x: center.x - wide * 0.5,
@@ -681,14 +934,28 @@ impl Painter<'_> {
                 };
                 self.plate(disc, Some(fill), wide * 0.5, None);
             }
-            if let Some((ink, icon)) = outline {
-                self.draw.marker(icon, center, size, (ink, angle));
+            if let Some((ink, rim)) = outline {
+                self.draw
+                    .marker(rim, center, size, (ink.faded(kept), angle));
             }
-            let tint = item.color.and_then(|tone| self.layout.tone(tone)).or(color);
             if let Some(tint) = tint {
-                self.draw.marker(&markers.icon, center, size, (tint, angle));
+                self.draw.marker(icon, center, size, (tint, angle));
             }
         }
+    }
+
+    pub(super) fn blind(&mut self, amount: f32) {
+        if amount <= 0.0 {
+            return;
+        }
+        let size = self.draw.size;
+        let whole = Area {
+            x: 0.0,
+            y: 0.0,
+            w: size.x,
+            h: size.y,
+        };
+        self.plate(whole, Some(WHITE.faded(math::min(amount, 1.0))), 0.0, None);
     }
 
     pub(super) fn scope(&mut self, scope: &ScopeNumbers) {
@@ -740,48 +1007,105 @@ impl Painter<'_> {
         self.plate(whole, Some(color), 0.0, None);
     }
 
+    fn palette(&self, key: &str) -> Option<Rgba> {
+        self.layout.palette.get(key).copied()
+    }
+
     pub(super) fn marks(&mut self, marks: &Marks) {
         let center = (self.draw.size * 0.5).round();
+        let ink = self.palette(&marks.outline_color);
         if let Some(hit) = self.facts.hit {
-            let tone = if hit.killed {
-                Tone::Danger
-            } else if hit.headshot {
-                Tone::Ready
-            } else {
-                Tone::Text
-            };
             let numbers = &marks.hit;
-            if let Some(color) = self.layout.tone(tone) {
-                let color = color.faded(1.0 - hit.age / numbers.seconds);
-                let reach = numbers.gap_px + numbers.length_px * 0.5;
-                for quarter in [1.0_f32, 3.0, 5.0, 7.0] {
-                    let angle = quarter * std::f32::consts::FRAC_PI_4;
-                    let (sin, cos) = math::sin_cos(angle);
+            let edge = numbers.rim_px;
+            let key = if hit.killed {
+                &marks.kill_color
+            } else if hit.headshot {
+                &marks.head_color
+            } else {
+                &numbers.color
+            };
+            let left = 1.0 - hit.age / numbers.seconds;
+            let reach = numbers.gap_px + numbers.length_px * 0.5;
+            let (w, h) = (numbers.length_px, numbers.width_px);
+            for quarter in [1.0_f32, 3.0, 5.0, 7.0] {
+                let angle = quarter * std::f32::consts::FRAC_PI_4;
+                let (sin, cos) = math::sin_cos(angle);
+                let at = center + Vec2::new(cos, sin) * reach;
+                if let Some(ink) = ink {
                     self.bar_mark(
-                        center + Vec2::new(cos, sin) * reach,
-                        numbers,
-                        1.0,
-                        (angle, color),
+                        at,
+                        (w + 2.0 * edge, h + 2.0 * edge),
+                        (angle, ink.faded(left)),
                     );
+                }
+                if let Some(color) = self.palette(key) {
+                    self.bar_mark(at, (w, h), (angle, color.faded(left)));
                 }
             }
         }
         let s = self.draw.scale();
         let numbers = &marks.damage;
-        let Some(color) = self.layout.tone(Tone::Danger) else {
-            return;
-        };
+        let color = self.palette(&numbers.color);
         let facts = self.facts;
+        let radius = numbers.gap_px * s;
+        if radius <= 0.0 {
+            return;
+        }
+        let edge = numbers.rim_px;
         for mark in &facts.damage {
-            let (sin, cos) = math::sin_cos(mark.angle_radians);
-            let at = center + Vec2::new(-sin, -cos) * numbers.gap_px * s;
-            let faded = color.faded(1.0 - mark.age / numbers.seconds);
-            self.bar_mark(at, numbers, s, (-mark.angle_radians, faded));
+            let left = 1.0 - mark.age / numbers.seconds;
+            let toward = -mark.angle_radians;
+            let layers = [
+                (
+                    ink,
+                    numbers.width_px * s + 2.0 * edge * s,
+                    numbers.length_px * s + 2.0 * edge * s,
+                ),
+                (color, numbers.width_px * s, numbers.length_px * s),
+            ];
+            for (paint, width, length) in layers {
+                let Some(paint) = paint else {
+                    continue;
+                };
+                let span = length / radius;
+                let outer = radius + width * 0.5;
+                let ring = Area {
+                    x: center.x - outer,
+                    y: center.y - outer,
+                    w: 2.0 * outer,
+                    h: 2.0 * outer,
+                };
+                self.draw.plate(
+                    ring,
+                    Plate {
+                        fill: None,
+                        radius: outer,
+                        stroke: Some(Stroke {
+                            width,
+                            inset: 0.0,
+                            color: paint.faded(left),
+                        }),
+                        angle_radians: toward - span * 0.5,
+                        soft: 1.0,
+                        sweep: span / std::f32::consts::TAU,
+                    },
+                );
+            }
+            let layout = self.layout;
+            if let Some(tip) = &layout.damage_tip {
+                let (sin, cos) = math::sin_cos(toward);
+                let reach = (numbers.gap_px + tip.radius_add_px) * s;
+                self.draw.sticker_turned(
+                    (&tip.atlas, &tip.icon),
+                    center + Vec2::new(sin, -cos) * reach,
+                    (tip.scale * s, toward),
+                    WHITE.faded(left),
+                );
+            }
         }
     }
 
-    fn bar_mark(&mut self, at: Vec2, numbers: &MarkNumbers, s: f32, (angle, color): (f32, Rgba)) {
-        let (w, h) = (numbers.length_px * s, numbers.width_px * s);
+    fn bar_mark(&mut self, at: Vec2, (w, h): (f32, f32), (angle, color): (f32, Rgba)) {
         self.draw.plate(
             Area {
                 x: at.x - w * 0.5,
@@ -816,6 +1140,9 @@ fn apply<'e>(look: &mut Look<'e>, set: &'e Set) {
     }
     if let Some(grey) = set.grey {
         look.grey = grey;
+    }
+    if let Some(shadows) = &set.shadows {
+        look.shadows = shadows;
     }
 }
 

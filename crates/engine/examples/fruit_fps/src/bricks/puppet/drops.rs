@@ -6,7 +6,6 @@ use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext};
 use glam::{Quat, Vec3};
 
 use super::{DroppedWeapon, PuppetBrick, PuppetStats};
-use crate::play::actors::{Alive, Body, Wish};
 use crate::play::arms::{Dropped, Drops};
 use crate::play::events::arms::Weapon;
 use crate::play::figures::GROUND;
@@ -30,7 +29,6 @@ type Reads<'w, 's> = (
     Option<Res<'w, SceneContext>>,
     Query<'w, 's, (Entity, &'static PuppetFile)>,
     Query<'w, 's, (Entity, &'static DroppedWeapon)>,
-    Query<'w, 's, (&'static Body, &'static Wish), With<Alive>>,
 );
 
 type Writes<'w, 's> = (
@@ -61,18 +59,6 @@ fn flown(book: &PuppetBook, item: &Dropped, flight: Flight) -> Transform {
     let lift = 4.0 * throw.lift_m * share * (1.0 - share);
     placed.translation = flight.from.lerp(placed.translation, share) + Vec3::new(0.0, lift, 0.0);
     placed
-}
-
-fn thrower(book: &PuppetBook, item: &Dropped, droppers: &[(Vec3, bool)]) -> Option<Vec3> {
-    let throw = book.table.throw;
-    droppers
-        .iter()
-        .filter(|(feet, letting_go)| {
-            let flat = Vec3::new(feet.x - item.position.x, 0.0, feet.z - item.position.z);
-            *letting_go && flat.length() <= throw.reach_m
-        })
-        .map(|(feet, _)| *feet + Vec3::new(0.0, throw.hand_m, 0.0))
-        .next()
 }
 
 pub(super) fn drawn_of(
@@ -109,7 +95,7 @@ pub(super) fn ground_node() -> Node {
 }
 
 pub(super) fn lie(
-    ((fixed, drops), scene, files, lying_now, droppers): Reads,
+    ((fixed, drops), scene, files, lying_now): Reads,
     ((mut stats, mut flights), mut refusals, mut spawner, mut moves): Writes,
 ) {
     let Some((owner, book)) = files
@@ -122,10 +108,6 @@ pub(super) fn lie(
     let existing: BTreeMap<u32, Entity> = lying_now
         .iter()
         .map(|(entity, dropped)| (dropped.id, entity))
-        .collect();
-    let droppers: Vec<(Vec3, bool)> = droppers
-        .iter()
-        .map(|(body, wish)| (body.feet, wish.drop || wish.interact_held))
         .collect();
     let mut refusal = None;
     for item in items {
@@ -145,7 +127,7 @@ pub(super) fn lie(
         }
         match gun_drawn(book, scene.as_deref(), Weapon::Gun(item.weapon).key()) {
             Ok(drawn) => {
-                let placed = match thrower(book, item, &droppers) {
+                let placed = match item.thrown_from {
                     Some(from) => {
                         let flight = Flight { from, elapsed: 0.0 };
                         flights.held.insert(item.id, flight);

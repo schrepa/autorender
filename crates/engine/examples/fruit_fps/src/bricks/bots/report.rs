@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use engine::prelude::*;
 
-use super::{BotStat, Book, BotsStats, SquadStat, ThrowStat, WishStat};
+use super::{Book, BotStat, BotsStats, SquadStat, ThrowStat, WishStat};
 use crate::play::bots::BotMinds;
 use crate::play::paths::Paths;
 
@@ -86,6 +86,8 @@ pub(super) fn report(
         expanded: minds.expanded,
         throws,
         drops: minds.drops,
+        gifts: minds.gifts,
+        buy_calls: minds.buy_calls.map(|call| call.map(str::to_owned)),
         squads,
         bots,
     });

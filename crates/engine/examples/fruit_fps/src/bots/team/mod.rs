@@ -140,6 +140,8 @@ pub struct Order {
     pub go_tick: u64,
     pub careful: bool,
     pub utility: Option<Utility>,
+    pub hand_over: bool,
+    pub wait_contact: bool,
 }
 
 impl Order {
@@ -153,6 +155,8 @@ impl Order {
             go_tick: 0,
             careful: false,
             utility: None,
+            hand_over: false,
+            wait_contact: false,
         }
     }
 }
@@ -179,6 +183,7 @@ pub struct SquadSense<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Intel {
+    at: Vec3,
     site: Option<usize>,
     strict: Option<usize>,
     tick: u64,
@@ -228,9 +233,11 @@ pub struct Squad {
     rotated: Option<usize>,
     defuser: Option<usize>,
     entry_way: Vec<Option<usize>>,
+    human_from: Vec<Option<Vec3>>,
     last_contact: u64,
     sweep: Vec<Vec3>,
     sweep_at: Vec<usize>,
+    hand_over: Option<(usize, usize)>,
 }
 
 pub struct Plan<'a, 'b> {
@@ -297,9 +304,11 @@ impl Squad {
             rotated: None,
             defuser: None,
             entry_way: vec![None; members],
+            human_from: vec![None; members],
             last_contact: 0,
             sweep: Vec::new(),
             sweep_at: vec![0; members],
+            hand_over: None,
         }
     }
 
@@ -378,6 +387,7 @@ impl Squad {
         for call in sense.calls {
             let site = site_near(world.places(), tactics, call.at, numbers.play.site_near_m);
             self.intel.push(Intel {
+                at: call.at,
                 site,
                 strict: strict_site(world.places(), tactics, call.at),
                 tick: call.tick,
@@ -413,6 +423,15 @@ impl Squad {
             .sum()
     }
 
+    fn contact_near(&self, at: Vec3, reach: f32) -> bool {
+        self.intel.iter().any(|i| {
+            matches!(
+                i.kind,
+                CallKind::Spotted | CallKind::Heard | CallKind::Down | CallKind::Device
+            ) && flat_distance(i.at, at) <= reach
+        })
+    }
+
     fn last_spotted(&self, site: usize) -> Option<u64> {
         self.intel
             .iter()
@@ -436,10 +455,12 @@ impl Squad {
             self.intel.clear();
             self.site = None;
             self.rotated = None;
+            self.human_from.iter_mut().for_each(|from| *from = None);
             self.defuser = None;
             self.approach = Approach::Hold;
             self.why = Why::RoundStart;
             self.sweep.clear();
+            self.hand_over = None;
         }
         self.phase = game.phase;
         self.last_contact = plan.tick;
@@ -482,10 +503,7 @@ impl Squad {
         let lift = plan.eye() * 0.5;
         let mut alive = plan.alive();
         alive.sort_by_key(|&member| {
-            !matches!(
-                self.orders[member].duty,
-                Duty::Defuser | Duty::Carrier
-            )
+            !matches!(self.orders[member].duty, Duty::Defuser | Duty::Carrier)
         });
         for (index, &member) in alive.iter().enumerate() {
             let order = self.orders[member];
@@ -535,6 +553,8 @@ impl Squad {
                 go_tick: 0,
                 careful,
                 utility: None,
+                hand_over: false,
+                wait_contact: false,
             },
         );
     }

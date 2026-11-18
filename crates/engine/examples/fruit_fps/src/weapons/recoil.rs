@@ -99,6 +99,11 @@ pub struct Recoil {
     recovery: Recovery,
 }
 
+pub fn bloomed_deg(gun: &GunNumbers, stance: Stance, scope_level: usize, shots: u32) -> f32 {
+    let bloom = gun.spread_bloom.per_shot_deg * shots as f32;
+    spread_deg(gun, stance, scope_level) + least(bloom, gun.spread_bloom.max_deg)
+}
+
 pub fn spread_deg(gun: &GunNumbers, stance: Stance, scope_level: usize) -> f32 {
     let table = gun
         .scope

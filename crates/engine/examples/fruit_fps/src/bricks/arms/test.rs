@@ -124,6 +124,6 @@ pub(super) fn door(
         ability: None,
     });
     book.ledger.forget_victim(hurt.slot);
-    drop_weapon(&mut arms.loadout, &numbers.weapons, tps, body.feet, drops);
+    drop_weapon(&mut arms.loadout, body.feet, drops);
     spawner.remove::<Alive>(entity);
 }

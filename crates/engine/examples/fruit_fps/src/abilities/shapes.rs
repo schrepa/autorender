@@ -157,6 +157,60 @@ pub(super) fn ray_box(
     Some(near)
 }
 
+pub(super) fn closest_on_box(point: Vec3, centre: Vec3, half_extents: Vec3, axes: Mat3) -> Vec3 {
+    let local = axes.transpose() * (point - centre);
+    let held = |value: f32, half: f32| greater(-half, lesser(value, half));
+    centre
+        + axes
+            * Vec3::new(
+                held(local.x, half_extents.x),
+                held(local.y, half_extents.y),
+                held(local.z, half_extents.z),
+            )
+}
+
+pub(super) fn ray_capsule(
+    origin: Vec3,
+    direction: Vec3,
+    max: f32,
+    (a, b): (Vec3, Vec3),
+    radius: f32,
+) -> Option<(f32, Vec3)> {
+    if (origin - closest_on_segment(origin, a, b)).length() <= radius {
+        return None;
+    }
+    let axis = b - a;
+    let from_a = origin - a;
+    let axis_sq = axis.dot(axis);
+    let axis_dir = axis.dot(direction);
+    let axis_from = axis.dot(from_a);
+    let k2 = axis_sq - axis_dir * axis_dir;
+    let mut best = None;
+    if k2 > 1e-9 {
+        let k1 = axis_sq * from_a.dot(direction) - axis_from * axis_dir;
+        let k0 = axis_sq * from_a.dot(from_a) - axis_from * axis_from - radius * radius * axis_sq;
+        let h = k1 * k1 - k2 * k0;
+        if h >= 0.0 {
+            let t = (-k1 - h.sqrt()) / k2;
+            let along = axis_from + t * axis_dir;
+            if along > 0.0 && along < axis_sq && t >= 0.0 && t <= max {
+                best = Some(t);
+            }
+        }
+    }
+    for cap in [a, b] {
+        if let Some(t) = ray_sphere(origin, direction, max, cap, radius)
+            && best.is_none_or(|held| t < held)
+        {
+            best = Some(t);
+        }
+    }
+    let t = best?;
+    let point = origin + direction * t;
+    let normal = (point - closest_on_segment(point, a, b)).normalize_or_zero();
+    Some((t, normal))
+}
+
 pub(super) fn segment_hits_sphere(a: Vec3, b: Vec3, centre: Vec3, radius: f32) -> bool {
     (centre - closest_on_segment(centre, a, b)).length() <= radius
 }

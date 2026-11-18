@@ -97,7 +97,7 @@ impl Mover {
         }
     }
 
-    fn remaining(&self, from: Vec3) -> f32 {
+    pub fn remaining(&self, from: Vec3) -> f32 {
         let Some(first) = self.corners.get(self.next) else {
             return 0.0;
         };

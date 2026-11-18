@@ -57,6 +57,7 @@ fn cue_look(cue: CueKind) -> Option<CueLook> {
         CueKind::Cast
         | CueKind::Throw
         | CueKind::Bounce
+        | CueKind::BounceBody
         | CueKind::SmokeBurst
         | CueKind::ZoneStart
         | CueKind::WallUp
@@ -64,6 +65,7 @@ fn cue_look(cue: CueKind) -> Option<CueLook> {
         | CueKind::TrapPlaced
         | CueKind::TrapArmed
         | CueKind::TrapTriggered
+        | CueKind::WireZap
         | CueKind::SensorPlaced
         | CueKind::Destroyed
         | CueKind::StrikeWarning
@@ -305,6 +307,7 @@ impl Sheet<'_> {
                     team: team_of(state.team),
                     born_tick: state.born,
                     place,
+                    enemy_share: spec.enemy_visibility,
                 })
             })
             .collect()
@@ -343,6 +346,7 @@ impl Sheet<'_> {
                 revealed_to: Team::BOTH.map(|to| self.powers.revealed(*slot, to)),
                 slots: self.asked.slots(*slot, character),
                 held: self.powers.held(*slot).map(|held| held.ability),
+                weapon_down_until: self.powers.weapon_down_until(*slot),
             })
             .collect()
     }
@@ -531,6 +535,8 @@ pub(super) fn write_tick_stats(
             damage_taken: actor.modifiers.damage_taken,
             spread: actor.modifiers.spread,
             revealed_to: actor.revealed_to,
+            held: actor.held.map(|ability| slot_key(ability).to_owned()),
+            weapon_down_until: actor.weapon_down_until,
         })
         .collect();
 }

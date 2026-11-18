@@ -3,12 +3,13 @@ use glam::Vec3;
 
 use super::pickup::{self, Ground};
 use super::senses::{self, Events, Noise, ReadTicks, Sight, Who};
+use super::shop::{Counter, Shopping};
 use super::world::{BotWorld, Thrower};
-use crate::abilities::{self as powers_maths, ActorId};
 use super::{Book, BotsTest, LevelChoice, Loaded, Reach, level_of};
+use crate::abilities::{self as powers_maths, ActorId};
 use crate::bots::{
-    self, Brain, Call, Gait as BotGait, Heard, Intent, MatchSense, Mate, Member, Places, Role,
-    Seen, Sense, Smoke, Squad, SquadSense, WeaponChoice,
+    self, Brain, BuySense, Call, Gait as BotGait, Heard, Intent, MatchSense, Mate, Member, Places,
+    Purchase, Role, Seen, Sense, Smoke, Squad, SquadSense, WeaponChoice,
 };
 use crate::play::actors::{Actor, Alive, Body, Equip, Gait, Health, Human, Wish};
 use crate::play::arms::{Arms, Drops};
@@ -23,7 +24,7 @@ use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::view::ViewOffsets;
 use crate::play::world::Arena;
-use crate::rules::{AbilitySlot, Team, View, suggest_buy};
+use crate::rules::{AbilitySlot, Phase, Team, View};
 use crate::weapons::forward;
 
 const BRAIN_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -48,6 +49,7 @@ pub(super) struct Minds {
     fired: Vec<bool>,
     picking: Vec<bool>,
     drops: u32,
+    gifts: u32,
     read: ReadTicks,
     noises: Vec<Noise>,
     whos: Vec<Who>,
@@ -59,6 +61,7 @@ pub(super) struct Minds {
     mates: Vec<Mate>,
     smokes: Vec<Smoke>,
     members: [Vec<Member>; 2],
+    shopping: Shopping,
 }
 
 #[derive(SystemParam)]
@@ -154,6 +157,7 @@ fn snapshot(
             armour: health.armour,
             gun: senses::gun_sense(arms, &loaded.weapons, body.motion, recoil),
             character: loaded.book.character(actor.character.as_str()),
+            interact: wish.interact_held,
         });
     }
     whos.sort_by_key(|who| who.slot);
@@ -304,6 +308,8 @@ fn gather(state: &mut Minds, ctx: &Ctx<'_>, who: &Who) {
             position: other.feet,
             health: other.health,
             alive: other.alive,
+            human: other.human,
+            yaw: other.yaw,
         });
     }
 }
@@ -346,12 +352,22 @@ fn think_one(
         smokes: &state.smokes,
         game: games[index],
         order,
+        buy: BuySense {
+            gift_to: state
+                .shopping
+                .gift_to(who.slot as usize)
+                .and_then(|seat| state.whos.iter().find(|w| w.slot as usize == seat))
+                .filter(|w| w.alive)
+                .map(|w| w.feet),
+            device_asked: asked_for_device(state, ctx, &who),
+        },
     };
     let loaded = ctx.loaded;
     let thrower = who
         .character
         .and_then(|character| loaded.specs(character))
-        .map(|specs| Thrower {
+        .zip(ctx.powers)
+        .map(|(specs, powers)| Thrower {
             actor: powers_maths::Actor {
                 id: ActorId(who.slot),
                 team: index,
@@ -366,7 +382,7 @@ fn think_one(
                 },
             },
             specs,
-            surfaces: &loaded.book.throw_surfaces,
+            powers,
         });
     let world = BotWorld {
         arena: ctx.arena,
@@ -395,6 +411,25 @@ fn think_one(
     Some(intent)
 }
 
+fn asked_for_device(state: &Minds, ctx: &Ctx<'_>, carrier: &Who) -> bool {
+    let play = &ctx.loaded.bots.play;
+    if ctx.view.phase != Phase::Buy || senses::carrier(ctx.round) != Some(carrier.slot) {
+        return false;
+    }
+    let chest = (carrier.feet + carrier.eye) * 0.5;
+    let limit = engine::math::cos(play.ask_device_deg.to_radians());
+    state.whos.iter().any(|human| {
+        let to = chest - human.eye;
+        let flat = Vec3::new(to.x, 0.0, to.z).length();
+        human.human
+            && human.alive
+            && human.interact
+            && human.team == carrier.team
+            && flat <= play.ask_device_m
+            && forward(human.yaw, human.pitch).dot(to.normalize_or_zero()) >= limit
+    })
+}
+
 fn equip_of(choice: WeaponChoice) -> Equip {
     match choice {
         WeaponChoice::Primary => Equip::Primary,
@@ -414,7 +449,7 @@ fn cast_of(slot: usize) -> Option<AbilitySlot> {
     .copied()
 }
 
-fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, view: &View<'_>, slot: u32) {
+fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, shopping: &Shopping, slot: u32) {
     let still = intent.gait == BotGait::Still;
     let flat = Vec3::new(intent.wish.x, 0.0, intent.wish.z);
     *wish = Wish {
@@ -435,19 +470,23 @@ fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, view: &View<'_>, 
         fire_held: intent.fire,
         fire_pressed: intent.fire && !fired_before,
         reload: intent.reload,
-        drop: intent.drop_device,
+        drop: intent.drop_device || intent.drop_gun,
+        cycle: 0,
+        ready: false,
         scope: intent.scope,
         equip: if intent.drop_device {
             Some(Equip::Device)
+        } else if intent.drop_gun {
+            Some(equip_of(WeaponChoice::Primary))
         } else {
             intent.switch.map(equip_of)
         },
         interact_held: intent.plant || intent.defuse,
         cast: intent.ability.and_then(|ability| cast_of(ability.slot)),
-        buys: if intent.buy {
-            suggest_buy(view, slot as usize)
-        } else {
-            Vec::new()
+        buys: match intent.buy {
+            Purchase::Nothing => Vec::new(),
+            Purchase::Gift => shopping.requests(slot as usize, true),
+            Purchase::Own => shopping.requests(slot as usize, false),
         },
         buy_menu: false,
         scoreboard: false,
@@ -464,7 +503,7 @@ fn summary(wish: &Wish) -> WishSummary {
     }
 }
 
-fn write(state: &mut Minds, actors: &mut Query<Row<'_>>, view: &View<'_>) {
+fn write(state: &mut Minds, actors: &mut Query<Row<'_>>) {
     state.wishes.clear();
     for (actor, _, _, mut wish, _, _, _, human) in actors.iter_mut() {
         if human {
@@ -474,7 +513,7 @@ fn write(state: &mut Minds, actors: &mut Query<Row<'_>>, view: &View<'_>) {
         match state.intents.iter().find(|(at, _)| *at == actor.slot) {
             Some((_, intent)) => {
                 let before = state.fired.get(slot).copied().unwrap_or(false);
-                apply(&mut wish, intent, before, view, actor.slot);
+                apply(&mut wish, intent, before, &state.shopping, actor.slot);
                 if let Some(fired) = state.fired.get_mut(slot) {
                     *fired = intent.fire;
                 }
@@ -482,6 +521,7 @@ fn write(state: &mut Minds, actors: &mut Query<Row<'_>>, view: &View<'_>) {
                     wish.interact_held = true;
                 }
                 state.drops += u32::from(intent.drop_device);
+                state.gifts += u32::from(intent.drop_gun);
                 state.wishes.push((actor.slot, summary(&wish)));
             }
             None => rest(&mut wish),
@@ -509,6 +549,8 @@ fn record(state: &Minds, minds: &mut BotMinds) {
     }
     minds.squads = [0, 1].map(|team| state.squads[team].as_ref().map(Squad::debug));
     minds.drops = state.drops;
+    minds.gifts = state.gifts;
+    minds.buy_calls = state.shopping.calls.map(|call| call.map(|c| c.key()));
 }
 
 fn gate(facts: &Facts<'_>, has_match: bool) -> Option<String> {
@@ -645,6 +687,26 @@ pub(super) fn think(
     let games = [0, 1].map(|team| senses::match_sense(round, view, places, view.sides[team]));
     let before = facts.paths.counts();
     plan(state, &ctx, &games);
+    let roles = |slot: u32| {
+        state
+            .members
+            .iter()
+            .flatten()
+            .find(|m| m.id == slot)
+            .map_or(Role::Support, |m| m.role)
+    };
+    let counter = Counter {
+        view,
+        powers: ctx.powers,
+        whos: &state.whos,
+        reaches: &state.reaches,
+        roles: &roles,
+        carrier: senses::carrier(round),
+        play: &loaded.bots.play,
+    };
+    let mut shopping = std::mem::take(&mut state.shopping);
+    shopping.refresh(&counter);
+    state.shopping = shopping;
     state.intents.clear();
     for at in 0..state.whos.len() {
         if state.whos[at].human {
@@ -660,7 +722,7 @@ pub(super) fn think(
     for team in 0..2 {
         state.calls[team] = std::mem::take(&mut state.next_calls[team]);
     }
-    write(state, &mut actors, view);
+    write(state, &mut actors);
     record(state, &mut minds);
     minds.problem = unthought(&seats, state);
 }

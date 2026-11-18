@@ -1,6 +1,6 @@
 use engine::prelude::Resource;
 
-use crate::abilities::Event;
+use crate::abilities::{Event, OrbEvent};
 use crate::rules::{AbilitySlot, AbilityUse};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,6 +12,7 @@ pub enum Refusal {
     UnknownCharacter,
     NoCharges,
     UltimateNotReady,
+    OutsideBuyZone,
 }
 
 impl Refusal {
@@ -24,6 +25,7 @@ impl Refusal {
             Refusal::UnknownCharacter => "unknown_character",
             Refusal::NoCharges => "no_charges",
             Refusal::UltimateNotReady => "ultimate_not_ready",
+            Refusal::OutsideBuyZone => "outside_buy_zone",
         }
     }
 }
@@ -73,4 +75,5 @@ pub struct PowerEvents {
     pub refused: Vec<Refused>,
     pub holds: Vec<HoldChange>,
     pub events: Vec<Event>,
+    pub orbs: Vec<OrbEvent>,
 }

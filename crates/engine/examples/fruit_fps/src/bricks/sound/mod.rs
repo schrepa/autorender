@@ -16,14 +16,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::actors::{Actor, Body, Human, Wish};
+use crate::play::arms::Drops;
 use crate::play::events::arms::ArmsEvents;
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
+use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::sound::{Anchor, Cue, SoundCues, SoundLoad, Volume};
 use crate::play::view::Watched;
-use crate::play::world::Arena;
+use crate::play::world::{Arena, Barrier};
 
 use events::Repeaters;
 use spatial::Listener;
@@ -84,6 +86,7 @@ stats! {
         pub loaded: u32,
         pub ready: bool,
         pub waiting: Vec<String>,
+        pub heard: BTreeMap<String, u64>,
         pub door: DoorStats,
     }
 }
@@ -103,6 +106,9 @@ struct Mixdown {
     rng: Option<Rng>,
     last: BTreeMap<String, usize>,
     repeaters: Repeaters,
+    drops_seen: Vec<u32>,
+    was_ready: bool,
+    heard: BTreeMap<String, u64>,
     cues_tick: u32,
     cues: u64,
     started: u64,
@@ -197,6 +203,12 @@ struct Row {
     yaw: f32,
 }
 
+type Scene<'w> = (
+    Option<Res<'w, Barrier>>,
+    Option<Res<'w, Drops>>,
+    Option<Res<'w, Powers>>,
+);
+
 type Feeds<'w> = (
     Option<Res<'w, ArmsEvents>>,
     Option<Res<'w, PowerEvents>>,
@@ -222,6 +234,7 @@ fn mix(
     bank: Res<Bank>,
     arena: Option<Res<Arena>>,
     (arms, powers, round_events, body_events): Feeds<'_>,
+    (barrier, drops, power_state): Scene<'_>,
     round: Option<Res<Round>>,
     watched: Option<Res<Watched>>,
     volume: Res<Volume>,
@@ -258,8 +271,21 @@ fn mix(
     if let Some(arms) = arms.filter(|arms| arms.tick == now) {
         events::arms(&arms, who, table, &mut fresh);
     }
+    let mut stops = Vec::new();
     if let Some(powers) = powers.filter(|powers| powers.tick == now) {
-        events::powers(&powers, who, now, &mut fresh);
+        let heard = events::Heard {
+            human: who,
+            listener: own,
+            now,
+            table,
+            orbs: power_state.as_deref().map_or(&[], Powers::orbs),
+        };
+        events::powers(&powers, &heard, &mut fresh, &mut stops);
+    }
+    for voice in &mut mixdown.voices {
+        if voice.tag.is_some_and(|tag| stops.contains(&tag)) {
+            voice.ends = now;
+        }
     }
     if let Some(round_events) = round_events {
         events::round(
@@ -271,13 +297,41 @@ fn mix(
         );
     }
     if let Some(body_events) = body_events.filter(|events| events.tick == now) {
-        events::bodies(&body_events, own, table, &mut fresh);
+        let slowed = |slot: u32| {
+            power_state
+                .as_deref()
+                .is_some_and(|powers| powers.modifiers(slot).speed < 1.0)
+        };
+        events::bodies(&body_events, own, slowed, table, &mut fresh);
     }
     mixdown.repeaters.tick(now, tps, table, &mut fresh);
     if let Some(view) = round.as_deref().and_then(Round::view)
         && view.phase == crate::rules::Phase::Buy
     {
         events::countdown(view.ticks_left, tps, table, &mut fresh);
+    }
+    let human_ready = round
+        .as_deref()
+        .and_then(Round::view)
+        .zip(who.slot)
+        .is_some_and(|(view, slot)| view.ready(slot as usize));
+    events::ready(&mut mixdown.was_ready, human_ready, &mut fresh);
+    let barrier = barrier.as_deref();
+    if barrier.is_some_and(|barrier| barrier.dropped_tick == Some(now)) {
+        fresh.push(events::cue("barrier.drop", Anchor::Listener, None));
+    }
+    if let Some(drops) = drops.as_deref() {
+        events::drops(
+            drops,
+            &mut mixdown.drops_seen,
+            arena.as_deref(),
+            table,
+            &mut fresh,
+        );
+    }
+    hum(mixdown, barrier, table, now, &mut fresh);
+    for cue in &fresh {
+        *mixdown.heard.entry(cue.event.clone()).or_default() += 1;
     }
     mixdown.cues_tick = u32::try_from(fresh.len()).unwrap_or(u32::MAX);
     mixdown.cues += fresh.len() as u64;
@@ -290,6 +344,9 @@ fn mix(
         listener,
         own,
         volume: volume.clone(),
+        barrier: barrier
+            .filter(|barrier| barrier.up)
+            .and_then(|barrier| events::barrier_point(barrier, listener.eye)),
         eyes: &eyes,
         arena: arena.as_deref(),
         now,
@@ -304,11 +361,36 @@ fn mix(
     mixdown.rng = Some(rng);
 }
 
+fn hum(
+    mixdown: &mut Mixdown,
+    barrier: Option<&Barrier>,
+    table: &Table,
+    now: u64,
+    out: &mut Vec<Cue>,
+) {
+    let humming = barrier.is_some_and(|barrier| barrier.up && !barrier.faces.is_empty());
+    let keep = now + u64::from(table.barrier_keep_ticks);
+    let mut held = false;
+    for voice in &mut mixdown.voices {
+        if voice.anchor == Anchor::Barrier {
+            held = true;
+            voice.ends = if humming { keep } else { now };
+        }
+    }
+    if humming && !held {
+        out.push(Cue {
+            hold_ticks: Some(table.barrier_keep_ticks),
+            ..events::cue("barrier.hum", Anchor::Barrier, None)
+        });
+    }
+}
+
 struct Place<'a> {
     table: &'a Table,
     listener: Listener,
     own: Option<u32>,
     volume: Volume,
+    barrier: Option<Vec3>,
     eyes: &'a BTreeMap<u32, Vec3>,
     arena: Option<&'a Arena>,
     now: u64,
@@ -321,6 +403,7 @@ impl Place<'_> {
             Anchor::Listener => self.listener.eye,
             Anchor::Point(point) => point,
             Anchor::Actor(slot) => self.eyes.get(&slot).copied().unwrap_or(last),
+            Anchor::Barrier => self.barrier.unwrap_or(last),
         }
     }
 
@@ -411,6 +494,15 @@ fn start(
     sounds: &mut Sounds,
 ) {
     let table = place.table;
+    if let (Some(tag), Some(hold)) = (cue.tag, cue.hold_ticks)
+        && let Some(voice) = mixdown
+            .voices
+            .iter_mut()
+            .find(|voice| voice.tag == Some(tag))
+    {
+        voice.ends = place.now + u64::from(hold);
+        return;
+    }
     let Some((name, sound)) = table
         .events
         .get(&cue.event)
@@ -488,6 +580,7 @@ fn start(
         at,
         source: cue.source,
         group: sound.group,
+        tag: cue.tag,
         occlusion,
         looping,
         ends,
@@ -558,6 +651,7 @@ fn report(
         loaded: u32::try_from(loaded).unwrap_or(u32::MAX),
         ready: load.ready,
         waiting,
+        heard: mixdown.heard.clone(),
         door: DoorStats {
             output: door.output.to_owned(),
             voices: door.voices.live,

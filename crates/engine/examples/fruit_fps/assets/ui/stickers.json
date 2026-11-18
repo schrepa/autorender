@@ -1,0 +1,368 @@
+{
+ "image": "stickers.png",
+ "size": [
+  2048,
+  2048
+ ],
+ "color": "full colour, sRGB, straight alpha: draw untinted",
+ "family": "Juice stickers: icons.py drawings at 2x, fill colour + ink outline 5 px + white border 7 px + ink edge 2.5 px",
+ "padding_px": 2,
+ "mips": "cells on even coordinates with a 2 px gap; every sticker keeps 3 px clear inside its cell",
+ "portraits": "char_<fruit> head sticker; char_<fruit>_<attack|defend> on the team disc (palette attack / defend)",
+ "icons": {
+  "ability_bunch": [
+   190,
+   278,
+   232,
+   258
+  ],
+  "ability_citrus_curtain": [
+   238,
+   540,
+   266,
+   246
+  ],
+  "ability_glare": [
+   2,
+   2,
+   272,
+   274
+  ],
+  "ability_jam_pool": [
+   742,
+   1036,
+   262,
+   238
+  ],
+  "ability_juice_flood": [
+   470,
+   1036,
+   270,
+   240
+  ],
+  "ability_made_man": [
+   552,
+   2,
+   170,
+   270
+  ],
+  "ability_melon_drop": [
+   724,
+   2,
+   210,
+   270
+  ],
+  "ability_nightshade": [
+   486,
+   1510,
+   254,
+   198
+  ],
+  "ability_peel": [
+   1166,
+   2,
+   282,
+   264
+  ],
+  "ability_pulp_cloud": [
+   742,
+   1510,
+   254,
+   198
+  ],
+  "ability_rind_wall": [
+   1522,
+   1282,
+   246,
+   206
+  ],
+  "ability_ripe_flash": [
+   878,
+   278,
+   250,
+   250
+  ],
+  "ability_seed_grenade": [
+   684,
+   278,
+   192,
+   254
+  ],
+  "ability_seed_sensor": [
+   2,
+   1718,
+   256,
+   162
+  ],
+  "ability_split": [
+   2,
+   1282,
+   254,
+   226
+  ],
+  "ability_sugar_rush": [
+   506,
+   540,
+   216,
+   246
+  ],
+  "ability_sweet_spot": [
+   1732,
+   1036,
+   254,
+   236
+  ],
+  "ability_thump": [
+   424,
+   278,
+   258,
+   258
+  ],
+  "ability_vine_wire": [
+   1258,
+   1282,
+   262,
+   214
+  ],
+  "ability_zest_bomb": [
+   258,
+   1282,
+   254,
+   224
+  ],
+  "ammo": [
+   514,
+   1282,
+   214,
+   220
+  ],
+  "armor_heavy": [
+   1728,
+   540,
+   208,
+   244
+  ],
+  "armor_light": [
+   936,
+   2,
+   228,
+   266
+  ],
+  "char_banana": [
+   1130,
+   278,
+   160,
+   248
+  ],
+  "char_banana_attack": [
+   2,
+   790,
+   232,
+   244
+  ],
+  "char_banana_defend": [
+   236,
+   790,
+   232,
+   244
+  ],
+  "char_eggplant": [
+   1292,
+   278,
+   204,
+   248
+  ],
+  "char_eggplant_attack": [
+   470,
+   790,
+   232,
+   244
+  ],
+  "char_eggplant_defend": [
+   704,
+   790,
+   232,
+   244
+  ],
+  "char_orange": [
+   1498,
+   278,
+   218,
+   248
+  ],
+  "char_orange_attack": [
+   938,
+   790,
+   232,
+   244
+  ],
+  "char_orange_defend": [
+   1172,
+   790,
+   232,
+   244
+  ],
+  "char_strawberry": [
+   1718,
+   278,
+   256,
+   248
+  ],
+  "char_strawberry_attack": [
+   1406,
+   790,
+   232,
+   244
+  ],
+  "char_strawberry_defend": [
+   1640,
+   790,
+   232,
+   244
+  ],
+  "char_watermelon": [
+   2,
+   540,
+   234,
+   248
+  ],
+  "char_watermelon_attack": [
+   2,
+   1036,
+   232,
+   244
+  ],
+  "char_watermelon_defend": [
+   236,
+   1036,
+   232,
+   244
+  ],
+  "clock": [
+   1690,
+   2,
+   234,
+   260
+  ],
+  "credits": [
+   1006,
+   1036,
+   238,
+   238
+  ],
+  "damage_tip": [
+   1926,
+   2,
+   84,
+   66
+  ],
+  "defuse": [
+   2,
+   278,
+   186,
+   260
+  ],
+  "defuser": [
+   1822,
+   1680,
+   200,
+   246
+  ],
+  "device": [
+   1450,
+   2,
+   238,
+   264
+  ],
+  "device_planted": [
+   1318,
+   1680,
+   246,
+   258
+  ],
+  "headshot": [
+   276,
+   2,
+   274,
+   274
+  ],
+  "health": [
+   724,
+   540,
+   246,
+   246
+  ],
+  "ready": [
+   1566,
+   1680,
+   254,
+   254
+  ],
+  "site_a": [
+   972,
+   540,
+   246,
+   246
+  ],
+  "site_b": [
+   1220,
+   540,
+   246,
+   246
+  ],
+  "skull": [
+   1246,
+   1036,
+   206,
+   238
+  ],
+  "ult_orb": [
+   998,
+   1706,
+   246,
+   244
+  ],
+  "wallshot": [
+   1454,
+   1036,
+   276,
+   238
+  ],
+  "weapon_peeler": [
+   260,
+   1718,
+   502,
+   162
+  ],
+  "weapon_pip": [
+   998,
+   1510,
+   318,
+   194
+  ],
+  "weapon_rind": [
+   730,
+   1282,
+   526,
+   216
+  ],
+  "weapon_stem": [
+   1318,
+   1510,
+   534,
+   168
+  ],
+  "weapon_zest": [
+   2,
+   1510,
+   482,
+   206
+  ],
+  "world_fall": [
+   1468,
+   540,
+   258,
+   246
+  ]
+ }
+}

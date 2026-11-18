@@ -17,10 +17,6 @@ struct RevealCorner {
     let slot = drawn_slot(index);
     let glow = drawn_emission(slot);
     var out: RevealCorner;
-    if dot(glow, glow) == 0.0 {
-        out.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-        return out;
-    }
     let skin = blended(u32(drawn_floats(slot, 0u).x), vertex.joints, vertex.weights);
     let rest = vec4<f32>(vertex.position, 1.0);
     let posed = vec3<f32>(dot(skin.row_0, rest), dot(skin.row_1, rest), dot(skin.row_2, rest));

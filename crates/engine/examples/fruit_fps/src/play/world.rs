@@ -30,6 +30,21 @@ pub struct ZoneBox {
     pub half: Vec3,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarrierFace {
+    pub side: Side,
+    pub corners: [Vec3; 4],
+    pub normal: Vec3,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Barrier {
+    pub faces: Vec<BarrierFace>,
+    pub up: bool,
+    pub dropped_tick: Option<u64>,
+    pub revision: u64,
+}
+
 impl ZoneBox {
     pub fn contains(&self, point: Vec3) -> bool {
         let local = self.rotation.inverse() * (point - self.centre);
@@ -43,6 +58,8 @@ pub struct Markers {
     pub defend: Vec<Spawn>,
     pub zones: Vec<ZoneBox>,
     pub kinds: Vec<(Kind, String)>,
+    pub floor_half_size: Option<f32>,
+    pub unknown_kinds: Vec<String>,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -86,6 +103,18 @@ impl Arena {
 
     pub fn solids_mut(&mut self) -> &mut Solids {
         &mut self.solids
+    }
+
+    pub fn unknown_kinds(&self) -> &[String] {
+        &self.markers.unknown_kinds
+    }
+
+    pub fn zones(&self) -> &[ZoneBox] {
+        &self.markers.zones
+    }
+
+    pub fn floor_half_size(&self) -> Option<f32> {
+        self.markers.floor_half_size
     }
 
     pub fn kind_name(&self, kind: Kind) -> Option<&str> {

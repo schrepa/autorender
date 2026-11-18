@@ -2,8 +2,8 @@ use engine::prelude::{Component, Resource};
 use glam::Vec3;
 
 use crate::abilities::{
-    self, AbilityId, AbilitySpec, ActorId, Aim, Danger, Drawable, EffectId, Effects, Modifiers,
-    Preview, WorldHit,
+    self, AbilityId, AbilitySpec, ActorId, Aim, Danger, Drawable, Effects, Modifiers, Orb,
+    OrbState, Orbs, Preview, WorldHit,
 };
 use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, Team};
@@ -34,6 +34,7 @@ pub struct PowerActor {
     pub revealed_to: [bool; 2],
     pub slots: [SlotView; 4],
     pub held: Option<AbilitySlot>,
+    pub weapon_down_until: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,20 +46,15 @@ pub struct Held {
     pub preview: Option<Preview>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EffectHit {
-    pub effect: EffectId,
-    pub shooter: u32,
-    pub damage: f32,
-}
-
 #[derive(Resource, Clone, Debug)]
 pub struct Powers {
     pub effects: Effects,
     pub actors: Vec<PowerActor>,
-    pub struck: Vec<EffectHit>,
     pub held: Vec<Held>,
     pub surfaces: Vec<(Kind, f32)>,
+    pub recovering: Vec<(u32, u64)>,
+    pub bodies: Vec<abilities::Actor>,
+    pub orbs: Orbs,
 }
 
 pub fn bounce_of(surfaces: &[(Kind, f32)], kind: Kind) -> f32 {
@@ -113,9 +109,11 @@ impl Default for Powers {
         Powers {
             effects: Effects::new(SOLID_ID_BASE),
             actors: Vec::new(),
-            struck: Vec::new(),
             held: Vec::new(),
             surfaces: Vec::new(),
+            recovering: Vec::new(),
+            bodies: Vec::new(),
+            orbs: Orbs::default(),
         }
     }
 }
@@ -126,7 +124,10 @@ impl Powers {
     }
 
     pub fn actor(&self, slot: u32) -> Option<&PowerActor> {
-        self.actors.iter().find(|actor| actor.slot == slot)
+        self.actors
+            .binary_search_by_key(&slot, |actor| actor.slot)
+            .ok()
+            .map(|index| &self.actors[index])
     }
 
     pub fn landing(
@@ -140,11 +141,49 @@ impl Powers {
             arena,
             surfaces: &self.surfaces,
         };
-        abilities::preview(&view, caster, spec, aim)
+        abilities::preview(&view, caster, spec, aim, &self.bodies)
+    }
+
+    pub fn orbs(&self) -> &[Orb] {
+        &self.orbs.orbs
+    }
+
+    pub fn orb_in_reach(&self, slot: u32) -> Option<usize> {
+        let body = &self.bodies[self
+            .bodies
+            .binary_search_by_key(&slot, |body| body.id.0)
+            .ok()?];
+        let reach = self.orbs.rules?.reach_m;
+        self.orbs
+            .orbs
+            .iter()
+            .position(|orb| orb.state == OrbState::Waiting && body.distance_to(orb.at) <= reach)
+    }
+
+    pub fn orb_progress(&self, slot: u32, tick: u64) -> Option<(usize, f32)> {
+        self.orbs.progress(ActorId(slot), tick)
+    }
+
+    pub fn weapon_down_until(&self, slot: u32) -> Option<u64> {
+        self.recovering
+            .binary_search_by_key(&slot, |(held, _)| *held)
+            .ok()
+            .map(|index| self.recovering[index].1)
+    }
+
+    pub fn weapon_down(&self, slot: u32, tick: u64) -> bool {
+        self.held(slot).is_some()
+            || self
+                .weapon_down_until(slot)
+                .is_some_and(|until| tick < until)
+            || self.orbs.progress(ActorId(slot), tick).is_some()
     }
 
     pub fn held(&self, slot: u32) -> Option<&Held> {
-        self.held.iter().find(|held| held.slot == slot)
+        self.held
+            .binary_search_by_key(&slot, |held| held.slot)
+            .ok()
+            .map(|index| &self.held[index])
     }
 
     pub fn previews(&self) -> Vec<&Preview> {
@@ -156,6 +195,10 @@ impl Powers {
 
     pub fn blindness(&self, slot: u32) -> f32 {
         self.effects.blindness(ActorId(slot))
+    }
+
+    pub fn blindness_at(&self, slot: u32, tick: f64) -> f32 {
+        self.effects.blindness_at(ActorId(slot), tick)
     }
 
     pub fn sight_limit(&self, slot: u32) -> Option<f32> {

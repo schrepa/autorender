@@ -60,7 +60,7 @@ pub struct LoadoutView<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Loadout {
     pub primary: Option<Gun>,
-    pub sidearm: Gun,
+    pub sidearm: Option<Gun>,
     pub active: Slot,
     melee_wait: u32,
     melee_total: u32,
@@ -79,7 +79,7 @@ impl Loadout {
     ) -> Self {
         let mut loadout = Self {
             primary: primary.map(|kind| Gun::new(kind, numbers)),
-            sidearm: Gun::new(GunKind::Sidearm, numbers),
+            sidearm: Some(Gun::new(GunKind::Sidearm, numbers)),
             active: Slot::Sidearm,
             melee_wait: 0,
             melee_total: 0,
@@ -104,7 +104,7 @@ impl Loadout {
     pub fn active_gun(&self) -> Option<&Gun> {
         match self.active {
             Slot::Primary => self.primary.as_ref(),
-            Slot::Sidearm => Some(&self.sidearm),
+            Slot::Sidearm => self.sidearm.as_ref(),
             Slot::Melee => None,
         }
     }
@@ -158,6 +158,25 @@ impl Loadout {
         self.switch(numbers, self.active, ticks_per_second);
     }
 
+    pub fn holds(&self, slot: Slot) -> bool {
+        match slot {
+            Slot::Primary => self.primary.is_some(),
+            Slot::Sidearm => self.sidearm.is_some(),
+            Slot::Melee => true,
+        }
+    }
+
+    pub fn cycled(&self, step: i32) -> Option<Slot> {
+        let order: Vec<Slot> = [Slot::Primary, Slot::Sidearm, Slot::Melee]
+            .into_iter()
+            .filter(|slot| self.holds(*slot))
+            .collect();
+        let at = order.iter().position(|slot| *slot == self.active)?;
+        let count = order.len() as i64;
+        let next = (at as i64 + i64::from(step)).rem_euclid(count) as usize;
+        order.get(next).copied().filter(|slot| *slot != self.active)
+    }
+
     pub fn view_zoom(&self, numbers: &WeaponNumbers) -> f32 {
         self.active_gun().map_or(1.0, |gun| gun.view_zoom(numbers))
     }
@@ -204,7 +223,7 @@ impl Loadout {
 
     pub fn give(&mut self, numbers: &WeaponNumbers, kind: GunKind, ticks_per_second: u32) {
         let slot = if kind == GunKind::Sidearm {
-            self.sidearm = Gun::new(kind, numbers);
+            self.sidearm = Some(Gun::new(kind, numbers));
             Slot::Sidearm
         } else {
             self.primary = Some(Gun::new(kind, numbers));
@@ -228,7 +247,7 @@ impl Loadout {
         let mut out = LoadoutTick::default();
         if let Some(slot) = input.switch_to
             && slot != self.active
-            && (slot != Slot::Primary || self.primary.is_some())
+            && self.holds(slot)
         {
             self.switch(numbers, slot, ticks_per_second);
             out.switched = true;
@@ -245,7 +264,7 @@ impl Loadout {
         let mut kick = Kick::default();
         for (slot, gun) in [
             (Slot::Primary, self.primary.as_mut()),
-            (Slot::Sidearm, Some(&mut self.sidearm)),
+            (Slot::Sidearm, self.sidearm.as_mut()),
         ] {
             let Some(gun) = gun else {
                 continue;
@@ -307,17 +326,37 @@ impl Loadout {
 
     pub fn drop_primary(&mut self, numbers: &WeaponNumbers, ticks_per_second: u32) -> Option<Gun> {
         let dropped = self.primary.take()?;
-        if self.active == Slot::Primary {
-            self.switch(numbers, Slot::Sidearm, ticks_per_second);
-        }
+        self.fall_back(numbers, Slot::Primary, ticks_per_second);
+        Some(dropped)
+    }
+
+    pub fn take_sidearm(&mut self, numbers: &WeaponNumbers, ticks_per_second: u32) -> Option<Gun> {
+        let dropped = self.sidearm.take()?;
+        self.fall_back(numbers, Slot::Sidearm, ticks_per_second);
         Some(dropped)
     }
 
     pub fn drop_active(&mut self, numbers: &WeaponNumbers, ticks_per_second: u32) -> Option<Gun> {
-        if self.active != Slot::Primary {
-            return None;
+        match self.active {
+            Slot::Primary => self.drop_primary(numbers, ticks_per_second),
+            Slot::Sidearm => self.take_sidearm(numbers, ticks_per_second),
+            Slot::Melee => None,
         }
-        self.drop_primary(numbers, ticks_per_second)
+    }
+
+    pub fn drop_on_death(&mut self) -> Option<Gun> {
+        self.primary.take().or_else(|| self.sidearm.take())
+    }
+
+    fn fall_back(&mut self, numbers: &WeaponNumbers, lost: Slot, ticks_per_second: u32) {
+        if self.active != lost {
+            return;
+        }
+        let next = [Slot::Primary, Slot::Sidearm, Slot::Melee]
+            .into_iter()
+            .find(|slot| self.holds(*slot))
+            .unwrap_or(Slot::Melee);
+        self.switch(numbers, next, ticks_per_second);
     }
 
     pub fn pick_up(
@@ -327,10 +366,7 @@ impl Loadout {
         ticks_per_second: u32,
     ) -> Option<Gun> {
         let (slot, held) = if gun.kind() == GunKind::Sidearm {
-            (
-                Slot::Sidearm,
-                Some(std::mem::replace(&mut self.sidearm, gun)),
-            )
+            (Slot::Sidearm, self.sidearm.replace(gun))
         } else {
             (Slot::Primary, self.primary.replace(gun))
         };
@@ -342,7 +378,9 @@ impl Loadout {
         if let Some(gun) = self.primary.as_mut() {
             gun.put_away();
         }
-        self.sidearm.put_away();
+        if let Some(gun) = self.sidearm.as_mut() {
+            gun.put_away();
+        }
         self.active = slot;
         self.melee_armed = false;
         match slot {
@@ -351,7 +389,11 @@ impl Loadout {
                     gun.take_out(numbers, ticks_per_second);
                 }
             }
-            Slot::Sidearm => self.sidearm.take_out(numbers, ticks_per_second),
+            Slot::Sidearm => {
+                if let Some(gun) = self.sidearm.as_mut() {
+                    gun.take_out(numbers, ticks_per_second);
+                }
+            }
             Slot::Melee => {
                 self.melee_wait = ticks(numbers.melee.equip_seconds, ticks_per_second);
                 self.melee_total = self.melee_wait;
@@ -361,7 +403,7 @@ impl Loadout {
     }
 
     fn guns(&self) -> impl Iterator<Item = &Gun> {
-        self.primary.iter().chain(std::iter::once(&self.sidearm))
+        self.primary.iter().chain(self.sidearm.iter())
     }
 }
 

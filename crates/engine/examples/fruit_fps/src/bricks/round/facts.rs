@@ -242,7 +242,7 @@ fn input_of(
             Some(Holding {
                 player,
                 primary: weapon_id(catalog, held.loadout.primary.as_ref()),
-                sidearm: weapon_id(catalog, Some(&held.loadout.sidearm)),
+                sidearm: weapon_id(catalog, held.loadout.sidearm.as_ref()),
             })
         })
         .collect();
@@ -319,9 +319,20 @@ pub(super) fn advance(
         start.device_reach_m,
         &actors,
     );
+    let readied: Vec<usize> = (round.seats.iter().enumerate())
+        .filter(|(_, seat)| {
+            seat.entity
+                .and_then(|entity| actors.get(entity).ok())
+                .is_some_and(|row| row.3.ready)
+        })
+        .map(|(slot, _)| slot)
+        .collect();
     let Some(game) = round.game.as_mut() else {
         return;
     };
+    for slot in readied {
+        game.mark_ready(slot);
+    }
     let events = game.tick(&input);
     let Some(view) = round.view() else {
         return;

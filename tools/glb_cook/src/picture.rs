@@ -29,6 +29,16 @@ fn read(path: &Path, file: &str) -> Result<Image, Fault> {
 pub fn run(picture: &PictureEntry, path: &Path) -> Report {
     let mut report = Report::default();
     let file = path.display().to_string();
+    if picture.optional && !path.is_file() {
+        report.counts.insert(
+            "left_out",
+            json!(format!(
+                "{file} is not there; scene parts that need `{}` are left out",
+                picture.name
+            )),
+        );
+        return report;
+    }
     let image = match read(path, &file) {
         Ok(image) => image,
         Err(fault) => {

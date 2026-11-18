@@ -68,6 +68,17 @@ fn flash_corner(item: EffectItem, unit: vec2<f32>, fade: f32) -> GlowCorner {
     return out;
 }
 
+fn halo_corner(item: EffectItem, unit: vec2<f32>) -> GlowCorner {
+    let size = item.p2.w;
+    let toward = stable_normalize(camera.position.xyz - item.p0.xyz);
+    var out: GlowCorner;
+    out.clip = view_clip(billboard(item.p0.xyz + toward * size, size, 0.0, unit));
+    out.unit = unit;
+    out.color = vec4<f32>(item.p2.rgb, 0.0);
+    out.shape = vec4<f32>(GLOW_ROUND, 0.0, 0.0, 0.0);
+    return out;
+}
+
 fn spray_corner(item: EffectItem, sprite: u32, unit: vec2<f32>, fade: f32) -> GlowCorner {
     let seed = u32(item.p3.y) + sprite * 7919u;
     let age = item.p0.w;
@@ -109,6 +120,9 @@ fn spray_corner(item: EffectItem, sprite: u32, unit: vec2<f32>, fade: f32) -> Gl
     }
     if kind == 1u {
         return flash_corner(item, unit, fade);
+    }
+    if kind == 3u {
+        return halo_corner(item, unit);
     }
     return spray_corner(item, sprite, unit, fade);
 }

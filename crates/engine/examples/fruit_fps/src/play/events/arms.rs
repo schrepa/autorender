@@ -2,7 +2,7 @@ use engine::prelude::Resource;
 use glam::Vec3;
 
 use crate::rules::{AbilitySlot, Catalog, Cause, Death};
-use crate::solids::{Kind, Surface};
+use crate::solids::Kind;
 use crate::weapons::{BodyPart, GunKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl Weapon {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Target {
     Nothing,
-    World { surface: Surface },
+    World,
     Actor { slot: u32, part: BodyPart },
 }
 
@@ -41,6 +41,7 @@ pub struct ShotEvent {
     pub pierced: Option<Vec3>,
     pub pierced_kind: Option<Kind>,
     pub kind: Option<Kind>,
+    pub heavy: bool,
     pub target: Target,
 }
 

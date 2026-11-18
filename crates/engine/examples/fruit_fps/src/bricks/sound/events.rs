@@ -1,22 +1,26 @@
+use engine::math;
 use glam::Vec3;
 
-use crate::abilities::{CueKind, Event as PowerEvent, Slot};
+use crate::abilities::{ActorId, CueKind, Event as PowerEvent, Orb, OrbEvent, Slot};
+use crate::play::arms::Drops;
 use crate::play::events::arms::{ArmsEvents, Handling, Weapon};
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::sound::{Anchor, Cue};
+use crate::play::world::{Arena, Barrier};
 use crate::rules::{CreditReason, Event, Phase, Team};
 use crate::weapons::BodyPart;
 
 use super::table::Table;
 
-fn cue(event: impl Into<String>, anchor: Anchor, source: Option<u32>) -> Cue {
+pub(super) fn cue(event: impl Into<String>, anchor: Anchor, source: Option<u32>) -> Cue {
     Cue {
         event: event.into(),
         anchor,
         source,
         gain: 1.0,
         hold_ticks: None,
+        tag: None,
     }
 }
 
@@ -38,8 +42,9 @@ impl Human {
 
 pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut Vec<Cue>) {
     for shot in &events.shots {
+        let weight = if shot.heavy { "_heavy" } else { "" };
         out.push(cue(
-            format!("shot.{}", shot.weapon.key()),
+            format!("shot.{}{weight}", shot.weapon.key()),
             Anchor::Actor(shot.shooter),
             Some(shot.shooter),
         ));
@@ -54,7 +59,12 @@ pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut V
         }
     }
     for hit in &events.hits {
+        let heavy = events
+            .shots
+            .iter()
+            .any(|shot| shot.heavy && shot.shooter == hit.shooter);
         let event = match (hit.weapon, hit.part) {
+            (Weapon::Melee, _) if heavy => "hit.melee_heavy",
             (Weapon::Melee, _) => "hit.melee",
             (Weapon::Gun(_), BodyPart::Head) => "hit.head",
             (Weapon::Gun(_), BodyPart::Body) => "hit.body",
@@ -62,7 +72,14 @@ pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut V
         };
         out.push(cue(event, Anchor::Actor(hit.victim), Some(hit.shooter)));
     }
+    let mut equipped: Vec<u32> = Vec::new();
     for handling in &events.handling {
+        if handling.kind == Handling::Equip {
+            if equipped.contains(&handling.slot) {
+                continue;
+            }
+            equipped.push(handling.slot);
+        }
         let key = handling.weapon.key();
         let here = (Anchor::Actor(handling.slot), Some(handling.slot));
         let names: &[&str] = match handling.kind {
@@ -257,12 +274,13 @@ pub(super) fn round(
 pub(super) fn bodies(
     events: &BodyEvents,
     listener: Option<u32>,
+    slowed: impl Fn(u32) -> bool,
     table: &Table,
     out: &mut Vec<Cue>,
 ) {
     for step in &events.footsteps {
         let own = listener == Some(step.slot);
-        if !step.loud && !own {
+        if (!step.loud && !own) || slowed(step.slot) {
             continue;
         }
         let mut heard = cue(
@@ -303,6 +321,7 @@ fn cue_name(kind: CueKind, slot: Slot) -> &'static str {
         CueKind::Cast => "power.cast",
         CueKind::Throw => "power.throw",
         CueKind::Bounce => "power.bounce",
+        CueKind::BounceBody => "power.bounce_body",
         CueKind::FlashBurst => "power.flash_burst",
         CueKind::Explosion => "power.explosion",
         CueKind::SmokeBurst => "power.smoke_burst",
@@ -312,6 +331,7 @@ fn cue_name(kind: CueKind, slot: Slot) -> &'static str {
         CueKind::TrapPlaced => "power.trap_placed",
         CueKind::TrapArmed => "power.trap_armed",
         CueKind::TrapTriggered => "power.trap_triggered",
+        CueKind::WireZap => "power.wire_zap",
         CueKind::SensorPlaced => "power.sensor_placed",
         CueKind::Destroyed => "power.destroyed",
         CueKind::StrikeWarning => "power.strike_warning",
@@ -332,9 +352,69 @@ fn held(event: &'static str, anchor: Anchor, source: Option<u32>, ticks: u64) ->
     }
 }
 
-pub(super) fn powers(events: &PowerEvents, human: Human, now: u64, out: &mut Vec<Cue>) {
+pub(super) struct Heard<'a> {
+    pub human: Human,
+    pub listener: Option<u32>,
+    pub now: u64,
+    pub table: &'a Table,
+    pub orbs: &'a [Orb],
+}
+
+fn reveal_tag(actor: ActorId, team: usize) -> u64 {
+    (1 << 62) | ((team as u64) << 32) | u64::from(actor.0)
+}
+
+fn orb_tag(orb: usize, actor: ActorId) -> u64 {
+    (1 << 63) | ((orb as u64) << 32) | u64::from(actor.0)
+}
+
+fn orbs(events: &PowerEvents, heard: &Heard<'_>, out: &mut Vec<Cue>, stops: &mut Vec<u64>) {
+    for event in &events.orbs {
+        let (orb, actor, taken) = match event {
+            OrbEvent::Started { orb, actor } => {
+                if let Some(at) = heard.orbs.get(*orb).map(|orb| orb.at) {
+                    out.push(Cue {
+                        hold_ticks: Some(heard.table.orb_hold_ticks),
+                        tag: Some(orb_tag(*orb, *actor)),
+                        ..cue("orb.channel", Anchor::Point(at), Some(actor.0))
+                    });
+                }
+                continue;
+            }
+            OrbEvent::Stopped { orb, actor, .. } => (*orb, *actor, false),
+            OrbEvent::Taken { orb, actor } => (*orb, *actor, true),
+            OrbEvent::Vanished { .. } | OrbEvent::Restored { .. } => continue,
+        };
+        stops.push(orb_tag(orb, actor));
+        if let (true, Some(at)) = (taken, heard.orbs.get(orb).map(|orb| orb.at)) {
+            out.push(cue("orb.pickup", Anchor::Point(at), Some(actor.0)));
+        }
+    }
+}
+
+pub(super) fn powers(
+    events: &PowerEvents,
+    heard: &Heard<'_>,
+    out: &mut Vec<Cue>,
+    stops: &mut Vec<u64>,
+) {
+    let (human, now) = (heard.human, heard.now);
+    orbs(events, heard, out, stops);
     for event in &events.events {
         match event {
+            PowerEvent::Cue {
+                cue: CueKind::Destroyed,
+                at,
+                size,
+                ..
+            } => {
+                let event = if *size >= heard.table.break_large_m {
+                    "power.destroyed.large"
+                } else {
+                    "power.destroyed.small"
+                };
+                out.push(cue(event, Anchor::Point(*at), None));
+            }
             PowerEvent::Cue {
                 cue: kind,
                 ability,
@@ -353,6 +433,7 @@ pub(super) fn powers(events: &PowerEvents, human: Human, now: u64, out: &mut Vec
                     CueKind::Cast
                     | CueKind::Throw
                     | CueKind::Bounce
+                    | CueKind::BounceBody
                     | CueKind::FlashBurst
                     | CueKind::Explosion
                     | CueKind::SmokeBurst
@@ -361,6 +442,7 @@ pub(super) fn powers(events: &PowerEvents, human: Human, now: u64, out: &mut Vec
                     | CueKind::TrapPlaced
                     | CueKind::TrapArmed
                     | CueKind::TrapTriggered
+                    | CueKind::WireZap
                     | CueKind::SensorPlaced
                     | CueKind::Destroyed
                     | CueKind::StrikeWarning
@@ -376,6 +458,25 @@ pub(super) fn powers(events: &PowerEvents, human: Human, now: u64, out: &mut Vec
                 let hold = until.saturating_sub(now);
                 out.push(held("power.blinded", Anchor::Listener, Some(actor.0), hold));
             }
+            PowerEvent::RevealStarted {
+                actor, team, until, ..
+            } if heard.listener == Some(actor.0) => {
+                out.push(Cue {
+                    tag: Some(reveal_tag(*actor, *team)),
+                    ..held(
+                        "status.revealed",
+                        Anchor::Listener,
+                        Some(actor.0),
+                        until.saturating_sub(now),
+                    )
+                });
+            }
+            PowerEvent::RevealEnded { actor, team } => stops.push(reveal_tag(*actor, *team)),
+            PowerEvent::Destroyed { team, .. }
+                if human.team.is_some_and(|own| own.index() == *team) =>
+            {
+                out.push(cue("power.destroyed.own", Anchor::Listener, None));
+            }
             PowerEvent::Damage { .. }
             | PowerEvent::Heal { .. }
             | PowerEvent::Shield { .. }
@@ -383,7 +484,6 @@ pub(super) fn powers(events: &PowerEvents, human: Human, now: u64, out: &mut Vec
             | PowerEvent::BuffEnded { .. }
             | PowerEvent::Blinded { .. }
             | PowerEvent::RevealStarted { .. }
-            | PowerEvent::RevealEnded { .. }
             | PowerEvent::Moved { .. }
             | PowerEvent::SolidAdded { .. }
             | PowerEvent::SolidRemoved { .. }
@@ -395,4 +495,58 @@ pub(super) fn powers(events: &PowerEvents, human: Human, now: u64, out: &mut Vec
             | PowerEvent::Ended { .. } => {}
         }
     }
+}
+
+pub(super) fn ready(was: &mut bool, now: bool, out: &mut Vec<Cue>) {
+    if now && !*was {
+        out.push(cue("ui.ready", Anchor::Listener, None));
+    }
+    *was = now;
+}
+
+pub(super) fn barrier_point(barrier: &Barrier, eye: Vec3) -> Option<Vec3> {
+    barrier
+        .faces
+        .iter()
+        .map(|face| {
+            let [origin, along, _, up] = face.corners;
+            let (u, v) = (along - origin, up - origin);
+            let offset = eye - origin;
+            let s = math::clamp(
+                offset.dot(u) / math::max(u.length_squared(), f32::EPSILON),
+                0.0,
+                1.0,
+            );
+            let t = math::clamp(
+                offset.dot(v) / math::max(v.length_squared(), f32::EPSILON),
+                0.0,
+                1.0,
+            );
+            origin + u * s + v * t
+        })
+        .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+}
+
+pub(super) fn drops(
+    drops: &Drops,
+    seen: &mut Vec<u32>,
+    arena: Option<&Arena>,
+    table: &Table,
+    out: &mut Vec<Cue>,
+) {
+    for item in &drops.items {
+        if seen.contains(&item.id) {
+            continue;
+        }
+        let lift = Vec3::new(0.0, table.drop_probe_m, 0.0);
+        let kind = arena
+            .and_then(|arena| arena.ground_under(item.position + lift, table.drop_probe_m * 2.0))
+            .map_or(table.default_kind.as_str(), |hit| table.kind(hit.kind));
+        out.push(cue(
+            format!("drop.{kind}"),
+            Anchor::Point(item.position),
+            None,
+        ));
+    }
+    *seen = drops.items.iter().map(|item| item.id).collect();
 }

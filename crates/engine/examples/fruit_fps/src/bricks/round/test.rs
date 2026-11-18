@@ -40,6 +40,7 @@ settings! {
     pub struct MatchTest {
         pub credits: Option<Credits> = None => any,
         pub end_round: Option<EndRound> = None => any,
+        pub ready: Option<u32> = None => any,
     }
 }
 
@@ -52,6 +53,9 @@ pub(super) fn door(test: Res<MatchTest>, mut round: ResMut<Round>) {
     };
     if let Some(credits) = test.credits {
         game.grant_credits(credits.slot as usize, credits.amount);
+    }
+    if let Some(slot) = test.ready {
+        game.mark_ready(slot as usize);
     }
     if let Some(end) = test.end_round {
         let side = match end.winner {

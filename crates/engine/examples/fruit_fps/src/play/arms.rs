@@ -54,6 +54,7 @@ pub struct Arms {
     pub device_out: bool,
     pub device_equip_left: u32,
     pub busy: bool,
+    pub weapon_down: bool,
 }
 
 impl Arms {
@@ -82,6 +83,7 @@ impl Arms {
             device_out: false,
             device_equip_left: 0,
             busy: false,
+            weapon_down: false,
         }
     }
 
@@ -97,6 +99,8 @@ impl Arms {
 pub struct Dropped {
     pub id: u32,
     pub position: Vec3,
+    pub thrown_from: Option<Vec3>,
+    pub by: Option<u32>,
     pub weapon: GunKind,
     pub magazine: u32,
     pub reserve: u32,
@@ -110,11 +114,27 @@ pub struct Drops {
 
 impl Drops {
     pub fn push(&mut self, position: Vec3, gun: &Gun) -> u32 {
+        self.put(position, None, None, gun)
+    }
+
+    pub fn throw(&mut self, (from, by): (Vec3, u32), to: Vec3, gun: &Gun) -> u32 {
+        self.put(to, Some(from), Some(by), gun)
+    }
+
+    fn put(
+        &mut self,
+        position: Vec3,
+        thrown_from: Option<Vec3>,
+        by: Option<u32>,
+        gun: &Gun,
+    ) -> u32 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         self.items.push(Dropped {
             id,
             position,
+            thrown_from,
+            by,
             weapon: gun.kind(),
             magazine: gun.magazine(),
             reserve: gun.reserve(),

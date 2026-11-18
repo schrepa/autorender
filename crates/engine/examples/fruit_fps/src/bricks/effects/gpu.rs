@@ -8,11 +8,13 @@ use engine_render::{
 };
 
 use super::assemble::BOX_VERTICES;
-use super::shaders::effects::{field, glow, items, screen, solid, volume};
+use super::shaders::effects::{barrier, field, glow, items, screen, solid, volume};
 use super::{EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
 use crate::names::{COLOR, COLOR_PASS, DEPTH};
 
 const FULLSCREEN_VERTICES: u32 = 3;
+
+const QUAD_VERTICES: u32 = 6;
 
 const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
     width: 1,
@@ -23,6 +25,7 @@ const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
 pub(super) struct EffectsGpu {
     glow: Pipeline<Self, Scene>,
     solid: Pipeline<Self, Scene>,
+    barrier: Pipeline<Self, Scene>,
     smoke: Pipeline<Self, Own>,
     marks: Pipeline<Self, Own>,
     screen: Pipeline<Self, Own>,
@@ -38,6 +41,7 @@ pub(super) struct EffectsGpu {
     device_range: Range<u32>,
     smoke_range: Range<u32>,
     marks_range: Range<u32>,
+    barrier_range: Range<u32>,
     glow_vertices: u32,
     screened: bool,
     own: bool,
@@ -69,6 +73,11 @@ fn description<'a>(
         constants: &[],
         per_batch: PerBatch::NONE,
     }
+}
+
+fn back_faces(mut pipeline: RenderPipeline<'_>) -> RenderPipeline<'_> {
+    pipeline.primitive.cull_mode = Some(wgpu::Face::Front);
+    pipeline
 }
 
 fn tested(write: bool) -> DepthUse {
@@ -142,6 +151,13 @@ impl GpuPart for EffectsGpu {
             &description(entries[0], entries[1], tested(true), &opaque),
             &list,
         )?;
+        let entries = [barrier::VS_BARRIER, barrier::FS_BARRIER];
+        let list = bound(cx, entries, buffers);
+        let barrier = cx.render_pipeline(
+            scene,
+            &description(entries[0], entries[1], tested(false), &over),
+            &list,
+        )?;
         let pass = cx
             .pass(EFFECTS_PASS)
             .label("fruit_fps/effects")
@@ -153,14 +169,14 @@ impl GpuPart for EffectsGpu {
         let list = bound(cx, entries, buffers);
         let smoke = cx.render_pipeline(
             pass,
-            &description(entries[0], entries[1], DepthUse::None, &over),
+            &back_faces(description(entries[0], entries[1], DepthUse::None, &over)),
             &list,
         )?;
         let entries = [volume::VS_VOLUME, volume::FS_MARKS];
         let list = bound(cx, entries, buffers);
         let marks = cx.render_pipeline(
             pass,
-            &description(entries[0], entries[1], DepthUse::None, &over),
+            &back_faces(description(entries[0], entries[1], DepthUse::None, &over)),
             &list,
         )?;
         let entries = [FULLSCREEN, screen::FS_SCREEN];
@@ -173,6 +189,7 @@ impl GpuPart for EffectsGpu {
         Ok(Self {
             glow,
             solid,
+            barrier,
             smoke,
             marks,
             screen,
@@ -188,6 +205,7 @@ impl GpuPart for EffectsGpu {
             device_range: 0..0,
             smoke_range: 0..0,
             marks_range: 0..0,
+            barrier_range: 0..0,
             glow_vertices: 0,
             screened: false,
             own: false,
@@ -219,6 +237,7 @@ impl GpuPart for EffectsGpu {
         self.device_range = drawing.device.clone();
         self.smoke_range = drawing.smoke.clone();
         self.marks_range = drawing.marks.clone();
+        self.barrier_range = drawing.barrier.clone();
         self.glow_vertices = drawing.glow_vertices;
         self.screened = drawing.screen;
         self.own = drawing.own_pass();
@@ -292,6 +311,9 @@ impl EffectsGpu {
         }
         if !self.glow_range.is_empty() {
             draw.draw(&self.glow, pulled(self.glow_vertices, &self.glow_range));
+        }
+        if !self.barrier_range.is_empty() {
+            draw.draw(&self.barrier, pulled(QUAD_VERTICES, &self.barrier_range));
         }
     }
 

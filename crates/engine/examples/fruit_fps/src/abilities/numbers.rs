@@ -95,6 +95,7 @@ pub struct Throw {
     pub bounce_keep: f32,
     pub fuse_ticks: Option<u32>,
     pub max_travel_m: Option<f32>,
+    pub body_bounce: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -181,6 +182,15 @@ pub struct TrapSpec {
     pub slow: f32,
     pub slow_ticks: u32,
     pub reveal_ticks: Option<u32>,
+    pub chain: Option<Chain>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Chain {
+    pub windup_ticks: u32,
+    pub leash_m: f32,
+    pub slow: f32,
+    pub zap_damage: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -243,6 +253,9 @@ pub struct AbilitySpec {
     pub prop: Option<String>,
     pub solid_kind: Option<String>,
     pub drop: Option<DropSpec>,
+    pub recover_ticks: u32,
+    pub object_damage: f32,
+    pub enemy_visibility: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -287,19 +300,27 @@ impl AbilityBook {
         let rate = Rate(ticks_per_second);
         let mut characters = Vec::with_capacity(root.characters.len());
         for (character, (key, raw)) in root.characters.into_iter().enumerate() {
+            let recover = root.ability_handling.recover_seconds;
             let read = |slot: Slot, value: &Value| {
-                spec(AbilityId { character, slot }, value, rate).map_err(|message| AbilityError {
-                    character: key.clone(),
-                    slot: Some(slot),
-                    message,
+                spec(AbilityId { character, slot }, value, (rate, recover)).map_err(|message| {
+                    AbilityError {
+                        character: key.clone(),
+                        slot: Some(slot),
+                        message,
+                    }
                 })
             };
-            let abilities = [
+            let mut abilities = [
                 read(Slot::C, &raw.c)?,
                 read(Slot::Q, &raw.q)?,
                 read(Slot::E, &raw.e)?,
                 read(Slot::X, &raw.x)?,
             ];
+            for ability in &mut abilities {
+                if let Delivery::Throw(throw) = &mut ability.delivery {
+                    throw.body_bounce = root.thrown_into_bodies.bounce;
+                }
+            }
             characters.push(CharacterAbilities {
                 key,
                 name: raw.name,
@@ -334,6 +355,22 @@ struct Root {
     characters: BTreeMap<String, RawCharacter>,
     #[serde(default)]
     throw_surfaces: BTreeMap<String, RawThrowSurface>,
+    thrown_into_bodies: RawThrowSurface,
+    ability_handling: RawHandling,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawHandling {
+    recover_seconds: RawRecover,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRecover {
+    throw: f32,
+    place: f32,
+    caster: f32,
 }
 
 #[derive(Deserialize)]
@@ -407,6 +444,7 @@ impl RawDelivery {
                 bounce_keep: raw.bounce_keep,
                 fuse_ticks: fuse_seconds.map(|seconds| rate.ticks(seconds)),
                 max_travel_m,
+                body_bounce: 0.0,
             }),
             RawDelivery::Place(raw) => Delivery::Place(Place {
                 range_m: raw.range_m,
@@ -425,6 +463,9 @@ struct Head {
     kind: Option<String>,
     drop_height_m: Option<f32>,
     drop_seconds: Option<f32>,
+    recover_seconds: Option<f32>,
+    object_damage: Option<f32>,
+    enemy_visibility: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -471,6 +512,10 @@ struct WireFields {
     reveal_seconds: f32,
     health: f32,
     hit_radius_m: f32,
+    windup_seconds: f32,
+    leash_m: f32,
+    chained_slow: f32,
+    zap_damage: f32,
 }
 
 #[derive(Deserialize)]
@@ -656,7 +701,11 @@ fn unknown(block: &str) -> Built {
     Err(format!("unknown block `{block}`"))
 }
 
-fn spec(id: AbilityId, value: &Value, rate: Rate) -> Result<AbilitySpec, String> {
+fn spec(
+    id: AbilityId,
+    value: &Value,
+    (rate, recover): (Rate, RawRecover),
+) -> Result<AbilitySpec, String> {
     let head: Head = fields(value)?;
     let block = head.block.as_str();
     if block == "wall_solid" && head.kind.is_none() {
@@ -685,6 +734,13 @@ fn spec(id: AbilityId, value: &Value, rate: Rate) -> Result<AbilitySpec, String>
         prop: head.prop,
         solid_kind: head.kind,
         drop,
+        recover_ticks: rate.ticks(head.recover_seconds.unwrap_or(match delivery {
+            Delivery::Caster => recover.caster,
+            Delivery::Throw(_) => recover.throw,
+            Delivery::Place(_) => recover.place,
+        })),
+        object_damage: head.object_damage.unwrap_or(1.0),
+        enemy_visibility: head.enemy_visibility.unwrap_or(1.0),
     })
 }
 
@@ -704,6 +760,7 @@ fn traps(block: &str, value: &Value, rate: Rate) -> Built {
                     slow: f.effect.slow,
                     slow_ticks: rate.ticks(f.effect.stun_seconds),
                     reveal_ticks: None,
+                    chain: None,
                 }),
             ))
         }
@@ -722,6 +779,12 @@ fn traps(block: &str, value: &Value, rate: Rate) -> Built {
                     slow: f.slow,
                     slow_ticks: rate.ticks(f.slow_seconds),
                     reveal_ticks: Some(rate.ticks(f.reveal_seconds)),
+                    chain: Some(Chain {
+                        windup_ticks: rate.ticks(f.windup_seconds),
+                        leash_m: f.leash_m,
+                        slow: f.chained_slow,
+                        zap_damage: f.zap_damage,
+                    }),
                 }),
             ))
         }

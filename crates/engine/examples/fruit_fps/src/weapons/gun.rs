@@ -1,5 +1,5 @@
 use super::numbers::{GunKind, GunNumbers, WeaponNumbers, ticks};
-use super::recoil::{Aim, Kick, Recoil, Shot, ShotRng, Stance, fire, recover, spread_deg};
+use super::recoil::{Aim, Kick, Recoil, Shot, ShotRng, Stance, bloomed_deg, fire, recover};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -196,7 +196,7 @@ impl Gun {
             magazine: self.magazine,
             reserve: self.reserve,
             reload_progress,
-            spread_deg: spread_deg(gun, stance, self.settled),
+            spread_deg: bloomed_deg(gun, stance, self.settled, self.recoil.shots),
             scope_level: self.scope_level,
             ready: self.phase == Phase::Ready,
         }
@@ -241,7 +241,8 @@ impl Gun {
                 self.armed = false;
                 let rate = gun.shots_per_second * input.pace.fire_rate * self.rate_factor(gun);
                 self.cooldown_ticks += ticks_per_second as f32 / rate - 1.0;
-                let spread = spread_deg(gun, stance, self.settled) * input.pace.spread;
+                let spread =
+                    bloomed_deg(gun, stance, self.settled, self.recoil.shots) * input.pace.spread;
                 let (shot, kick) = fire(&gun.recoil, &mut self.recoil, aim, spread, rng);
                 if gun.scope.as_ref().is_some_and(|scope| scope.breaks_on_shot) {
                     self.scope_level = 0;

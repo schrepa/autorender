@@ -5,15 +5,17 @@ mod pickup;
 mod test;
 
 use engine::prelude::*;
+use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::actors::{Actor, Alive, Health, Human, SpeedFactor};
 use crate::play::arms::{Arms, Drops, HandAction};
-use crate::play::events::arms::{ArmsEvents, Weapon};
+use crate::play::events::arms::{ArmsEvents, PickupEvent, Weapon};
 use crate::play::numbers::Numbers;
 use crate::play::round::Round;
-use crate::weapons::{ArmsNumbers, DamageLedger, Loadout, Slot, WeaponNumbers, actor_rng};
+use crate::play::world::Arena;
+use crate::weapons::{ArmsNumbers, DamageLedger, KeyDrop, Loadout, Slot, actor_rng, forward};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WeaponStats {
@@ -47,8 +49,16 @@ pub struct ActorArms {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PickupStats {
+    pub slot: u32,
+    pub weapon: String,
+    pub left: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DropStats {
     pub id: u32,
+    pub by: Option<u32>,
     pub weapon: String,
     pub position: [f32; 3],
     pub magazine: u32,
@@ -73,6 +83,10 @@ stats! {
         pub drops: Vec<DropStats>,
         pub pickups_tick: u32,
         pub drops_tick: u32,
+        pub picked_up: u64,
+        pub dropped: u64,
+        pub last_pickup: Option<PickupStats>,
+        pub unknown_surfaces: Vec<String>,
     }
 }
 
@@ -90,6 +104,10 @@ struct Book {
     hits: u64,
     heads: u64,
     damage: f64,
+    picked_up: u64,
+    dropped: u64,
+    last_pickup: Option<PickupEvent>,
+    unknown_surfaces: Vec<crate::solids::Kind>,
 }
 
 pub struct ArmsBrick;
@@ -162,17 +180,24 @@ fn arm(
     }
 }
 
-fn drop_weapon(
-    loadout: &mut Loadout,
-    weapons: &WeaponNumbers,
-    tps: u32,
-    at: glam::Vec3,
-    drops: &mut Drops,
-) {
-    match loadout.drop_primary(weapons, tps) {
-        Some(primary) => drops.push(at, &primary),
-        None => drops.push(at, &loadout.sidearm),
-    };
+fn drop_weapon(loadout: &mut Loadout, at: glam::Vec3, drops: &mut Drops) {
+    if let Some(gun) = loadout.drop_on_death() {
+        drops.push(at, &gun);
+    }
+}
+
+fn thrown_to(arena: &Arena, throw: &KeyDrop, feet: Vec3, yaw_radians: f32) -> Vec3 {
+    let ahead = forward(yaw_radians, 0.0);
+    let lift = feet + Vec3::Y * throw.lift_m;
+    let travel = arena
+        .solids()
+        .sphere_sweep(lift, throw.radius_m, ahead * throw.throw_m)
+        .map_or(throw.throw_m, |hit| hit.distance);
+    let steps = throw.back_steps.max(1);
+    (0..=steps)
+        .map(|step| lift + ahead * (travel * (steps - step) as f32 / steps as f32))
+        .find_map(|from| arena.ground_under(from, throw.lift_m + throw.floor_drop_m))
+        .map_or(feet, |hit| hit.point)
 }
 
 fn ticks_per_second(time: &FixedTime) -> Option<u32> {
@@ -210,11 +235,17 @@ type Reported<'a> = (
 fn report(
     setup: Res<Setup>,
     events: Res<ArmsEvents>,
-    book: Res<Book>,
+    mut book: ResMut<Book>,
     drops: Res<Drops>,
+    arena: Res<Arena>,
     actors: Query<Reported<'_>>,
     mut stats: ResMut<ArmsStats>,
 ) {
+    book.picked_up += events.pickups.len() as u64;
+    book.dropped += events.drops.len() as u64;
+    if let Some(last) = events.pickups.last() {
+        book.last_pickup = Some(*last);
+    }
     let mut next = ArmsStats {
         refusal: setup.refusal.clone(),
         shots_tick: events.shots.len() as u32,
@@ -227,6 +258,7 @@ fn report(
             .iter()
             .map(|item| DropStats {
                 id: item.id,
+                by: item.by,
                 weapon: Weapon::Gun(item.weapon).key().to_owned(),
                 position: item.position.to_array(),
                 magazine: item.magazine,
@@ -237,6 +269,20 @@ fn report(
         hits: book.hits,
         heads: book.heads,
         damage: book.damage,
+        unknown_surfaces: (book.unknown_surfaces.iter())
+            .map(|kind| {
+                arena
+                    .kind_name(*kind)
+                    .map_or_else(|| format!("{:08x}", kind.0), str::to_owned)
+            })
+            .collect(),
+        picked_up: book.picked_up,
+        dropped: book.dropped,
+        last_pickup: book.last_pickup.map(|pickup| PickupStats {
+            slot: pickup.slot,
+            weapon: Weapon::Gun(pickup.weapon).key().to_owned(),
+            left: pickup.left.map(|gun| Weapon::Gun(gun).key().to_owned()),
+        }),
         ..ArmsStats::default()
     };
     let mut rows: Vec<_> = actors.iter().collect();

@@ -353,6 +353,14 @@ pub fn consider(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         return;
     }
     brain.utilities.next_check = ctx.tick + ctx.numbers.ticks(play.utility_seconds).max(1);
+    let fight_near = brain.memory.visible_count() > 0
+        || brain
+            .memory
+            .lost(ctx.tick, ctx.numbers.ticks(play.cast_clear_seconds))
+            .is_some_and(|track| flat_distance(track.at, ctx.sense.position) <= play.cast_clear_m);
+    if fight_near {
+        return;
+    }
     let Some(((slot, target, line), ordered)) = choose(brain, ctx) else {
         return;
     };
@@ -430,9 +438,13 @@ fn throw(brain: &mut Brain, ctx: &Ctx<'_, '_>, pending: Pending, intent: &mut In
         return;
     };
     let play = &ctx.numbers.play;
-    brain
-        .aim
-        .turn_toward(shot.yaw, shot.pitch, ctx.level.turn_deg_per_second, play, ctx.dt);
+    brain.aim.turn_toward(
+        shot.yaw,
+        shot.pitch,
+        ctx.level.turn_deg_per_second,
+        play,
+        ctx.dt,
+    );
     let on = angle_between(brain.aim.yaw, brain.aim.pitch, shot.yaw, shot.pitch)
         <= radians(play.throw_aim_deg);
     let still = ctx.speed_share < ctx.numbers.combat.deadzone_share;

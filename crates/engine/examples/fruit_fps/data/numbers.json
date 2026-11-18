@@ -7,8 +7,9 @@
     "overtime_win_by": 2,
     "overtime_credits": 5000,
     "overtime_rounds_before_decider": 4,
-    "buy_seconds": 20,
-    "buy_seconds_first_round_of_half": 30,
+    "buy_seconds": 30,
+    "buy_seconds_first_round_of_half": 45,
+    "buy_ready_seconds": 3.0,
     "round_seconds": 100,
     "plant_seconds": 4.0,
     "defuse_seconds": 7.0,
@@ -131,11 +132,26 @@
     "crouch_height_m": 1.25,
     "jump_apex_seconds": 0.3,
     "crouch_seconds": 0.12,
-    "stride_run_m": 1.5,
-    "stride_walk_m": 1.2,
-    "stride_crouch_m": 1.0,
+    "stride_run_m": 1.343,
+    "stride_walk_m": 1.157,
+    "stride_crouch_m": 1.157,
     "hard_landing_mps": 7.5,
-    "push_apart_mps": 1.5
+    "push_apart_mps": 1.5,
+    "slow_jump_share": 1.0,
+    "barrier_column_m": 0.5,
+    "surface_kinds": [
+      "stone",
+      "plaster",
+      "wood",
+      "planks",
+      "metal",
+      "grate",
+      "cloth",
+      "plant",
+      "glass",
+      "water",
+      "dirt"
+    ]
   },
   "weapons": {
     "sidearm": {
@@ -165,11 +181,15 @@
       "spread_deg": {
         "stand": 0.4,
         "crouch": 0.3,
-        "walk": 1.1,
-        "run": 2.3,
-        "air": 5.0,
-        "crouch_move": 0.5,
+        "walk": 1.5,
+        "run": 2.7,
+        "air": 7.4,
+        "crouch_move": 0.8,
         "land": 7.0
+      },
+      "spread_bloom": {
+        "per_shot_deg": 0.15,
+        "max_deg": 0.6
       },
       "recoil": {
         "up_deg_per_shot": 0.9,
@@ -186,7 +206,7 @@
       "name": "Zest",
       "cost": 1600,
       "auto": true,
-      "shots_per_second": 13.5,
+      "shots_per_second": 13.33,
       "magazine": 30,
       "reserve": 90,
       "reload_seconds": 2.25,
@@ -194,26 +214,36 @@
       "run_speed_factor": 1.061,
       "damage": [
         {
-          "to_m": 20,
-          "head": 67,
-          "body": 27,
-          "leg": 23
+          "to_m": 15,
+          "head": 78,
+          "body": 26,
+          "leg": 22
+        },
+        {
+          "to_m": 30,
+          "head": 66,
+          "body": 22,
+          "leg": 18
         },
         {
           "to_m": 999,
-          "head": 55,
-          "body": 22,
-          "leg": 18
+          "head": 60,
+          "body": 20,
+          "leg": 17
         }
       ],
       "spread_deg": {
-        "stand": 0.5,
-        "crouch": 0.4,
-        "walk": 1.2,
-        "run": 2.6,
-        "air": 6.0,
-        "crouch_move": 0.6,
+        "stand": 0.4,
+        "crouch": 0.34,
+        "walk": 1.4,
+        "run": 2.9,
+        "air": 10.4,
+        "crouch_move": 0.49,
         "land": 7.0
+      },
+      "spread_bloom": {
+        "per_shot_deg": 0.1,
+        "max_deg": 1.0
       },
       "recoil": {
         "up_deg_per_shot": 0.55,
@@ -231,12 +261,12 @@
         ],
         "aim_speed_factor": 0.76,
         "spread_deg": {
-          "stand": 0.4,
-          "crouch": 0.32,
-          "walk": 1.0,
-          "run": 2.4,
-          "air": 6.0,
-          "crouch_move": 0.5,
+          "stand": 0.25,
+          "crouch": 0.21,
+          "walk": 1.25,
+          "run": 2.75,
+          "air": 10.25,
+          "crouch_move": 0.36,
           "land": 7.0
         },
         "fire_rate_factor": 0.9,
@@ -250,7 +280,7 @@
       "auto": true,
       "shots_per_second": 9.75,
       "magazine": 25,
-      "reserve": 75,
+      "reserve": 50,
       "reload_seconds": 2.5,
       "equip_seconds": 1.0,
       "run_speed_factor": 1.0,
@@ -264,12 +294,16 @@
       ],
       "spread_deg": {
         "stand": 0.25,
-        "crouch": 0.16,
-        "walk": 3.0,
-        "run": 6.0,
-        "air": 8.0,
-        "crouch_move": 0.8,
+        "crouch": 0.21,
+        "walk": 3.25,
+        "run": 6.25,
+        "air": 10.25,
+        "crouch_move": 1.01,
         "land": 7.0
+      },
+      "spread_bloom": {
+        "per_shot_deg": 0.15,
+        "max_deg": 0.75
       },
       "recoil": {
         "up_deg_per_shot": 0.8,
@@ -287,12 +321,12 @@
         ],
         "aim_speed_factor": 0.76,
         "spread_deg": {
-          "stand": 0.2,
+          "stand": 0.157,
           "crouch": 0.13,
-          "walk": 1.8,
-          "run": 4.5,
-          "air": 8.0,
-          "crouch_move": 0.7,
+          "walk": 3.157,
+          "run": 6.157,
+          "air": 10.157,
+          "crouch_move": 0.93,
           "land": 7.0
         },
         "fire_rate_factor": 0.9,
@@ -320,12 +354,16 @@
       ],
       "spread_deg": {
         "stand": 5.0,
-        "crouch": 4.0,
-        "walk": 7.0,
-        "run": 12.0,
-        "air": 10.0,
-        "crouch_move": 5.0,
+        "crouch": 4.5,
+        "walk": 15.0,
+        "run": 20.0,
+        "air": 20.0,
+        "crouch_move": 12.0,
         "land": 10.0
+      },
+      "spread_bloom": {
+        "per_shot_deg": 0.0,
+        "max_deg": 0.0
       },
       "recoil": {
         "up_deg_per_shot": 3.0,
@@ -374,7 +412,7 @@
     "c": "bought each round",
     "q": "bought each round",
     "e": "signature: one free charge each round, then a cooldown or a refresh rule",
-    "x": "ultimate: charged by points (kill 1, plant or defuse 1, every round end 1)"
+    "x": "ultimate: charged by points (kill 1, death 1, plant or defuse 1, orb 1)"
   },
   "characters": {
     "banana": {
@@ -389,8 +427,8 @@
         "lasts_seconds": 30,
         "trigger_radius_m": 0.8,
         "effect": {
-          "stun_seconds": 1.2,
-          "slow": 0.7
+          "stun_seconds": 4.0,
+          "slow": 0.4
         },
         "delivery": {
           "place": {
@@ -409,7 +447,7 @@
         "cost": 250,
         "charges": 2,
         "fuse_seconds": 0.6,
-        "max_blind_seconds": 1.6,
+        "max_blind_seconds": 1.5,
         "range_m": 30,
         "delivery": {
           "throw": {
@@ -430,7 +468,8 @@
         "distance_m": 7.0,
         "seconds": 0.25,
         "charges": 1,
-        "refresh_on_kills": 2
+        "refresh_on_kills": 2,
+        "recover_seconds": 0.0
       },
       "x": {
         "name": "Bunch",
@@ -439,6 +478,7 @@
         "seconds": 10,
         "speed_factor": 1.15,
         "fire_rate_factor": 1.1,
+        "reload_factor": 1.11,
         "dash_refresh_on_kill": true
       }
     },
@@ -451,7 +491,7 @@
         "cost": 200,
         "charges": 2,
         "radius_m": 5.0,
-        "seconds": 8,
+        "seconds": 7,
         "slow": 0.5,
         "delivery": {
           "throw": {
@@ -518,6 +558,7 @@
       "role": "controller",
       "c": {
         "name": "Zest Bomb",
+        "object_damage": 0.5,
         "block": "zone_damage",
         "cost": 300,
         "charges": 1,
@@ -570,9 +611,9 @@
       "x": {
         "name": "Juice Flood",
         "block": "zone_slow_reveal",
-        "points": 7,
+        "points": 8,
         "radius_m": 12.0,
-        "seconds": 10,
+        "seconds": 8,
         "slow": 0.3,
         "delivery": "caster"
       }
@@ -582,6 +623,7 @@
       "role": "initiator",
       "c": {
         "name": "Seed Grenade",
+        "object_damage": 1.0,
         "block": "grenade",
         "cost": 300,
         "charges": 1,
@@ -625,12 +667,13 @@
         "name": "Thump",
         "block": "reveal_pulse",
         "radius_m": 18.0,
-        "reveal_seconds": 2.5,
+        "reveal_seconds": 1.5,
         "cooldown_seconds": 40,
         "charges": 1
       },
       "x": {
         "name": "Melon Drop",
+        "object_damage": 1.0,
         "block": "airstrike",
         "points": 8,
         "delay_seconds": 2.5,
@@ -660,7 +703,7 @@
         "charges": 1,
         "radius_m": 5.0,
         "seconds": 6,
-        "sight_m": 5.0,
+        "sight_m": 7.0,
         "delivery": {
           "throw": {
             "speed_mps": 16.0,
@@ -674,13 +717,18 @@
       },
       "q": {
         "name": "Vine Wire",
+        "enemy_visibility": 0.25,
+        "windup_seconds": 0.7,
+        "leash_m": 4.0,
+        "chained_slow": 0.5,
+        "zap_damage": 5,
         "block": "trap_tripwire",
         "cost": 200,
         "charges": 1,
         "max_length_m": 6.0,
-        "slow": 0.8,
-        "slow_seconds": 1.5,
-        "reveal_seconds": 3.0,
+        "slow": 0.5,
+        "slow_seconds": 1.0,
+        "reveal_seconds": 1.0,
         "lasts_whole_round": true,
         "delivery": {
           "place": {
@@ -724,6 +772,24 @@
       "bounce": 0.4
     }
   },
+  "ultimate_orbs": {
+    "spots": [
+      "Lemon Alley",
+      "Spice Lane"
+    ],
+    "channel_seconds": 2.0,
+    "reach_m": 0.9
+  },
+  "thrown_into_bodies": {
+    "bounce": 0.3
+  },
+  "ability_handling": {
+    "recover_seconds": {
+      "throw": 0.7,
+      "place": 0.9,
+      "caster": 0.5
+    }
+  },
   "bots": {
     "levels": {
       "easy": {
@@ -733,35 +799,14 @@
         "spray_settle_seconds": 0.3,
         "ability_skill": 0.5,
         "checks_corners": false,
-        "aim_error_deg": 2.4,
         "turn_deg_per_second": 220,
-        "burst_shots": [
-          2,
-          4
-        ],
-        "first_error": 1.5,
         "settle_seconds": 0.9,
         "move_error": 1.5,
         "head_share": 0.15,
-        "recoil_control": 0.35,
         "fire_tolerance": 2.0,
-        "stop_to_shoot": 0.45,
-        "burst_pause_seconds": 0.45,
         "hearing_loudness": 0.45,
         "hearing_error_m": 6.0,
-        "memory_seconds": 4.0,
-        "ability_use": 0.45,
-        "corner_check": 0.5,
-        "over_peek": 0.35,
-        "hesitate_seconds": [
-          0.4,
-          1.4
-        ],
-        "peek_wait_seconds": [
-          0.1,
-          0.6
-        ],
-        "shoot_through_smoke": false
+        "memory_seconds": 4.0
       },
       "normal": {
         "reaction_seconds": 0.3,
@@ -770,35 +815,14 @@
         "spray_settle_seconds": 0.12,
         "ability_skill": 0.8,
         "checks_corners": true,
-        "aim_error_deg": 1.4,
         "turn_deg_per_second": 320,
-        "burst_shots": [
-          3,
-          5
-        ],
-        "first_error": 1.2,
         "settle_seconds": 0.7,
         "move_error": 1.0,
         "head_share": 0.4,
-        "recoil_control": 0.65,
         "fire_tolerance": 1.5,
-        "stop_to_shoot": 0.8,
-        "burst_pause_seconds": 0.35,
         "hearing_loudness": 0.3,
         "hearing_error_m": 4.0,
-        "memory_seconds": 6.0,
-        "ability_use": 0.75,
-        "corner_check": 0.8,
-        "over_peek": 0.15,
-        "hesitate_seconds": [
-          0.2,
-          0.7
-        ],
-        "peek_wait_seconds": [
-          0.3,
-          1.2
-        ],
-        "shoot_through_smoke": false
+        "memory_seconds": 6.0
       },
       "hard": {
         "reaction_seconds": 0.2,
@@ -807,35 +831,14 @@
         "spray_settle_seconds": 0.05,
         "ability_skill": 0.95,
         "checks_corners": true,
-        "aim_error_deg": 0.8,
         "turn_deg_per_second": 480,
-        "burst_shots": [
-          3,
-          6
-        ],
-        "first_error": 1.0,
         "settle_seconds": 0.45,
         "move_error": 0.6,
         "head_share": 0.7,
-        "recoil_control": 0.9,
         "fire_tolerance": 1.1,
-        "stop_to_shoot": 0.97,
-        "burst_pause_seconds": 0.25,
         "hearing_loudness": 0.12,
         "hearing_error_m": 2.0,
-        "memory_seconds": 8.0,
-        "ability_use": 0.95,
-        "corner_check": 1.0,
-        "over_peek": 0.04,
-        "hesitate_seconds": [
-          0.05,
-          0.25
-        ],
-        "peek_wait_seconds": [
-          0.4,
-          2.0
-        ],
-        "shoot_through_smoke": true
+        "memory_seconds": 8.0
       }
     },
     "play": {
@@ -869,6 +872,8 @@
       "safe_margin_m": 10,
       "crossfire_deg": 35,
       "retake_group": 2,
+      "lone_save_enemies": 3,
+      "handoff_m": 5.0,
       "line_up_m": 2.0,
       "throw_pitch_deg": [
         -20,
@@ -926,6 +931,19 @@
       ],
       "late_round_seconds": 15,
       "save_gun_cost": 2000,
+      "save_spend": 300,
+      "follow_human_m": 10.0,
+      "knife_path_m": 20.0,
+      "cast_clear_seconds": 1.0,
+      "cast_clear_m": 25.0,
+      "buy_late_seconds": 2.0,
+      "line_of_fire_m": 15.0,
+      "line_of_fire_deg": 6.0,
+      "line_of_fire_seconds": 0.4,
+      "ask_device_m": 2.0,
+      "ask_device_deg": 20.0,
+      "sniper_spare": 400,
+      "gift_wait_seconds": 0.3,
       "eco_gun_cost": 1000,
       "rotate_seen": 2,
       "info_seconds": 8,
@@ -952,7 +970,6 @@
       "gate_step_m": 2,
       "spacing_m": 1.5,
       "idle_turn_share": 0.5,
-      "sidearm_switch_control": 0.8,
       "burst_pause_stretch": 3,
       "burst_hold_share": 3,
       "preaim_front": 0.3,
@@ -1016,6 +1033,13 @@
       "equip_seconds": 0.6,
       "run_speed_factor": 1.0,
       "busy_run_speed_factor": 0.0
+    },
+    "key_drop": {
+      "throw_m": 1.5,
+      "lift_m": 0.9,
+      "radius_m": 0.15,
+      "floor_drop_m": 0.5,
+      "back_steps": 6
     },
     "surfaces": {
       "stone": {
@@ -1089,6 +1113,33 @@
           "sniper": 1.0
         },
         "damage_kept": 0.9
+      },
+      "planks": {
+        "pierce_m": {
+          "sidearm": 0.1,
+          "smg": 0.2,
+          "rifle": 0.2,
+          "sniper": 0.4
+        },
+        "damage_kept": 0.5
+      },
+      "grate": {
+        "pierce_m": {
+          "sidearm": 0.025,
+          "smg": 0.05,
+          "rifle": 0.05,
+          "sniper": 0.1
+        },
+        "damage_kept": 0.5
+      },
+      "water": {
+        "pierce_m": {
+          "sidearm": 0.08,
+          "smg": 0.16,
+          "rifle": 0.16,
+          "sniper": 0.32
+        },
+        "damage_kept": 0.55
       }
     }
   },
@@ -1128,6 +1179,15 @@
     ],
     "drop": [
       "KeyG"
+    ],
+    "next_item": [
+      "WheelUp"
+    ],
+    "previous_item": [
+      "WheelDown"
+    ],
+    "ready": [
+      "Enter"
     ],
     "primary": [
       "Digit1"
@@ -1216,7 +1276,7 @@
       "points": 5.0
     },
     "impacts": {
-      "stone": {
+      "default": {
         "sprites": 10,
         "seconds": 0.6,
         "speed_mps": 2.5,
@@ -1231,50 +1291,172 @@
         "opacity": 0.8,
         "streak_seconds": 0.0
       },
-      "metal": {
-        "sprites": 12,
-        "seconds": 0.25,
-        "speed_mps": 6.0,
-        "spread": 0.6,
-        "size_m": 0.012,
-        "gravity_mps2": 9.8,
-        "color": [
-          5.0,
-          3.2,
-          1.2
-        ],
-        "opacity": 0.0,
-        "streak_seconds": 0.02
-      },
-      "wood": {
-        "sprites": 8,
-        "seconds": 0.7,
-        "speed_mps": 3.0,
-        "spread": 0.7,
-        "size_m": 0.025,
-        "gravity_mps2": 9.8,
-        "color": [
-          0.45,
-          0.3,
-          0.16
-        ],
-        "opacity": 1.0,
-        "streak_seconds": 0.0
-      },
-      "dirt": {
-        "sprites": 10,
-        "seconds": 0.8,
-        "speed_mps": 2.0,
-        "spread": 0.9,
-        "size_m": 0.04,
-        "gravity_mps2": 9.8,
-        "color": [
-          0.32,
-          0.24,
-          0.16
-        ],
-        "opacity": 0.85,
-        "streak_seconds": 0.0
+      "kinds": {
+        "stone": {
+          "sprites": 10,
+          "seconds": 0.6,
+          "speed_mps": 2.5,
+          "spread": 0.8,
+          "size_m": 0.03,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.55,
+            0.52,
+            0.48
+          ],
+          "opacity": 0.8,
+          "streak_seconds": 0.0
+        },
+        "plaster": {
+          "sprites": 12,
+          "seconds": 0.7,
+          "speed_mps": 2.2,
+          "spread": 0.9,
+          "size_m": 0.035,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.78,
+            0.74,
+            0.68
+          ],
+          "opacity": 0.85,
+          "streak_seconds": 0.0
+        },
+        "wood": {
+          "sprites": 8,
+          "seconds": 0.7,
+          "speed_mps": 3.0,
+          "spread": 0.7,
+          "size_m": 0.025,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.45,
+            0.3,
+            0.16
+          ],
+          "opacity": 1.0,
+          "streak_seconds": 0.0
+        },
+        "planks": {
+          "sprites": 8,
+          "seconds": 0.7,
+          "speed_mps": 3.0,
+          "spread": 0.7,
+          "size_m": 0.025,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.52,
+            0.38,
+            0.22
+          ],
+          "opacity": 1.0,
+          "streak_seconds": 0.0
+        },
+        "metal": {
+          "sprites": 12,
+          "seconds": 0.25,
+          "speed_mps": 6.0,
+          "spread": 0.6,
+          "size_m": 0.012,
+          "gravity_mps2": 9.8,
+          "color": [
+            5.0,
+            3.2,
+            1.2
+          ],
+          "opacity": 0.0,
+          "streak_seconds": 0.02
+        },
+        "grate": {
+          "sprites": 8,
+          "seconds": 0.25,
+          "speed_mps": 6.0,
+          "spread": 0.6,
+          "size_m": 0.012,
+          "gravity_mps2": 9.8,
+          "color": [
+            5.0,
+            3.2,
+            1.2
+          ],
+          "opacity": 0.0,
+          "streak_seconds": 0.02
+        },
+        "cloth": {
+          "sprites": 5,
+          "seconds": 0.5,
+          "speed_mps": 1.2,
+          "spread": 0.9,
+          "size_m": 0.02,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.6,
+            0.55,
+            0.5
+          ],
+          "opacity": 0.6,
+          "streak_seconds": 0.0
+        },
+        "plant": {
+          "sprites": 8,
+          "seconds": 0.7,
+          "speed_mps": 2.0,
+          "spread": 0.9,
+          "size_m": 0.025,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.2,
+            0.35,
+            0.12
+          ],
+          "opacity": 0.9,
+          "streak_seconds": 0.0
+        },
+        "glass": {
+          "sprites": 10,
+          "seconds": 0.35,
+          "speed_mps": 4.0,
+          "spread": 0.7,
+          "size_m": 0.012,
+          "gravity_mps2": 9.8,
+          "color": [
+            1.6,
+            1.7,
+            1.8
+          ],
+          "opacity": 0.0,
+          "streak_seconds": 0.015
+        },
+        "water": {
+          "sprites": 12,
+          "seconds": 0.5,
+          "speed_mps": 3.0,
+          "spread": 0.5,
+          "size_m": 0.03,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.55,
+            0.65,
+            0.7
+          ],
+          "opacity": 0.6,
+          "streak_seconds": 0.0
+        },
+        "dirt": {
+          "sprites": 10,
+          "seconds": 0.8,
+          "speed_mps": 2.0,
+          "spread": 0.9,
+          "size_m": 0.04,
+          "gravity_mps2": 9.8,
+          "color": [
+            0.32,
+            0.24,
+            0.16
+          ],
+          "opacity": 0.85,
+          "streak_seconds": 0.0
+        }
       }
     },
     "juice": {
@@ -1489,7 +1671,50 @@
       "light_size_m": 0.05,
       "blink_slow_seconds": 1.0,
       "blink_fast_seconds": 0.12,
-      "lit_share": 0.4
+      "peak_glow": 1.0,
+      "dim_glow": 0.15,
+      "pulse_power": 3.0,
+      "halo_m": 0.18
+    },
+    "props": {
+      "trail_seconds": 0.12,
+      "trail_width_m": 0.03,
+      "trail_glow": 0.35,
+      "puff_scale": 1.4,
+      "wire_color": [
+        0.16,
+        0.3,
+        0.1
+      ],
+      "wire_glow": 0.6,
+      "shadow_radius_m": 0.32,
+      "shadow_opacity": 0.75
+    },
+    "barrier": {
+      "friendly": [
+        0.0176,
+        0.6105,
+        0.4678
+      ],
+      "enemy": [
+        1.0,
+        0.0437,
+        0.107
+      ],
+      "glow": 1.6,
+      "fill": 0.0,
+      "line": 0.35,
+      "edge": 0.6,
+      "edge_m": 0.08,
+      "cell_m": 0.5,
+      "line_px": 1.5,
+      "band_m": 1.2,
+      "band_mps": 0.3,
+      "band_share": 0.45,
+      "extend_m": 0.5,
+      "near_m": 1.5,
+      "near_boost": 2.0,
+      "drop_seconds": 0.4
     },
     "showcase": {
       "every_seconds": 1.5,

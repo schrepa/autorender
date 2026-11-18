@@ -1,7 +1,80 @@
 use super::{
     AbilitySlot, Armor, ArmorTier, BuyRefusal, BuyRequest, CreditReason, Event, Item, Match, Phase,
-    PlayerId, TickInput, WeaponId, WeaponSlot,
+    Player, PlayerId, Team, TickInput, View, WeaponId, WeaponSlot,
 };
+
+fn shop_open(
+    phase: Phase,
+    players: &[Player],
+    player: PlayerId,
+    in_zone: bool,
+) -> Result<&Player, BuyRefusal> {
+    if phase != Phase::Buy {
+        return Err(BuyRefusal::WrongPhase);
+    }
+    let p = players.get(player).ok_or(BuyRefusal::UnknownPlayer)?;
+    if !p.alive {
+        return Err(BuyRefusal::Dead);
+    }
+    if !in_zone {
+        return Err(BuyRefusal::OutsideBuyZone);
+    }
+    Ok(p)
+}
+
+impl View<'_> {
+    pub fn loss_bonus(&self, team: Team) -> u32 {
+        self.catalog.loss_reward(self.loss_streak[team.index()])
+    }
+
+    pub fn can_buy(&self, player: PlayerId) -> Result<(), BuyRefusal> {
+        let in_zone = self.in_zone.get(player).copied().unwrap_or(false);
+        shop_open(self.phase, self.players, player, in_zone).map(|_| ())
+    }
+
+    pub fn price(&self, player: PlayerId, item: Item) -> Result<u32, BuyRefusal> {
+        let in_zone = self.in_zone.get(player).copied().unwrap_or(false);
+        let p = shop_open(self.phase, self.players, player, in_zone)?;
+        let refund = self.refund(player);
+        let (cost, back) = match item {
+            Item::Weapon(weapon) if weapon == self.catalog.sidearm => {
+                if p.sidearm.is_some() {
+                    return Err(BuyRefusal::AlreadyOwned);
+                }
+                (0, 0)
+            }
+            Item::Weapon(weapon) => {
+                let entry = self.catalog.weapon(weapon).ok_or(BuyRefusal::NotForSale)?;
+                if entry.slot != WeaponSlot::Primary {
+                    return Err(BuyRefusal::NotForSale);
+                }
+                if p.primary == Some(weapon) {
+                    return Err(BuyRefusal::AlreadyOwned);
+                }
+                (entry.cost.unwrap_or(0), refund.primary.unwrap_or(0))
+            }
+            Item::Armor(tier) => {
+                let numbers = self.catalog.armor(tier);
+                if p.armor.is_some_and(|a| a.points >= numbers.points) {
+                    return Err(BuyRefusal::AlreadyOwned);
+                }
+                (numbers.cost, refund.armor.unwrap_or(0))
+            }
+            Item::Ability(slot) => {
+                let index = Match::bought_index(slot)?;
+                let ability = p.abilities[index];
+                if ability.charges >= ability.max {
+                    return Err(BuyRefusal::AtMaximum);
+                }
+                (self.catalog.characters[p.character].bought[index].cost, 0)
+            }
+        };
+        if p.credits + back < cost {
+            return Err(BuyRefusal::TooFewCredits);
+        }
+        Ok(cost)
+    }
+}
 
 impl Match {
     pub(super) fn apply_buy(
@@ -31,16 +104,22 @@ impl Match {
     }
 
     fn buy_context(&self, player: PlayerId, input: &TickInput) -> Result<(), BuyRefusal> {
-        if self.phase != Phase::Buy {
-            return Err(BuyRefusal::WrongPhase);
+        let in_zone = input.players.get(player).is_some_and(|f| f.in_buy_zone);
+        shop_open(self.phase, &self.players, player, in_zone).map(|_| ())
+    }
+
+    fn take_free_sidearm(
+        &mut self,
+        player: PlayerId,
+        events: &mut Vec<Event>,
+    ) -> Result<(), BuyRefusal> {
+        let weapon = self.catalog.sidearm;
+        let p = &mut self.players[player];
+        if p.sidearm.is_some() {
+            return Err(BuyRefusal::AlreadyOwned);
         }
-        let p = self.players.get(player).ok_or(BuyRefusal::UnknownPlayer)?;
-        if !p.alive {
-            return Err(BuyRefusal::Dead);
-        }
-        if !input.players.get(player).is_some_and(|f| f.in_buy_zone) {
-            return Err(BuyRefusal::OutsideBuyZone);
-        }
+        p.sidearm = Some(weapon);
+        events.push(Event::GiveWeapon { player, weapon });
         Ok(())
     }
 
@@ -58,6 +137,9 @@ impl Match {
         weapon: WeaponId,
         events: &mut Vec<Event>,
     ) -> Result<(), BuyRefusal> {
+        if weapon == self.catalog.sidearm {
+            return self.take_free_sidearm(player, events);
+        }
         let entry = self.catalog.weapon(weapon).ok_or(BuyRefusal::NotForSale)?;
         if entry.slot != WeaponSlot::Primary {
             return Err(BuyRefusal::NotForSale);

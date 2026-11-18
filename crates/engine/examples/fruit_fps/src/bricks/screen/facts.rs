@@ -4,9 +4,11 @@ use engine::math;
 use engine::prelude::*;
 use engine::{FrameTime, Projection, Views};
 
+use crate::abilities::{AbilityId, Event as PowerEvent, Modifiers};
 use crate::play::actors::{Actor, Body, Health, Human, Motion, Wish};
 use crate::play::arms::Arms;
-use crate::play::events::arms::ArmsEvents;
+use crate::play::events::arms::{ArmsEvents, Target};
+use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
 use crate::play::numbers::Numbers;
 use crate::play::round::{DeviceSpot, Round};
@@ -17,9 +19,32 @@ use crate::weapons::Stance;
 use super::live::{self, character_key, character_name, named, set, tone, worded};
 use super::{ScreenSetup, ScreenSource, Words};
 
+const WALL_SECONDS: f64 = 1.0;
+const DEVICE_ICON: &str = "device";
+const DEMO_CHANNEL: f32 = 0.6;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Hold {
+    Buff(u32, Modifiers),
+    Reveal(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Mark {
+    pub actor: u32,
+    pub hold: Hold,
+    pub until: u64,
+    pub ability: AbilityId,
+}
+
 #[derive(Resource, Default)]
 pub(super) struct Recent {
-    feed: Vec<(f64, FeedLine)>,
+    pub(super) marks: Vec<Mark>,
+    power_tick: Option<u64>,
+    feed: Vec<(f64, usize, FeedLine)>,
+    walls: Vec<(f64, usize)>,
+    went_live: Option<f64>,
+    point: Option<(f64, String)>,
     round_kills: Vec<u32>,
     dealt: Vec<f32>,
     round_result: Option<ResultFacts>,
@@ -80,14 +105,46 @@ fn feed_line(
     };
     if let Some(player) = killer.and_then(|killer| view.players.get(killer)) {
         set(&mut line.killer, character_name(catalog, player));
+        named(
+            &mut line.killer_char,
+            "char_",
+            character_key(catalog, player),
+        );
         line.killer_color = tone(view.side_of(player.team));
     }
     if let Some(player) = view.players.get(victim) {
         set(&mut line.victim, character_name(catalog, player));
+        named(
+            &mut line.victim_char,
+            "char_",
+            character_key(catalog, player),
+        );
         line.victim_color = tone(view.side_of(player.team));
     }
     cause_icon(&mut line, view, killer, cause);
     line
+}
+
+fn point_reason<'a>(events: &[Event], human: usize, words: &'a Words) -> Option<&'a str> {
+    let gained = events
+        .iter()
+        .any(|event| matches!(event, Event::UltimatePoint { player, .. } if *player == human));
+    if !gained {
+        return None;
+    }
+    let mut reason = words.point_orb.as_str();
+    for event in events {
+        if matches!(event, Event::KillFeed { killer: Some(killer), .. } if *killer == human) {
+            reason = &words.point_kill;
+        } else if matches!(event, Event::KillFeed { victim, .. } if *victim == human) {
+            reason = &words.point_death;
+        } else if matches!(event, Event::PlantCompleted { player, .. } if *player == human) {
+            reason = &words.point_plant;
+        } else if matches!(event, Event::DefuseCompleted { player } if *player == human) {
+            reason = &words.point_defuse;
+        }
+    }
+    Some(reason)
 }
 
 fn most(scores: impl Iterator<Item = (usize, u32)>) -> Option<usize> {
@@ -236,14 +293,59 @@ fn match_result(
 
 type Sources<'w, 's> = (
     Option<Res<'w, Round>>,
-    Option<Res<'w, RoundEvents>>,
+    (Option<Res<'w, RoundEvents>>, Option<Res<'w, PowerEvents>>),
     Option<Res<'w, ArmsEvents>>,
     Query<'w, 's, &'static ScreenSource>,
     Res<'w, FrameTime>,
 );
 
+fn powers_part(recent: &mut Recent, events: &PowerEvents) {
+    if recent.power_tick == Some(events.tick) {
+        return;
+    }
+    recent.power_tick = Some(events.tick);
+    for event in &events.events {
+        match *event {
+            PowerEvent::BuffStarted {
+                actor,
+                effect,
+                modifiers,
+                until,
+                ability,
+            } => recent.marks.push(Mark {
+                actor: actor.0,
+                hold: Hold::Buff(effect.0, modifiers),
+                until,
+                ability,
+            }),
+            PowerEvent::BuffEnded { actor, effect } => recent.marks.retain(|mark| {
+                mark.actor != actor.0
+                    || !matches!(mark.hold, Hold::Buff(held, _) if held == effect.0)
+            }),
+            PowerEvent::RevealStarted {
+                actor,
+                team,
+                until,
+                ability,
+                ..
+            } => recent.marks.push(Mark {
+                actor: actor.0,
+                hold: Hold::Reveal(team),
+                until,
+                ability,
+            }),
+            PowerEvent::RevealEnded { actor, team } => recent
+                .marks
+                .retain(|mark| mark.actor != actor.0 || mark.hold != Hold::Reveal(team)),
+            _ => {}
+        }
+    }
+    let now = events.tick;
+    recent.marks.retain(|mark| mark.until > now);
+}
+
 pub(super) fn collect(
-    (round, events, arms, sources, time): Sources,
+    (round, (events, powers), arms, sources, time): Sources,
     humans: Query<&Actor, With<Human>>,
     bodies: Query<(&Actor, &Body)>,
     mut recent: ResMut<Recent>,
@@ -257,6 +359,9 @@ pub(super) fn collect(
     };
     let now = time.elapsed;
     let recent = &mut *recent;
+    if let Some(powers) = powers.as_deref() {
+        powers_part(recent, powers);
+    }
     let human = humans.iter().next().map(|actor| actor.slot as usize);
     let human_team = human
         .and_then(|slot| view.players.get(slot))
@@ -274,10 +379,9 @@ pub(super) fn collect(
                 ..
             } = event
             {
-                recent.feed.push((
-                    now,
-                    feed_line(&view, (*killer, *victim), (*headshot, *cause), human),
-                ));
+                let mut line = feed_line(&view, (*killer, *victim), (*headshot, *cause), human);
+                line.wall = recent.walls.iter().any(|(_, slot)| slot == victim);
+                recent.feed.push((now, *victim, line));
                 if let Some(kills) = killer.and_then(|killer| recent.round_kills.get_mut(killer)) {
                     *kills += 1;
                 }
@@ -291,8 +395,14 @@ pub(super) fn collect(
                     recent.dealt.fill(0.0);
                 }
                 recent.round_kills.fill(0);
+                recent.marks.clear();
                 recent.round_result = None;
                 recent.match_result = None;
+            } else if let Event::Phase {
+                phase: Phase::Live, ..
+            } = event
+            {
+                recent.went_live = Some(now);
             } else if let Event::RoundEnd { winner, reason, .. } = event {
                 let result = round_result(
                     &view,
@@ -311,16 +421,46 @@ pub(super) fn collect(
                 ));
             }
         }
+        if let Some(reason) =
+            human.and_then(|human| point_reason(&events.events, human, &source.words))
+        {
+            recent.point = Some((now, reason.to_owned()));
+        }
     }
     let lines = source.feed.lines;
     if recent.feed.len() > lines {
         let extra = recent.feed.len() - lines;
         recent.feed.drain(..extra);
     }
-    let Some(arms) = arms.filter(|arms| recent.arms_tick != Some(arms.tick)) else {
-        return;
-    };
+    if let Some(arms) = arms.filter(|arms| recent.arms_tick != Some(arms.tick)) {
+        arms_part(recent, &arms, (&bodies, human), (source, now));
+    }
+}
+
+fn arms_part(
+    recent: &mut Recent,
+    arms: &ArmsEvents,
+    (bodies, human): (&Query<(&Actor, &Body)>, Option<usize>),
+    (source, now): (&ScreenSource, f64),
+) {
     recent.arms_tick = Some(arms.tick);
+    recent.walls.retain(|(born, _)| now - born < WALL_SECONDS);
+    for hit in arms.hits.iter().filter(|hit| hit.killed) {
+        let walled = arms.shots.iter().any(|shot| {
+            shot.shooter == hit.shooter
+                && shot.pierced.is_some()
+                && matches!(shot.target, Target::Actor { slot, .. } if slot == hit.victim)
+        });
+        if walled {
+            let victim = hit.victim as usize;
+            recent.walls.push((now, victim));
+            for (born, slot, line) in &mut recent.feed {
+                if *slot == victim && now - *born < WALL_SECONDS {
+                    line.wall = true;
+                }
+            }
+        }
+    }
     for hit in &arms.hits {
         if let Some(dealt) = recent.dealt.get_mut(hit.shooter as usize) {
             *dealt += hit.health_lost + hit.armor_lost;
@@ -401,6 +541,12 @@ fn weapon_part(
     let motion = body.map_or(Stance::Stand, |body| stance(body.motion));
     let shown = arms.loadout.view(&numbers.weapons, motion);
     set(&mut weapon.name, shown.name);
+    if arms.device_out {
+        set(&mut weapon.icon, DEVICE_ICON);
+    } else {
+        named(&mut weapon.icon, "weapon_", shown.name);
+    }
+    weapon.down = arms.weapon_down;
     weapon.mag = shown.magazine;
     weapon.reserve = shown.reserve;
     weapon.reload = shown.reload_progress;
@@ -447,11 +593,26 @@ fn marks_part(
     }
 }
 
-fn spot(feet: Vec3) -> [f32; 2] {
+fn moments_part(facts: &mut HudFacts, recent: &Recent, lows: &super::Lows, now: f64) {
+    facts.round.go = !facts.round.buying
+        && recent
+            .went_live
+            .is_some_and(|born| now - born < f64::from(lows.go_seconds));
+    let point = &mut facts.point;
+    point.active = false;
+    if let Some((born, reason)) = &recent.point
+        && now - born < f64::from(lows.point_seconds)
+    {
+        point.active = true;
+        set(&mut point.reason, reason);
+    }
+}
+
+pub(super) fn spot(feet: Vec3) -> [f32; 2] {
     [feet.x, -feet.z]
 }
 
-fn compass(yaw_radians: f32) -> f32 {
+pub(super) fn compass(yaw_radians: f32) -> f32 {
     -yaw_radians.to_degrees()
 }
 
@@ -471,7 +632,7 @@ fn minimap_part(
         minimap.me.push(MapItem {
             pos: spot(body.feet),
             yaw_degrees: compass(wish.yaw_radians),
-            color: None,
+            ..MapItem::default()
         });
     }
     minimap.players.clear();
@@ -493,10 +654,19 @@ fn minimap_part(
                 pos: spot(placed.feet),
                 yaw_degrees: compass(actor.yaw_radians),
                 color: tone,
+                ..MapItem::default()
             });
         }
     }
     minimap.device.clear();
+    minimap.planted.clear();
+    if let DeviceSpot::Planted { at, .. } = round.device {
+        minimap.planted.push(MapItem {
+            pos: spot(at),
+            ..MapItem::default()
+        });
+        return;
+    }
     let seen = round.device.at().or_else(|| {
         carrier
             .filter(|(at, _)| view.players.get(*at).map(|player| player.team) == team)
@@ -505,8 +675,7 @@ fn minimap_part(
     if let Some(at) = seen {
         minimap.device.push(MapItem {
             pos: spot(at),
-            yaw_degrees: 0.0,
-            color: None,
+            ..MapItem::default()
         });
     }
 }
@@ -517,10 +686,10 @@ fn recent_part(facts: &mut HudFacts, recent: &Recent, source: &ScreenSource, now
         .feed
         .iter()
         .rev()
-        .filter(|(born, _)| now - born < keep);
+        .filter(|(born, _, _)| now - born < keep);
     let count = fresh.clone().count();
     facts.feed.resize_with(count, FeedLine::default);
-    for (shown, (_, line)) in facts.feed.iter_mut().zip(fresh) {
+    for (shown, (_, _, line)) in facts.feed.iter_mut().zip(fresh) {
         shown.clone_from(line);
     }
     let result = match facts.phase {
@@ -575,6 +744,15 @@ pub(super) fn fill(
             facts.clone_from(&loaded.demo);
             recent.demo_shown = true;
         }
+        facts.blind = setup.demo_blind;
+        let orb = &mut facts.orb;
+        orb.channel = setup.demo_channel;
+        orb.hint = !setup.demo_channel;
+        orb.progress = if setup.demo_channel {
+            DEMO_CHANNEL
+        } else {
+            0.0
+        };
         return;
     };
     recent.demo_shown = false;
@@ -621,6 +799,11 @@ pub(super) fn fill(
         entry.map_or("", |entry| entry.name.as_str()),
     );
     set(&mut me.role, entry.map_or("", |entry| entry.role.as_str()));
+    named(
+        &mut me.icon,
+        "char_",
+        entry.map_or("", |entry| entry.key.as_str()),
+    );
     let tier = player.armor.map(|armor| armor.tier);
     set(
         &mut me.armor_icon,
@@ -636,5 +819,10 @@ pub(super) fn fill(
         minimap_part(facts, (&view, round), (slot, wish, body), &actors);
     }
     marks_part(facts, recent, (wish, body), (source, time.elapsed));
+    moments_part(facts, recent, lows, time.elapsed);
+    let round = &mut facts.round;
+    round.ready = view.ready(slot);
+    round.ready_left = if round.ready { round.time } else { 0.0 };
+    round.ready_count = round.ready_left.ceil() as u32;
     recent_part(facts, recent, source, time.elapsed);
 }

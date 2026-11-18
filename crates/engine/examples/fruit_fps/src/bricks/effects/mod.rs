@@ -53,6 +53,7 @@ pub(crate) struct EffectsDrawing {
     pub device: Range<u32>,
     pub smoke: Range<u32>,
     pub marks: Range<u32>,
+    pub barrier: Range<u32>,
     pub glow_vertices: u32,
     pub frame: EffectsFrame,
     pub screen: bool,
@@ -91,6 +92,7 @@ pub enum Show {
     NearSight,
     Damage,
     InsideSmoke,
+    Barrier,
 }
 
 settings! {
@@ -124,6 +126,13 @@ stats! {
         pub panels: u32,
         pub glowing: u32,
         pub blobs: u32,
+        pub trails: u32,
+        pub barrier_faces: u32,
+        pub barrier_drop: f32,
+        pub shadows: u32,
+        pub puffs: u32,
+        pub meshed: u32,
+        pub lamp: f32,
         pub device: bool,
         pub screen: ScreenStats,
         pub draws: u32,

@@ -113,6 +113,17 @@ pub fn material(
         return Err(source.fault("EmissiveMap", item, "emissive textures are not cooked"));
     }
     let emissive = held.emissive_factor();
+    let values = match (held.emissive_strength(), &names.emissive_value) {
+        (None, _) => None,
+        (Some(strength), Some(name)) => Some(BTreeMap::from([(name.clone(), strength)])),
+        (Some(strength), None) => {
+            return Err(source.fault(
+                "EmissiveStrength",
+                item,
+                format!("emissive strength {strength}: the entry's `material.emissive_value` names no value for it"),
+            ));
+        }
+    };
     let maps = cooked
         .maps
         .iter()
@@ -151,7 +162,7 @@ pub fn material(
         depth_write: None,
         depth_bias: None,
         slots: Some(slots),
-        values: None,
+        values,
         lighting: Some(names.lighting.clone()),
     })
 }

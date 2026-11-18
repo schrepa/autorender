@@ -1,6 +1,7 @@
 engine::brick!(body);
 
 mod arena;
+mod barrier;
 mod input;
 mod steps;
 mod watch;
@@ -15,10 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::play::actors::{Actor, Alive, Body, Gait, Health, Human, Motion, SpeedFactor, Wish};
 use crate::play::events::body::BodyEvents;
 use crate::play::numbers::{Numbers, PlayerNumbers};
-use crate::play::powers::Push;
+use crate::play::powers::{Powers, Push};
 use crate::play::round::Round;
 use crate::play::view::{Controls, ViewOffsets, Watched};
-use crate::play::world::{Arena, Zone};
+use crate::play::world::{Arena, Barrier, Zone};
 use crate::rules::Side;
 use crate::solids::{self, Moved};
 
@@ -44,7 +45,6 @@ pub struct HumanStats {
     pub grounded: bool,
     pub crouch: f32,
     pub motion: String,
-    pub surface: Option<String>,
     pub floor: Option<String>,
     pub yaw: f32,
     pub pitch: f32,
@@ -68,6 +68,7 @@ pub struct ArenaStats {
     pub ready: bool,
     pub triangles: u32,
     pub dropped: u32,
+    pub notes: Vec<String>,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -133,6 +134,7 @@ impl Brick for BodyBrick {
             .resource::<BodyEvents>()
             .resource::<EventStats>()
             .resource::<Watched>()
+            .resource::<Barrier>()
             .settings::<Controls>()
             .stats::<BodyStats>()
             .systems(Schedule::FrameStart, input::adopt_numbers)
@@ -143,18 +145,31 @@ impl Brick for BodyBrick {
             .systems(Schedule::FrameStart, embody)
             .systems(Schedule::FixedSimulation, input::wish)
             .systems(Schedule::FixedSimulation, advance)
+            .systems(Schedule::FixedSimulation, barrier::publish)
             .systems(Schedule::FixedSimulation, watch::watch)
             .systems(Schedule::Presentation, report);
     }
 }
 
-fn adopt(files: Query<Ref<ArenaFile>>, mut arena: ResMut<Arena>) {
+fn adopt(
+    files: Query<Ref<ArenaFile>>,
+    numbers: Res<Numbers>,
+    mut arena: ResMut<Arena>,
+    mut applied: Local<Option<Vec<String>>>,
+) {
+    let Some(numbers) = numbers.get() else {
+        return;
+    };
+    let known = &numbers.player.surface_kinds;
+    let fresh = applied.as_ref() != Some(known);
     for file in &files {
-        if file.is_changed()
+        if (file.is_changed() || fresh)
             && let Some(built) = &file.built
         {
-            let (solids, markers) = &**built;
-            arena.adopt(solids.clone(), markers.clone());
+            let (mut solids, mut markers) = (**built).clone();
+            arena::stone_unknown(&mut solids, &mut markers, known);
+            arena.adopt(solids, markers);
+            *applied = Some(known.clone());
         }
     }
 }
@@ -326,7 +341,7 @@ fn step_once(
     (arena, peers): (&Arena, &[(u32, solids::Capsule)]),
     player: &PlayerNumbers,
     (wish, body, factor): (&Wish, &Body, f32),
-    dt: f32,
+    (slowed, dt): (f32, f32),
 ) -> Moved {
     let capsules: Vec<solids::Capsule> = peers.iter().map(|&(_, capsule)| capsule).collect();
     solids::step(
@@ -337,6 +352,8 @@ fn step_once(
             speed: wished_speed(player, wish, body.crouched, factor),
             jump: wish.jump,
             crouch: wish.crouch,
+            rooted: factor <= 0.0,
+            jump_share: 1.0 - player.slow_jump_share * (1.0 - slowed),
         },
         &player.moving,
         dt,
@@ -349,6 +366,7 @@ struct Setting<'w> {
     numbers: Res<'w, Numbers>,
     arena: Res<'w, Arena>,
     round: Option<Res<'w, Round>>,
+    powers: Option<Res<'w, Powers>>,
 }
 
 fn advance(
@@ -387,7 +405,15 @@ fn advance(
         let around = others(&peers, own);
         let jumped = body.feet != tally.placed;
         let factor = factor.map_or(1.0, |held| held.0);
-        let mut moved = step_once((arena, &around), player, (wish, &body, factor), dt);
+        let slowed = (world.powers.as_deref()).map_or(1.0, |powers| {
+            math::min(powers.modifiers(actor.slot).speed, 1.0)
+        });
+        let mut moved = step_once(
+            (arena, &around),
+            player,
+            (wish, &body, factor),
+            (slowed, dt),
+        );
         if let Some(mut push) = push
             && push.0 != Vec3::ZERO
         {
@@ -506,7 +532,6 @@ fn report(
                 grounded: body.grounded,
                 crouch: body.crouch,
                 motion: named(&body.motion),
-                surface: body.ground.map(|ground| named(&ground.surface)),
                 floor: (body.ground)
                     .and_then(|ground| arena.kind_name(ground.kind))
                     .map(str::to_owned),
@@ -540,6 +565,13 @@ fn report(
             ready: arena.ready(),
             triangles: arena.solids().triangle_count() as u32,
             dropped: dropped.degenerate + dropped.unlabelled + dropped.out_of_range,
+            notes: (arena.unknown_kinds().iter())
+                .map(|name| {
+                    format!(
+                        "surface kind \"{name}\" is not in player.surface_kinds; it acts as stone"
+                    )
+                })
+                .collect(),
         },
     };
     stats.set_if_neq(next);

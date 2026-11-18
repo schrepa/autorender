@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 pub const FIGURE: DrawKind = DrawKind("figure");
 pub const GROUND: DrawKind = DrawKind("ground");
+pub const REVEALED: DrawKind = DrawKind("revealed");
+pub const FIELD_AT_CAMERA: [f32; 8] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
 
 pub const HIP: &str = "Hip";
 pub const RIGHT_ARM: [&str; 3] = ["R_Upperarm", "R_Forearm", "R_Hand"];
@@ -79,6 +81,20 @@ impl Figure {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct Blended {
+    pub clip: String,
+    pub weight: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Stride {
+    pub scale: f32,
+    pub axis: [f32; 2],
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BaseLayer {
     pub clip: String,
     pub speed: f32,
@@ -87,6 +103,12 @@ pub struct BaseLayer {
     pub cue: u32,
     #[serde(default)]
     pub fit_seconds: Option<f32>,
+    #[serde(default)]
+    pub blend: Vec<Blended>,
+    #[serde(default)]
+    pub stride: Option<Stride>,
+    #[serde(default)]
+    pub synced: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -99,6 +121,8 @@ pub struct UpperLayer {
     pub feather: u32,
     pub speed: f32,
     pub cue: u32,
+    #[serde(default)]
+    pub window: Option<[f32; 2]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -254,6 +278,8 @@ pub struct FigureJoints {
     pub strides: BTreeMap<String, f32>,
     #[serde(skip)]
     pub steps: BTreeMap<String, f32>,
+    #[serde(skip)]
+    pub head_top: Option<Vec3>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -1,6 +1,6 @@
 import package::engine::drawn::{drawn_floats, drawn_model, drawn_slot};
 import package::engine::view::view_clip;
-import package::figures::light::{FigureCorner, octahedral_normal};
+import package::figures::light::{FigureCorner, figure_field, octahedral_normal};
 
 struct JointRow {
     row_0: vec4<f32>,
@@ -45,5 +45,6 @@ fn blended(base: u32, joints: vec4<u32>, weights: vec4<f32>) -> JointRow {
     out.normal = (model * vec4<f32>(turned, 0.0)).xyz;
     out.uv = vertex.uv0;
     out.slot = slot;
+    out.field = figure_field(world, slot);
     return out;
 }

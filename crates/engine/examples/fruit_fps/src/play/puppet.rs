@@ -68,12 +68,21 @@ pub struct Switch {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct HardLanding {
+    pub from_mps: f32,
+    pub shot: OneShot,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OneShot {
     pub clip: String,
     pub from: String,
     pub feather: u32,
     pub weight: f32,
     pub speed: f32,
+    #[serde(default)]
+    pub window: Option<[f32; 2]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -105,7 +114,6 @@ pub struct Death {
 pub struct CrouchClips {
     pub from: f32,
     pub idle: BaseClip,
-    pub walk: BaseClip,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -138,10 +146,41 @@ pub struct PinFeet {
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Rate {
+pub struct Band {
     pub min: f32,
     pub max: f32,
-    pub stride_floor_mps: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Heading {
+    Forward,
+    Left,
+    Right,
+    Back,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Gait {
+    pub clip: String,
+    pub planted_mps: f32,
+    pub direction: Heading,
+    pub from_mps: f32,
+    pub to_mps: f32,
+    pub crouch: bool,
+    pub dropped: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Locomotion {
+    pub gaits: Vec<Gait>,
+    pub speed_fade_mps: f32,
+    pub fade_seconds: f32,
+    pub hip_turn_limit_radians: f32,
+    pub rate: Band,
+    pub stride: Band,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -238,8 +277,12 @@ pub struct ViewDevice {
 pub struct Throw {
     pub seconds: f32,
     pub lift_m: f32,
-    pub hand_m: f32,
-    pub reach_m: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shade {
+    pub indirect_floor: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -274,10 +317,8 @@ pub struct PuppetTable {
     pub aim: AimTable,
     pub crouch: CrouchTable,
     pub still_below_mps: f32,
-    pub rate: Rate,
+    pub locomotion: Locomotion,
     pub idle: BaseClip,
-    pub walk: BaseClip,
-    pub run: BaseClip,
     pub turn: BaseClip,
     pub look: LookTable,
     pub rise: BaseClip,
@@ -291,12 +332,15 @@ pub struct PuppetTable {
     pub plant: Plant,
     pub defuse: BaseClip,
     pub land: OneShot,
+    #[serde(default)]
+    pub land_hard: Option<HardLanding>,
     pub reload_hand: ReloadHand,
     pub switch: Switch,
     pub aiming: Aiming,
     pub dropped: DroppedLook,
     pub throw: Throw,
     pub props: PropsLook,
+    pub shade: Shade,
     pub pin_feet: PinFeet,
     pub hold_blend_seconds: f32,
     pub hand_axes: HandAxes,

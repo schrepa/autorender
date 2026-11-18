@@ -14,30 +14,136 @@
       "idle": {
         "clip": "crouch_idle",
         "fade_seconds": 0.2
-      },
-      "walk": {
-        "clip": "crouch_walk",
-        "fade_seconds": 0.2
       }
     }
   },
   "still_below_mps": 0.3,
-  "rate": {
-    "min": 0.5,
-    "max": 2.0,
-    "stride_floor_mps": 0.2
+  "locomotion": {
+    "gaits": [
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "forward",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "run",
+        "planted_mps": 2.15,
+        "direction": "forward",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "forward",
+        "from_mps": 0.0,
+        "to_mps": 99.0,
+        "crouch": true,
+        "dropped": true
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "left",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "run",
+        "planted_mps": 2.15,
+        "direction": "left",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "left",
+        "from_mps": 0.0,
+        "to_mps": 99.0,
+        "crouch": true,
+        "dropped": true
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "right",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "run",
+        "planted_mps": 2.15,
+        "direction": "right",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "right",
+        "from_mps": 0.0,
+        "to_mps": 99.0,
+        "crouch": true,
+        "dropped": true
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "back",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "run",
+        "planted_mps": 2.15,
+        "direction": "back",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "walk",
+        "planted_mps": 0.99,
+        "direction": "back",
+        "from_mps": 0.0,
+        "to_mps": 99.0,
+        "crouch": true,
+        "dropped": true
+      }
+    ],
+    "speed_fade_mps": 0.3,
+    "fade_seconds": 0.2,
+    "hip_turn_limit_radians": 0.8,
+    "rate": {
+      "min": 0.5,
+      "max": 3.0
+    },
+    "stride": {
+      "min": 1.0,
+      "max": 1.0
+    }
   },
   "idle": {
     "clip": "idle",
     "fade_seconds": 0.25
-  },
-  "walk": {
-    "clip": "walk",
-    "fade_seconds": 0.2
-  },
-  "run": {
-    "clip": "run",
-    "fade_seconds": 0.15
   },
   "turn": {
     "clip": "turn",
@@ -70,39 +176,59 @@
   },
   "melee": {
     "clip": "slash",
-    "from": "Spine01",
-    "feather": 2,
+    "from": "R_Clavicle",
+    "feather": 1,
     "weight": 1.0,
-    "speed": 1.0
+    "speed": 2.8,
+    "window": [
+      0.9,
+      2.6
+    ]
   },
   "melee_heavy": {
     "clip": "slash",
-    "from": "Spine01",
-    "feather": 2,
+    "from": "R_Clavicle",
+    "feather": 1,
     "weight": 1.0,
-    "speed": 0.6
+    "speed": 1.7,
+    "window": [
+      0.9,
+      2.6
+    ]
   },
   "casts": {
     "caster": {
       "clip": "cast",
-      "from": "Spine01",
+      "from": "Spine02",
       "feather": 2,
-      "weight": 1.0,
-      "speed": 1.0
+      "weight": 0.8,
+      "speed": 2.0,
+      "window": [
+        0.55,
+        4.6
+      ]
     },
     "throw": {
       "clip": "throw",
-      "from": "Spine01",
+      "from": "Spine02",
       "feather": 2,
       "weight": 1.0,
-      "speed": 1.0
+      "speed": 1.4,
+      "window": [
+        0.7,
+        2.1
+      ]
     },
     "place": {
       "clip": "dig",
-      "from": "Spine01",
+      "from": "Spine02",
       "feather": 2,
-      "weight": 1.0,
-      "speed": 1.0
+      "weight": 0.6,
+      "speed": 3.0,
+      "window": [
+        1.4,
+        6.3
+      ]
     }
   },
   "victory": {
@@ -168,14 +294,15 @@
   },
   "throw": {
     "seconds": 0.45,
-    "lift_m": 0.35,
-    "hand_m": 1.2,
-    "reach_m": 2.0
+    "lift_m": 0.35
   },
   "props": {
     "spin_radians_per_second": 9.0,
     "tile_m": 1.0,
     "wall_height_m": 3.0
+  },
+  "shade": {
+    "indirect_floor": 0.5
   },
   "pin_feet": {
     "contact_m": 0.03,

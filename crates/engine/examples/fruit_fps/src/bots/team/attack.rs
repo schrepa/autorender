@@ -60,8 +60,30 @@ impl Squad {
             .copied()
             .find(|&m| members[m].carrying_device && members[m].bot)
         {
-            duties[carrier] = Duty::Carrier;
-            taken[carrier] = true;
+            let handoff = plan.numbers.play.handoff_m;
+            let mate = (members[carrier].role == Role::Entry)
+                .then(|| {
+                    alive
+                        .iter()
+                        .copied()
+                        .filter(|&m| {
+                            m != carrier && members[m].bot && members[m].role != Role::Entry
+                        })
+                        .map(|m| {
+                            (
+                                m,
+                                flat_distance(members[m].position, members[carrier].position),
+                            )
+                        })
+                        .filter(|(_, d)| *d <= handoff)
+                        .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+                        .map(|(m, _)| m)
+                })
+                .flatten();
+            let holder = mate.unwrap_or(carrier);
+            self.hand_over = mate.map(|mate| (carrier, mate));
+            duties[holder] = Duty::Carrier;
+            taken[holder] = true;
         }
         let entry = pick(plan, alive, &taken, Role::Entry)
             .or_else(|| alive.iter().copied().find(|&m| !taken[m]));
@@ -120,6 +142,7 @@ impl Squad {
         if alive.is_empty() || self.site.is_none() {
             return;
         }
+        self.follow_human(plan, &alive);
         self.check_time(plan, &alive);
         self.check_collapse(plan, &alive);
         match self.step {
@@ -137,16 +160,28 @@ impl Squad {
             | Step::Save
             | Step::Hunt => self.attack_execute(plan, &alive),
         }
+        self.hand_over_orders(plan);
         if let DeviceSense::Dropped { at } = plan.sense.game.device {
             let members = plan.sense.members;
-            let nearest = alive.iter().copied().min_by(|&a, &b| {
-                let da = flat_distance(members[a].position, at);
-                let db = flat_distance(members[b].position, at);
-                members[b]
-                    .bot
-                    .cmp(&members[a].bot)
-                    .then(da.total_cmp(&db))
-                    .then(a.cmp(&b))
+            let handed = self
+                .hand_over
+                .filter(|&(_, to)| members[to].alive)
+                .map(|(_, to)| to);
+            let dropper = self.hand_over.map(|(from, _)| from);
+            let nearest = handed.or_else(|| {
+                alive
+                    .iter()
+                    .copied()
+                    .filter(|&m| Some(m) != dropper || alive.len() == 1)
+                    .min_by(|&a, &b| {
+                        let da = flat_distance(members[a].position, at);
+                        let db = flat_distance(members[b].position, at);
+                        members[b]
+                            .bot
+                            .cmp(&members[a].bot)
+                            .then(da.total_cmp(&db))
+                            .then(a.cmp(&b))
+                    })
             });
             if let Some(m) = nearest {
                 let face = at + plan.eye();
@@ -202,6 +237,48 @@ impl Squad {
         }
         let sum: Vec3 = alive.iter().map(|&m| members[m].position).sum();
         sum / alive.len().max(1) as f32
+    }
+
+    fn follow_human(&mut self, plan: &Plan<'_, '_>, alive: &[usize]) {
+        if !matches!(self.step, Step::Wait | Step::Gather | Step::Execute) {
+            return;
+        }
+        let members = plan.sense.members;
+        let follow = plan.numbers.play.follow_human_m;
+        let mut lead: Option<(usize, f32)> = None;
+        for &m in alive {
+            let member = &members[m];
+            if member.bot {
+                continue;
+            }
+            let Some(from) = self.human_from.get_mut(m) else {
+                continue;
+            };
+            let from = *from.get_or_insert(member.position);
+            let need = if member.carrying_device {
+                follow * 0.5
+            } else {
+                follow
+            };
+            if let Some(site) = plan.places().site_at(member.position) {
+                lead = Some((site, f32::INFINITY));
+                break;
+            }
+            for site in 0..plan.tactics.sites.len() {
+                let plant = plan.site(site).plant;
+                let gain = flat_distance(from, plant) - flat_distance(member.position, plant);
+                if gain >= need && lead.is_none_or(|(_, g)| gain > g) {
+                    lead = Some((site, gain));
+                }
+            }
+        }
+        if let Some((site, _)) = lead
+            && self.site != Some(site)
+        {
+            self.site = Some(site);
+            self.why = Why::HumanLead;
+            self.since = plan.tick;
+        }
     }
 
     fn check_time(&mut self, plan: &Plan<'_, '_>, alive: &[usize]) {
@@ -487,8 +564,41 @@ impl Squad {
                 go_tick,
                 careful,
                 utility,
+                hand_over: false,
+                wait_contact: false,
             };
             self.put(plan, m, order);
+        }
+    }
+
+    fn hand_over_orders(&mut self, plan: &Plan<'_, '_>) {
+        let Some((from, to)) = self.hand_over else {
+            return;
+        };
+        let members = plan.sense.members;
+        let early = matches!(self.step, Step::Wait | Step::Gather);
+        if !early || !members[from].alive || !members[to].alive || members[to].carrying_device {
+            self.hand_over = None;
+            return;
+        }
+        let eye = plan.eye();
+        if members[from].carrying_device {
+            let at = members[from].position;
+            let face = members[to].position + eye;
+            self.put(
+                plan,
+                from,
+                Order {
+                    hand_over: true,
+                    wait_contact: false,
+                    ..Order {
+                        goal: at,
+                        face,
+                        go_tick: 0,
+                        ..self.orders[from]
+                    }
+                },
+            );
         }
     }
 

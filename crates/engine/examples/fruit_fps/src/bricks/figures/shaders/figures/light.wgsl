@@ -1,7 +1,7 @@
-import package::engine::drawn::drawn_tint;
+import package::engine::drawn::{drawn_floats, drawn_tint};
 import package::engine::view::{camera, stable_normalize};
 import package::generated::figures::FigureLight;
-import package::figures::material::material_texels;
+import package::figures::material::{field_texel, material_texels};
 
 @group(2) @binding(0) var<uniform> figure_light: FigureLight;
 
@@ -16,6 +16,20 @@ struct FigureCorner {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) @interpolate(flat) slot: u32,
+    @location(4) field: vec4<f32>,
+}
+
+fn figure_field(world: vec3<f32>, slot: u32) -> vec4<f32> {
+    let shape = figure_light.field_shape;
+    if shape.z == 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let at = select(world, camera.position.xyz, drawn_floats(slot, 1u).w > 0.5);
+    let to_sun = normalize(figure_light.direction.xyz);
+    let along = to_sun.xz * ((at.y - shape.x) / max(to_sun.y, 0.05));
+    let uv = (at.xz - along - figure_light.field.xy) * figure_light.field.zw;
+    let stored = field_texel(uv);
+    return vec4<f32>(stored.rgb * stored.rgb * shape.y, stored.a);
 }
 
 fn octahedral_normal(packed: vec2<f32>) -> vec3<f32> {
@@ -50,7 +64,7 @@ fn scene_fogged(color: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
 }
 
 fn lit_color(base_color: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, roughness: f32,
-        metallic: f32) -> vec3<f32> {
+        metallic: f32, field: vec4<f32>) -> vec3<f32> {
     let to_sun = normalize(figure_light.direction.xyz);
     let half_way = normalize(to_sun + view);
     let n_l = max(dot(normal, to_sun), 0.0);
@@ -70,7 +84,12 @@ fn lit_color(base_color: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, roughnes
     let sun = (diffuse * wrapped + FIGURE_PI * distribution * visibility * fresnel * n_l)
         * figure_light.sun.rgb;
     let ambient = hemisphere(normal) * diffuse + hemisphere(reflect(-view, normal)) * reflectance;
-    return sun + ambient;
+    if figure_light.field_shape.z == 0.0 {
+        return sun + ambient;
+    }
+    let open = max(hemisphere(vec3<f32>(0.0, 1.0, 0.0)), vec3<f32>(1.0e-4));
+    let share = max(field.rgb / open, vec3<f32>(figure_light.field_shape.w));
+    return sun * field.a + ambient * share;
 }
 
 @fragment fn fs_figures(corner: FigureCorner, @builtin(front_facing) front: bool)
@@ -80,7 +99,8 @@ fn lit_color(base_color: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, roughnes
     let normal = deflected_normal(facing, dpdx(corner.world), dpdy(corner.world),
         dpdx(corner.uv), dpdy(corner.uv), texels.normal);
     let view = stable_normalize(camera.position.xyz - corner.world);
-    let lit = lit_color(texels.base_color, normal, view, texels.roughness, texels.metallic);
+    let lit = lit_color(texels.base_color, normal, view, texels.roughness, texels.metallic,
+        corner.field);
     let shown = select(texels.base_color, lit, figure_light.direction.w != 0.0);
     let tint = drawn_tint(corner.slot);
     let rim = (1.0 - tint.a) * pow(1.0 - saturate(dot(normal, view)), 3.0);

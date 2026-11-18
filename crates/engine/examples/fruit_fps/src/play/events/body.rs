@@ -2,7 +2,7 @@ use engine::prelude::Resource;
 use glam::Vec3;
 use serde::Serialize;
 
-use crate::solids::{Kind, Surface};
+use crate::solids::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,7 +16,6 @@ pub enum Stride {
 pub struct Footstep {
     pub slot: u32,
     pub position: Vec3,
-    pub surface: Surface,
     pub kind: Kind,
     pub stride: Stride,
     pub loud: bool,
@@ -26,7 +25,6 @@ pub struct Footstep {
 pub struct Jump {
     pub slot: u32,
     pub position: Vec3,
-    pub surface: Option<Surface>,
     pub kind: Option<Kind>,
 }
 
@@ -34,7 +32,6 @@ pub struct Jump {
 pub struct Landing {
     pub slot: u32,
     pub position: Vec3,
-    pub surface: Surface,
     pub kind: Kind,
     pub fall_speed: f32,
     pub hard: bool,

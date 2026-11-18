@@ -1,6 +1,7 @@
 pub mod actors;
 pub mod arms;
 pub mod bots;
+pub mod camera;
 pub mod effects;
 pub mod events;
 pub mod figures;

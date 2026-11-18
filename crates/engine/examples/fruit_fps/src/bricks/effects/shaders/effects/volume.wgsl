@@ -69,15 +69,21 @@ fn seen_from(corner: VolumeCorner, pixel: vec2<f32>) -> Seen {
 @fragment fn fs_smoke(corner: VolumeCorner) -> @location(0) vec4<f32> {
     let item = effect_items[corner.index];
     let seen = seen_from(corner, corner.clip.xy);
-    if !far_face(item, seen) {
-        discard;
-    }
     let centre = item.p0.xyz;
     let radius = item.p0.w;
     let rim = item.p2.w;
     let offset = centre - seen.eye;
     let closest = dot(offset, seen.toward);
     let miss_squared = max(dot(offset, offset) - closest * closest, 0.0);
+    let widest = max(abs(radius + rim), abs(radius + rim * 0.5));
+    let widest_squared = widest * widest - miss_squared;
+    if widest_squared <= 0.0 {
+        discard;
+    }
+    let widest_chord = sqrt(widest_squared);
+    if closest - widest_chord >= seen.scene || closest + widest_chord <= 0.0 {
+        discard;
+    }
     let swirl = seen.eye + seen.toward * closest;
     let drift = vec3<f32>(0.0, effect_seconds() * item.p5.w, item.p3.y * 17.0);
     let noise = effect_noise(swirl * item.p4.w + drift);

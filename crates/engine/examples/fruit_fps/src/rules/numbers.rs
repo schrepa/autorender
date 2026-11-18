@@ -25,6 +25,7 @@ pub struct MatchNumbers {
     pub overtime_rounds_before_decider: u32,
     pub buy_seconds: f64,
     pub buy_seconds_first_round_of_half: f64,
+    pub buy_ready_seconds: f64,
     pub round_seconds: f64,
     pub plant_seconds: f64,
     pub defuse_seconds: f64,
@@ -147,6 +148,7 @@ pub struct CharacterEntry {
 pub struct Timings {
     pub buy: u32,
     pub buy_first_round_of_half: u32,
+    pub buy_ready: u32,
     pub round: u32,
     pub plant: u32,
     pub defuse: u32,
@@ -317,6 +319,7 @@ impl Catalog {
         let timings = Timings {
             buy: ticks(round.buy_seconds, tps),
             buy_first_round_of_half: ticks(round.buy_seconds_first_round_of_half, tps),
+            buy_ready: ticks(round.buy_ready_seconds, tps),
             round: ticks(round.round_seconds, tps),
             plant: ticks(round.plant_seconds, tps),
             defuse,

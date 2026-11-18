@@ -4,6 +4,8 @@
 @group(1) @binding(3) var normal_sampler: sampler;
 @group(1) @binding(4) var orm_map: texture_2d<f32>;
 @group(1) @binding(5) var orm_sampler: sampler;
+@group(1) @binding(6) var figure_field_map: texture_2d<f32>;
+@group(1) @binding(7) var figure_field_sampler: sampler;
 
 struct MaterialTexels {
     base_color: vec3<f32>,
@@ -21,4 +23,8 @@ fn material_texels(uv: vec2<f32>) -> MaterialTexels {
     texels.roughness = orm.g;
     texels.metallic = orm.b;
     return texels;
+}
+
+fn field_texel(uv: vec2<f32>) -> vec4<f32> {
+    return textureSampleLevel(figure_field_map, figure_field_sampler, uv, 0.0);
 }

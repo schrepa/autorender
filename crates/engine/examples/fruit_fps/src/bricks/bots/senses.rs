@@ -37,6 +37,7 @@ pub(super) struct Who {
     pub armour: f32,
     pub gun: GunSense,
     pub character: Option<usize>,
+    pub interact: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -1,7 +1,14 @@
 use engine::math;
 use engine::prelude::*;
-use engine_core::{AlphaMode, AssetLibrary, DrawnTable, Error, ErrorCode, Expected, Material};
+use std::collections::BTreeMap;
 
+use engine_core::{
+    AlphaMode, AssetLibrary, AssetResidency, DrawnTable, Error, ErrorCode, Expected, Material,
+    MaterialHandle, SceneContext, Views,
+};
+
+use super::chunks;
+use super::gpu::problems_of;
 use super::numbers::Antialias;
 use super::numbers::{self, LightingNumbers};
 use super::{
@@ -227,8 +234,12 @@ pub(super) fn count(
     lighting: Res<Lighting>,
     lights: Query<&Light>,
     marks: Res<GroundMarks>,
-    table: Res<DrawnTable>,
-    library: Option<Res<AssetLibrary>>,
+    (table, views): (Res<DrawnTable>, Res<Views>),
+    (library, residency, scene): (
+        Option<Res<AssetLibrary>>,
+        Option<Res<AssetResidency>>,
+        Option<Res<SceneContext>>,
+    ),
     mut stats: ResMut<LevelStats>,
 ) {
     let mut next = LevelStats {
@@ -270,6 +281,14 @@ pub(super) fn count(
         }
     }
     next.materials = materials.len() as u32;
+    let judged = judged(
+        &table,
+        library,
+        residency.as_deref(),
+        scene.as_deref(),
+        &mut next,
+    );
+    submitted(&mut next, &table, library, (&views, &judged));
     next.lightmap = next.baked > 0;
     let sky = table.batches(SKY).next();
     next.sky = sky.is_some();
@@ -287,12 +306,107 @@ pub(super) fn count(
     stats.set_if_neq(next);
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Judged {
+    Ready,
+    Broken,
+    Waiting,
+}
+
+fn name_of(scene: Option<&SceneContext>, handle: MaterialHandle) -> String {
+    scene
+        .and_then(|scene| {
+            scene
+                .assets
+                .materials
+                .iter()
+                .find(|(_, known)| **known == handle)
+                .map(|(name, _)| name.clone())
+        })
+        .unwrap_or_else(|| format!("$.materials.{}", handle.slot()))
+}
+
+fn judged(
+    table: &DrawnTable,
+    library: Option<&AssetLibrary>,
+    residency: Option<&AssetResidency>,
+    scene: Option<&SceneContext>,
+    next: &mut LevelStats,
+) -> BTreeMap<MaterialHandle, Judged> {
+    let mut judged = BTreeMap::new();
+    let used = table
+        .batches(LEVEL_DETAIL)
+        .map(|batch| (batch.material, true))
+        .chain(table.batches(LEVEL).map(|batch| (batch.material, false)));
+    for (handle, detail) in used {
+        let Some(handle) = handle else {
+            continue;
+        };
+        if judged.contains_key(&handle) {
+            continue;
+        }
+        let material = library.and_then(|library| library.material(handle));
+        let problems = material.map_or_else(Vec::new, |material| {
+            problems_of(material, &format!("$.materials.{}", handle.slot()), detail)
+        });
+        let resident = residency.is_some_and(|residency| residency.material_resident(handle));
+        let verdict = if !problems.is_empty() {
+            Judged::Broken
+        } else if resident && material.is_some() {
+            Judged::Ready
+        } else {
+            Judged::Waiting
+        };
+        if !problems.is_empty() {
+            let name = name_of(scene, handle);
+            next.problems.extend(
+                problems
+                    .iter()
+                    .map(|problem| format!("level material {name}: {problem}")),
+            );
+        }
+        judged.insert(handle, verdict);
+    }
+    judged
+}
+
+fn submitted(
+    next: &mut LevelStats,
+    table: &DrawnTable,
+    library: Option<&AssetLibrary>,
+    (views, judged): (&Views, &BTreeMap<MaterialHandle, Judged>),
+) {
+    let mut listed = Vec::new();
+    let mut order = Vec::new();
+    for kind in [LEVEL, LEVEL_DETAIL] {
+        chunks::listed(table, library, kind, &mut listed);
+        next.chunks += listed.len() as u32;
+        let Some(facts) = views.main() else {
+            continue;
+        };
+        chunks::ordered(&listed, facts, &mut order);
+        for chunk in order.iter().map(|&at| &listed[at as usize]) {
+            let verdict = chunk.material.map_or(Judged::Ready, |handle| {
+                judged.get(&handle).copied().unwrap_or(Judged::Waiting)
+            });
+            match verdict {
+                Judged::Ready => {
+                    next.submitted += 1;
+                    next.vertices += chunk.vertices;
+                }
+                Judged::Broken => next.skipped += 1,
+                Judged::Waiting => next.waiting += 1,
+            }
+        }
+    }
+}
+
 fn tally(next: &mut LevelStats, material: &Material) {
     let strength = |name| material.value(name).unwrap_or(0.0);
     next.baked += u32::from(material.map(LIGHTMAP_MAP).is_some());
     next.cutout += u32::from(matches!(material.alpha_mode(), AlphaMode::Mask { .. }));
     next.glowing += u32::from(material.emissive().iter().any(|value| *value > 0.0));
-    next.broken += u32::from(strength(MACRO_COLOR) + strength(MACRO_ROUGH) > 0.0);
+    next.macro_strengths += u32::from(strength(MACRO_COLOR) + strength(MACRO_ROUGH) > 0.0);
     next.mirrors += u32::from(strength(MIRROR) > 0.0);
     next.plain += u32::from(
         super::SURFACE_MAPS

@@ -1,5 +1,6 @@
 mod bc5;
 mod bc7;
+mod chunks;
 mod config;
 mod encode;
 mod entry;
@@ -11,11 +12,13 @@ mod maps;
 mod markers;
 mod mips;
 mod motion;
+mod part;
 mod picture;
 mod probe;
 mod rig;
 mod scene;
 mod source;
+mod uris;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -105,6 +108,26 @@ fn cook_all(cook_path: &Path) -> ExitCode {
         let names: Vec<&String> = files.iter().map(|(file, _)| file).collect();
         println!("{}", json!({"entry": name, "written": names}));
     }
+    for part in &cook.scene_parts {
+        let present = part.needs.iter().all(|name| {
+            cook.entries.iter().any(|entry| match entry {
+                config::Entry::Picture(picture) => {
+                    picture.name == *name && base.join(&picture.source).is_file()
+                }
+                config::Entry::Character(_)
+                | config::Entry::Clip(_)
+                | config::Entry::Static(_)
+                | config::Entry::Map(_) => false,
+            })
+        });
+        match part::apply(&base, part, present) {
+            Ok(line) => println!("{line}"),
+            Err(fault) => {
+                print_faults(&[fault]);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     for variant in &cook.scenes {
         match scene::write(&base, variant) {
             Ok(swapped) => println!(
@@ -117,7 +140,33 @@ fn cook_all(cook_path: &Path) -> ExitCode {
             }
         }
     }
-    ExitCode::SUCCESS
+    shipped_uris(&cook, &base)
+}
+
+fn shipped_uris(cook: &config::Cook, base: &Path) -> ExitCode {
+    let mut shipped: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    for variant in &cook.scenes {
+        for scene in [&variant.from, &variant.to] {
+            let path = base.join(scene);
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            shipped.entry(folder(&path)).or_default().push(name);
+        }
+    }
+    let mut missing = false;
+    for (at, scenes) in &shipped {
+        let (line, faults) = uris::check(at, scenes);
+        println!("{line}");
+        print_faults(&faults);
+        missing |= !faults.is_empty();
+    }
+    if missing {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn check(glb: &Path, cook_path: &Path, name: &str) -> ExitCode {

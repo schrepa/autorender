@@ -116,11 +116,14 @@ fn menus(
 
 fn options_facts(
     facts: &mut HudFacts,
-    source: &ScreenSource,
+    (source, flow): (&ScreenSource, Option<&Flow>),
     values: &Values,
     numbers: Option<&Numbers>,
 ) {
     let settings = &mut facts.menu.settings;
+    if let Some(flow) = flow {
+        super::live::set(&mut settings.level, &flow.level);
+    }
     menu::slider_facts(&mut settings.sliders, &source.menu.sliders, values);
     settings.crosshair = values.options.crosshair as usize;
     settings.invert = values.controls.invert_pitch;
@@ -130,9 +133,25 @@ fn options_facts(
         .get(settings.crosshair)
         .map_or("", String::as_str);
     super::live::set(&mut settings.crosshair_color, color);
-    if let Some(numbers) = numbers.and_then(Numbers::get) {
-        menu::key_rows(&mut settings.keys, &source.menu.key_rows, &numbers.keys);
-    }
+    let Some(numbers) = numbers.and_then(Numbers::get) else {
+        return;
+    };
+    let names = &source.key_names;
+    menu::key_rows(
+        &mut settings.keys,
+        (&source.menu.key_rows, names),
+        &numbers.keys,
+    );
+    let shop = source.loaded().map(|loaded| {
+        [
+            ("take", &loaded.keys.take),
+            ("give_back", &loaded.keys.give_back),
+        ]
+    });
+    let all = menu::bindings(&numbers.keys)
+        .into_iter()
+        .chain(shop.into_iter().flatten());
+    menu::key_facts(&mut facts.keys, all, names);
 }
 
 type Reads<'w> = (
@@ -208,7 +227,12 @@ pub(super) fn control(
     if values.options != *options {
         writes.options_wanted(values.options.clone());
     }
-    options_facts(facts, source, &values, numbers.as_deref());
+    options_facts(
+        facts,
+        (source, flow.as_deref()),
+        &values,
+        numbers.as_deref(),
+    );
     let playing = flow
         .as_deref()
         .is_none_or(|flow| flow.stage == Stage::Playing && !flow.settings_open);
@@ -236,5 +260,16 @@ pub(super) fn control(
     book.hovered = None;
     if next.shown == Shown::Buy {
         buying((&devices, loaded, &draw), facts, &mut buys, &mut book);
+    }
+    let hovered = book.hovered;
+    let lists = [
+        (CardList::Weapons, &mut facts.buy.weapons),
+        (CardList::Armor, &mut facts.buy.armor),
+        (CardList::Abilities, &mut facts.buy.abilities),
+    ];
+    for (list, cards) in lists {
+        for (index, card) in cards.iter_mut().enumerate() {
+            card.focus = hovered == Some((list, index));
+        }
     }
 }

@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::world::{Markers, Spawn, Zone, ZoneBox};
-use crate::solids::{Block, Ground, Kind, Solids, Surface};
+use crate::solids::{Block, Ground, Kind, Solids};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -87,15 +87,26 @@ struct Marker {
 
 const DEFAULT_KIND: &str = "stone";
 
+pub(super) fn stone_unknown(solids: &mut Solids, markers: &mut Markers, known: &[String]) {
+    let (kept, unknown): (Vec<_>, Vec<_>) = std::mem::take(&mut markers.kinds)
+        .into_iter()
+        .partition(|(_, name)| known.contains(name));
+    for (kind, _) in &unknown {
+        solids.relabel(*kind, Kind::STONE);
+    }
+    markers.kinds = kept;
+    if !unknown.is_empty() && !markers.kinds.iter().any(|(kind, _)| *kind == Kind::STONE) {
+        markers.kinds.push((Kind::STONE, DEFAULT_KIND.to_owned()));
+    }
+    markers.unknown_kinds = unknown.into_iter().map(|(_, name)| name).collect();
+}
+
 fn ground(name: &str, kinds: &mut Vec<(Kind, String)>) -> Ground {
     let kind = Kind::named(name);
     if !kinds.iter().any(|(known, _)| *known == kind) {
         kinds.push((kind, name.to_owned()));
     }
-    Ground {
-        surface: Surface::of_kind(name),
-        kind,
-    }
+    Ground { kind }
 }
 
 fn json<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T, Error> {
@@ -124,12 +135,12 @@ fn floor(floor: &Floor) -> (Solids, Markers) {
             centre: Vec3::from_array(block.centre),
             half_extents: Vec3::from_array(block.half_extents),
             axes: Mat3::IDENTITY,
-            surface: made.surface,
             kind: made.kind,
         });
     }
     let markers = Markers {
         kinds,
+        floor_half_size: Some(h),
         ..Markers::default()
     };
     (solids, markers)
@@ -198,6 +209,8 @@ fn markers(file: &MarkerFile) -> Markers {
         defend: defend.into_iter().map(|(_, spawn)| spawn).collect(),
         zones,
         kinds: Vec::new(),
+        floor_half_size: None,
+        unknown_kinds: Vec::new(),
     }
 }
 

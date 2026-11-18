@@ -5,7 +5,8 @@ use engine::math;
 use engine::prelude::*;
 
 use crate::names::{FAR, NEAR, PITCH_LIMIT_DEGREES};
-use crate::play::actors::{Body, Human, Wish};
+use crate::play::actors::{Actor, Body, Human, Wish};
+use crate::play::camera::TestCamera;
 use crate::play::numbers::{Numbers, SpectateNumbers};
 use crate::play::view::{Controls, CorpseView, ViewOffsets, Watch, Watched};
 
@@ -22,6 +23,37 @@ use crate::play::view::{Controls, CorpseView, ViewOffsets, Watch, Watched};
 #[serde(deny_unknown_fields)]
 pub struct Look {}
 
+#[derive(
+    Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct FreeCamera {
+    pub position: [f32; 3],
+    pub target: [f32; 3],
+    pub fov_degrees: f32,
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct FollowCamera {
+    pub slot: u32,
+    pub offset: [f32; 3],
+    pub look_height_m: f32,
+    pub fov_degrees: f32,
+}
+
+settings! {
+    #[section("look_test")]
+    #[serde(deny_unknown_fields)]
+    pub struct LookTest {
+        pub free: Option<FreeCamera> = None => any,
+        pub follow: Option<FollowCamera> = None => any,
+        pub hide_hud: bool = false => any,
+    }
+}
+
 stats! {
     #[section("look")]
     pub struct LookStats {
@@ -29,6 +61,9 @@ stats! {
         pub pitch: f32,
         pub position: [f32; 3],
         pub fov: f32,
+        pub free: bool,
+        pub follow: Option<u32>,
+        pub test_refusal: Option<String>,
     }
 }
 
@@ -43,6 +78,8 @@ impl Brick for LookBrick {
                 ComponentKind::of::<Look>("look").schema(engine_core::schema_of::<Look>),
             )
             .moves::<Look>(Pace::Frame)
+            .settings::<LookTest>()
+            .resource::<TestCamera>()
             .stats::<LookStats>()
             .systems(Schedule::FrameStart, lens)
             .systems(Schedule::FrameStart, place);
@@ -115,6 +152,82 @@ fn corpse_shot(corpse: &CorpseView, spectate: &SpectateNumbers, ticks: f32) -> S
     }
 }
 
+fn aimed(position: Vec3, target: Vec3) -> Option<(Quat, f32, f32)> {
+    let toward = (target - position).try_normalize()?;
+    let flat = toward.with_y(0.0).length();
+    let yaw = math::atan2(-toward.x, -toward.z);
+    let pitch = math::atan2(toward.y, flat);
+    Some((
+        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch),
+        yaw,
+        pitch,
+    ))
+}
+
+fn fov_checked(fov_degrees: f32, path: &str) -> Result<f32, String> {
+    if fov_degrees.is_finite() && fov_degrees > 1.0 && fov_degrees < 170.0 {
+        Ok(fov_degrees)
+    } else {
+        Err(format!(
+            "{path}.fov_degrees: {fov_degrees} is outside 1..170"
+        ))
+    }
+}
+
+fn aimed_shot(position: Vec3, target: Vec3, path: &str) -> Result<Shot, String> {
+    let (rotation, yaw, pitch) = aimed(position, target)
+        .ok_or_else(|| format!("{path}: the camera stands on its target"))?;
+    Ok(Shot {
+        position,
+        rotation,
+        yaw,
+        pitch,
+        zoom: 1.0,
+    })
+}
+
+fn followed(
+    follow: &FollowCamera,
+    alpha: f32,
+    actors: &Query<'_, '_, (&Actor, Seen<'static>)>,
+) -> Result<Shot, String> {
+    let (_, (body, wish, _)) = actors
+        .iter()
+        .find(|(actor, _)| actor.slot == follow.slot)
+        .ok_or_else(|| format!("$.look_test.follow.slot: no actor in slot {}", follow.slot))?;
+    let drawn_eye = body.eye_before.lerp(body.eye, alpha);
+    let feet = body.feet + (drawn_eye - body.eye);
+    let turn = Quat::from_rotation_y(wish.yaw_radians);
+    let position = feet + turn * Vec3::from_array(follow.offset);
+    aimed_shot(
+        position,
+        feet + Vec3::Y * follow.look_height_m,
+        "$.look_test.follow",
+    )
+}
+
+fn test_shot(view: &Viewing<'_, '_>) -> Option<Result<(Shot, f32), String>> {
+    let test = view.test.as_deref()?;
+    if let Some(follow) = test.follow.as_ref() {
+        return Some(
+            fov_checked(follow.fov_degrees, "$.look_test.follow").and_then(|fov| {
+                followed(follow, view.frame.alpha, &view.slots).map(|shot| (shot, fov))
+            }),
+        );
+    }
+    let free = test.free.as_ref()?;
+    Some(
+        fov_checked(free.fov_degrees, "$.look_test.free").and_then(|fov| {
+            aimed_shot(
+                Vec3::from_array(free.position),
+                Vec3::from_array(free.target),
+                "$.look_test.free",
+            )
+            .map(|shot| (shot, fov))
+        }),
+    )
+}
+
 type Seen<'a> = (&'a Body, &'a Wish, &'a ViewOffsets);
 
 #[derive(SystemParam)]
@@ -124,7 +237,9 @@ struct Viewing<'w, 's> {
     numbers: Res<'w, Numbers>,
     controls: Res<'w, Controls>,
     watched: Option<Res<'w, Watched>>,
+    test: Option<Res<'w, LookTest>>,
     actors: Query<'w, 's, Seen<'static>>,
+    slots: Query<'w, 's, (&'static Actor, Seen<'static>)>,
     humans: Query<'w, 's, Seen<'static>, With<Human>>,
 }
 
@@ -158,12 +273,27 @@ fn place(
     view: Viewing<'_, '_>,
     mut eyes: Query<(Entity, &mut Camera), With<Look>>,
     mut moves: Moves<LookBrick>,
-    mut stats: ResMut<LookStats>,
+    (mut stats, mut outside): (ResMut<LookStats>, ResMut<TestCamera>),
 ) {
-    let Some(shot) = shot_of(&view) else {
+    let tested = test_shot(&view);
+    let test_refusal = tested
+        .as_ref()
+        .and_then(|tested| tested.as_ref().err().cloned());
+    let tested = tested.and_then(Result::ok);
+    let free = tested.is_some();
+    let hud_hidden = view.test.as_deref().is_some_and(|test| test.hide_hud);
+    let (shot, fov_degrees) = match tested {
+        Some((shot, fov)) => (Some(shot), fov),
+        None => (shot_of(&view), view.controls.fov_degrees),
+    };
+    outside.set_if_neq(TestCamera {
+        outside: free,
+        hud_hidden: hud_hidden && free,
+    });
+    let Some(shot) = shot else {
         return;
     };
-    let lens = lens_of(view.controls.fov_degrees, shot.zoom);
+    let lens = lens_of(fov_degrees, shot.zoom);
     for (eye, mut camera) in &mut eyes {
         camera.set_if_neq(lens);
         if let Some(mut transform) = moves.get_mut(eye) {
@@ -186,5 +316,13 @@ fn place(
         pitch: shot.pitch,
         position: shot.position.to_array(),
         fov,
+        free,
+        follow: view
+            .test
+            .as_deref()
+            .and_then(|test| test.follow)
+            .filter(|_| free)
+            .map(|follow| follow.slot),
+        test_refusal,
     });
 }

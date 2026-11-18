@@ -4,6 +4,7 @@ mod carry;
 mod choose;
 mod device;
 mod drops;
+mod locomotion;
 mod props;
 
 use std::collections::BTreeMap;
@@ -41,8 +42,41 @@ stats! {
         pub dropped: u32,
         pub props: u32,
         pub props_skipped: u32,
+        pub props_skipped_keys: Vec<String>,
+        pub locomotion: Option<LocomotionStats>,
+        pub head: Option<HeadStats>,
         pub refusal: Option<String>,
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ClipWeight {
+    pub clip: String,
+    pub weight: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LocomotionStats {
+    pub slot: u32,
+    pub clips: Vec<ClipWeight>,
+    pub rate: f32,
+    pub stride: f32,
+    pub hip_turn: f32,
+    pub speed_mps: f32,
+    pub planted_mps: f32,
+    pub planned_slide_mps: f32,
+    pub slide_mps: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HeadStats {
+    pub slot: u32,
+    pub head_top_m: f32,
+    pub height_m: f32,
+    pub top_gap_m: f32,
+    pub eye_m: f32,
+    pub body_eye_m: f32,
+    pub eye_gap_m: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]

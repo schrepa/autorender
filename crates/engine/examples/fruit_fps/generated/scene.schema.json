@@ -116,6 +116,13 @@
     "BaseLayer": {
       "additionalProperties": false,
       "properties": {
+        "blend": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Blended"
+          },
+          "type": "array"
+        },
         "clip": {
           "type": "string"
         },
@@ -142,6 +149,21 @@
         "speed": {
           "format": "float",
           "type": "number"
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stride"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "synced": {
+          "default": false,
+          "type": "boolean"
         }
       },
       "required": [
@@ -150,6 +172,23 @@
         "looping",
         "fade_seconds",
         "cue"
+      ],
+      "type": "object"
+    },
+    "Blended": {
+      "additionalProperties": false,
+      "properties": {
+        "clip": {
+          "type": "string"
+        },
+        "weight": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "clip",
+        "weight"
       ],
       "type": "object"
     },
@@ -226,6 +265,50 @@
         "near",
         "far",
         "projection"
+      ],
+      "type": "object"
+    },
+    "CastAt": {
+      "additionalProperties": false,
+      "properties": {
+        "ability": {
+          "$ref": "#/$defs/TestSlot"
+        },
+        "eye": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch_deg": {
+          "format": "float",
+          "type": "number"
+        },
+        "slot": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "yaw_deg": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "slot",
+        "ability",
+        "eye",
+        "yaw_deg",
+        "pitch_deg"
       ],
       "type": "object"
     },
@@ -643,6 +726,96 @@
       },
       "type": "object"
     },
+    "FollowCamera": {
+      "additionalProperties": false,
+      "properties": {
+        "fov_degrees": {
+          "format": "float",
+          "type": "number"
+        },
+        "look_height_m": {
+          "format": "float",
+          "type": "number"
+        },
+        "offset": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "slot": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot",
+        "offset",
+        "look_height_m",
+        "fov_degrees"
+      ],
+      "type": "object"
+    },
+    "FontSource": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "texture": {
+          "type": "string"
+        },
+        "thin_faces": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "file",
+        "texture",
+        "thin_faces"
+      ],
+      "type": "object"
+    },
+    "FreeCamera": {
+      "additionalProperties": false,
+      "properties": {
+        "fov_degrees": {
+          "format": "float",
+          "type": "number"
+        },
+        "position": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "target": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "position",
+        "target",
+        "fov_degrees"
+      ],
+      "type": "object"
+    },
     "Give": {
       "additionalProperties": false,
       "properties": {
@@ -954,6 +1127,38 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "LookTest": {
+      "additionalProperties": false,
+      "properties": {
+        "follow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FollowCamera"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "free": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FreeCamera"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hide_hud": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "Lows": {
       "additionalProperties": false,
       "properties": {
@@ -965,11 +1170,23 @@
           "format": "float",
           "type": "number"
         },
+        "go_seconds": {
+          "format": "float",
+          "type": "number"
+        },
         "health": {
           "format": "float",
           "type": "number"
         },
+        "lost_seconds": {
+          "format": "float",
+          "type": "number"
+        },
         "magazine_share": {
+          "format": "float",
+          "type": "number"
+        },
+        "point_seconds": {
           "format": "float",
           "type": "number"
         },
@@ -983,18 +1200,28 @@
         "fuse_seconds",
         "health",
         "magazine_share",
-        "buy_seconds"
+        "buy_seconds",
+        "go_seconds",
+        "point_seconds",
+        "lost_seconds"
       ],
       "type": "object"
     },
     "MarkNumbers": {
       "additionalProperties": false,
       "properties": {
+        "color": {
+          "type": "string"
+        },
         "gap_px": {
           "format": "float",
           "type": "number"
         },
         "length_px": {
+          "format": "float",
+          "type": "number"
+        },
+        "rim_px": {
           "format": "float",
           "type": "number"
         },
@@ -1011,7 +1238,9 @@
         "gap_px",
         "length_px",
         "width_px",
-        "seconds"
+        "rim_px",
+        "seconds",
+        "color"
       ],
       "type": "object"
     },
@@ -1021,13 +1250,25 @@
         "damage": {
           "$ref": "#/$defs/MarkNumbers"
         },
+        "head_color": {
+          "type": "string"
+        },
         "hit": {
           "$ref": "#/$defs/MarkNumbers"
+        },
+        "kill_color": {
+          "type": "string"
+        },
+        "outline_color": {
+          "type": "string"
         }
       },
       "required": [
         "hit",
-        "damage"
+        "damage",
+        "head_color",
+        "kill_color",
+        "outline_color"
       ],
       "type": "object"
     },
@@ -1071,6 +1312,15 @@
             }
           ],
           "default": null
+        },
+        "ready": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -1462,6 +1712,17 @@
           "$ref": "#/$defs/Relay",
           "default": "own"
         },
+        "cast_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastAt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "free": {
           "default": false,
           "type": "boolean"
@@ -1778,6 +2039,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFrameLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "look_test": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LookTest"
             },
             {
               "type": "null"
@@ -2733,6 +3004,17 @@
           "default": false,
           "type": "boolean"
         },
+        "demo_blind": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "demo_channel": {
+          "default": false,
+          "type": "boolean"
+        },
         "show": {
           "$ref": "#/$defs/Showing",
           "default": "auto"
@@ -2752,17 +3034,23 @@
         "feed": {
           "$ref": "#/$defs/FeedNumbers"
         },
-        "font": {
-          "type": "string"
-        },
-        "font_texture": {
-          "type": "string"
+        "fonts": {
+          "items": {
+            "$ref": "#/$defs/FontSource"
+          },
+          "type": "array"
         },
         "icons": {
           "type": "string"
         },
         "icons_texture": {
           "type": "string"
+        },
+        "key_names": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         },
         "keys": {
           "$ref": "#/$defs/ScreenKeys"
@@ -2803,12 +3091,6 @@
           },
           "type": "object"
         },
-        "thin_faces": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "words": {
           "$ref": "#/$defs/Words"
         }
@@ -2816,17 +3098,16 @@
       "required": [
         "layout",
         "icons",
-        "font",
         "minimap",
         "portraits",
         "icons_texture",
-        "font_texture",
+        "fonts",
         "pictures",
         "sized",
-        "thin_faces",
         "atlases",
         "menu",
         "keys",
+        "key_names",
         "low",
         "feed",
         "marks",
@@ -2851,7 +3132,8 @@
         "flash",
         "near_sight",
         "damage",
-        "inside_smoke"
+        "inside_smoke",
+        "barrier"
       ],
       "type": "string"
     },
@@ -2915,6 +3197,9 @@
         "fov": {
           "$ref": "#/$defs/SliderNumbers"
         },
+        "render_scale": {
+          "$ref": "#/$defs/SliderNumbers"
+        },
         "sensitivity": {
           "$ref": "#/$defs/SliderNumbers"
         },
@@ -2925,7 +3210,8 @@
       "required": [
         "sensitivity",
         "fov",
-        "volume"
+        "volume",
+        "render_scale"
       ],
       "type": "object"
     },
@@ -2941,10 +3227,42 @@
       ],
       "type": "object"
     },
+    "Stride": {
+      "additionalProperties": false,
+      "properties": {
+        "axis": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "scale": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scale",
+        "axis"
+      ],
+      "type": "object"
+    },
     "TeamName": {
       "enum": [
         "first",
         "second"
+      ],
+      "type": "string"
+    },
+    "TestSlot": {
+      "enum": [
+        "c",
+        "q",
+        "e",
+        "x"
       ],
       "type": "string"
     },
@@ -2977,6 +3295,19 @@
         "weight": {
           "format": "float",
           "type": "number"
+        },
+        "window": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3182,10 +3513,43 @@
         "planting": {
           "type": "string"
         },
+        "point_death": {
+          "type": "string"
+        },
+        "point_defuse": {
+          "type": "string"
+        },
+        "point_kill": {
+          "type": "string"
+        },
+        "point_orb": {
+          "type": "string"
+        },
+        "point_plant": {
+          "type": "string"
+        },
         "round_lost": {
           "type": "string"
         },
         "round_won": {
+          "type": "string"
+        },
+        "signature_free": {
+          "type": "string"
+        },
+        "status_boosted": {
+          "type": "string"
+        },
+        "status_revealed": {
+          "type": "string"
+        },
+        "status_sight": {
+          "type": "string"
+        },
+        "status_slowed": {
+          "type": "string"
+        },
+        "status_vulnerable": {
           "type": "string"
         },
         "time_out": {
@@ -3217,7 +3581,18 @@
         "mvp_round",
         "mvp_match",
         "mvp_stats",
-        "mvp_char"
+        "mvp_char",
+        "signature_free",
+        "point_kill",
+        "point_death",
+        "point_plant",
+        "point_defuse",
+        "point_orb",
+        "status_slowed",
+        "status_sight",
+        "status_vulnerable",
+        "status_revealed",
+        "status_boosted"
       ],
       "type": "object"
     }

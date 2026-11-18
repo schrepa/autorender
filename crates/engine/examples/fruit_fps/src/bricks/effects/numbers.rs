@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::solids::Surface;
+use crate::solids::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,23 +47,22 @@ pub(super) struct Spray {
     pub streak_seconds: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Impacts {
-    pub stone: Spray,
-    pub metal: Spray,
-    pub wood: Spray,
-    pub dirt: Spray,
+    pub default: Spray,
+    pub kinds: BTreeMap<String, Spray>,
 }
 
 impl Impacts {
-    pub fn of(&self, surface: Surface) -> &Spray {
-        match surface {
-            Surface::Stone => &self.stone,
-            Surface::Metal => &self.metal,
-            Surface::Wood => &self.wood,
-            Surface::Dirt => &self.dirt,
-        }
+    pub fn of(&self, kind: Option<Kind>) -> &Spray {
+        kind.and_then(|kind| {
+            self.kinds
+                .iter()
+                .find(|(name, _)| Kind::named(name) == kind)
+                .map(|(_, spray)| spray)
+        })
+        .unwrap_or(&self.default)
     }
 }
 
@@ -169,7 +168,44 @@ pub(super) struct DeviceLook {
     pub light_size_m: f32,
     pub blink_slow_seconds: f32,
     pub blink_fast_seconds: f32,
-    pub lit_share: f32,
+    pub peak_glow: f32,
+    pub dim_glow: f32,
+    pub pulse_power: f32,
+    pub halo_m: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BarrierLook {
+    pub friendly: [f32; 3],
+    pub enemy: [f32; 3],
+    pub glow: f32,
+    pub fill: f32,
+    pub line: f32,
+    pub edge: f32,
+    pub edge_m: f32,
+    pub cell_m: f32,
+    pub line_px: f32,
+    pub band_m: f32,
+    pub band_mps: f32,
+    pub band_share: f32,
+    pub extend_m: f32,
+    pub near_m: f32,
+    pub near_boost: f32,
+    pub drop_seconds: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PropsLook {
+    pub trail_seconds: f32,
+    pub trail_width_m: f32,
+    pub trail_glow: f32,
+    pub puff_scale: f32,
+    pub wire_color: [f32; 3],
+    pub wire_glow: f32,
+    pub shadow_radius_m: f32,
+    pub shadow_opacity: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -200,6 +236,8 @@ pub(super) struct EffectsNumbers {
     pub blast: BlastLook,
     pub screen: ScreenLook,
     pub device: DeviceLook,
+    pub props: PropsLook,
+    pub barrier: BarrierLook,
     pub showcase: ShowcaseLook,
     #[serde(default)]
     pub enemy: Option<EnemyLook>,
@@ -229,14 +267,12 @@ pub(super) struct EnemyLook {
 impl EffectsNumbers {
     pub fn most_sprites(&self) -> u32 {
         [
-            self.impacts.stone.sprites,
-            self.impacts.metal.sprites,
-            self.impacts.wood.sprites,
-            self.impacts.dirt.sprites,
+            self.impacts.default.sprites,
             self.juice.spray.sprites,
             self.blast.spray.sprites,
         ]
         .into_iter()
+        .chain(self.impacts.kinds.values().map(|spray| spray.sprites))
         .fold(1, u32::max)
     }
 }

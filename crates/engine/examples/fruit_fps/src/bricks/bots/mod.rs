@@ -3,6 +3,7 @@ engine::brick!(bots);
 mod pickup;
 mod report;
 mod senses;
+mod shop;
 mod think;
 mod world;
 
@@ -92,6 +93,8 @@ stats! {
         pub expanded: u32,
         pub throws: ThrowStat,
         pub drops: u32,
+        pub gifts: u32,
+        pub buy_calls: [Option<String>; 2],
         pub squads: Vec<SquadStat>,
         pub bots: Vec<BotStat>,
     }

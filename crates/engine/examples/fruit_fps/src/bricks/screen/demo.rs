@@ -1,13 +1,21 @@
 use crate::play::screen::{
     AbilityFacts, ActionFacts, BoardRow, BuyFacts, Card, CastFacts, FeedLine, HudFacts, MapItem,
-    Mate, MenuFacts, MinimapFacts, PickupFacts, PlaceFacts, PlateFacts, PlayerFacts, ResultFacts,
-    RoundFacts, SpectateFacts, TeamFacts, Tone, WeaponFacts, WeaponStats,
+    Mate, MenuFacts, MinimapFacts, OrbFacts, PickupFacts, PlaceFacts, PlateFacts, PlayerFacts,
+    PointFacts, ResultFacts, RoundFacts, SpectateFacts, StatusFacts, TeamFacts, Tone, WeaponFacts,
+    WeaponStats,
 };
 use crate::rules::{AbilitySlot, ArmorTier, BuyRequest, Item, Phase, WeaponId};
 
 use super::Words;
 use super::live::credits_into;
 
+const GEAR: [&str; 5] = [
+    "weapon_rind",
+    "weapon_zest",
+    "weapon_rind",
+    "weapon_stem",
+    "weapon_pip",
+];
 const FRUIT: [&str; 5] = ["banana", "strawberry", "orange", "watermelon", "eggplant"];
 const LEFT: [&str; 5] = [
     "slipnslide",
@@ -36,10 +44,10 @@ fn plates(alive: [bool; 5], health: [f32; 5], ready: [bool; 5]) -> Vec<PlateFact
 }
 
 fn line(
-    killer: (&str, Tone),
+    killer: (&str, Tone, &str),
     weapon: &str,
     headshot: bool,
-    victim: (&str, Tone),
+    victim: (&str, Tone, &str),
     mine: bool,
 ) -> FeedLine {
     FeedLine {
@@ -60,6 +68,9 @@ fn line(
             String::new()
         },
         world: weapon == "world_fall",
+        killer_char: format!("char_{}", killer.2),
+        victim_char: format!("char_{}", victim.2),
+        wall: false,
     }
 }
 
@@ -94,7 +105,7 @@ fn card(
     }
 }
 
-fn buy(words: &Words) -> BuyFacts {
+fn weapons(words: &Words) -> Vec<Card> {
     let weapons = [
         ("sidearm", "Pip", words.free.as_str(), true, true),
         ("smg", "Zest", "1,600", false, true),
@@ -107,6 +118,35 @@ fn buy(words: &Words) -> BuyFacts {
         (0.27, 0.73, 0.7),
         (1.0, 0.07, 1.0),
     ];
+    weapons
+        .iter()
+        .enumerate()
+        .zip(stats)
+        .map(
+            |((at, (kind, name, price, owned, afford)), (damage, rate, range))| {
+                let icon = format!("weapon_{}", name.to_lowercase());
+                Card {
+                    stats: WeaponStats {
+                        damage,
+                        rate,
+                        range,
+                    },
+                    need: if *afford { 0 } else { 2250 },
+                    ..card(
+                        kind,
+                        name,
+                        &icon,
+                        price,
+                        (*owned, *afford),
+                        Item::Weapon(WeaponId(at)),
+                    )
+                }
+            },
+        )
+        .collect()
+}
+
+fn buy(words: &Words) -> BuyFacts {
     let mut abilities = vec![
         card(
             &words.per_charge,
@@ -150,35 +190,12 @@ fn buy(words: &Words) -> BuyFacts {
     BuyFacts {
         time: 14.0,
         time_low: false,
-        weapons: weapons
-            .iter()
-            .enumerate()
-            .zip(stats)
-            .map(
-                |((at, (kind, name, price, owned, afford)), (damage, rate, range))| {
-                    let icon = format!("weapon_{}", name.to_lowercase());
-                    Card {
-                        stats: WeaponStats {
-                            damage,
-                            rate,
-                            range,
-                        },
-                        ..card(
-                            kind,
-                            name,
-                            &icon,
-                            price,
-                            (*owned, *afford),
-                            Item::Weapon(WeaponId(at)),
-                        )
-                    }
-                },
-            )
-            .collect(),
+        weapons: weapons(words),
         armor: armor
             .into_iter()
             .map(|(tier, name, icon, price, points, owned)| Card {
                 points,
+                sell_credits: if owned { 1000 } else { 0 },
                 ..card(
                     &words.armor_kind,
                     name,
@@ -203,6 +220,72 @@ fn buy(words: &Words) -> BuyFacts {
                 can_rifle: credits >= 2900,
             })
             .collect(),
+        signature: Card {
+            kind: words.signature_free.clone(),
+            name: "Split".to_owned(),
+            icon: "ability_split".to_owned(),
+            price: words.free.clone(),
+            owned: true,
+            afford: true,
+            max: 1,
+            charges: 1,
+            ..Card::default()
+        },
+    }
+}
+
+const KEYS: [(&str, &str); 9] = [
+    ("fire", "Mouse Left"),
+    ("scope", "Mouse Right"),
+    ("ready", "Enter"),
+    ("buy_menu", "B"),
+    ("drop", "G"),
+    ("device", "5"),
+    ("interact", "F"),
+    ("take", "Mouse Left"),
+    ("give_back", "Mouse Right"),
+];
+
+fn feed() -> Vec<FeedLine> {
+    let (attack, defend) = (Tone::Attack, Tone::Defend);
+    vec![
+        line(
+            (LEFT[0], attack, FRUIT[0]),
+            "weapon_rind",
+            true,
+            (RIGHT[2], defend, FRUIT[2]),
+            true,
+        ),
+        line(
+            (RIGHT[3], defend, FRUIT[3]),
+            "weapon_stem",
+            false,
+            (LEFT[2], attack, FRUIT[2]),
+            false,
+        ),
+        line(
+            (LEFT[3], attack, FRUIT[3]),
+            "ability_seed_grenade",
+            false,
+            (RIGHT[4], defend, FRUIT[4]),
+            false,
+        ),
+    ]
+}
+
+fn result(words: &Words) -> ResultFacts {
+    ResultFacts {
+        title: words.round_won.clone(),
+        reason: "Juicer detonated on site B".to_owned(),
+        color: Tone::Attack,
+        mvp: "slipnslide   3 kills".to_owned(),
+        mvp_icon: "char_banana".to_owned(),
+        mvp_color: Tone::Attack,
+        mvp_portrait: "char_banana".to_owned(),
+        mvp_name: LEFT[0].to_owned(),
+        mvp_stats: "24 kills   12 deaths   5 assists   ADR 168".to_owned(),
+        mvp_char: "Bananito  entry".to_owned(),
+        next_seconds: 9.0,
     }
 }
 
@@ -211,6 +294,7 @@ fn minimap() -> MinimapFacts {
         pos,
         yaw_degrees,
         color,
+        ..MapItem::default()
     };
     let attack = Some(Tone::Attack);
     MinimapFacts {
@@ -219,9 +303,25 @@ fn minimap() -> MinimapFacts {
             item([-20.0, 16.5], 300.0, attack),
             item([-31.0, -4.0], 0.0, attack),
             item([-12.0, 11.7], 270.0, attack),
-            item([-23.0, 27.0], 180.0, Some(Tone::Defend)),
         ],
         device: vec![item([-24.0, 12.0], 0.0, None)],
+        planted: Vec::new(),
+        orbs: vec![item([-14.0, 2.0], 0.0, None), item([14.0, 2.0], 0.0, None)],
+        enemies: vec![
+            item([-23.0, 27.0], 180.0, Some(Tone::Defend)),
+            MapItem {
+                fade: 0.5,
+                ..item([-8.0, 20.0], 200.0, Some(Tone::Defend))
+            },
+        ],
+        smokes: vec![MapItem {
+            radius_m: 4.5,
+            ..item([-17.0, 14.0], 0.0, None)
+        }],
+        utility: vec![MapItem {
+            icon: "ability_peel".to_owned(),
+            ..item([-29.0, 6.0], 0.0, attack)
+        }],
     }
 }
 fn board(words: &Words) -> [Vec<BoardRow>; 2] {
@@ -237,11 +337,7 @@ fn board(words: &Words) -> [Vec<BoardRow>; 2] {
                 d,
                 a,
                 adr: 60 + k * 8,
-                loadout: {
-                    let mut out = String::new();
-                    credits_into(&mut out, 3900 + at as u32 * 100);
-                    out
-                },
+                loadout: GEAR[at].to_owned(),
                 credits: {
                     let mut out = String::new();
                     if mine {
@@ -288,6 +384,10 @@ pub(super) fn demo(words: &Words) -> HudFacts {
     let attack = Tone::Attack;
     let defend = Tone::Defend;
     HudFacts {
+        keys: KEYS
+            .iter()
+            .map(|(name, spoken)| ((*name).to_owned(), (*spoken).to_owned()))
+            .collect(),
         round: RoundFacts {
             time: 72.0,
             number: 9,
@@ -316,29 +416,7 @@ pub(super) fn demo(words: &Words) -> HudFacts {
                 [false, false, false, true, false],
             ),
         ],
-        feed: vec![
-            line(
-                (LEFT[0], attack),
-                "weapon_rind",
-                true,
-                (RIGHT[2], defend),
-                true,
-            ),
-            line(
-                (RIGHT[3], defend),
-                "weapon_stem",
-                false,
-                (LEFT[2], attack),
-                false,
-            ),
-            line(
-                (LEFT[3], attack),
-                "ability_seed_grenade",
-                false,
-                (RIGHT[4], defend),
-                false,
-            ),
-        ],
+        feed: feed(),
         player: PlayerFacts {
             health: 76.0,
             health_low: false,
@@ -347,6 +425,7 @@ pub(super) fn demo(words: &Words) -> HudFacts {
             credits: 2450,
             char_name: "Bananito".to_owned(),
             role: "entry".to_owned(),
+            icon: "char_banana".to_owned(),
         },
         abilities: [
             ability("ability_peel", 2, 2),
@@ -361,11 +440,14 @@ pub(super) fn demo(words: &Words) -> HudFacts {
         ],
         weapon: WeaponFacts {
             name: "Rind".to_owned(),
+            icon: "weapon_rind".to_owned(),
             mag: Some(18),
             mag_size: Some(25),
             reserve: Some(75),
             low: false,
             reload: None,
+            down: false,
+            down_left: 0.0,
         },
         spread_px: 0.0,
         action: ActionFacts {
@@ -374,29 +456,38 @@ pub(super) fn demo(words: &Words) -> HudFacts {
             left: 1.5,
             progress: 0.62,
             color: attack,
+            kind: "plant".to_owned(),
             checkpoint: false,
         },
         buy: buy(words),
         board: board(words),
-        result: ResultFacts {
-            title: words.round_won.clone(),
-            reason: "Juicer detonated on site B".to_owned(),
-            color: attack,
-            mvp: "slipnslide   3 kills".to_owned(),
-            mvp_icon: "char_banana".to_owned(),
-            mvp_color: attack,
-            mvp_portrait: "char_banana".to_owned(),
-            mvp_name: LEFT[0].to_owned(),
-            mvp_stats: "24 kills   12 deaths   5 assists   ADR 168".to_owned(),
-            mvp_char: "Bananito  entry".to_owned(),
-            next_seconds: 9.0,
-        },
+        result: result(words),
         menu: MenuFacts::default(),
         spectate: SpectateFacts::default(),
         place: PlaceFacts::default(),
         scope: 0,
         pickup: PickupFacts::default(),
         cast: CastFacts::default(),
+        point: PointFacts::default(),
+        orb: OrbFacts {
+            hint: true,
+            ..OrbFacts::default()
+        },
+        statuses: vec![
+            StatusFacts {
+                kind: "slowed".to_owned(),
+                label: words.status_slowed.clone(),
+                icon: "ability_jam_pool".to_owned(),
+                left: 3.4,
+            },
+            StatusFacts {
+                kind: "revealed".to_owned(),
+                label: words.status_revealed.clone(),
+                icon: "ability_thump".to_owned(),
+                left: 1.2,
+            },
+        ],
+        blind: 0.0,
         minimap: minimap(),
         hit: None,
         damage: Vec::new(),

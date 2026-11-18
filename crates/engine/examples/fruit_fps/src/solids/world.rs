@@ -4,7 +4,7 @@ use glam::Vec3;
 
 use super::shapes::{self, Boxed, Swept, Triangle};
 use super::tree::{self, Node, Probe};
-use super::{Block, Capsule, Dropped, Ground, Hit, Solid};
+use super::{Block, Capsule, Dropped, Ground, Hit, Kind, Solid};
 
 const SWEEP_TOLERANCE: f32 = 1e-5;
 const BOUNDS_MARGIN: f32 = 1e-4;
@@ -161,6 +161,19 @@ impl Solids {
         self.nodes.len()
     }
 
+    pub fn relabel(&mut self, from: Kind, to: Kind) {
+        for ground in &mut self.surfaces {
+            if ground.kind == from {
+                ground.kind = to;
+            }
+        }
+        for block in &mut self.blocks {
+            if block.kind == from {
+                block.kind = to;
+            }
+        }
+    }
+
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
     }
@@ -200,13 +213,7 @@ impl Solids {
             Owner::Static(slot) => (self.surfaces[slot], Solid::Triangle(self.sources[slot])),
             Owner::Block(index, _) => {
                 let block = &self.blocks[index];
-                (
-                    Ground {
-                        surface: block.surface,
-                        kind: block.kind,
-                    },
-                    Solid::Block(block.id),
-                )
+                (Ground { kind: block.kind }, Solid::Block(block.id))
             }
         }
     }
@@ -296,7 +303,6 @@ impl Solids {
             point: origin + along * t,
             normal,
             face_normal: normal,
-            surface: ground.surface,
             kind: ground.kind,
             solid,
         })
@@ -338,7 +344,6 @@ impl Solids {
             point,
             normal,
             face_normal: shapes::facing(triangle.normal, normal),
-            surface: ground.surface,
             kind: ground.kind,
             solid,
         })

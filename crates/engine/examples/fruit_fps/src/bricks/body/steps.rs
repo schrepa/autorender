@@ -47,7 +47,6 @@ pub(super) fn record(
         events.jumps.push(Jump {
             slot,
             position: before.feet,
-            surface: before.ground.map(|ground| ground.surface),
             kind: before.ground.map(|ground| ground.kind),
         });
     }
@@ -55,7 +54,6 @@ pub(super) fn record(
         events.landings.push(Landing {
             slot,
             position: next.feet,
-            surface: landed.surface,
             kind: landed.kind,
             fall_speed: landed.speed,
             hard: landed.speed >= player.hard_landing_mps,
@@ -74,7 +72,6 @@ pub(super) fn record(
         events.footsteps.push(Footstep {
             slot,
             position: next.feet,
-            surface: ground.surface,
             kind: ground.kind,
             stride,
             loud: stride == Stride::Run || !player.walk_is_silent,

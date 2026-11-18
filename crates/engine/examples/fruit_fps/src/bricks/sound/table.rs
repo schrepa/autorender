@@ -41,6 +41,8 @@ pub(super) struct SoundEntry {
     pub curve: String,
     pub own_gain: f32,
     pub group: Group,
+    #[serde(default)]
+    pub stand_in: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -70,6 +72,10 @@ pub(super) struct Table {
     pub quiet_step_gain: f32,
     pub kinds: Vec<String>,
     pub default_kind: String,
+    pub drop_probe_m: f32,
+    pub barrier_keep_ticks: u32,
+    pub orb_hold_ticks: u32,
+    pub break_large_m: f32,
     #[serde(skip)]
     pub named: BTreeMap<Kind, String>,
     pub countdown_seconds: u32,
@@ -89,7 +95,7 @@ impl Table {
             ));
         }
         for kind in &table.kinds {
-            for event in ["step", "impact", "land.soft", "land.hard"] {
+            for event in ["step", "impact", "land.soft", "land.hard", "drop"] {
                 if !table.events.contains_key(&format!("{event}.{kind}")) {
                     return Err(format!("kinds: no event {event}.{kind}"));
                 }

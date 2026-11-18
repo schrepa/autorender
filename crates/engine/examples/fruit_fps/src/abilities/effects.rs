@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{Mat3, Vec3};
 
@@ -7,9 +7,11 @@ use super::numbers::{
     SensorSpec, SmokeSpec, Throw, TrapShape, TrapSpec, WallSpec, ZoneSpec,
 };
 use super::shapes::{
-    closest_on_segment, flat, frame, greater, lesser, segment_distance, segment_hits_box,
-    segment_hits_sphere,
+    closest_on_box, closest_on_segment, flat, frame, greater, lesser, ray_capsule,
+    segment_distance, segment_hits_box, segment_hits_sphere,
 };
+
+const OBJECT_SIGHT_SLACK_M: f32 = 0.1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ActorId(pub u32);
@@ -74,6 +76,7 @@ pub enum CueKind {
     Cast,
     Throw,
     Bounce,
+    BounceBody,
     FlashBurst,
     Explosion,
     SmokeBurst,
@@ -83,6 +86,7 @@ pub enum CueKind {
     TrapPlaced,
     TrapArmed,
     TrapTriggered,
+    WireZap,
     SensorPlaced,
     Destroyed,
     StrikeWarning,
@@ -170,6 +174,8 @@ pub enum Event {
     Destroyed {
         effect: EffectId,
         by: ActorId,
+        owner: ActorId,
+        team: usize,
     },
     Transformed {
         actor: ActorId,
@@ -200,6 +206,7 @@ pub(super) struct Flight {
     pub(super) travelled: f32,
     pub(super) resting: bool,
     pub(super) throw: Throw,
+    pub(super) thrower: ActorId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,6 +228,7 @@ pub(super) struct TrapState {
     pub(super) spec: TrapSpec,
     pub(super) health: f32,
     pub(super) armed: bool,
+    pub(super) chained: Option<(ActorId, u64)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -287,6 +295,7 @@ pub(super) struct Living {
     pub(super) aim: Aim,
     pub(super) delivery: Delivery,
     pub(super) action: Action,
+    pub(super) object_damage: f32,
     pub(super) born: u64,
     pub(super) state: State,
 }
@@ -294,6 +303,40 @@ pub(super) struct Living {
 impl Living {
     pub(super) fn age(&self, now: u64) -> u32 {
         now.saturating_sub(self.born).min(u32::MAX as u64) as u32
+    }
+
+    fn object_point(&self, from: Vec3) -> Option<Vec3> {
+        match &self.state {
+            State::Wall(WallState {
+                health: Some(_),
+                centre,
+                half_extents,
+                axes,
+                ..
+            }) => Some(closest_on_box(from, *centre, *half_extents, *axes)),
+            State::Trap(trap) => Some(match trap.spec.shape {
+                TrapShape::Radius(_) => trap.a,
+                TrapShape::Wire { .. } => {
+                    if (trap.b - from).length() < (trap.a - from).length() {
+                        trap.b
+                    } else {
+                        trap.a
+                    }
+                }
+            }),
+            State::Sensor(sensor) => Some(sensor.at),
+            State::Wall(WallState { health: None, .. })
+            | State::Pending
+            | State::Flight(_)
+            | State::Smoke { .. }
+            | State::Zone { .. }
+            | State::Strike { .. }
+            | State::Glare(_)
+            | State::Heal { .. }
+            | State::Dash { .. }
+            | State::Transform { .. }
+            | State::Done => None,
+        }
     }
 
     pub(super) fn smoke_radius(spec: &SmokeSpec, age: u32) -> f32 {
@@ -340,7 +383,6 @@ pub(super) struct Buff {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Blind {
-    pub(super) actor: ActorId,
     pub(super) amount: f32,
     pub(super) start: u64,
     pub(super) ticks: u32,
@@ -348,25 +390,27 @@ pub(super) struct Blind {
 }
 
 impl Blind {
-    pub(super) fn value(&self, now: u64) -> f32 {
-        let elapsed = now.saturating_sub(self.start);
-        if elapsed >= self.ticks as u64 {
+    pub(super) fn value(&self, now: f64) -> f32 {
+        let start = self.start as f64;
+        let elapsed = if now > start { now - start } else { 0.0 };
+        let ticks = f64::from(self.ticks);
+        if elapsed >= ticks {
             return 0.0;
         }
-        let left = (self.ticks as u64 - elapsed) as u32;
-        let fade = self.fade_ticks.min(self.ticks);
-        if fade == 0 || left >= fade {
-            self.amount
-        } else {
-            self.amount * left as f32 / fade as f32
+        let left = ticks - elapsed;
+        let fade = f64::from(self.fade_ticks.min(self.ticks));
+        if fade == 0.0 || left >= fade {
+            return self.amount;
         }
+        let share = (left / fade) as f32;
+        self.amount * share * (2.0 - share)
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Marks {
-    pub(super) buffs: Vec<Buff>,
-    pub(super) blinds: Vec<Blind>,
+    pub(super) buffs: BTreeMap<(ActorId, EffectId), Buff>,
+    pub(super) blinds: BTreeMap<ActorId, Vec<Blind>>,
     pub(super) reveals: BTreeMap<(usize, ActorId), u64>,
 }
 
@@ -394,6 +438,18 @@ struct Run<'a, W: World> {
     marks: &'a mut Marks,
     solid_id_base: u32,
     events: Vec<Event>,
+    blows: Vec<Blow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Blow {
+    centre: Vec3,
+    radius_m: f32,
+    max: f32,
+    min: f32,
+    line_of_sight: bool,
+    team: usize,
+    by: ActorId,
 }
 
 impl Effects {
@@ -423,6 +479,7 @@ impl Effects {
             aim,
             delivery: ability.delivery,
             action: ability.action,
+            object_damage: ability.object_damage,
             born: tick,
             state: State::Pending,
         });
@@ -451,14 +508,53 @@ impl Effects {
             marks: &mut self.marks,
             solid_id_base: self.solid_id_base,
             events: Vec::new(),
+            blows: Vec::new(),
         };
         for living in livings.iter_mut() {
             run.advance(living);
         }
         livings.retain(|living| living.state != State::Done);
         run.expire();
-        let events = run.events;
+        let Run {
+            mut events, blows, ..
+        } = run;
         self.livings = livings;
+        for blow in blows {
+            events.extend(self.strike_objects(world, blow));
+        }
+        events
+    }
+
+    fn strike_objects(&mut self, world: &mut impl World, blow: Blow) -> Vec<Event> {
+        let struck: Vec<(EffectId, f32)> = self
+            .livings
+            .iter()
+            .filter(|living| living.caster.team != blow.team)
+            .filter_map(|living| {
+                let point = living.object_point(blow.centre)?;
+                let distance = (point - blow.centre).length();
+                if distance > blow.radius_m {
+                    return None;
+                }
+                if blow.line_of_sight && distance > OBJECT_SIGHT_SLACK_M {
+                    let direction = (point - blow.centre) / distance;
+                    let reach = distance - OBJECT_SIGHT_SLACK_M;
+                    if world.ray(blow.centre, direction, reach).is_some() {
+                        return None;
+                    }
+                }
+                let share = if blow.radius_m > 0.0 {
+                    distance / blow.radius_m
+                } else {
+                    0.0
+                };
+                Some((living.id, blow.max + (blow.min - blow.max) * share))
+            })
+            .collect();
+        let mut events = Vec::new();
+        for (effect, amount) in struck {
+            events.extend(self.damage_effect(world, effect, amount, blow.by));
+        }
         events
     }
 
@@ -482,7 +578,7 @@ impl Effects {
             }
             events.push(Event::Ended { effect: living.id });
         }
-        for buff in std::mem::take(&mut self.marks.buffs) {
+        for buff in std::mem::take(&mut self.marks.buffs).into_values() {
             events.push(Event::BuffEnded {
                 actor: buff.actor,
                 effect: buff.effect,
@@ -507,15 +603,22 @@ impl Effects {
             return events;
         };
         let living = &mut self.livings[index];
-        let (health, at, solid) = match &mut living.state {
+        let (owner, team) = (living.caster.id, living.caster.team);
+        let (health, at, size, solid) = match &mut living.state {
             State::Wall(WallState {
                 health: Some(health),
                 centre,
+                half_extents,
                 solid_id,
                 ..
-            }) => (health, *centre, *solid_id),
-            State::Trap(trap) => (&mut trap.health, trap.a, None),
-            State::Sensor(sensor) => (&mut sensor.health, sensor.at, None),
+            }) => (health, *centre, half_extents.max_element(), *solid_id),
+            State::Trap(trap) => (&mut trap.health, trap.a, trap.spec.hit_radius_m, None),
+            State::Sensor(sensor) => (
+                &mut sensor.health,
+                sensor.at,
+                sensor.spec.hit_radius_m,
+                None,
+            ),
             State::Wall(WallState { health: None, .. })
             | State::Pending
             | State::Flight(_)
@@ -536,12 +639,17 @@ impl Effects {
             world.remove_box(id);
             events.push(Event::SolidRemoved { effect, id });
         }
-        events.push(Event::Destroyed { effect, by });
+        events.push(Event::Destroyed {
+            effect,
+            by,
+            owner,
+            team,
+        });
         events.push(Event::Cue {
             cue: CueKind::Destroyed,
             ability: living.ability,
             at,
-            size: 0.0,
+            size,
             ticks: 0,
         });
         events.push(Event::Ended { effect });
@@ -579,22 +687,20 @@ impl<W: World> Run<'_, W> {
 
     fn buff(&mut self, living: &Living, actor: ActorId, modifiers: Modifiers, until: u64) {
         let effect = living.id;
-        if let Some(buff) = self
-            .marks
-            .buffs
-            .iter_mut()
-            .find(|buff| buff.actor == actor && buff.effect == effect)
-        {
+        if let Some(buff) = self.marks.buffs.get_mut(&(actor, effect)) {
             buff.until = buff.until.max(until);
             buff.modifiers = modifiers;
             return;
         }
-        self.marks.buffs.push(Buff {
-            actor,
-            effect,
-            modifiers,
-            until,
-        });
+        self.marks.buffs.insert(
+            (actor, effect),
+            Buff {
+                actor,
+                effect,
+                modifiers,
+                until,
+            },
+        );
         self.events.push(Event::BuffStarted {
             actor,
             effect,
@@ -651,8 +757,7 @@ impl<W: World> Run<'_, W> {
             if ticks == 0 {
                 continue;
             }
-            self.marks.blinds.push(Blind {
-                actor: actor.id,
+            self.marks.blinds.entry(actor.id).or_default().push(Blind {
                 amount,
                 start: self.tick,
                 ticks,
@@ -669,6 +774,15 @@ impl<W: World> Run<'_, W> {
     }
 
     fn falloff(&mut self, living: &Living, centre: Vec3, falloff: Falloff) {
+        self.blows.push(Blow {
+            centre,
+            radius_m: falloff.radius_m,
+            max: falloff.max * living.object_damage,
+            min: falloff.min * living.object_damage,
+            line_of_sight: falloff.line_of_sight,
+            team: living.caster.team,
+            by: living.caster.id,
+        });
         for actor in self.actors {
             if actor.team == living.caster.team && !falloff.hurts_team {
                 continue;
@@ -816,6 +930,7 @@ impl<W: World> Run<'_, W> {
                 travelled: 0.0,
                 resting: false,
                 throw,
+                thrower: living.caster.id,
             }),
         }
     }
@@ -852,10 +967,16 @@ impl<W: World> Run<'_, W> {
             capped = true;
         }
         let length = motion.length();
-        let Some(hit) = self
+        let world_hit = self
             .world
-            .sphere_sweep(flight.position, throw.radius_m, motion)
-        else {
+            .sphere_sweep(flight.position, throw.radius_m, motion);
+        let body_hit = self.body_hit(flight, motion, length);
+        let (hit, body) = match (world_hit, body_hit) {
+            (Some(wall), Some(body)) if body.distance < wall.distance => (Some(body), true),
+            (None, Some(body)) => (Some(body), true),
+            (wall, Some(_) | None) => (wall, false),
+        };
+        let Some(hit) = hit else {
             flight.position += motion;
             flight.travelled += length;
             flight.velocity += Vec3::NEG_Y * throw.gravity;
@@ -874,7 +995,12 @@ impl<W: World> Run<'_, W> {
         flight.position = contact;
         let share = if full > 0.0 { hit.distance / full } else { 0.0 };
         let velocity = flight.velocity + Vec3::NEG_Y * (throw.gravity * share);
-        if flight.bounces_left > 0 && hit.bounce > 0.0 {
+        if body {
+            flight.velocity =
+                (velocity - hit.normal * (2.0 * velocity.dot(hit.normal))) * hit.bounce;
+            self.cue(CueKind::BounceBody, ability, contact, throw.radius_m, 0);
+            None
+        } else if flight.bounces_left > 0 && hit.bounce > 0.0 {
             flight.bounces_left -= 1;
             flight.velocity = (velocity - hit.normal * (2.0 * velocity.dot(hit.normal)))
                 * throw.bounce_keep
@@ -893,6 +1019,40 @@ impl<W: World> Run<'_, W> {
         }
     }
 
+    fn body_hit(&self, flight: &Flight, motion: Vec3, length: f32) -> Option<WorldHit> {
+        if length <= 0.0 {
+            return None;
+        }
+        let along = motion / length;
+        let radius = flight.throw.radius_m;
+        self.actors
+            .iter()
+            .filter(|actor| actor.id != flight.thrower)
+            .filter_map(|actor| {
+                let a = actor.feet + Vec3::Y * actor.radius;
+                let top = actor.feet + Vec3::Y * greater(actor.height - actor.radius, actor.radius);
+                ray_capsule(
+                    flight.position,
+                    along,
+                    length,
+                    (a, top),
+                    actor.radius + radius,
+                )
+            })
+            .fold(
+                None,
+                |best: Option<(f32, Vec3)>, (distance, normal)| match best {
+                    Some(held) if held.0 <= distance => Some(held),
+                    Some(_) | None => Some((distance, normal)),
+                },
+            )
+            .map(|(distance, normal)| WorldHit {
+                distance,
+                normal,
+                bounce: flight.throw.body_bounce,
+            })
+    }
+
     fn zone(&mut self, living: &Living, centre: Vec3, spec: ZoneSpec) {
         let hostile = Modifiers {
             speed: spec.slow.map_or(1.0, |slow| 1.0 - slow),
@@ -900,6 +1060,17 @@ impl<W: World> Run<'_, W> {
             ..Modifiers::NONE
         };
         let slows_or_blinds = spec.slow.is_some() || spec.sight_m.is_some();
+        if let Some(amount) = spec.damage_per_tick {
+            self.blows.push(Blow {
+                centre,
+                radius_m: spec.radius_m,
+                max: amount * living.object_damage,
+                min: amount * living.object_damage,
+                line_of_sight: false,
+                team: living.caster.team,
+                by: living.caster.id,
+            });
+        }
         for actor in self.actors {
             if actor.distance_to(centre) > spec.radius_m {
                 continue;
@@ -968,7 +1139,10 @@ impl<W: World> Run<'_, W> {
                 0,
             );
         }
-        let trap = *trap;
+        if let Some((held, since)) = trap.chained {
+            return self.chained_step(living, trap, (held, since));
+        }
+        let trap_now = *trap;
         let caught = self.actors.iter().find(|actor| {
             actor.team != living.caster.team
                 && match trap.spec.shape {
@@ -985,6 +1159,17 @@ impl<W: World> Run<'_, W> {
             effect: living.id,
             actor: actor.id,
         });
+        if let Some(chain) = trap_now.spec.chain {
+            self.cue(
+                CueKind::TrapTriggered,
+                living.ability,
+                actor.feet,
+                trap_now.spec.hit_radius_m,
+                chain.windup_ticks,
+            );
+            return self.chained_step(living, trap, (actor.id, self.tick));
+        }
+        let trap = trap_now;
         let slowed = Modifiers {
             speed: 1.0 - trap.spec.slow,
             ..Modifiers::NONE
@@ -1000,6 +1185,58 @@ impl<W: World> Run<'_, W> {
         }
         self.cue(
             CueKind::TrapTriggered,
+            living.ability,
+            actor.feet,
+            trap.spec.hit_radius_m,
+            trap.spec.slow_ticks,
+        );
+        Step::Finish
+    }
+
+    fn chained_step(
+        &mut self,
+        living: &Living,
+        trap: &mut TrapState,
+        (held, since): (ActorId, u64),
+    ) -> Step {
+        let Some(chain) = trap.spec.chain else {
+            return Step::Finish;
+        };
+        trap.chained = Some((held, since));
+        let Some(actor) = self.present(held).copied() else {
+            return Step::Finish;
+        };
+        let away = segment_distance(trap.a, trap.b, actor.feet, actor.top());
+        let due = self.tick >= since + u64::from(chain.windup_ticks);
+        if !due && away <= chain.leash_m {
+            let chained = Modifiers {
+                speed: 1.0 - chain.slow,
+                ..Modifiers::NONE
+            };
+            self.buff(living, actor.id, chained, self.tick + 1);
+            return Step::Stay;
+        }
+        self.events.push(Event::Damage {
+            target: actor.id,
+            amount: chain.zap_damage,
+            by: living.caster.id,
+            ability: living.ability,
+        });
+        let slowed = Modifiers {
+            speed: 1.0 - trap.spec.slow,
+            ..Modifiers::NONE
+        };
+        self.buff(
+            living,
+            actor.id,
+            slowed,
+            self.tick + u64::from(trap.spec.slow_ticks),
+        );
+        if let Some(ticks) = trap.spec.reveal_ticks {
+            self.reveal(living, actor.id, self.tick + u64::from(ticks));
+        }
+        self.cue(
+            CueKind::WireZap,
             living.ability,
             actor.feet,
             trap.spec.hit_radius_m,
@@ -1095,6 +1332,7 @@ impl<W: World> Run<'_, W> {
         let Some(actor) = self.present(living.caster.id).copied() else {
             return Step::Finish;
         };
+        let step = step * self.slowed(actor.id);
         let motion = direction * step;
         let (moved, stopped) = match self
             .world
@@ -1108,6 +1346,15 @@ impl<W: World> Run<'_, W> {
             by: moved,
         });
         if stopped { Step::Finish } else { Step::Stay }
+    }
+
+    fn slowed(&self, actor: ActorId) -> f32 {
+        self.marks
+            .buffs
+            .range((actor, EffectId(0))..=(actor, EffectId(u32::MAX)))
+            .map(|(_, buff)| buff.modifiers.speed)
+            .filter(|speed| *speed < 1.0)
+            .product()
     }
 
     fn transform_step(&mut self, living: &Living, over: bool) -> Step {
@@ -1293,6 +1540,7 @@ impl<W: World> Run<'_, W> {
             spec,
             health: spec.health,
             armed: false,
+            chained: None,
         })
     }
 
@@ -1439,10 +1687,10 @@ impl<W: World> Run<'_, W> {
 
     fn expire(&mut self) {
         let tick = self.tick;
-        let actors = self.actors;
-        let alive = |actor: ActorId| actors.iter().any(|other| other.id == actor);
+        let present: BTreeSet<ActorId> = self.actors.iter().map(|actor| actor.id).collect();
+        let alive = |actor: ActorId| present.contains(&actor);
         let mut ended = Vec::new();
-        self.marks.buffs.retain(|buff| {
+        self.marks.buffs.retain(|_, buff| {
             let keep = buff.until > tick && alive(buff.actor);
             if !keep {
                 ended.push(Event::BuffEnded {
@@ -1452,9 +1700,10 @@ impl<W: World> Run<'_, W> {
             }
             keep
         });
-        self.marks
-            .blinds
-            .retain(|blind| blind.start + blind.ticks as u64 > tick && alive(blind.actor));
+        self.marks.blinds.retain(|actor, blinds| {
+            blinds.retain(|blind| blind.start + blind.ticks as u64 > tick);
+            alive(*actor) && !blinds.is_empty()
+        });
         self.marks.reveals.retain(|(team, actor), until| {
             let keep = *until > tick && alive(*actor);
             if !keep {

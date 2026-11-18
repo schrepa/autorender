@@ -16,7 +16,10 @@ pub(super) type Path = Vec<Seg>;
 pub(super) struct Cond {
     pub path: Path,
     pub negated: bool,
+    pub equals: Option<String>,
 }
+
+pub(super) type Conds = Vec<Cond>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Paint {
@@ -74,6 +77,7 @@ pub(super) struct Set {
     pub stroke: Option<StrokeRef>,
     pub icon: Option<Template>,
     pub grey: Option<f32>,
+    pub shadows: Option<Vec<Shadow>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -95,7 +99,7 @@ pub(super) enum Dir {
 pub(super) struct TextKind {
     pub text: Template,
     pub size: f32,
-    pub face: String,
+    pub face: (String, String),
     pub weight: Weight,
     pub align: Align,
 }
@@ -105,26 +109,39 @@ pub(super) enum FlowKind {
     Text {
         text: TextKind,
         color: Paint,
+        cap: bool,
     },
     Icon {
         icon: Template,
         w: f32,
         h: f32,
-        color: Paint,
+        color: Option<Paint>,
+        atlas: Option<String>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct FlowItem {
-    pub when: Option<Cond>,
+    pub when: Conds,
     pub kind: FlowKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Arc {
+    pub value: Number,
+    pub max: Number,
+    pub width: f32,
+    pub track: Option<Paint>,
+    pub start_deg: f32,
+    pub clockwise: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Kind {
     Plate,
     Text(TextKind),
-    Icon(Fit),
+    Icon(Fit, Option<String>),
+    Arc(Arc),
     Image(Picture),
     Markers(Markers),
     Bar {
@@ -148,6 +165,7 @@ pub(super) enum Kind {
         align: Align,
         padding: f32,
         gap: f32,
+        min_w: f32,
         items: Vec<FlowItem>,
     },
 }
@@ -176,6 +194,8 @@ pub(super) struct Markers {
     pub rotate: bool,
     pub backing: Option<(Paint, f32)>,
     pub outline: Option<(Paint, String)>,
+    pub atlas: Option<String>,
+    pub disc: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,11 +211,10 @@ pub(super) struct Element {
     pub rect: [f32; 4],
     pub anchor: Anchor,
     pub unscaled: bool,
-    pub when: Option<Cond>,
-    pub styles: Vec<(Cond, Set)>,
+    pub when: Conds,
+    pub styles: Vec<(Conds, Set)>,
     pub look: Set,
     pub radius: f32,
-    pub shadows: Vec<Shadow>,
     pub sweep: Option<Number>,
     pub pulse: Option<Pulse>,
     pub serial: usize,
@@ -228,6 +247,25 @@ pub(super) struct Layout {
     pub skipped: Vec<String>,
     pub ability_texts: BTreeMap<String, String>,
     pub tips: Vec<String>,
+    pub key_cap: Option<KeyCap>,
+    pub damage_tip: Option<DamageTip>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct KeyCap {
+    pub fill: Paint,
+    pub shadows: Vec<Shadow>,
+    pub radius: f32,
+    pub padding_x: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct DamageTip {
+    pub atlas: String,
+    pub icon: String,
+    pub scale: f32,
+    pub radius_add_px: f32,
 }
 
 impl Layout {
@@ -242,7 +280,7 @@ impl Layout {
             .sum()
     }
 
-    pub(super) fn faces(&mut self, names: &[String]) {
+    pub(super) fn faces(&mut self, names: &[(String, String)]) {
         let skipped = &mut self.skipped;
         let settle = |text: &mut TextKind| match names.iter().position(|name| *name == text.face) {
             Some(index) => {
@@ -250,8 +288,8 @@ impl Layout {
                 Ok(())
             }
             None => Err(format!(
-                "weight `{}` is no face of the font atlas",
-                text.face
+                "face `{}` is not in the bound font `{}`",
+                text.face.1, text.face.0
             )),
         };
         for screen in self.screens.values_mut() {
@@ -265,7 +303,8 @@ impl Layout {
                         })
                     }
                     Kind::Plate
-                    | Kind::Icon(_)
+                    | Kind::Icon(..)
+                    | Kind::Arc(_)
                     | Kind::Image(_)
                     | Kind::Markers(_)
                     | Kind::Bar { .. }
@@ -389,15 +428,36 @@ fn path(text: &str) -> Path {
 }
 
 fn cond(text: &str) -> Cond {
-    match text.strip_prefix('!') {
-        Some(rest) => Cond {
-            path: path(rest),
-            negated: true,
-        },
-        None => Cond {
-            path: path(text),
-            negated: false,
-        },
+    let (negated, rest) = match text.strip_prefix('!') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (name, equals) = match rest.split_once('=') {
+        Some((name, value)) => (name, Some(value.to_owned())),
+        None => (rest, None),
+    };
+    Cond {
+        path: path(name),
+        negated,
+        equals,
+    }
+}
+
+fn conds_of(value: Option<&Value>, at: &str) -> Result<Conds, String> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::String(text)) => Ok(vec![cond(text)]),
+        Some(Value::Array(listed)) => listed
+            .iter()
+            .map(|one| {
+                one.as_str()
+                    .map(cond)
+                    .ok_or_else(|| format!("{at}: expected a list of conditions"))
+            })
+            .collect(),
+        Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => {
+            Err(format!("{at}: expected a condition or a list of them"))
+        }
     }
 }
 
@@ -525,17 +585,28 @@ fn set_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Result
                 set.icon = Some(template(text, &at)?);
             }
             "grey" => set.grey = Some(unit(given, &at)?),
+            "shadows" => set.shadows = Some(shadow_list(given, palette, &at)?),
             _ => return Err(format!("{at}: style_if cannot set `{key}`")),
         }
     }
     Ok(set)
 }
 
-fn text_kind(read: &Reader<'_>) -> Result<TextKind, String> {
+fn text_kind(read: &Reader<'_>, cx: &Context<'_>) -> Result<TextKind, String> {
+    let face = match read.get("face") {
+        None => (cx.font_atlas.to_owned(), read.text("weight")?.to_owned()),
+        Some(_) => {
+            let name = read.text("face")?;
+            cx.fonts
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("{}: `{name}` is not in `fonts`", read.within("face")))?
+        }
+    };
     Ok(TextKind {
         text: template(read.text("text")?, &read.within("text"))?,
         size: read.number("size")?,
-        face: read.text("weight")?.to_owned(),
+        face,
         weight: Weight::default(),
         align: match read.get("align") {
             None => Align::Left,
@@ -544,40 +615,84 @@ fn text_kind(read: &Reader<'_>) -> Result<TextKind, String> {
     })
 }
 
-fn flow_items(
-    read: &Reader<'_>,
-    palette: &BTreeMap<String, Rgba>,
-) -> Result<Vec<FlowItem>, String> {
+fn flow_items(read: &Reader<'_>, cx: &Context<'_>) -> Result<Vec<FlowItem>, String> {
+    let palette = cx.palette;
     let mut items = Vec::new();
     for (index, value) in read.list("items")?.iter().enumerate() {
         let item = Reader::of(value, format!("{}.items[{index}]", read.at))?;
-        let color = paint(
-            item.get("color").unwrap_or(&Value::Null),
-            palette,
-            &item.within("color"),
-        )?;
+        let color = match item.get("color") {
+            None => None,
+            Some(given) => Some(paint(given, palette, &item.within("color"))?),
+        };
         let kind = match item.text("type")? {
-            "text" => FlowKind::Text {
-                text: text_kind(&item)?,
-                color,
-            },
-            "icon" => FlowKind::Icon {
-                icon: template(item.text("icon")?, &item.within("icon"))?,
-                w: item.number("w")?,
-                h: item.number("h")?,
-                color,
-            },
+            kind @ ("text" | "key") => {
+                let cap = kind == "key";
+                if cap && !cx.key_cap {
+                    return Err(format!("{}: key items need `$.pieces.key_cap`", item.at));
+                }
+                FlowKind::Text {
+                    text: text_kind(&item, cx)?,
+                    color: color.ok_or_else(|| {
+                        format!("{}: expected a colour name", item.within("color"))
+                    })?,
+                    cap,
+                }
+            }
+            "icon" => {
+                let atlas = sticker_of(&item, cx)?;
+                if atlas.is_none() && color.is_none() {
+                    return Err(format!(
+                        "{}: a tinted icon needs a colour",
+                        item.within("color")
+                    ));
+                }
+                FlowKind::Icon {
+                    icon: template(item.text("icon")?, &item.within("icon"))?,
+                    w: item.number("w")?,
+                    h: item.number("h")?,
+                    color,
+                    atlas,
+                }
+            }
             other => return Err(format!("{}.type: unknown item `{other}`", item.at)),
         };
         items.push(FlowItem {
-            when: item.get("when").and_then(Value::as_str).map(cond),
+            when: conds_of(item.get("when"), &item.within("when"))?,
             kind,
         });
     }
     Ok(items)
 }
 
-fn kind_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Kind, String> {
+fn sticker_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Option<String>, String> {
+    if read.get("atlas").is_none() {
+        return Ok(None);
+    }
+    let named = read.text("atlas")?;
+    let file = cx.atlases.get(named).map_or(named, String::as_str);
+    Ok((Some(file) != cx.icons_atlas).then(|| file.to_owned()))
+}
+
+fn arc_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Arc, String> {
+    let number_at = |key: &str| number_of(read.get(key).unwrap_or(&Value::Null), &read.within(key));
+    Ok(Arc {
+        value: number_at("value")?,
+        max: number_at("max")?,
+        width: read.number("width")?,
+        track: match read.get("track") {
+            None => None,
+            Some(given) => Some(paint(given, palette, &read.within("track"))?),
+        },
+        start_deg: read.number_or("start_deg", 0.0)?,
+        clockwise: match read.get("clockwise") {
+            None => true,
+            Some(_) => read.flag("clockwise")?,
+        },
+    })
+}
+
+fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
+    let palette = cx.palette;
     let paint_at = |key: &str| {
         paint(
             read.get(key).unwrap_or(&Value::Null),
@@ -592,15 +707,19 @@ fn kind_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Kind, 
     };
     Ok(match read.text("kind")? {
         "plate" => Kind::Plate,
-        "text" => Kind::Text(text_kind(read)?),
-        "icon" => Kind::Icon(match read.get("fit") {
-            None => Fit::Cell,
-            Some(_) => match read.text("fit")? {
-                "cell" => Fit::Cell,
-                "trim" => Fit::Trim,
-                other => return Err(format!("{}: unknown fit `{other}`", read.within("fit"))),
+        "text" => Kind::Text(text_kind(read, cx)?),
+        "icon" => Kind::Icon(
+            match read.get("fit") {
+                None => Fit::Cell,
+                Some(_) => match read.text("fit")? {
+                    "cell" => Fit::Cell,
+                    "trim" => Fit::Trim,
+                    other => return Err(format!("{}: unknown fit `{other}`", read.within("fit"))),
+                },
             },
-        }),
+            sticker_of(read, cx)?,
+        ),
+        "arc" => Kind::Arc(arc_of(read, palette)?),
         "image" => Kind::Image(Picture {
             image: template(read.text("image")?, &read.within("image"))?,
             small: match read.get("image_small") {
@@ -626,7 +745,7 @@ fn kind_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Kind, 
                 )),
             },
         }),
-        "markers" => Kind::Markers(markers_of(read, palette)?),
+        "markers" => Kind::Markers(markers_of(read, cx)?),
         "bar" => Kind::Bar {
             value: number_at("value")?,
             max: number_at("max")?,
@@ -667,7 +786,8 @@ fn kind_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Kind, 
             align: aligned(Align::Left)?,
             padding: read.number("padding")?,
             gap: read.number("gap")?,
-            items: flow_items(read, palette)?,
+            min_w: read.number_or("min_w", 0.0)?,
+            items: flow_items(read, cx)?,
         },
         other => return Err(format!("{}: unknown kind `{other}`", read.within("kind"))),
     })
@@ -717,7 +837,8 @@ fn texts_of(read: &Reader<'_>) -> Result<(BTreeMap<String, String>, Vec<String>)
     Ok((named, tips))
 }
 
-fn markers_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Markers, String> {
+fn markers_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Markers, String> {
+    let palette = cx.palette;
     let backing = match read.get("backing") {
         None => None,
         Some(value) => {
@@ -745,13 +866,16 @@ fn markers_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Mar
         rotate: read.flag("rotate")?,
         backing,
         outline,
+        atlas: sticker_of(read, cx)?,
+        disc: read.flag("disc")?,
     })
 }
 
-fn card_of(styles: &[(Cond, Set)]) -> Option<(CardList, usize)> {
+fn card_of(styles: &[(Conds, Set)]) -> Option<(CardList, usize)> {
     styles
         .iter()
-        .find_map(|(cond, _)| match cond.path.as_slice() {
+        .flat_map(|(conds, _)| conds)
+        .find_map(|cond| match cond.path.as_slice() {
             [Seg::Key(buy), Seg::Key(list), Seg::Index(index), ..] if buy == "buy" => {
                 let list = match list.as_str() {
                     "weapons" => CardList::Weapons,
@@ -768,6 +892,20 @@ fn card_of(styles: &[(Cond, Set)]) -> Option<(CardList, usize)> {
 struct Context<'a> {
     palette: &'a BTreeMap<String, Rgba>,
     anchors: &'a BTreeMap<String, Anchor>,
+    fonts: &'a BTreeMap<String, (String, String)>,
+    atlases: &'a BTreeMap<String, String>,
+    font_atlas: &'a str,
+    icons_atlas: Option<&'a str>,
+    key_cap: bool,
+}
+
+const SHADOWED: &str = "shadows draw under plate, text, flow, bar and image elements only";
+
+fn shadowed(kind: &Kind) -> bool {
+    match kind {
+        Kind::Plate | Kind::Text(_) | Kind::Flow { .. } | Kind::Bar { .. } | Kind::Image(_) => true,
+        Kind::Icon(..) | Kind::Arc(_) | Kind::Markers(_) | Kind::Pips { .. } => false,
+    }
 }
 
 fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, String> {
@@ -791,7 +929,10 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
             .ok_or_else(|| format!("{}: expected a list", read.within("style_if")))?;
         for (index, rule) in rules.iter().enumerate() {
             let rule_read = Reader::of(rule, format!("{}.style_if[{index}]", read.at))?;
-            let when = cond(rule_read.text("when")?);
+            let when = conds_of(
+                Some(rule_read.get("when").unwrap_or(&Value::Null)),
+                &rule_read.within("when"),
+            )?;
             let set = set_of(
                 rule_read.get("set").unwrap_or(&Value::Null),
                 cx.palette,
@@ -821,10 +962,13 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
             None => None,
             Some(given) => Some(unit(given, &read.within("grey"))?),
         },
+        shadows: match read.get("shadows") {
+            None => None,
+            Some(given) => Some(shadow_list(given, cx.palette, &read.within("shadows"))?),
+        },
     };
     let card = card_of(&styles);
-    let kind = kind_of(&read, cx.palette)?;
-    let shadows = shadows_of(&read, cx.palette)?;
+    let kind = kind_of(&read, cx)?;
     let sweep = match read.get("sweep") {
         None => None,
         Some(given) => Some(number_of(given, &read.within("sweep"))?),
@@ -839,22 +983,19 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
         None => None,
         Some(given) => Some(pulse_of(given, cx.palette, read.within("pulse"))?),
     };
-    if !shadows.is_empty() && !matches!(kind, Kind::Plate | Kind::Text(_)) {
-        return Err(format!(
-            "{}: shadows draw under plate and text elements only",
-            read.within("shadows")
-        ));
+    let any_shadows = look.shadows.is_some() || styles.iter().any(|(_, set)| set.shadows.is_some());
+    if any_shadows && !shadowed(&kind) {
+        return Err(format!("{}: {SHADOWED}", read.within("shadows")));
     }
     Ok(Element {
         id: read.text("id")?.to_owned(),
         rect,
         anchor,
         unscaled: read.flag("unscaled")?,
-        when: read.get("when").and_then(Value::as_str).map(cond),
+        when: conds_of(read.get("when"), &read.within("when"))?,
         styles,
         look,
         radius: read.number_or("radius", 0.0)?,
-        shadows,
         sweep,
         pulse,
         serial: 0,
@@ -862,6 +1003,109 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
         card,
     })
 }
+
+type Named = (BTreeMap<String, String>, BTreeMap<String, (String, String)>);
+
+fn named_files(read: &Reader<'_>) -> Result<Named, String> {
+    let atlases: BTreeMap<String, String> = read
+        .fields
+        .iter()
+        .filter_map(|(name, value)| {
+            let file = value.as_object()?.get("atlas")?.as_str()?;
+            Some((name.clone(), file.to_owned()))
+        })
+        .collect();
+    let mut fonts = BTreeMap::new();
+    if let Some(listed) = read.get("fonts").and_then(Value::as_object) {
+        for (name, value) in listed {
+            if !value.is_object() {
+                continue;
+            }
+            let one = Reader::of(value, format!("$.fonts.{name}"))?;
+            fonts.insert(
+                name.clone(),
+                (one.text("atlas")?.to_owned(), one.text("face")?.to_owned()),
+            );
+        }
+    }
+    Ok((atlases, fonts))
+}
+
+type Pieces = (Option<KeyCap>, Option<DamageTip>);
+
+fn key_cap_of(cap: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<KeyCap, String> {
+    let border = Reader::of(
+        cap.get("border").unwrap_or(&Value::Null),
+        cap.within("border"),
+    )?;
+    let drop = Reader::of(cap.get("drop").unwrap_or(&Value::Null), cap.within("drop"))?;
+    let width = border.number("width")?;
+    let ring = |part: &Reader<'_>, offset: [f32; 2]| -> Result<Shadow, String> {
+        Ok(Shadow {
+            offset,
+            grow: width,
+            soft: 0.0,
+            color: paint(
+                part.get("color").unwrap_or(&Value::Null),
+                palette,
+                &part.within("color"),
+            )?,
+        })
+    };
+    Ok(KeyCap {
+        fill: paint(
+            cap.get("fill").unwrap_or(&Value::Null),
+            palette,
+            &cap.within("fill"),
+        )?,
+        shadows: vec![
+            ring(&drop, drop.pair("offset")?)?,
+            ring(&border, [0.0, 0.0])?,
+        ],
+        radius: cap.number("radius")?,
+        padding_x: cap.number("padding_x")?,
+        height: cap.number("height")?,
+    })
+}
+
+fn pieces_of(
+    read: &Reader<'_>,
+    palette: &BTreeMap<String, Rgba>,
+    atlases: &BTreeMap<String, String>,
+) -> Result<Pieces, String> {
+    let Some(given) = read.get("pieces") else {
+        return Ok((None, None));
+    };
+    let pieces = Reader::of(given, read.within("pieces"))?;
+    let key_cap = match pieces.get("key_cap") {
+        None => None,
+        Some(given) => Some(key_cap_of(
+            &Reader::of(given, pieces.within("key_cap"))?,
+            palette,
+        )?),
+    };
+    let damage_tip = match pieces.get("damage_tip") {
+        None => None,
+        Some(given) => {
+            let tip = Reader::of(given, pieces.within("damage_tip"))?;
+            let atlas = atlases.get(STICKERS).ok_or_else(|| {
+                format!(
+                    "{}: the tip is a sticker and `$.{STICKERS}` is missing",
+                    tip.at
+                )
+            })?;
+            Some(DamageTip {
+                atlas: atlas.clone(),
+                icon: tip.text("icon")?.to_owned(),
+                scale: tip.number("scale")?,
+                radius_add_px: tip.number("radius_add_px")?,
+            })
+        }
+    };
+    Ok((key_cap, damage_tip))
+}
+
+const STICKERS: &str = "stickers";
 
 fn shown_of(name: &str) -> Option<Shown> {
     Shown::ALL.into_iter().find(|shown| shown.key() == name)
@@ -882,12 +1126,6 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
             .and_then(hex)
             .ok_or_else(|| format!("{}: expected #RRGGBB or #RRGGBBAA", colours.within(name)))?;
         palette.insert(name.clone(), colour);
-    }
-    if let Some(tone) = Tone::ALL
-        .into_iter()
-        .find(|tone| !palette.contains_key(tone.key()))
-    {
-        return Err(format!("$.palette: `{}` is missing", tone.key()));
     }
     let mut anchors = BTreeMap::new();
     let listed = Reader::of(
@@ -911,9 +1149,16 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         read.get("font").unwrap_or(&Value::Null),
         read.within("font"),
     )?;
+    let (atlases, fonts) = named_files(&read)?;
+    let (key_cap, damage_tip) = pieces_of(&read, &palette, &atlases)?;
     let cx = Context {
         palette: &palette,
         anchors: &anchors,
+        fonts: &fonts,
+        atlases: &atlases,
+        font_atlas: font.text("atlas")?,
+        icons_atlas: atlases.get("icons").map(String::as_str),
+        key_cap: key_cap.is_some(),
     };
     let listed = Reader::of(
         read.get("screens").unwrap_or(&Value::Null),
@@ -972,6 +1217,8 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         skipped,
         ability_texts,
         tips,
+        key_cap,
+        damage_tip,
     })
 }
 
@@ -1005,6 +1252,13 @@ fn set_paths(set: &Set, found: &mut Vec<Path>) {
     if let Some(icon) = &set.icon {
         template_paths(icon, found);
     }
+    for shadow in set.shadows.iter().flatten() {
+        paint_paths(&shadow.color, found);
+    }
+}
+
+fn cond_paths(conds: &[Cond], found: &mut Vec<Path>) {
+    found.extend(conds.iter().map(|cond| cond.path.clone()));
 }
 
 fn unit(value: &Value, at: &str) -> Result<f32, String> {
@@ -1035,16 +1289,17 @@ fn pulse_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Resu
     })
 }
 
-fn shadows_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Vec<Shadow>, String> {
-    let Some(listed) = read.get("shadows") else {
-        return Ok(Vec::new());
-    };
+fn shadow_list(
+    listed: &Value,
+    palette: &BTreeMap<String, Rgba>,
+    at: &str,
+) -> Result<Vec<Shadow>, String> {
     let listed = listed
         .as_array()
-        .ok_or_else(|| format!("{}: expected a list", read.within("shadows")))?;
+        .ok_or_else(|| format!("{at}: expected a list"))?;
     let mut shadows = Vec::new();
     for (index, value) in listed.iter().enumerate() {
-        let one = Reader::of(value, format!("{}.shadows[{index}]", read.at))?;
+        let one = Reader::of(value, format!("{at}[{index}]"))?;
         shadows.push(Shadow {
             offset: match one.get("offset") {
                 None => [0.0, 0.0],
@@ -1064,7 +1319,14 @@ fn shadows_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Vec
 
 fn kind_paths(kind: &Kind, found: &mut Vec<Path>) {
     match kind {
-        Kind::Plate | Kind::Icon(_) => {}
+        Kind::Plate | Kind::Icon(..) => {}
+        Kind::Arc(arc) => {
+            number_paths(&arc.value, found);
+            number_paths(&arc.max, found);
+            if let Some(track) = &arc.track {
+                paint_paths(track, found);
+            }
+        }
         Kind::Image(picture) => {
             template_paths(&picture.image, found);
             if let Some(small) = &picture.small {
@@ -1117,17 +1379,17 @@ fn kind_paths(kind: &Kind, found: &mut Vec<Path>) {
         }
         Kind::Flow { items, .. } => {
             for item in items {
-                if let Some(when) = &item.when {
-                    found.push(when.path.clone());
-                }
+                cond_paths(&item.when, found);
                 match &item.kind {
-                    FlowKind::Text { text, color } => {
+                    FlowKind::Text { text, color, .. } => {
                         template_paths(&text.text, found);
                         paint_paths(color, found);
                     }
                     FlowKind::Icon { icon, color, .. } => {
                         template_paths(icon, found);
-                        paint_paths(color, found);
+                        if let Some(color) = color {
+                            paint_paths(color, found);
+                        }
                     }
                 }
             }
@@ -1144,13 +1406,8 @@ impl Element {
 
     fn paths(&self, found: &mut Vec<(String, Path)>) {
         let mut listed = Vec::new();
-        if let Some(when) = &self.when {
-            listed.push(when.path.clone());
-        }
+        cond_paths(&self.when, &mut listed);
         set_paths(&self.look, &mut listed);
-        for shadow in &self.shadows {
-            paint_paths(&shadow.color, &mut listed);
-        }
         if let Some(sweep) = &self.sweep {
             number_paths(sweep, &mut listed);
         }
@@ -1160,8 +1417,8 @@ impl Element {
                 paint_paths(color, &mut listed);
             }
         }
-        for (cond, given) in &self.styles {
-            listed.push(cond.path.clone());
+        for (conds, given) in &self.styles {
+            cond_paths(conds, &mut listed);
             set_paths(given, &mut listed);
         }
         kind_paths(&self.kind, &mut listed);

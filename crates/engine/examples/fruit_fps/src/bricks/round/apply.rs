@@ -185,6 +185,21 @@ pub(super) fn apply(
             .any(|e| matches!(e, Event::Respawn { player: p, .. } if *p == player));
         if respawned || held != kind {
             arms.loadout = Loadout::new(&numbers.weapons, kind, rng, tps);
+            let unarmed = view
+                .players
+                .get(player)
+                .is_some_and(|p| p.sidearm.is_none());
+            if unarmed {
+                arms.loadout.take_sidearm(&numbers.weapons, tps);
+            }
+        } else if arms.loadout.sidearm.is_none()
+            && view
+                .players
+                .get(player)
+                .is_some_and(|p| p.sidearm.is_some())
+        {
+            arms.loadout
+                .give(&numbers.weapons, crate::weapons::GunKind::Sidearm, tps);
         }
     }
 }

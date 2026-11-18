@@ -32,4 +32,6 @@ pub struct BotMinds {
     pub queries: u32,
     pub expanded: u32,
     pub drops: u32,
+    pub gifts: u32,
+    pub buy_calls: [Option<&'static str>; 2],
 }

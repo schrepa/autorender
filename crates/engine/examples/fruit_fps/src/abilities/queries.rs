@@ -77,6 +77,14 @@ pub struct Drawable {
 pub struct ShootableHit {
     pub effect: EffectId,
     pub distance: f32,
+    pub team: usize,
+    pub wall: bool,
+}
+
+impl ShootableHit {
+    pub fn shootable_by(&self, team: usize) -> bool {
+        self.wall || self.team != team
+    }
 }
 
 fn nearer(best: Option<f32>, candidate: Option<f32>) -> Option<f32> {
@@ -110,12 +118,16 @@ impl Effects {
     }
 
     pub fn blindness(&self, actor: ActorId) -> f32 {
-        self.marks
-            .blinds
-            .iter()
-            .filter(|blind| blind.actor == actor)
-            .map(|blind| blind.value(self.now))
-            .fold(0.0, |most, value| if value > most { value } else { most })
+        self.blindness_at(actor, self.now as f64)
+    }
+
+    pub fn blindness_at(&self, actor: ActorId, tick: f64) -> f32 {
+        self.marks.blinds.get(&actor).map_or(0.0, |blinds| {
+            blinds
+                .iter()
+                .map(|blind| blind.value(tick))
+                .fold(0.0, |most, value| if value > most { value } else { most })
+        })
     }
 
     pub fn sight_limit(&self, actor: ActorId) -> Option<f32> {
@@ -125,9 +137,10 @@ impl Effects {
     pub fn modifiers(&self, actor: ActorId) -> Modifiers {
         self.marks
             .buffs
-            .iter()
-            .filter(|buff| buff.actor == actor)
-            .fold(Modifiers::NONE, |all, buff| all.combine(buff.modifiers))
+            .range((actor, EffectId(0))..=(actor, EffectId(u32::MAX)))
+            .fold(Modifiers::NONE, |all, (_, buff)| {
+                all.combine(buff.modifiers)
+            })
     }
 
     pub fn revealed(&self, actor: ActorId, team: usize) -> bool {
@@ -393,6 +406,8 @@ impl Effects {
                 best = Some(ShootableHit {
                     effect: living.id,
                     distance,
+                    team: living.caster.team,
+                    wall: matches!(living.state, State::Wall(_)),
                 });
             }
         }

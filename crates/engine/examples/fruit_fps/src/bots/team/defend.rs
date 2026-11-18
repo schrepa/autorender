@@ -4,7 +4,7 @@ use super::tactics::{self, Hold, SiteTactics};
 use super::{Duty, Line, LineKind, Order, Plan, Role, Slot, Squad, Step, Utility, spaced};
 use crate::bots::aim::flat_distance;
 use crate::bots::debug::Why;
-use crate::bots::sense::{Block, DeviceSense};
+use crate::bots::sense::{Block, DeviceSense, GamePhase};
 
 const MID: usize = usize::MAX;
 
@@ -65,7 +65,16 @@ impl Squad {
         self.set_step(Step::Setup, Why::RoundStart, plan.tick);
     }
 
-    fn routed(&mut self, plan: &Plan<'_, '_>, member: usize, site: Option<usize>, hold: Hold) -> Hold {
+    fn routed(
+        &mut self,
+        plan: &Plan<'_, '_>,
+        member: usize,
+        site: Option<usize>,
+        hold: Hold,
+    ) -> Hold {
+        if plan.sense.game.phase == GamePhase::Planted {
+            return hold;
+        }
         let places = plan.places();
         let play = &plan.numbers.play;
         let from = plan.sense.members[member].position;
@@ -79,11 +88,18 @@ impl Squad {
         let safe = &plan.tactics.safe;
         let allowed = [site_zone, places.zone_at(hold.at)];
         let step = play.gate_step_m;
-        if tactics::safe_path(plan.world, safe, from, hold.at, allowed, step, &mut self.buffer) {
+        if tactics::safe_path(
+            plan.world,
+            safe,
+            from,
+            hold.at,
+            allowed,
+            step,
+            &mut self.buffer,
+        ) {
             return hold;
         }
-        let gate = site
-            .and_then(|s| plan.site(s).back.map(|back| plan.site(s).ways[back].inside));
+        let gate = site.and_then(|s| plan.site(s).back.map(|back| plan.site(s).ways[back].inside));
         let home = plan.tactics.defend_home;
         let at_home = flat_distance(from, home) <= play.site_near_m;
         match gate {
@@ -118,8 +134,11 @@ impl Squad {
         let mut hottest: Option<(usize, u32)> = None;
         for site in 0..plan.tactics.sites.len() {
             let contact = self.contact(site, numbers);
-            if contact > 0 && hottest.is_none_or(|(_, c)| contact > c) {
-                hottest = Some((site, contact));
+            let pressure = self.pressure(site, numbers);
+            let heat = contact.max(pressure);
+            let called = contact > 0 || pressure >= numbers.play.rotate_seen;
+            if called && hottest.is_none_or(|(_, c)| heat > c) {
+                hottest = Some((site, heat));
             }
         }
         if let Some((site, _)) = hottest
@@ -137,13 +156,26 @@ impl Squad {
         }
         let mut rotating = 0usize;
         let held = self.rotated.map_or(0, |site| {
-            alive.iter().filter(|&&m| self.slots[m].group == site).count() as u32
+            alive
+                .iter()
+                .filter(|&&m| self.slots[m].group == site)
+                .count() as u32
         });
         let heavy = self
             .rotated
             .is_some_and(|site| self.contact(site, numbers) > held + numbers.play.rotate_seen);
+        let mid = plan.tactics.mid_hold.at;
+        let mid_seen = self.contact_near(mid, numbers.play.site_near_m);
+        let fallback = self
+            .rotated
+            .unwrap_or_else(|| self.fallback_site(plan, mid));
         for &m in &alive {
             let slot = self.slots[m];
+            if slot.duty == Duty::Mid && mid_seen && self.rotated.is_none() {
+                self.rotate_to(plan, m, fallback, rotating, false);
+                rotating += 1;
+                continue;
+            }
             match self.rotated {
                 Some(site)
                     if heavy
@@ -157,12 +189,37 @@ impl Squad {
                     let site = (slot.group != MID).then_some(slot.group);
                     let hold = self.routed(plan, m, site, slot.hold);
                     self.simple(plan, m, slot.duty, Step::Setup, hold, true);
+                    self.orders[m].wait_contact = slot.duty == Duty::Anchor
+                        && slot.rank == 1
+                        && site.is_some_and(|s| self.contact(s, numbers) == 0);
                 }
             }
         }
     }
 
-    fn rotate_to(&mut self, plan: &Plan<'_, '_>, member: usize, site: usize, k: usize, heavy: bool) {
+    fn fallback_site(&self, plan: &Plan<'_, '_>, from: Vec3) -> usize {
+        let numbers = plan.numbers;
+        (0..plan.tactics.sites.len())
+            .min_by(|&a, &b| {
+                self.pressure(b, numbers)
+                    .cmp(&self.pressure(a, numbers))
+                    .then(
+                        flat_distance(from, plan.site(a).plant)
+                            .total_cmp(&flat_distance(from, plan.site(b).plant)),
+                    )
+                    .then(a.cmp(&b))
+            })
+            .unwrap_or(0)
+    }
+
+    fn rotate_to(
+        &mut self,
+        plan: &Plan<'_, '_>,
+        member: usize,
+        site: usize,
+        k: usize,
+        heavy: bool,
+    ) {
         let st = plan.site(site);
         if st.ways.is_empty() {
             return;
@@ -250,7 +307,15 @@ impl Squad {
             self.set_step(Step::Save, Why::Saving, plan.tick);
             return;
         }
-        let critical = fuse < defuse + travel + play.defuse_margin_seconds;
+        let critical =
+            fuse < defuse + travel + play.defuse_margin_seconds || plan.sense.enemies_alive == 0;
+        let hopeless = plan.sense.enemies_alive >= play.lone_save_enemies
+            || fuse < defuse + travel + play.defuse_margin_seconds + play.clear_seconds;
+        if alive.len() == 1 && hopeless && self.saves(plan, nearest) {
+            self.save_order(plan, nearest, plan.tactics.defend_home);
+            self.set_step(Step::Save, Why::Saving, plan.tick);
+            return;
+        }
         if alive.len() == 1 {
             self.lone_retake(
                 plan,
@@ -362,7 +427,11 @@ impl Squad {
             };
             let st = plan.site(self.site.unwrap_or(0));
             let way = &st.ways[index];
-            let at = spaced(way.defend_stage, way.mid, k, spacing);
+            let stage = spaced(way.defend_stage, way.mid, k, spacing);
+            let at = plan
+                .world
+                .cover_from(device + eye, stage, plan.numbers.play.cover_search_m)
+                .unwrap_or(stage);
             let hold = Hold {
                 at,
                 face: way.hold.face,
@@ -504,6 +573,8 @@ impl Squad {
                 utility: (!defusing)
                     .then(|| self.retake_utility(plan, entry, k))
                     .flatten(),
+                hand_over: false,
+                wait_contact: false,
             };
             if flat_distance(members[m].position, at) <= numbers.play.site_near_m && !defusing {
                 order.goal = self.orders[m].goal;

@@ -4,6 +4,7 @@ mod clock;
 mod files;
 mod gpu;
 mod play;
+mod reveal;
 
 use engine_core::{
     AttributeFormat, Attributes, Brick, Bricks, ComponentKind, DrawKind, GpuStruct, KindDecl, Pace,
@@ -14,7 +15,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::names::COLOR_PASS;
-use crate::play::figures::{FIGURE, Figure, FigureJoints, FigurePlay, GROUND, Held};
+use crate::play::figures::{FIGURE, Figure, FigureJoints, FigurePlay, GROUND, Held, REVEALED};
 use crate::play::light::Light;
 
 pub use clock::FigureClocks;
@@ -115,8 +116,15 @@ impl Brick for FiguresBrick {
             .resource::<FigureClocks>()
             .resource::<FigureDrawing>()
             .moves::<Held>(Pace::Tick)
+            .moves::<reveal::RevealOf>(Pace::Tick)
             .draw_kind(KindDecl {
                 kind: FIGURE,
+                needs: Attributes::BASE,
+                streams: &[JOINTS, WEIGHTS],
+                passes: &[COLOR_PASS],
+            })
+            .draw_kind(KindDecl {
+                kind: REVEALED,
                 needs: Attributes::BASE,
                 streams: &[JOINTS, WEIGHTS],
                 passes: &[COLOR_PASS],
@@ -129,9 +137,11 @@ impl Brick for FiguresBrick {
             })
             .generated(GENERATED)
             .draws::<gpu::FiguresGpu>(FIGURE, gpu::FiguresGpu::draw_figures)
+            .draws::<gpu::FiguresGpu>(REVEALED, gpu::FiguresGpu::draw_revealed)
             .draws::<gpu::FiguresGpu>(GROUND, gpu::FiguresGpu::draw_ground)
             .systems(Schedule::FixedSimulation, figure_tick)
             .systems(Schedule::Presentation, play::figure_draw)
+            .systems(Schedule::Presentation, reveal::outline)
             .systems(Schedule::Presentation, play::count);
     }
 }

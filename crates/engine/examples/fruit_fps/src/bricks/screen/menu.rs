@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use engine::prelude::*;
@@ -6,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::flow::{Flow, Stage};
-use crate::play::numbers::{Binding, Input, KeyMap};
+use crate::play::numbers::{Binding, Input, KeyMap, Spin};
 use crate::play::screen::{Area, HudFacts, KeyRow, ScreenDraw, Shown, Slider};
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
@@ -42,6 +43,7 @@ pub struct SliderSet {
     pub sensitivity: SliderNumbers,
     pub fov: SliderNumbers,
     pub volume: SliderNumbers,
+    pub render_scale: SliderNumbers,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -157,10 +159,23 @@ const TITLE: [&str; 3] = ["play", "settings", "quit"];
 const TITLE_NO_QUIT: [&str; 2] = ["play", "settings"];
 const PAUSE: [&str; 3] = ["resume", "settings", "quit"];
 const MATCH_END: [&str; 2] = ["play", "quit"];
-const SETTINGS_ROWS: usize = 8;
-const CROSSHAIR_ROW: usize = 5;
-const INVERT_ROW: usize = 6;
-const BACK_ROW: usize = 7;
+const SETTINGS_ROWS: [&str; 10] = [
+    "sensitivity",
+    "fov",
+    "invert",
+    "crosshair",
+    "master",
+    "effects",
+    "interface",
+    "render_scale",
+    "bots",
+    "back",
+];
+const SLIDER_ROWS: [usize; 6] = [0, 1, 4, 5, 6, 7];
+const INVERT_ROW: usize = 2;
+const CROSSHAIR_ROW: usize = 3;
+const BOTS_ROW: usize = 8;
+const BACK_ROW: usize = 9;
 
 #[derive(Resource, Default)]
 pub(super) struct MenuState {
@@ -292,7 +307,7 @@ fn match_end(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
         nav,
         state,
         Shown::MatchEnd,
-        (MATCH_END, ["play_again", "quit"]),
+        (MATCH_END, ["button_again", "button_quit"]),
     );
     match chosen {
         Some("play") => flow.stage = Stage::Select,
@@ -319,7 +334,7 @@ fn select(nav: &Nav<'_>, facts: &HudFacts, flow: &mut Flow) {
     let mut id = String::new();
     for index in 0..cards.len() {
         id.clear();
-        let _ = write!(id, "card_{index}");
+        let _ = write!(id, "roster_{index}");
         if nav.clicked() && nav.over(Shown::Select, &id).is_some() {
             at = index;
         }
@@ -341,7 +356,7 @@ fn select(nav: &Nav<'_>, facts: &HudFacts, flow: &mut Flow) {
         }
     }
     if nav.pressed(&nav.keys.confirm)
-        || (nav.clicked() && nav.over(Shown::Select, "play").is_some())
+        || (nav.clicked() && nav.over(Shown::Select, "button_play").is_some())
     {
         start(flow);
     }
@@ -382,7 +397,8 @@ impl Values {
             1 => self.controls.fov_degrees,
             2 => self.volume.master,
             3 => self.volume.effects,
-            _ => self.volume.interface,
+            4 => self.volume.interface,
+            _ => self.controls.render_scale,
         }
     }
 
@@ -392,7 +408,8 @@ impl Values {
             1 => self.controls.fov_degrees = value,
             2 => self.volume.master = value,
             3 => self.volume.effects = value,
-            _ => self.volume.interface = value,
+            4 => self.volume.interface = value,
+            _ => self.controls.render_scale = value,
         }
     }
 }
@@ -401,42 +418,60 @@ fn numbers_of(sliders: &SliderSet, row: usize) -> &SliderNumbers {
     match row {
         0 => &sliders.sensitivity,
         1 => &sliders.fov,
-        _ => &sliders.volume,
+        2..=4 => &sliders.volume,
+        _ => &sliders.render_scale,
     }
 }
 
-const SLIDER_IDS: [&str; 5] = [
-    "sensitivity_slider",
-    "fov_slider",
-    "master_slider",
-    "effects_slider",
-    "interface_slider",
+const SLIDER_IDS: [&str; 6] = [
+    "slider_sensitivity",
+    "slider_fov",
+    "slider_master",
+    "slider_effects",
+    "slider_interface",
+    "slider_render_scale",
 ];
+
+fn level_step(flow: &mut Flow, levels: &[String], turn: i32) {
+    let count = levels.len();
+    if count == 0 {
+        return;
+    }
+    let at = levels
+        .iter()
+        .position(|level| *level == flow.level)
+        .unwrap_or(0);
+    let next = (at as i32 + turn).rem_euclid(count as i32) as usize;
+    flow.level.clone_from(&levels[next]);
+}
 
 fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut Values) {
     if nav.pressed(&nav.keys.back) {
         flow.settings_open = false;
         return;
     }
+    let rows = SETTINGS_ROWS.len();
     if nav.pressed(&nav.keys.down) {
-        state.focus = (state.focus + 1) % SETTINGS_ROWS;
+        state.focus = (state.focus + 1) % rows;
     } else if nav.pressed(&nav.keys.up) {
-        state.focus = (state.focus + SETTINGS_ROWS - 1) % SETTINGS_ROWS;
+        state.focus = (state.focus + rows - 1) % rows;
     }
     let sliders = &nav.source.sliders;
     let turn = i32::from(nav.pressed(&nav.keys.right)) - i32::from(nav.pressed(&nav.keys.left));
-    if turn != 0 && state.focus < CROSSHAIR_ROW {
-        let numbers = numbers_of(sliders, state.focus);
-        let next = values.slider(state.focus) + turn as f32 * numbers.step;
-        values.set_slider(
-            state.focus,
-            engine::math::clamp(next, numbers.min, numbers.max),
-        );
+    if let Some(slider) = SLIDER_ROWS.iter().position(|row| *row == state.focus)
+        && turn != 0
+    {
+        let numbers = numbers_of(sliders, slider);
+        let next = values.slider(slider) + turn as f32 * numbers.step;
+        values.set_slider(slider, engine::math::clamp(next, numbers.min, numbers.max));
     }
     let count = nav.source.crosshairs.len() as u32;
     if turn != 0 && state.focus == CROSSHAIR_ROW && count > 0 {
         values.options.crosshair =
             (values.options.crosshair + count).wrapping_add_signed(turn) % count;
+    }
+    if turn != 0 && state.focus == BOTS_ROW {
+        level_step(flow, &nav.source.levels, turn);
     }
     let confirmed = nav.pressed(&nav.keys.confirm);
     if state.focus == INVERT_ROW && (turn != 0 || confirmed) {
@@ -445,14 +480,18 @@ fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut 
     if confirmed && state.focus == BACK_ROW {
         flow.settings_open = false;
     }
-    if !nav.clicked() {
-        return;
+    if nav.clicked() {
+        settings_click(nav, state, flow, values);
     }
-    if nav.over(Shown::Settings, "invert").is_some() {
+}
+
+fn settings_click(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut Values) {
+    if nav.over(Shown::Settings, "invert_off").is_some() {
         values.controls.invert_pitch = !values.controls.invert_pitch;
         state.focus = INVERT_ROW;
     }
-    for (row, id) in SLIDER_IDS.iter().enumerate() {
+    let sliders = &nav.source.sliders;
+    for (slider, id) in SLIDER_IDS.iter().enumerate() {
         if let (Some(area), Some(pointer)) = (
             nav.over(Shown::Settings, id),
             nav.devices.mouse.position_pixels,
@@ -462,20 +501,28 @@ fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut 
             } else {
                 0.0
             };
-            values.set_slider(row, value_of(frac, numbers_of(sliders, row)));
-            state.focus = row;
+            values.set_slider(slider, value_of(frac, numbers_of(sliders, slider)));
+            state.focus = SLIDER_ROWS[slider];
         }
     }
     let mut id = String::new();
-    for index in 0..count {
+    for index in 0..nav.source.crosshairs.len() as u32 {
         id.clear();
-        let _ = write!(id, "swatch_{index}");
+        let _ = write!(id, "crosshair_{index}");
         if nav.over(Shown::Settings, &id).is_some() {
             values.options.crosshair = index;
             state.focus = CROSSHAIR_ROW;
         }
     }
-    if nav.over(Shown::Settings, "back").is_some() {
+    for level in &nav.source.levels {
+        id.clear();
+        let _ = write!(id, "bots_{level}");
+        if nav.over(Shown::Settings, &id).is_some() {
+            flow.level.clone_from(level);
+            state.focus = BOTS_ROW;
+        }
+    }
+    if nav.over(Shown::Settings, "button_back").is_some() {
         flow.settings_open = false;
     }
 }
@@ -523,25 +570,15 @@ pub(super) fn navigate(
         Some(Shown::Title) => TITLE.get(state.focus).copied(),
         Some(Shown::Pause) => PAUSE.get(state.focus).copied(),
         Some(Shown::MatchEnd) => MATCH_END.get(state.focus).copied(),
-        Some(Shown::Settings) => match state.focus {
-            INVERT_ROW => Some("invert"),
-            BACK_ROW => Some("back"),
-            _ => None,
-        },
-        Some(
-            Shown::Select
-            | Shown::Loading
-            | Shown::Hud
-            | Shown::Buy
-            | Shown::Scoreboard
-            | Shown::RoundEnd,
-        )
+        Some(Shown::Settings) => SETTINGS_ROWS.get(state.focus).copied(),
+        Some(Shown::Select) => Some("play"),
+        Some(Shown::Loading | Shown::Hud | Shown::Buy | Shown::Scoreboard | Shown::RoundEnd)
         | None => None,
     };
     menu.focus.push_str(focus.unwrap_or(""));
 }
 
-pub(super) fn slider_facts(sliders: &mut [Slider; 5], source: &SliderSet, values: &Values) {
+pub(super) fn slider_facts(sliders: &mut [Slider; 6], source: &SliderSet, values: &Values) {
     for (row, slider) in sliders.iter_mut().enumerate() {
         let numbers = numbers_of(source, row);
         let value = values.slider(row);
@@ -557,81 +594,108 @@ pub(super) fn slider_facts(sliders: &mut [Slider; 5], source: &SliderSet, values
     }
 }
 
-const MOUSE_NAMES: [(MouseButton, &str); 5] = [
-    (MouseButton::Left, "Mouse Left"),
-    (MouseButton::Middle, "Mouse Middle"),
-    (MouseButton::Right, "Mouse Right"),
-    (MouseButton::Back, "Mouse Back"),
-    (MouseButton::Forward, "Mouse Forward"),
-];
+pub(super) type KeyNames = BTreeMap<String, String>;
 
-fn spoken_input(input: &Input, out: &mut String) {
+fn input_code(input: &Input) -> &str {
     match input {
-        Input::Key(code) => {
-            let short = code
-                .strip_prefix("Key")
-                .or_else(|| code.strip_prefix("Digit"))
-                .or_else(|| code.strip_prefix("Arrow"))
-                .unwrap_or(code);
-            out.push_str(short);
-        }
-        Input::Mouse(button) => {
-            let name = MOUSE_NAMES
-                .iter()
-                .find(|(known, _)| known == button)
-                .map_or("Mouse", |(_, name)| name);
-            out.push_str(name);
-        }
+        Input::Key(code) => code,
+        Input::Mouse(MouseButton::Left) => "MouseLeft",
+        Input::Mouse(MouseButton::Middle) => "MouseMiddle",
+        Input::Mouse(MouseButton::Right) => "MouseRight",
+        Input::Mouse(MouseButton::Back) => "MouseBack",
+        Input::Mouse(MouseButton::Forward) => "MouseForward",
+        Input::Wheel(Spin::Up) => "WheelUp",
+        Input::Wheel(Spin::Down) => "WheelDown",
     }
+}
+
+pub(super) fn bindings(keys: &KeyMap) -> [(&'static str, &Binding); 27] {
+    [
+        ("forward", &keys.forward),
+        ("back", &keys.back),
+        ("left", &keys.left),
+        ("right", &keys.right),
+        ("walk", &keys.walk),
+        ("crouch", &keys.crouch),
+        ("jump", &keys.jump),
+        ("fire", &keys.fire),
+        ("scope", &keys.scope),
+        ("reload", &keys.reload),
+        ("drop", &keys.drop),
+        ("next_item", &keys.next_item),
+        ("previous_item", &keys.previous_item),
+        ("ready", &keys.ready),
+        ("primary", &keys.primary),
+        ("sidearm", &keys.sidearm),
+        ("melee", &keys.melee),
+        ("device", &keys.device),
+        ("interact", &keys.interact),
+        ("ability_c", &keys.ability_c),
+        ("ability_q", &keys.ability_q),
+        ("ability_e", &keys.ability_e),
+        ("ability_x", &keys.ability_x),
+        ("buy_menu", &keys.buy_menu),
+        ("scoreboard", &keys.scoreboard),
+        ("capture", &keys.capture),
+        ("release", &keys.release),
+    ]
 }
 
 pub(super) fn binding_of<'a>(keys: &'a KeyMap, name: &str) -> Option<&'a Binding> {
-    Some(match name {
-        "forward" => &keys.forward,
-        "back" => &keys.back,
-        "left" => &keys.left,
-        "right" => &keys.right,
-        "walk" => &keys.walk,
-        "crouch" => &keys.crouch,
-        "jump" => &keys.jump,
-        "fire" => &keys.fire,
-        "scope" => &keys.scope,
-        "reload" => &keys.reload,
-        "primary" => &keys.primary,
-        "sidearm" => &keys.sidearm,
-        "melee" => &keys.melee,
-        "device" => &keys.device,
-        "interact" => &keys.interact,
-        "ability_c" => &keys.ability_c,
-        "ability_q" => &keys.ability_q,
-        "ability_e" => &keys.ability_e,
-        "ability_x" => &keys.ability_x,
-        "buy_menu" => &keys.buy_menu,
-        "scoreboard" => &keys.scoreboard,
-        "capture" => &keys.capture,
-        "release" => &keys.release,
-        _ => return None,
-    })
+    bindings(keys)
+        .into_iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, binding)| binding)
 }
 
-pub(super) fn spoken_binding(binding: &[Input], out: &mut String) {
+pub(super) fn spoken_binding(binding: &[Input], names: &KeyNames, out: &mut String) {
     out.clear();
-    for (index, input) in binding.iter().enumerate() {
-        if index > 0 {
-            out.push_str(" / ");
-        }
-        spoken_input(input, out);
+    let Some(input) = binding.first() else {
+        return;
+    };
+    let code = input_code(input);
+    match names.get(code) {
+        Some(name) => out.push_str(name),
+        None => out.push_str(
+            code.strip_prefix("Key")
+                .or_else(|| code.strip_prefix("Digit"))
+                .unwrap_or(code),
+        ),
     }
 }
 
-pub(super) fn key_rows(rows: &mut Vec<KeyRow>, names: &[KeyName], keys: &KeyMap) {
+pub(super) fn key_facts<'a>(
+    out: &mut Vec<(String, String)>,
+    all: impl Iterator<Item = (&'static str, &'a Vec<Input>)>,
+    names: &KeyNames,
+) {
+    let mut count = 0;
+    for (index, (name, binding)) in all.enumerate() {
+        if out.len() == index {
+            out.push((name.to_owned(), String::new()));
+        }
+        let (known, spoken) = &mut out[index];
+        if known != name {
+            name.clone_into(known);
+        }
+        spoken_binding(binding, names, spoken);
+        count = index + 1;
+    }
+    out.truncate(count);
+}
+
+pub(super) fn key_rows(
+    rows: &mut Vec<KeyRow>,
+    (names, spoken): (&[KeyName], &KeyNames),
+    keys: &KeyMap,
+) {
     rows.resize_with(names.len(), KeyRow::default);
     for (row, name) in rows.iter_mut().zip(names) {
         if row.action != name.action {
             row.action.clone_from(&name.action);
         }
         match binding_of(keys, &name.key) {
-            Some(binding) => spoken_binding(binding, &mut row.binding),
+            Some(binding) => spoken_binding(binding, spoken, &mut row.binding),
             None => row.binding.clear(),
         }
     }

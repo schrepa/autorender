@@ -6,6 +6,7 @@ pub enum Anchor {
     Listener,
     Point(Vec3),
     Actor(u32),
+    Barrier,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,6 +16,7 @@ pub struct Cue {
     pub source: Option<u32>,
     pub gain: f32,
     pub hold_ticks: Option<u32>,
+    pub tag: Option<u64>,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -30,6 +32,7 @@ impl SoundCues {
             source,
             gain: 1.0,
             hold_ticks: None,
+            tag: None,
         });
     }
 }

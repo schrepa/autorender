@@ -1,7 +1,8 @@
 use crate::abilities::{AbilityBook, AbilitySpec, Slot};
 use crate::play::events::powers::Refusal;
 use crate::play::powers::SlotView;
-use crate::rules::{AbilitySlot, Phase, Player, View};
+use crate::play::world::Zone;
+use crate::rules::{AbilitySlot, Phase, Player, Side, View};
 
 pub(super) const SLOTS: [AbilitySlot; 4] = [
     AbilitySlot::C,
@@ -34,8 +35,8 @@ pub(super) fn slot_key(slot: AbilitySlot) -> &'static str {
 
 fn phase_allows(phase: Phase) -> bool {
     match phase {
-        Phase::Live | Phase::Planted | Phase::RoundEnd => true,
-        Phase::Buy | Phase::Over => false,
+        Phase::Buy | Phase::Live | Phase::Planted | Phase::RoundEnd => true,
+        Phase::Over => false,
     }
 }
 
@@ -81,6 +82,18 @@ impl<'a> Asked<'a> {
         let player = view.players.get(slot as usize).ok_or(Refusal::NoMatch)?;
         ready_in(player, ability)?;
         Ok(spec)
+    }
+
+    pub(super) fn buy_zone(&self, slot: u32) -> Option<Zone> {
+        let view = self.view.as_ref()?;
+        if view.phase != Phase::Buy {
+            return None;
+        }
+        let player = view.players.get(slot as usize)?;
+        Some(match view.sides[player.team.index()] {
+            Side::Attack => Zone::BuyAttack,
+            Side::Defend => Zone::BuyDefend,
+        })
     }
 
     pub(super) fn spec(&self, character: &str, ability: AbilitySlot) -> Option<&'a AbilitySpec> {

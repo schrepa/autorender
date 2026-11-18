@@ -64,9 +64,11 @@ fn landing(cue: CueKind) -> bool {
         CueKind::Cast
         | CueKind::Throw
         | CueKind::Bounce
+        | CueKind::BounceBody
         | CueKind::WallDown
         | CueKind::TrapArmed
         | CueKind::TrapTriggered
+        | CueKind::WireZap
         | CueKind::Destroyed
         | CueKind::Dash
         | CueKind::TransformStart
@@ -118,6 +120,7 @@ pub fn preview(
     caster: &Actor,
     spec: &AbilitySpec,
     aim: Aim,
+    bodies: &[Actor],
 ) -> Option<Preview> {
     if !needs_aim(spec) {
         return None;
@@ -131,7 +134,7 @@ pub fn preview(
     effects.cast(caster, spec, aim, 0);
     let mut path = vec![aim.origin];
     for tick in 1..=LOOK_AHEAD_TICKS {
-        let events = effects.tick(&mut sandbox, &[], tick);
+        let events = effects.tick(&mut sandbox, bodies, tick);
         for drawable in effects.drawables() {
             if let (DrawKind::Projectile, DrawShape::Sphere { centre, .. }) =
                 (drawable.kind, drawable.shape)

@@ -16,7 +16,9 @@
   "stone",
   "plaster",
   "wood",
+  "planks",
   "metal",
+  "grate",
   "cloth",
   "plant",
   "glass",
@@ -24,6 +26,10 @@
   "dirt"
  ],
  "default_kind": "stone",
+ "drop_probe_m": 0.5,
+ "barrier_keep_ticks": 120,
+ "orb_hold_ticks": 150,
+ "break_large_m": 1.0,
  "countdown_seconds": 3,
  "device": {
   "plant_repeat_seconds": 0.45,
@@ -103,6 +109,22 @@
    "floor": 0.3,
    "power": 1.0,
    "occluded": 0.7
+  },
+  "hum": {
+   "flat": false,
+   "near_m": 0.5,
+   "far_m": 6.0,
+   "floor": 0.0,
+   "power": 2.0,
+   "occluded": 0.5
+  },
+  "orb": {
+   "flat": false,
+   "near_m": 1.0,
+   "far_m": 12.0,
+   "floor": 0.0,
+   "power": 2.0,
+   "occluded": 0.5
   }
  },
  "sounds": {
@@ -136,6 +158,36 @@
    "own_gain": 0.9,
    "group": "effects"
   },
+  "barrier_drop": {
+   "files": [
+    {
+     "file": "assets/sfx/barrier_drop.ogg",
+     "seconds": 1.115417
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "barrier_hum": {
+   "files": [
+    {
+     "file": "assets/sfx/barrier_hum.ogg",
+     "seconds": 2.0
+    }
+   ],
+   "loops": true,
+   "gain": 0.5,
+   "jitter": 0.0,
+   "priority": 55,
+   "curve": "hum",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
   "bounce": {
    "files": [
     {
@@ -149,6 +201,51 @@
    "priority": 50,
    "curve": "near",
    "own_gain": 0.9,
+   "group": "effects"
+  },
+  "bounce_body": {
+   "files": [
+    {
+     "file": "assets/sfx/bounce_body.ogg",
+     "seconds": 0.136375
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "break_large": {
+   "files": [
+    {
+     "file": "assets/sfx/break_large.ogg",
+     "seconds": 1.178958
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 80,
+   "curve": "loud",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "break_small": {
+   "files": [
+    {
+     "file": "assets/sfx/break_small.ogg",
+     "seconds": 0.320458
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.04,
+   "priority": 60,
+   "curve": "impact",
+   "own_gain": 1.0,
    "group": "effects"
   },
   "buff_on": {
@@ -314,6 +411,97 @@
    "priority": 65,
    "curve": "ability",
    "own_gain": 0.9,
+   "group": "effects"
+  },
+  "gun_drop_hard": {
+   "files": [
+    {
+     "file": "assets/sfx/gun_drop_hard_1.ogg",
+     "seconds": 0.390688
+    },
+    {
+     "file": "assets/sfx/gun_drop_hard_2.ogg",
+     "seconds": 0.344542
+    }
+   ],
+   "loops": false,
+   "gain": 0.6,
+   "jitter": 0.05,
+   "priority": 35,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "gun_drop_metal": {
+   "files": [
+    {
+     "file": "assets/sfx/gun_drop_metal_1.ogg",
+     "seconds": 0.498104
+    },
+    {
+     "file": "assets/sfx/gun_drop_metal_2.ogg",
+     "seconds": 0.493125
+    }
+   ],
+   "loops": false,
+   "gain": 0.6,
+   "jitter": 0.05,
+   "priority": 35,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "gun_drop_soft": {
+   "files": [
+    {
+     "file": "assets/sfx/gun_drop_soft_1.ogg",
+     "seconds": 0.244583
+    },
+    {
+     "file": "assets/sfx/gun_drop_soft_2.ogg",
+     "seconds": 0.209875
+    }
+   ],
+   "loops": false,
+   "gain": 0.6,
+   "jitter": 0.05,
+   "priority": 35,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "gun_drop_water": {
+   "files": [
+    {
+     "file": "assets/sfx/gun_drop_water.ogg",
+     "seconds": 0.427708
+    }
+   ],
+   "loops": false,
+   "gain": 0.8,
+   "jitter": 0.05,
+   "priority": 35,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "gun_drop_wood": {
+   "files": [
+    {
+     "file": "assets/sfx/gun_drop_wood_1.ogg",
+     "seconds": 0.325729
+    },
+    {
+     "file": "assets/sfx/gun_drop_wood_2.ogg",
+     "seconds": 0.382042
+    }
+   ],
+   "loops": false,
+   "gain": 0.6,
+   "jitter": 0.05,
+   "priority": 35,
+   "curve": "near",
+   "own_gain": 1.0,
    "group": "effects"
   },
   "heal_loop": {
@@ -706,6 +894,44 @@
    "own_gain": 1.0,
    "group": "interface"
   },
+  "melee_heavy_hit": {
+   "files": [
+    {
+     "file": "assets/sfx/melee_heavy_hit_1.ogg",
+     "seconds": 0.3575
+    },
+    {
+     "file": "assets/sfx/melee_heavy_hit_2.ogg",
+     "seconds": 0.384417
+    }
+   ],
+   "loops": false,
+   "gain": 1.25,
+   "jitter": 0.02,
+   "priority": 80,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "melee_heavy_swing": {
+   "files": [
+    {
+     "file": "assets/sfx/melee_heavy_swing_1.ogg",
+     "seconds": 0.446625
+    },
+    {
+     "file": "assets/sfx/melee_heavy_swing_2.ogg",
+     "seconds": 0.433208
+    }
+   ],
+   "loops": false,
+   "gain": 1.25,
+   "jitter": 0.02,
+   "priority": 65,
+   "curve": "near",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
   "melee_hit": {
    "files": [
     {
@@ -754,6 +980,21 @@
    "curve": "ability",
    "own_gain": 0.9,
    "group": "effects"
+  },
+  "reveal_warning": {
+   "files": [
+    {
+     "file": "assets/sfx/reveal_warning.ogg",
+     "seconds": 2.0
+    }
+   ],
+   "loops": true,
+   "gain": 0.6,
+   "jitter": 0.0,
+   "priority": 90,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
   },
   "rifle_bolt": {
    "files": [
@@ -1249,6 +1490,33 @@
    "own_gain": 0.45,
    "group": "footsteps"
   },
+  "step_grate": {
+   "files": [
+    {
+     "file": "assets/sfx/step_grate_1.ogg",
+     "seconds": 0.262208
+    },
+    {
+     "file": "assets/sfx/step_grate_2.ogg",
+     "seconds": 0.28925
+    },
+    {
+     "file": "assets/sfx/step_grate_3.ogg",
+     "seconds": 0.264937
+    },
+    {
+     "file": "assets/sfx/step_grate_4.ogg",
+     "seconds": 0.275687
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
   "step_metal": {
    "files": [
     {
@@ -1489,6 +1757,21 @@
    "own_gain": 1.0,
    "group": "interface"
   },
+  "ui_ready": {
+   "files": [
+    {
+     "file": "assets/sfx/ui_ready.ogg",
+     "seconds": 0.264625
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
   "ult_cast": {
    "files": [
     {
@@ -1502,6 +1785,36 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
+   "group": "effects"
+  },
+  "ult_orb_loop": {
+   "files": [
+    {
+     "file": "assets/sfx/ult_orb_loop.ogg",
+     "seconds": 2.0
+    }
+   ],
+   "loops": true,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 70,
+   "curve": "orb",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "ult_orb_pickup": {
+   "files": [
+    {
+     "file": "assets/sfx/ult_orb_pickup.ogg",
+     "seconds": 0.840792
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 85,
+   "curve": "near",
+   "own_gain": 1.0,
    "group": "effects"
   },
   "ult_ready": {
@@ -1518,6 +1831,21 @@
    "curve": "ability",
    "own_gain": 0.9,
    "group": "effects"
+  },
+  "vo_prop_lost": {
+   "files": [
+    {
+     "file": "assets/sfx/vo_prop_lost.ogg",
+     "seconds": 1.002417
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
   },
   "wall_break": {
    "files": [
@@ -1566,6 +1894,8 @@
   }
  },
  "events": {
+  "barrier.drop": "barrier_drop",
+  "barrier.hum": "barrier_hum",
   "bolt.rifle": "rifle_bolt",
   "bolt.sidearm": "sidearm_bolt",
   "bolt.smg": "smg_bolt",
@@ -1577,6 +1907,17 @@
   "device.explode": "device_explode",
   "device.plant_tick": "device_plant_tick",
   "device.planted": "device_planted",
+  "drop.cloth": "gun_drop_soft",
+  "drop.dirt": "gun_drop_soft",
+  "drop.glass": "gun_drop_hard",
+  "drop.grate": "gun_drop_metal",
+  "drop.metal": "gun_drop_metal",
+  "drop.planks": "gun_drop_wood",
+  "drop.plant": "gun_drop_soft",
+  "drop.plaster": "gun_drop_hard",
+  "drop.stone": "gun_drop_hard",
+  "drop.water": "gun_drop_water",
+  "drop.wood": "gun_drop_wood",
   "dry.rifle": "rifle_dry",
   "dry.sidearm": "sidearm_dry",
   "dry.smg": "smg_dry",
@@ -1590,10 +1931,13 @@
   "hit.head": "hit_head",
   "hit.leg": "hit_body",
   "hit.melee": "melee_hit",
+  "hit.melee_heavy": "melee_heavy_hit",
   "impact.cloth": "impact_wood",
   "impact.dirt": "impact_dirt",
   "impact.glass": "impact_glass",
+  "impact.grate": "impact_metal",
   "impact.metal": "impact_metal",
+  "impact.planks": "impact_wood",
   "impact.plant": "impact_wood",
   "impact.plaster": "impact_plaster",
   "impact.stone": "impact_stone",
@@ -1604,7 +1948,9 @@
   "land.hard.cloth": "land_hard",
   "land.hard.dirt": "land_hard_dirt",
   "land.hard.glass": "land_hard",
+  "land.hard.grate": "land_hard_metal",
   "land.hard.metal": "land_hard_metal",
+  "land.hard.planks": "land_hard_wood",
   "land.hard.plant": "land_hard_dirt",
   "land.hard.plaster": "land_hard",
   "land.hard.stone": "land_hard",
@@ -1613,7 +1959,9 @@
   "land.soft.cloth": "land_soft",
   "land.soft.dirt": "land_soft_dirt",
   "land.soft.glass": "land_soft",
+  "land.soft.grate": "land_soft_metal",
   "land.soft.metal": "land_soft_metal",
+  "land.soft.planks": "land_soft_wood",
   "land.soft.plant": "land_soft_dirt",
   "land.soft.plaster": "land_soft",
   "land.soft.stone": "land_soft",
@@ -1629,11 +1977,16 @@
   "mag_out.sniper": "sniper_mag_out",
   "match.loss": "match_loss",
   "match.win": "match_win",
+  "orb.channel": "ult_orb_loop",
+  "orb.pickup": "ult_orb_pickup",
   "power.blinded": "flash_ring",
   "power.bounce": "bounce",
+  "power.bounce_body": "bounce_body",
   "power.cast": "throw",
   "power.dash": "dash",
-  "power.destroyed": "wall_break",
+  "power.destroyed.large": "break_large",
+  "power.destroyed.own": "vo_prop_lost",
+  "power.destroyed.small": "break_small",
   "power.explosion": "airstrike_impact",
   "power.flash_burst": "flash_pop",
   "power.glare": "flash_ring",
@@ -1659,23 +2012,28 @@
   "round.start": "round_start",
   "round.win": "round_win",
   "shot.melee": "melee_swing",
+  "shot.melee_heavy": "melee_heavy_swing",
   "shot.rifle": "rifle_fire",
   "shot.sidearm": "sidearm_fire",
   "shot.smg": "smg_fire",
   "shot.sniper": "sniper_fire",
+  "status.revealed": "reveal_warning",
   "step.cloth": "step_wood",
   "step.dirt": "step_dirt",
   "step.glass": "step_stone",
+  "step.grate": "step_grate",
   "step.metal": "step_metal",
+  "step.planks": "step_planks",
   "step.plant": "step_dirt",
   "step.plaster": "step_stone",
   "step.stone": "step_stone",
   "step.water": "step_water",
-  "step.wood": "step_planks",
+  "step.wood": "step_wood",
   "ui.buy": "ui_buy",
   "ui.click": "ui_click",
   "ui.deny": "ui_deny",
   "ui.hover": "ui_hover",
+  "ui.ready": "ui_ready",
   "ult.ready": "ult_ready"
  }
 }

@@ -1,10 +1,8 @@
-mod bots;
 mod buying;
 mod device;
 mod flow;
 mod numbers;
 
-pub use bots::suggest_buy;
 pub use numbers::{
     ArmorNumbers, BoughtAbilityNumbers, BoughtEntry, Catalog, CharacterEntry, CharacterNumbers,
     EconomyNumbers, MatchNumbers, PlayerNumbers, RulesError, RulesNumbers, SignatureEntry,
@@ -151,6 +149,11 @@ pub enum Cause {
     Weapon(WeaponId),
     Ability(AbilitySlot),
     World,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PointReason {
+    Orb,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -430,11 +433,40 @@ pub struct View<'a> {
     pub players: &'a [Player],
     pub device: &'a Device,
     pub catalog: &'a Catalog,
+    ledgers: &'a [Ledger],
+    ready: &'a [bool],
+    in_zone: &'a [bool],
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Refund {
+    pub primary: Option<u32>,
+    pub armor: Option<u32>,
+    pub charges: [u32; 2],
 }
 
 impl View<'_> {
     pub fn side_of(&self, team: Team) -> Side {
         self.sides[team.index()]
+    }
+
+    pub fn ready(&self, player: PlayerId) -> bool {
+        self.phase == Phase::Buy && self.ready.get(player).copied().unwrap_or(false)
+    }
+
+    pub fn refund(&self, player: PlayerId) -> Refund {
+        let Some(ledger) = self
+            .ledgers
+            .get(player)
+            .filter(|_| self.phase == Phase::Buy)
+        else {
+            return Refund::default();
+        };
+        Refund {
+            primary: ledger.primary_paid,
+            armor: ledger.armor_paid,
+            charges: ledger.charges_bought,
+        }
     }
 }
 
@@ -474,6 +506,8 @@ pub struct Match {
     pending: Vec<Event>,
     dropped_by: Option<PlayerId>,
     overtime_rounds: u32,
+    ready: Vec<bool>,
+    in_zone: Vec<bool>,
 }
 
 impl Match {
@@ -483,6 +517,11 @@ impl Match {
             return events;
         }
         self.tick += 1;
+        self.in_zone = input
+            .players
+            .iter()
+            .map(|facts| facts.in_buy_zone)
+            .collect();
         self.apply_armor_facts(input, &mut events);
         for holding in &input.holdings {
             self.apply_holding(*holding);
@@ -519,6 +558,23 @@ impl Match {
         self.pending = events;
     }
 
+    pub fn mark_ready(&mut self, player: PlayerId) {
+        if self.phase != Phase::Buy {
+            return;
+        }
+        if let Some(ready) = self.ready.get_mut(player) {
+            *ready = true;
+        }
+    }
+
+    pub fn grant_ultimate_point(&mut self, player: PlayerId, reason: PointReason) {
+        let mut events = std::mem::take(&mut self.pending);
+        match reason {
+            PointReason::Orb => self.ultimate_point(player, &mut events),
+        }
+        self.pending = events;
+    }
+
     fn apply_holding(&mut self, holding: Holding) {
         let Some(p) = self.players.get_mut(holding.player).filter(|p| p.alive) else {
             return;
@@ -549,6 +605,9 @@ impl Match {
             players: &self.players,
             device: &self.device,
             catalog: &self.catalog,
+            ledgers: &self.ledgers,
+            ready: &self.ready,
+            in_zone: &self.in_zone,
         }
     }
 

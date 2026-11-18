@@ -1,5 +1,6 @@
 engine::brick!(level);
 
+mod chunks;
 mod gpu;
 mod numbers;
 mod scene;
@@ -76,13 +77,19 @@ stats! {
         pub refusal: Option<String>,
         pub lights: u32,
         pub draws: u32,
+        pub chunks: u32,
+        pub submitted: u32,
+        pub skipped: u32,
+        pub waiting: u32,
+        pub vertices: u64,
         pub triangles: u64,
         pub materials: u32,
         pub baked: u32,
         pub detail: u32,
         pub cutout: u32,
         pub glowing: u32,
-        pub broken: u32,
+        pub macro_strengths: u32,
+        pub problems: Vec<String>,
         pub lightmap: bool,
         pub sky: bool,
         pub picture: bool,

@@ -1,11 +1,12 @@
 use engine::prelude::*;
 use glam::Vec3;
 
-use super::{Setup, ticks_per_second};
+use super::{Setup, thrown_to, ticks_per_second};
 use crate::play::actors::{Actor, Alive, Body, Wish};
 use crate::play::arms::{Arms, Drops};
 use crate::play::events::arms::{ArmsEvents, PickupEvent};
 use crate::play::events::round::RoundEvents;
+use crate::play::world::Arena;
 use crate::rules::{Event, Phase};
 use crate::weapons::{CombatNumbers, Gun, forward};
 
@@ -14,6 +15,7 @@ type Picking<'a> = (&'a Actor, &'a Wish, &'a Body, &'a mut Arms, Has<Alive>);
 pub(super) fn pick(
     time: Res<FixedTime>,
     setup: Res<Setup>,
+    arena: Res<Arena>,
     round: Option<Res<RoundEvents>>,
     mut drops: ResMut<Drops>,
     mut events: ResMut<ArmsEvents>,
@@ -60,7 +62,13 @@ pub(super) fn pick(
         let gun = Gun::with_ammo(found.weapon, found.magazine, found.reserve);
         let left = arms.loadout.pick_up(&numbers.weapons, gun, tps);
         if let Some(left) = &left {
-            drops.push(body.feet, left);
+            let to = thrown_to(
+                &arena,
+                &numbers.combat.key_drop,
+                body.feet,
+                wish.yaw_radians,
+            );
+            drops.throw((body.feet, actor.slot), to, left);
         }
         arms.pickable = None;
         events.pickups.push(PickupEvent {

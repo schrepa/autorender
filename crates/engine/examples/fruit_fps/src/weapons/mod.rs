@@ -16,8 +16,8 @@ pub use loadout::{
 };
 pub use numbers::{
     Absorb, ArmsNumbers, ClassMeters, CombatNumbers, DEFAULT_SURFACE, DamageBand, DeviceHand,
-    GunKind, GunNumbers, HitShapeNumbers, MeleeNumbers, PlayerShape, RecoilNumbers, ScopeNumbers,
-    SpreadDeg, StandJoints, SurfaceNumbers, WeaponNumbers, ticks,
+    GunKind, GunNumbers, HitShapeNumbers, KeyDrop, MeleeNumbers, PlayerShape, RecoilNumbers,
+    ScopeNumbers, SpreadBloom, SpreadDeg, StandJoints, SurfaceNumbers, WeaponNumbers, ticks,
 };
 pub use recoil::{
     Aim, Footing, Kick, Recoil, Shot, ShotRng, Stance, fire, forward, pattern_deg, recover,

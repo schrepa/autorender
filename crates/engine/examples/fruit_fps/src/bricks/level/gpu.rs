@@ -4,12 +4,13 @@ use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Cull, DrawnTable, Error, ErrorCode, Expected,
-    Material, MaterialHandle, Sampler, TextureHandle, TextureRef, Var, gpu_struct,
+    Material, MaterialHandle, Sampler, TextureHandle, TextureRef, Var, ViewFacts, gpu_struct,
 };
 use engine_render::{
     BatchGroup, GroupEntry, PerBatch, Scene, Texture, Variant, VertexLayout, wgpu,
 };
 
+use super::chunks::{self, Chunk};
 use super::shaders::level::{light, map, material, picture, sky};
 use super::{
     COLOR_STREAM, EMISSIVE_STRENGTH, LEVEL_DETAIL, LIGHTMAP_CURVE, LIGHTMAP_SCALE, MACRO_COLOR,
@@ -147,6 +148,8 @@ pub(super) struct LevelGpu {
     slots: u32,
     pictured: Option<Pictured>,
     ready: bool,
+    chunks: [Vec<Chunk>; 2],
+    order: [Vec<u32>; 2],
 }
 
 fn face(cull: Cull) -> Option<wgpu::Face> {
@@ -280,26 +283,51 @@ fn curve_of(material: &Material, path: &str) -> Result<f32, Error> {
     Ok(curve)
 }
 
-fn broken_of(material: &Material, path: &str) -> Result<(Option<TextureRef>, [f32; 4]), Error> {
-    let color = value_at_least(material, path, MACRO_COLOR, 0.0)?;
-    let rough = value_at_least(material, path, MACRO_ROUGH, 0.0)?;
+fn kept<T>(problems: &mut Vec<Error>, found: Result<T, Error>, instead: T) -> T {
+    found.unwrap_or_else(|problem| {
+        problems.push(problem);
+        instead
+    })
+}
+
+fn broken_of(
+    material: &Material,
+    path: &str,
+    problems: &mut Vec<Error>,
+) -> (Option<TextureRef>, [f32; 4]) {
+    let color = kept(
+        problems,
+        value_at_least(material, path, MACRO_COLOR, 0.0),
+        0.0,
+    );
+    let rough = kept(
+        problems,
+        value_at_least(material, path, MACRO_ROUGH, 0.0),
+        0.0,
+    );
     if color + rough <= 0.0 {
-        return Ok((None, [0.0; 4]));
+        return (None, [0.0; 4]);
     }
-    let map = material
-        .map(MACRO_MAP)
-        .ok_or_else(|| missing(path, &format!("maps.{MACRO_MAP}")))?;
-    let tile = material
-        .value(MACRO_TILE)
-        .ok_or_else(|| missing(path, &format!("values.{MACRO_TILE}")))?;
-    if !(tile.is_finite() && tile > 0.0) {
-        return Err(
-            Error::new(ErrorCode::OutOfRange, format!("{path}.values.{MACRO_TILE}"))
-                .expected(Expected::Above)
-                .got(tile),
-        );
+    let map = material.map(MACRO_MAP);
+    if map.is_none() {
+        problems.push(missing(path, &format!("maps.{MACRO_MAP}")));
     }
-    Ok((Some(map), [color, rough, 1.0 / tile, 0.0]))
+    let tile = match material.value(MACRO_TILE) {
+        None => {
+            problems.push(missing(path, &format!("values.{MACRO_TILE}")));
+            1.0
+        }
+        Some(tile) if !(tile.is_finite() && tile > 0.0) => {
+            problems.push(
+                Error::new(ErrorCode::OutOfRange, format!("{path}.values.{MACRO_TILE}"))
+                    .expected(Expected::Above)
+                    .got(tile),
+            );
+            1.0
+        }
+        Some(tile) => tile,
+    };
+    (map, [color, rough, 1.0 / tile, 0.0])
 }
 
 fn cutoff_of(material: &Material, path: &str) -> Result<Option<f32>, Error> {
@@ -314,44 +342,65 @@ fn cutoff_of(material: &Material, path: &str) -> Result<Option<f32>, Error> {
     }
 }
 
-fn mapped(material: &Material, path: &str, detail: bool) -> Result<Mapped, Error> {
+pub(super) fn problems_of(material: &Material, path: &str, detail: bool) -> Vec<Error> {
+    mapped(material, path, detail).err().unwrap_or_default()
+}
+
+fn mapped(material: &Material, path: &str, detail: bool) -> Result<Mapped, Vec<Error>> {
+    let mut problems = Vec::new();
     let plain = SURFACE_MAPS.iter().all(|name| material.map(name).is_none());
     let mut maps = Vec::with_capacity(MAPS.len());
     for (name, _, _) in MAPS.iter().filter(|_| !plain) {
-        let map = material.map(name).ok_or_else(|| {
-            missing(path, &format!("maps.{name}"))
-                .variants(material.maps().iter().map(|(known, _)| known.clone()))
-        })?;
-        if map.tex_coord != 0 {
-            return Err(Error::new(
-                ErrorCode::InvalidMaterial,
-                format!("{path}.maps.{name}.tex_coord"),
-            )
-            .got(map.tex_coord));
+        match material.map(name) {
+            None => problems.push(
+                missing(path, &format!("maps.{name}"))
+                    .variants(material.maps().iter().map(|(known, _)| known.clone())),
+            ),
+            Some(map) if map.tex_coord != 0 => problems.push(
+                Error::new(
+                    ErrorCode::InvalidMaterial,
+                    format!("{path}.maps.{name}.tex_coord"),
+                )
+                .got(map.tex_coord),
+            ),
+            Some(map) => maps.push(map),
         }
-        maps.push(map);
     }
-    let baked = lightmap_of(material, path)?;
-    let curve = curve_of(material, path)?;
+    let baked = kept(&mut problems, lightmap_of(material, path), None);
+    let curve = kept(&mut problems, curve_of(material, path), 1.0);
     let scale = match material.value(LIGHTMAP_SCALE) {
         Some(scale) => scale,
         None if baked.is_none() && !detail => 1.0,
-        None => return Err(missing(path, &format!("values.{LIGHTMAP_SCALE}"))),
+        None => {
+            problems.push(missing(path, &format!("values.{LIGHTMAP_SCALE}")));
+            1.0
+        }
     };
-    let (broken, strengths) = broken_of(material, path)?;
-    let cutoff = cutoff_of(material, path)?;
+    let (broken, strengths) = broken_of(material, path, &mut problems);
+    let cutoff = kept(&mut problems, cutoff_of(material, path), None);
     let strength = match material.value(EMISSIVE_STRENGTH) {
         None => 1.0,
-        Some(_) => value_at_least(material, path, EMISSIVE_STRENGTH, 0.0)?,
+        Some(_) => kept(
+            &mut problems,
+            value_at_least(material, path, EMISSIVE_STRENGTH, 0.0),
+            1.0,
+        ),
     };
     let emissive = material.emissive().map(|value| value * strength);
-    let mirror = value_at_least(material, path, MIRROR, 0.0)?;
+    let mirror = kept(
+        &mut problems,
+        value_at_least(material, path, MIRROR, 0.0),
+        0.0,
+    );
     if mirror > 1.0 {
-        return Err(
+        problems.push(
             Error::new(ErrorCode::OutOfRange, format!("{path}.values.{MIRROR}"))
                 .range(0.0, 1.0)
                 .got(mirror),
         );
+    }
+    if !problems.is_empty() {
+        return Err(problems);
     }
     Ok(Mapped {
         plain,
@@ -510,6 +559,8 @@ impl GpuPart for LevelGpu {
             slots: 0,
             pictured: None,
             ready: false,
+            chunks: [Vec::new(), Vec::new()],
+            order: [Vec::new(), Vec::new()],
         })
     }
 
@@ -523,6 +574,9 @@ impl GpuPart for LevelGpu {
             bytes_per_row: Some(4),
             rows_per_image: Some(1),
         };
+        for (kind, into) in [LEVEL, LEVEL_DETAIL].into_iter().zip(&mut self.chunks) {
+            chunks::listed(&table, library.as_deref(), kind, into);
+        }
         let mut fresh = cx.allocate(self.unbaked, TEXEL, 1) == Allocation::Fresh;
         for texture in self.plain {
             fresh |= cx.allocate(texture, TEXEL, 1) == Allocation::Fresh;
@@ -582,15 +636,49 @@ impl GpuPart for LevelGpu {
             self.sent = Some(shown);
         }
     }
+
+    fn view(&mut self, facts: &ViewFacts, _cx: &mut Prepare<'_, Self>) {
+        for (listed, order) in self.chunks.iter().zip(&mut self.order) {
+            chunks::ordered(listed, facts, order);
+        }
+    }
 }
 
 impl LevelGpu {
     pub(super) fn draw_level(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.level, 0..0);
+        self.submit(draw, &self.level, 0);
     }
 
     pub(super) fn draw_detail(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.detail, 0..0);
+        self.submit(draw, &self.detail, 1);
+    }
+
+    fn submit(
+        &self,
+        draw: &mut Draw<'_, Self, Scene>,
+        pipeline: &Pipeline<Self, Scene>,
+        at: usize,
+    ) {
+        let pass = draw.pass();
+        for &index in &self.order[at] {
+            let chunk = &self.chunks[at][index as usize];
+            if !chunk.drawn_in(pass) {
+                continue;
+            }
+            let shape = match chunk.mesh {
+                Some(mesh) => Shape::Mesh {
+                    mesh,
+                    key: chunk.material,
+                    instances: chunk.instances.clone(),
+                },
+                None => Shape::Pulled {
+                    vertices: 0..0,
+                    instances: chunk.instances.clone(),
+                    key: chunk.material,
+                },
+            };
+            draw.draw(pipeline, shape);
+        }
     }
 
     pub(super) fn draw_field(&self, _draw: &mut Draw<'_, Self, Scene>) {}
@@ -683,8 +771,10 @@ impl LevelGpu {
         let path = format!("$.materials.{}", handle.slot());
         let mapped = match mapped(material, &path, detail) {
             Ok(mapped) => mapped,
-            Err(problem) => {
-                cx.report(problem);
+            Err(problems) => {
+                for problem in problems {
+                    cx.report(problem);
+                }
                 if let Some(Bound { slot, .. }) =
                     self.held.remove(&handle).and_then(|held| held.bound)
                 {

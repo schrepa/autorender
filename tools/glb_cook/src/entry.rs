@@ -9,7 +9,7 @@ use engine_scene::{SceneMap, SceneMaterial, SceneSlot};
 use engine_textures::Image;
 
 use crate::config::{
-    BakedPlan, Character, ClipEntry, Cook, Entry, MapEntry, MaterialNames, TextureVariant,
+    BakedPlan, Character, ClipEntry, Cook, Entry, MapEntry, MaterialNames, TextureVariant, ValueMap,
 };
 use crate::encode;
 use crate::fault::Fault;
@@ -126,6 +126,7 @@ fn mesh_counts(file: &str, report: &mut Report, meshes: &[Built], budgets: (usiz
 
 pub struct Baked<'a> {
     pub plans: &'a BTreeMap<String, BakedPlan>,
+    pub value_maps: &'a BTreeMap<String, ValueMap>,
     pub pictures: Vec<(String, String, Image)>,
 }
 
@@ -244,6 +245,60 @@ fn bake(
     Ok(())
 }
 
+fn value_maps(
+    source: &Source,
+    index: usize,
+    (material, slot): (&mut SceneMaterial, &str),
+    rules: &BTreeMap<String, ValueMap>,
+) -> Result<(), Fault> {
+    let item = format!("materials[{index}]");
+    for (name, rule) in rules {
+        let held = material.values.clone().unwrap_or_default();
+        let value = |key: &str| held.get(key).copied();
+        let on: Vec<&str> = rule
+            .when
+            .iter()
+            .map(String::as_str)
+            .filter(|key| value(key).is_some_and(|number| number > 0.0))
+            .collect();
+        if on.is_empty() {
+            continue;
+        }
+        let short: Vec<&str> = rule
+            .needs
+            .iter()
+            .map(String::as_str)
+            .filter(|key| !value(key).is_some_and(|number| number.is_finite() && number > 0.0))
+            .collect();
+        if !short.is_empty() {
+            return Err(source.fault(
+                "ValueMapNeeds",
+                item,
+                format!("{on:?} above 0 turn on map `{name}`, which also needs {short:?} above 0"),
+            ));
+        }
+        let Some(SceneSlot::Filled(fill)) = material
+            .slots
+            .as_mut()
+            .and_then(|slots| slots.get_mut(slot))
+        else {
+            return Err(source.fault(
+                "ValueMap",
+                item,
+                format!("{on:?} above 0 need map `{name}` but the material has no filled slot"),
+            ));
+        };
+        let mut sampling = rule.sampling.clone();
+        sampling.insert("id".into(), json!(rule.picture));
+        let map: SceneMap = serde_json::from_value(Value::Object(sampling))
+            .map_err(|error| source.fault("ValueMap", item.clone(), error))?;
+        if fill.maps.insert(name.clone(), map).is_some() {
+            return Err(source.fault("ValueMap", item, format!("map `{name}` is set twice")));
+        }
+    }
+    Ok(())
+}
+
 type MapKey = (usize, MapKind, u32, [u32; 2]);
 
 pub struct Made<'a> {
@@ -306,7 +361,14 @@ fn cook_one(
     }
     let mut maps = Vec::new();
     let mut borrowed = Vec::new();
-    for &kind in &plan.kinds {
+    let plain = plan
+        .kinds
+        .iter()
+        .all(|&kind| maps::texture_of(&held, kind).is_none());
+    if plain {
+        report.notes.push(json!({"note": "PlainMaterial", "file": source.file, "item": item, "detail": "the material names none of the cooked maps; it is written without maps"}));
+    }
+    for &kind in plan.kinds.iter().filter(|_| !plain) {
         let size = plan.size(held.name(), kind);
         let key = maps::key(&held, kind, size);
         if let Some(owner) = key.and_then(|key| shared.get(&key)) {
@@ -326,7 +388,7 @@ fn cook_one(
             maps.push(map);
         }
     }
-    if maps.len() + borrowed.len() != plan.kinds.len() {
+    if !plain && maps.len() + borrowed.len() != plan.kinds.len() {
         return None;
     }
     let made = CookedMaterial {
@@ -335,9 +397,21 @@ fn cook_one(
         borrowed,
     };
     let mut material = report.take(material(source, &held, &made, plan.names))?;
-    let values = report.take(extras_values(source, index))?;
-    if !values.is_empty() {
-        material.values = Some(values);
+    let extras = report.take(extras_values(source, index))?;
+    if !extras.is_empty() {
+        let values = material.values.get_or_insert_with(BTreeMap::new);
+        for (key, value) in extras {
+            if let Some(held) = values.insert(key.clone(), value)
+                && held.to_bits() != value.to_bits()
+            {
+                report.faults.push(source.fault(
+                    "MaterialExtras",
+                    format!("materials[{index}].extras.{key}"),
+                    format!("{value} here, but the glTF material itself writes {held}"),
+                ));
+                return None;
+            }
+        }
     }
     if let Some(baked) = &plan.baked {
         report.take(bake(
@@ -345,6 +419,12 @@ fn cook_one(
             (index, meshes),
             (&mut material, &plan.names.slot),
             baked.plans,
+        ))?;
+        report.take(value_maps(
+            source,
+            index,
+            (&mut material, &plan.names.slot),
+            baked.value_maps,
         ))?;
     }
     Some((made, material))
@@ -579,9 +659,11 @@ struct ClipPlan<'a> {
     clips: &'a BTreeMap<String, String>,
     root_motion: Option<&'a str>,
     remove_travel: &'a [String],
+    keys_per_second: f32,
+    tolerance: f32,
 }
 
-fn cook_clips(cook: &Cook, source: &Source, report: &mut Report, rig: &Rig, plan: &ClipPlan<'_>) {
+fn cook_clips(source: &Source, report: &mut Report, rig: &Rig, plan: &ClipPlan<'_>) {
     let mut cooked = Vec::new();
     for (animation_name, clip_name) in plan.clips {
         let Some(animation) = source
@@ -599,8 +681,8 @@ fn cook_clips(cook: &Cook, source: &Source, report: &mut Report, rig: &Rig, plan
         let settings = motion::Settings {
             root_motion: plan.root_motion,
             remove_travel: plan.remove_travel.contains(animation_name),
-            keys_per_second: cook.keys_per_second,
-            tolerance: cook.tolerance,
+            keys_per_second: plan.keys_per_second,
+            tolerance: plan.tolerance,
         };
         let Some(made) = report.take(motion::cook(source, rig, &animation, &settings)) else {
             continue;
@@ -720,7 +802,6 @@ fn run_character(cook: &Cook, source: &Source, report: &mut Report, character: &
     let found = markers::markers(source, space, |node| rig.joint_of_node(node));
     push_markers(report, &character.name, &found);
     cook_clips(
-        cook,
         source,
         report,
         &rig,
@@ -728,6 +809,8 @@ fn run_character(cook: &Cook, source: &Source, report: &mut Report, character: &
             clips: &character.clips,
             root_motion: character.root_motion.as_deref(),
             remove_travel: &character.remove_travel,
+            keys_per_second: cook.keys_per_second,
+            tolerance: cook.tolerance,
         },
     );
 }
@@ -738,15 +821,15 @@ fn baked_pictures(
     map: &MapEntry,
 ) -> Result<Vec<(String, String, Image)>, Fault> {
     let mut pictures: Vec<(String, String, Image)> = Vec::new();
-    for baked in map.baked.values().flat_map(|plan| plan.maps.values()) {
-        if pictures.iter().any(|(id, _, _)| *id == baked.picture) {
+    for (_, wanted, variant) in map.pictures() {
+        if pictures.iter().any(|(id, _, _)| *id == wanted) {
             continue;
         }
         let picture = cook
             .entries
             .iter()
             .find_map(|entry| match entry {
-                Entry::Picture(picture) if picture.name == baked.picture => Some(picture),
+                Entry::Picture(picture) if picture.name == wanted => Some(picture),
                 Entry::Character(_)
                 | Entry::Clip(_)
                 | Entry::Static(_)
@@ -761,11 +844,8 @@ fn baked_pictures(
         let image = engine_textures::decode_image(&file, &bytes)
             .map_err(|error| Fault::new("PictureUndecodable", &file, "file", error))?;
         pictures.push((
-            baked.picture.clone(),
-            format!(
-                "{}{}.{}.ktx2",
-                cook.uri_prefix, baked.picture, baked.variant
-            ),
+            wanted.to_owned(),
+            format!("{}{wanted}.{variant}.ktx2", cook.uri_prefix),
             image,
         ));
     }
@@ -779,7 +859,7 @@ fn run_map(cook: &Cook, base: &Path, source: &Source, report: &mut Report, map: 
         &map.name,
         map.scale,
         cook.tolerance,
-        &prefixes,
+        (&prefixes, map.chunks.as_ref()),
     )) {
         mesh_counts(
             &source.file,
@@ -798,12 +878,18 @@ fn run_map(cook: &Cook, base: &Path, source: &Source, report: &mut Report, map: 
             vertices,
             map.budgets.object_vertices,
         );
+        let mut materials: Vec<usize> = drawn.built.iter().map(|mesh| mesh.material).collect();
+        materials.sort_unstable();
+        materials.dedup();
         report.budget(
             &source.file,
             "BudgetMaterials",
-            drawn.built.len(),
+            materials.len(),
             map.budgets.materials,
         );
+        if let Some(chunks) = &drawn.chunks {
+            report.counts.insert("chunks", chunks.clone());
+        }
         let mut plan = MaterialPlan::new(
             &map.material,
             (map.texture_size, &map.map_sizes),
@@ -811,12 +897,13 @@ fn run_map(cook: &Cook, base: &Path, source: &Source, report: &mut Report, map: 
             &map.textures,
         );
         plan.material_sizes = Some(&map.material_sizes);
-        if !map.baked.is_empty() {
+        if !map.baked.is_empty() || !map.value_maps.is_empty() {
             let Some(pictures) = report.take(baked_pictures(cook, base, map)) else {
                 return;
             };
             plan.baked = Some(Baked {
                 plans: &map.baked,
+                value_maps: &map.value_maps,
                 pictures,
             });
         }
@@ -915,8 +1002,10 @@ pub fn run(cook: &Cook, base: &Path, entry: &Entry, path: &Path) -> Report {
                 clips: &clip.clips,
                 root_motion: Some(&clip.root_motion),
                 remove_travel: &clip.remove_travel,
+                keys_per_second: clip.keys_per_second.unwrap_or(cook.keys_per_second),
+                tolerance: clip.tolerance.unwrap_or(cook.tolerance),
             };
-            cook_clips(cook, &source, &mut report, &rig, &plan);
+            cook_clips(&source, &mut report, &rig, &plan);
         }
         Entry::Static(fixed) => {
             if let Some(meshes) = report.take(geometry::fixed(

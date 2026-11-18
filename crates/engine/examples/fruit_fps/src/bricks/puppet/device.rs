@@ -79,7 +79,15 @@ pub(super) fn place(
             .as_ref()
             .and_then(|planted| planted.markers.light)
             .map(|light| at + light),
-        Some(Form::Dropped(_)) | None => None,
+        Some(Form::Dropped(at)) => book
+            .weapons
+            .get(DEVICE)
+            .and_then(|look| look.markers.light)
+            .map(|light| {
+                let lying = lying_at(book, at, 0, 1.0);
+                lying.translation + lying.rotation * light
+            }),
+        None => None,
     };
     lamp.set_if_neq(DeviceLamp { position: light });
     let mut kept = false;

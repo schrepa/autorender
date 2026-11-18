@@ -1,6 +1,6 @@
 import package::engine::drawn::{drawn_model, drawn_slot};
 import package::engine::view::view_clip;
-import package::figures::light::{FigureCorner, octahedral_normal};
+import package::figures::light::{FigureCorner, figure_field, octahedral_normal};
 
 struct StaticVertex {
     @location(0) position: vec3<f32>,
@@ -18,5 +18,6 @@ struct StaticVertex {
     out.normal = (model * vec4<f32>(octahedral_normal(vertex.normal), 0.0)).xyz;
     out.uv = vertex.uv0;
     out.slot = slot;
+    out.field = figure_field(world, slot);
     return out;
 }

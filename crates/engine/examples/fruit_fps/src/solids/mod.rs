@@ -1,4 +1,5 @@
 mod body;
+mod openings;
 mod peers;
 mod shapes;
 mod tree;
@@ -8,29 +9,10 @@ use glam::{Mat3, Vec3};
 use serde::{Deserialize, Serialize};
 
 pub use body::{Body, Landed, Moved, Player, Wish, capsule_of, step};
+pub use openings::{Opening, Probe, openings};
 pub use peers::apart;
 pub use world::Solids;
 pub use world::Work;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Surface {
-    Stone,
-    Metal,
-    Wood,
-    Dirt,
-}
-
-impl Surface {
-    pub fn of_kind(name: &str) -> Surface {
-        match name {
-            "metal" => Surface::Metal,
-            "wood" => Surface::Wood,
-            "dirt" => Surface::Dirt,
-            _ => Surface::Stone,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Kind(pub u32);
@@ -53,7 +35,6 @@ impl Kind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Ground {
-    pub surface: Surface,
     pub kind: Kind,
 }
 
@@ -69,7 +50,6 @@ pub struct Hit {
     pub point: Vec3,
     pub normal: Vec3,
     pub face_normal: Vec3,
-    pub surface: Surface,
     pub kind: Kind,
     pub solid: Solid,
 }
@@ -87,7 +67,6 @@ pub struct Block {
     pub centre: Vec3,
     pub half_extents: Vec3,
     pub axes: Mat3,
-    pub surface: Surface,
     pub kind: Kind,
 }
 

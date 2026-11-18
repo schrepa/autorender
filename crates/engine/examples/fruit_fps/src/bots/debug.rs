@@ -39,6 +39,8 @@ pub enum Why {
     Hesitating,
     TimeShort,
     PlanDied,
+    HumanLead,
+    InLine,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

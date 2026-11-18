@@ -48,5 +48,11 @@ struct SolidCorner {
         let beat = select(1.0, 0.6 + 0.4 * wave, item.p3.z > 0.0);
         return vec4<f32>(item.p2.rgb * item.p2.w * beat * (0.8 + 0.2 * sky), 1.0);
     }
+    if kind == 3u {
+        let wave = 0.5 + 0.5 * sin(effect_seconds() * item.p1.w * EFFECT_TAU);
+        let beat = select(1.0, 0.6 + 0.4 * wave, item.p3.z > 0.0);
+        let vine = effect_lit(item.p6.rgb, normal, corner.field);
+        return vec4<f32>(vine + item.p2.rgb * item.p2.w * beat, 1.0);
+    }
     return vec4<f32>(item.p2.rgb * sky, 1.0);
 }

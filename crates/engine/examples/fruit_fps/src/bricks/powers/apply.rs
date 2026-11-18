@@ -1,24 +1,28 @@
+use std::collections::BTreeSet;
+
 use engine::prelude::*;
 use glam::{Mat3, Vec3};
 
 use super::cast::{Asked, rules_slot, slot_key};
 use super::hold::Casting;
 use super::publish::{self, Sheet};
-use super::{Book, CastStat, Parts, PowerSetup, PowerStats, PowersBrick, ShieldHeld, SolidKind};
+use super::{
+    Book, CastStat, Parts, PowerSetup, PowerStats, PowersBrick, ShieldHeld, SolidKind, orbs,
+};
 use crate::abilities::{self, AbilityId, ActorId, Event, World, WorldHit};
 use crate::play::actors::{Actor, Alive, Body, Health, Human, SpeedFactor, Wish};
 use crate::play::effects::EffectsFeed;
-use crate::play::events::arms::{AbilityKill, ArmsEvents, DeathEvent};
+use crate::play::events::arms::{AbilityKill, ArmsEvents, DeathEvent, Target, Weapon};
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
-use crate::play::paths::Hazards;
+use crate::play::paths::{Hazards, Paths};
 use crate::play::powers::{Powers, Push, world_hit};
 use crate::play::round::Round;
-use crate::play::view::ViewOffsets;
+use crate::play::view::{ViewOffsets, Watched};
 use crate::play::world::Arena;
 use crate::rules::{Phase, Team};
-use crate::solids::{Block, Kind, Surface};
-use crate::weapons::{BodyPart, Vitals, forward, wound};
+use crate::solids::{Block, Kind};
+use crate::weapons::{BodyPart, Vitals, forward, gun_damage, wound};
 
 struct ArenaWorld<'a> {
     arena: &'a mut Arena,
@@ -48,19 +52,16 @@ impl World for ArenaWorld<'_> {
         half_extents: Vec3,
         axes: Mat3,
     ) {
-        let (surface, kind) = self
+        let kind = self
             .kinds
             .iter()
             .find(|held| held.ability == ability)
-            .map_or((Surface::Stone, Kind::STONE), |held| {
-                (held.surface, held.kind)
-            });
+            .map_or(Kind::STONE, |held| held.kind);
         self.arena.solids_mut().add_block(Block {
             id,
             centre,
             half_extents,
             axes,
-            surface,
             kind,
         });
     }
@@ -74,8 +75,10 @@ impl World for ArenaWorld<'_> {
 pub(super) struct Facts<'w> {
     time: Res<'w, FixedTime>,
     setup: Res<'w, PowerSetup>,
-    round: Option<Res<'w, Round>>,
+    round: Option<ResMut<'w, Round>>,
     round_events: Option<Res<'w, RoundEvents>>,
+    paths: Option<Res<'w, Paths>>,
+    watched: Option<Res<'w, Watched>>,
 }
 
 #[derive(SystemParam)]
@@ -203,13 +206,8 @@ fn apply_events(
     let Some(parts) = book.parts else {
         return applied;
     };
-    let entity_of = |slot: u32| {
-        order
-            .iter()
-            .find(|(held, _)| *held == slot)
-            .map(|(_, entity)| *entity)
-    };
-    let mut fallen: Vec<u32> = Vec::new();
+    let entity_of = |slot: u32| entity_of(order, slot);
+    let mut fallen: BTreeSet<u32> = BTreeSet::new();
     for event in events {
         match event {
             Event::Damage {
@@ -242,7 +240,7 @@ fn apply_events(
                 if !hurt.killed {
                     continue;
                 }
-                fallen.push(target.0);
+                fallen.insert(target.0);
                 let killer = (by.0 != target.0).then_some(by.0);
                 applied.deaths.push(ability_death(
                     book,
@@ -314,10 +312,10 @@ fn expire_shields(book: &mut Book, rows: &mut Query<Row<'_>>, order: &[(u32, Ent
         book.shields.iter().partition(|shield| shield.until <= tick);
     book.shields = kept;
     for shield in done {
-        let Some((_, entity)) = order.iter().find(|(slot, _)| *slot == shield.slot) else {
+        let Some(entity) = entity_of(order, shield.slot) else {
             continue;
         };
-        if let Ok(mut row) = rows.get_mut(*entity)
+        if let Ok(mut row) = rows.get_mut(entity)
             && row.4.armour > shield.armour_before
         {
             row.4.armour = shield.armour_before;
@@ -339,15 +337,10 @@ fn ordered(rows: &Query<Row<'_>>, spawner: &mut Spawner<PowersBrick>) -> Vec<(u3
     order
 }
 
-fn tally(
-    (casts_total, last_cast): (&mut u64, &mut Option<CastStat>),
-    (refused_total, last_refusal): (&mut u64, &mut Option<CastStat>),
-    events: &PowerEvents,
-    tick: u64,
-) {
+fn tally(book: &mut Book, events: &PowerEvents, tick: u64) {
     for cast in &events.casts {
-        *casts_total += 1;
-        *last_cast = Some(CastStat {
+        book.casts_total += 1;
+        book.last_cast = Some(CastStat {
             tick,
             slot: cast.slot,
             ability: slot_key(cast.ability).to_owned(),
@@ -355,8 +348,8 @@ fn tally(
         });
     }
     for refused in &events.refused {
-        *refused_total += 1;
-        *last_refusal = Some(CastStat {
+        book.refused_total += 1;
+        book.last_refusal = Some(CastStat {
             tick,
             slot: refused.slot,
             ability: slot_key(refused.ability).to_owned(),
@@ -402,16 +395,64 @@ fn opening(
     if restarted {
         ticked.extend(powers.effects.end_round(world));
         book.shields.clear();
-        powers.struck.clear();
         powers.held.clear();
+        powers.recovering.clear();
         book.ledger = Default::default();
     }
-    for hit in std::mem::take(&mut powers.struck) {
+    ticked
+}
+
+pub(super) fn entity_of(order: &[(u32, Entity)], slot: u32) -> Option<Entity> {
+    order
+        .binary_search_by_key(&slot, |(held, _)| *held)
+        .ok()
+        .map(|index| order[index].1)
+}
+
+const SHOT_SLACK_M: f32 = 0.05;
+
+fn shot_objects(
+    world: &mut ArenaWorld<'_>,
+    (powers, book): (&mut Powers, &Book),
+    arms: Option<&ArmsEvents>,
+    (rows, order): (&Query<Row<'_>>, &[(u32, Entity)]),
+) -> Vec<Event> {
+    let shots = arms.map_or(&[][..], |arms| arms.shots.as_slice());
+    let teams: Vec<(u32, usize)> = faces(rows, order)
+        .iter()
+        .map(|face| (face.0, face.1.index()))
+        .collect();
+    let mut ticked = Vec::new();
+    let Some(guns) = book.guns.as_ref() else {
+        return ticked;
+    };
+    for shot in shots {
+        let Weapon::Gun(gun) = shot.weapon else {
+            continue;
+        };
+        if let Target::Actor { .. } = shot.target {
+            continue;
+        }
+        let Ok(at) = teams.binary_search_by_key(&shot.shooter, |(slot, _)| *slot) else {
+            continue;
+        };
+        let team = teams[at].1;
+        let reach = (shot.end - shot.origin).length() + SHOT_SLACK_M;
+        let Some(hit) = powers
+            .effects
+            .shootable_ray(shot.origin, shot.direction, reach)
+        else {
+            continue;
+        };
+        if !hit.shootable_by(team) {
+            continue;
+        }
+        let damage = gun_damage(guns.gun(gun), BodyPart::Body, hit.distance);
         ticked.extend(powers.effects.damage_effect(
             world,
             hit.effect,
-            hit.damage,
-            ActorId(hit.shooter),
+            damage,
+            ActorId(shot.shooter),
         ));
     }
     ticked
@@ -427,8 +468,76 @@ fn speed_up(rows: &mut Query<Row<'_>>, order: &[(u32, Entity)], powers: &Powers)
     }
 }
 
+fn living(rows: &Query<Row<'_>>, order: &[(u32, Entity)], parts: &Parts) -> Vec<abilities::Actor> {
+    order
+        .iter()
+        .filter_map(|(_, entity)| {
+            let (_, actor, wish, body, health, _, _, offsets, alive, _) = rows.get(*entity).ok()?;
+            (alive && health.health > 0.0).then(|| power_actor(actor, body, wish, offsets, parts))
+        })
+        .collect()
+}
+
+fn asked<'a>(abilities: Option<&'a abilities::AbilityBook>, facts: &'a Facts<'_>) -> Asked<'a> {
+    Asked {
+        book: abilities,
+        view: facts.round.as_deref().and_then(Round::view),
+        free: facts.setup.free,
+    }
+}
+
+fn fresh_cast_at(done: &mut Option<u32>, setup: &PowerSetup) -> Option<super::CastAt> {
+    let request = setup.cast_at?;
+    if *done == Some(request.id) {
+        return None;
+    }
+    *done = Some(request.id);
+    Some(request)
+}
+
+fn fallen(applied: &Applied) -> Vec<u32> {
+    let mut fallen: Vec<u32> = applied.deaths.iter().map(|death| death.victim).collect();
+    fallen.sort_unstable();
+    fallen
+}
+
+fn orbs_now(
+    facts: &mut Facts<'_>,
+    (book, powers, arena): (&mut Book, &mut Powers, &Arena),
+    (rows, order): (&Query<Row<'_>>, &[(u32, Entity)]),
+    (restarted, tick): (bool, u64),
+) -> Vec<abilities::OrbEvent> {
+    orbs::placed(book, powers, facts.paths.as_deref(), arena);
+    let takers = takers(rows, order, &powers.bodies);
+    let events = orbs::step(
+        &mut powers.orbs,
+        facts.round.as_deref_mut(),
+        &takers,
+        (restarted, tick),
+    );
+    orbs::remember(book, &events, tick);
+    events
+}
+
+fn takers(
+    rows: &Query<Row<'_>>,
+    order: &[(u32, Entity)],
+    bodies: &[abilities::Actor],
+) -> Vec<abilities::Taker> {
+    bodies
+        .iter()
+        .filter_map(|body| {
+            let row = rows.get(entity_of(order, body.id.0)?).ok()?;
+            Some(abilities::Taker {
+                actor: *body,
+                holding: row.2.interact_held,
+            })
+        })
+        .collect()
+}
+
 pub(super) fn act(
-    facts: Facts<'_>,
+    mut facts: Facts<'_>,
     mut out: Out<'_>,
     mut rows: Query<Row<'_>>,
     mut spawner: Spawner<PowersBrick>,
@@ -449,10 +558,8 @@ pub(super) fn act(
     let events: &mut PowerEvents = events;
     let book: &mut Book = book;
     let stats: &mut PowerStats = stats;
-    *events = PowerEvents {
-        tick,
-        ..PowerEvents::default()
-    };
+    *events = PowerEvents::default();
+    events.tick = tick;
     let order = ordered(&rows, &mut spawner);
     let surfaces = powers.surfaces.clone();
     let kinds = book.solid_kinds.clone();
@@ -463,18 +570,19 @@ pub(super) fn act(
     };
     let restarted = round_restarted(book, facts.round.as_deref(), facts.round_events.as_deref());
     let mut ticked = opening(&mut world, powers, book, restarted);
+    ticked.extend(shot_objects(
+        &mut world,
+        (powers, book),
+        arms.as_deref(),
+        (&rows, &order),
+    ));
     let Some(parts) = book.parts else {
         publish::write_stats(stats, book, &facts.setup, &[], tick);
         return;
     };
-    let living: Vec<abilities::Actor> = order
-        .iter()
-        .filter_map(|(_, entity)| {
-            let (_, actor, wish, body, health, _, _, offsets, alive, _) = rows.get(*entity).ok()?;
-            (alive && health.health > 0.0).then(|| power_actor(actor, body, wish, offsets, &parts))
-        })
-        .collect();
+    let living = living(&rows, &order, &parts);
     ticked.extend(powers.effects.tick(&mut world, &living, tick));
+    powers.bodies = living;
     book.ledger.prune(tick, parts.assist_ticks);
     let applied = apply_events(
         &ticked,
@@ -485,12 +593,14 @@ pub(super) fn act(
     );
     expire_shields(book, &mut rows, &order, tick);
     speed_up(&mut rows, &order, powers);
-    let asked = Asked {
-        book: book.abilities.as_ref(),
-        view: facts.round.as_deref().and_then(Round::view),
-        free: facts.setup.free,
-    };
-    let fallen: Vec<u32> = applied.deaths.iter().map(|death| death.victim).collect();
+    events.orbs = orbs_now(
+        &mut facts,
+        (book, powers, world.arena),
+        (&rows, &order),
+        (restarted, tick),
+    );
+    let asked = asked(book.abilities.as_ref(), &facts);
+    let fallen = fallen(&applied);
     let casting = Casting {
         relay: facts.setup.cast_as,
         asked: &asked,
@@ -498,15 +608,17 @@ pub(super) fn act(
         fallen: &fallen,
         free: facts.setup.free,
         tick,
+        cast_at: fresh_cast_at(&mut book.cast_at_done, &facts.setup),
     };
-    casting.run(&rows, &order, (&mut *powers, &mut *events, &mut ticked));
-    casting.previews(world.arena, &rows, &order, powers);
-    tally(
-        (&mut book.casts_total, &mut book.last_cast),
-        (&mut book.refused_total, &mut book.last_refusal),
-        events,
-        tick,
+    casting.run(
+        world.arena,
+        &rows,
+        &order,
+        (&mut *powers, &mut *events, &mut ticked),
     );
+    powers.recovering.retain(|(_, until)| *until > tick);
+    let watched = facts.watched.as_deref().and_then(|watched| watched.slot);
+    casting.previews(world.arena, &rows, (&order, watched), powers);
     publish::remember_cues(&mut book.recent_cues, &ticked, tick);
     let faces = faces(&rows, &order);
     let sheet = Sheet {
@@ -531,6 +643,7 @@ pub(super) fn act(
     let human_slots = sheet.human_slots();
     let live = sheet.live();
     let props = publish::prop_stats(&sheet.props());
+    tally(book, events, tick);
     if let Some(arms) = arms.as_deref_mut() {
         arms.deaths.extend(applied.deaths);
     }
@@ -540,4 +653,5 @@ pub(super) fn act(
     publish::write_tick_stats(stats, events, powers, human_slots);
     stats.hidden_from_human = hidden_from_human(&rows, &order, powers);
     stats.props = props;
+    orbs::write_stats(stats, powers, book, tick);
 }

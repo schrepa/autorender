@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::peers;
 use super::shapes::{least, most, within};
 use super::world::{Footing, Support, Work};
-use super::{Capsule, Ground, Hit, Kind, Solids, Surface};
+use super::{Capsule, Ground, Hit, Kind, Solids};
 
 const SKIN: f32 = 0.003;
 const PROBE: f32 = 0.006;
@@ -48,12 +48,13 @@ pub struct Wish {
     pub speed: f32,
     pub jump: bool,
     pub crouch: bool,
+    pub rooted: bool,
+    pub jump_share: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Landed {
     pub speed: f32,
-    pub surface: Surface,
     pub kind: Kind,
 }
 
@@ -491,19 +492,27 @@ pub fn step(
     } else {
         None
     };
-    let target = wish_target(&wish);
-    let current = flat(body.velocity);
+    let target = if wish.rooted {
+        Vec3::ZERO
+    } else {
+        wish_target(&wish)
+    };
+    let current = if wish.rooted {
+        Vec3::ZERO
+    } else {
+        flat(body.velocity)
+    };
     let mut velocity = match start_support {
         Some(_) => ground_velocity(current, target, numbers, dt),
         None => air_velocity(current, target, numbers, dt),
     };
-    let jumped = start_support.is_some() && wish.jump;
+    let jumped = start_support.is_some() && wish.jump && !wish.rooted;
     if jumped {
         velocity = capped(velocity, numbers.jump_speed_cap_mps);
     }
     let grounded = start_support.is_some() && !jumped;
     let upward = if jumped {
-        rules.takeoff
+        rules.takeoff * within(wish.jump_share, 0.0, 1.0).sqrt()
     } else {
         body.velocity.y
     };
@@ -540,7 +549,6 @@ pub fn step(
     }
     let landed = support.filter(|_| !body.grounded).map(|support| Landed {
         speed: most(-fall, 0.0),
-        surface: support.ground.surface,
         kind: support.ground.kind,
     });
     Moved {

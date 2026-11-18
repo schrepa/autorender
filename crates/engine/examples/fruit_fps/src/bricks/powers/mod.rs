@@ -3,20 +3,22 @@ engine::brick!(powers);
 mod apply;
 mod cast;
 mod hold;
+mod orbs;
 mod publish;
 
 use engine::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::abilities::{AbilityBook, AbilityId};
+use crate::abilities::{AbilityBook, AbilityId, OrbNumbers};
 use crate::play::events::powers::PowerEvents;
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
-use crate::solids::{Kind, Surface};
-use crate::weapons::{Absorb, DamageLedger};
+use crate::solids::Kind;
+use crate::weapons::{Absorb, DamageLedger, WeaponNumbers};
 
 const RECENT_CUES: usize = 12;
+const RECENT_ORBS: usize = 12;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -26,12 +28,33 @@ pub enum Relay {
     Slot(u32),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TestSlot {
+    C,
+    Q,
+    E,
+    X,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CastAt {
+    pub id: u32,
+    pub slot: u32,
+    pub ability: TestSlot,
+    pub eye: [f32; 3],
+    pub yaw_deg: f32,
+    pub pitch_deg: f32,
+}
+
 settings! {
     #[section("powers_test")]
     #[serde(deny_unknown_fields)]
     pub struct PowerSetup {
         pub free: bool = false => any,
         pub cast_as: Relay = Relay::Own => any,
+        pub cast_at: Option<CastAt> = None => any,
     }
 }
 
@@ -102,6 +125,31 @@ pub struct ActorPowers {
     pub damage_taken: f32,
     pub spread: f32,
     pub revealed_to: [bool; 2],
+    pub held: Option<String>,
+    pub weapon_down_until: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OrbChannelStat {
+    pub slot: u32,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OrbStat {
+    pub name: String,
+    pub at: [f32; 3],
+    pub state: String,
+    pub by: Option<u32>,
+    pub channels: Vec<OrbChannelStat>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OrbEventStat {
+    pub tick: u64,
+    pub orb: u32,
+    pub slot: Option<u32>,
+    pub change: String,
 }
 
 stats! {
@@ -125,6 +173,9 @@ stats! {
         pub holds: Vec<CastStat>,
         pub human_slots: Vec<SlotStat>,
         pub actors: Vec<ActorPowers>,
+        pub orbs: Vec<OrbStat>,
+        pub orb_problem: Option<String>,
+        pub recent_orbs: Vec<OrbEventStat>,
     }
 }
 
@@ -159,7 +210,6 @@ struct ShieldHeld {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct SolidKind {
     ability: AbilityId,
-    surface: Surface,
     kind: Kind,
 }
 
@@ -180,6 +230,11 @@ struct Book {
     recent_cues: Vec<CueStat>,
     solid_kinds: Vec<SolidKind>,
     ticks_per_second: u32,
+    guns: Option<WeaponNumbers>,
+    orbs: Option<OrbNumbers>,
+    orb_problem: Option<String>,
+    recent_orbs: Vec<OrbEventStat>,
+    cast_at_done: Option<u32>,
 }
 
 pub struct PowersBrick;
@@ -248,7 +303,6 @@ fn setup(
                     let name = spec.solid_kind.as_deref()?;
                     Some(SolidKind {
                         ability: spec.id,
-                        surface: Surface::of_kind(name),
                         kind: Kind::named(name),
                     })
                 })
@@ -259,6 +313,18 @@ fn setup(
                 .map(|surface| (Kind::named(&surface.kind), surface.bounce))
                 .collect();
             book.ticks_per_second = tps;
+            book.guns = Some(game.weapons.clone());
+            powers.orbs = Default::default();
+            match OrbNumbers::parse(&game.text, tps) {
+                Ok(orbs) => {
+                    book.orbs = Some(orbs);
+                    book.orb_problem = None;
+                }
+                Err(problem) => {
+                    book.orbs = None;
+                    book.orb_problem = Some(problem);
+                }
+            }
             book.abilities = Some(abilities);
             book.refusal = None;
         }

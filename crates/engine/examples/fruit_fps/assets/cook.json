@@ -516,7 +516,8 @@
       "material": {
         "slot": "figure",
         "module": "figure",
-        "lighting": "figure"
+        "lighting": "figure",
+        "emissive_value": "emissive_strength"
       },
       "merge": [
         {
@@ -531,8 +532,8 @@
         }
       ],
       "budgets": {
-        "triangles": 300000,
-        "vertices": 300000,
+        "triangles": 350000,
+        "vertices": 550000,
         "materials": 16,
         "object_vertices": 131072
       },
@@ -579,6 +580,34 @@
             "lightmap_scale": 4.0
           }
         }
+      },
+      "material_sizes": {
+        "m_props_atlas": {
+          "base_color": 1024,
+          "normal": 1024,
+          "orm": 512
+        }
+      },
+      "value_maps": {
+        "macro": {
+          "picture": "macro_breakup",
+          "variant": "bc",
+          "sampling": {
+            "wrap_u": "repeat",
+            "wrap_v": "repeat",
+            "mag_filter": "linear",
+            "min_filter": "linear",
+            "mipmap_filter": "linear",
+            "tex_coord": 0
+          },
+          "when": [
+            "macro_color",
+            "macro_rough"
+          ],
+          "needs": [
+            "macro_tile_m"
+          ]
+        }
       }
     },
     {
@@ -598,6 +627,28 @@
         "crouch_walk": "crouch_walk",
         "land": "land"
       },
+      "budgets": {
+        "joints": 96
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "banana_move",
+      "source": "../../../../../artifacts/game/art/anim/anim_banana_move.glb",
+      "root_motion": "Hip",
+      "rig_from": "banana",
+      "clips": {
+        "run": "move_run",
+        "sprint": "move_sprint",
+        "walk": "move_walk",
+        "crouch_walk": "move_crouch_walk",
+        "run_left": "move_run_left",
+        "run_right": "move_run_right",
+        "run_back": "move_run_back",
+        "land_hard": "move_land_hard",
+        "jump_takeoff": "move_jump_takeoff"
+      },
+      "keys_per_second": 60,
       "budgets": {
         "joints": 96
       }
@@ -1128,8 +1179,21 @@
     },
     {
       "kind": "picture",
-      "name": "font_atlas",
-      "source": "ui/font_atlas.png",
+      "name": "fredoka",
+      "source": "ui/fredoka.png",
+      "encodings": {
+        "rgba8": "rgba8"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "nunito",
+      "source": "ui/nunito.png",
       "encodings": {
         "rgba8": "rgba8"
       },
@@ -1157,6 +1221,20 @@
       "kind": "picture",
       "name": "portraits",
       "source": "ui/portraits.png",
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "stickers",
+      "source": "ui/stickers.png",
       "encodings": {
         "bc": "bc7_srgb",
         "rgba8": "rgba8_srgb"
@@ -1294,6 +1372,20 @@
     },
     {
       "kind": "picture",
+      "name": "macro_breakup",
+      "source": "../../../../../artifacts/game/art/map/textures/kit/macro.png",
+      "encodings": {
+        "bc": "bc7",
+        "rgba8": "rgba8"
+      },
+      "mips": true,
+      "wrap": [
+        "repeat",
+        "repeat"
+      ]
+    },
+    {
+      "kind": "picture",
       "name": "sky_panorama",
       "source": "source/sky_pano.png",
       "encodings": {
@@ -1304,6 +1396,78 @@
       "wrap": [
         "repeat",
         "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "mercato_field",
+      "source": "source/mercato_field.png",
+      "encodings": {
+        "rgba8": "rgba8"
+      },
+      "mips": false,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ],
+      "optional": true
+    }
+  ],
+  "scene_parts": [
+    {
+      "id": "light_field",
+      "scene": "../fruit_fps.scene.json",
+      "needs": [
+        "mercato_field"
+      ],
+      "textures": [
+        {
+          "id": "mercato_field",
+          "uri": "assets/cooked/mercato_field.rgba8.ktx2"
+        }
+      ],
+      "materials": [
+        {
+          "id": "mercato_field",
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "slots": {
+            "field": {
+              "module": "field",
+              "maps": {
+                "field": {
+                  "id": "mercato_field",
+                  "wrap_u": "clamp_to_edge",
+                  "wrap_v": "clamp_to_edge",
+                  "mag_filter": "linear",
+                  "min_filter": "linear"
+                }
+              }
+            }
+          },
+          "values": {
+            "min_x": -45.0,
+            "min_z": -44.0,
+            "max_x": 45.0,
+            "max_z": 46.0,
+            "height_m": 1.2,
+            "lightmap_scale": 4.0
+          }
+        }
+      ],
+      "entities": [
+        {
+          "id": "light_field",
+          "drawn": {
+            "kind": "light_field",
+            "material": "mercato_field"
+          },
+          "transform": {}
+        }
       ]
     }
   ],

@@ -24,6 +24,10 @@ gpu_struct! {
 
 const GENERATED: &[&str] = &[<FrameGrade as GpuStruct>::WGSL];
 
+const TONED: TargetName = TargetName("toned");
+
+const TONE_PASS: &str = "tone";
+
 pub struct ColorPass;
 
 impl PassName for ColorPass {
@@ -48,6 +52,8 @@ impl Brick for FrameBrick {
 }
 
 struct Composite {
+    tone_pass: engine_render::Pass<Self>,
+    tone: Pipeline<Self, Own>,
     pass: engine_render::Pass<Self>,
     pipeline: Pipeline<Self, Own>,
     grade: Buffer<Self>,
@@ -65,12 +71,30 @@ fn graded(grade: Grade, antialias: bool) -> FrameGrade {
     }
 }
 
+fn fullscreen(fragment: engine_core::Entry) -> RenderPipeline<'static> {
+    RenderPipeline {
+        vertex: FULLSCREEN,
+        fragment: Some(fragment),
+        vertices: &[],
+        primitive: wgpu::PrimitiveState::default(),
+        depth: DepthUse::None,
+        stencil: wgpu::StencilState::default(),
+        samples: 1,
+        targets: &[(None, wgpu::ColorWrites::ALL)],
+        constants: &[],
+        per_batch: PerBatch::NONE,
+    }
+}
+
 impl GpuPart for Composite {
-    type Reads = (Option<Res<'static, Lighting>>, Option<Res<'static, Controls>>);
+    type Reads = (
+        Option<Res<'static, Lighting>>,
+        Option<Res<'static, Controls>>,
+    );
     const NAME: &'static str = "frame";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::frame::composite;
+        use shaders::frame::{composite, tone};
         cx.shared_target(SharedTarget {
             name: COLOR,
             format: wgpu::TextureFormat::Rgba16Float,
@@ -83,35 +107,45 @@ impl GpuPart for Composite {
             samples: 1,
             clear: TargetClear::Depth(0.0),
         });
-        cx.frame(composite::SCENE, Bind::Target(COLOR))?;
+        cx.shared_target(SharedTarget {
+            name: TONED,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            samples: 1,
+            clear: TargetClear::Color([0.0, 0.0, 0.0, 1.0]),
+        });
+        cx.frame(tone::SCENE, Bind::Target(COLOR))?;
+        cx.frame(composite::TONED, Bind::Target(TONED))?;
         let grade = cx.buffer("frame_grade", Lifetime::Kept);
         let sampler = cx.sampler(Sampler::LINEAR_CLAMP);
+        let tone_pass = cx
+            .pass(TONE_PASS)
+            .label("fruit_fps/tone")
+            .span("tone")
+            .target(TONED, Access::Clear)
+            .id();
+        let tone = cx.render_pipeline(
+            tone_pass,
+            &fullscreen(tone::FS_TONE),
+            &[(tone::TONE_GRADE, Bind::Buffer(grade))],
+        )?;
         let pass = cx
             .pass(COMPOSITE_PASS)
             .label("fruit_fps/composite")
             .span("composite")
             .target(TargetName::CANVAS, Access::Clear)
             .id();
+        cx.after(pass, tone_pass);
         let pipeline = cx.render_pipeline(
             pass,
-            &RenderPipeline {
-                vertex: FULLSCREEN,
-                fragment: Some(composite::FS_COMPOSITE),
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::None,
-                stencil: wgpu::StencilState::default(),
-                samples: 1,
-                targets: &[(None, wgpu::ColorWrites::ALL)],
-                constants: &[],
-                per_batch: PerBatch::NONE,
-            },
+            &fullscreen(composite::FS_COMPOSITE),
             &[
                 (composite::FRAME_GRADE, Bind::Buffer(grade)),
-                (composite::SCENE_SAMPLER, Bind::Sampler(sampler)),
+                (composite::TONED_SAMPLER, Bind::Sampler(sampler)),
             ],
         )?;
         Ok(Self {
+            tone_pass,
+            tone,
             pass,
             pipeline,
             grade,
@@ -127,6 +161,7 @@ impl GpuPart for Composite {
         let scale = controls.map_or(1.0, |controls| controls.render_scale);
         cx.scale_target(COLOR, scale);
         cx.scale_target(DEPTH, scale);
+        cx.scale_target(TONED, scale);
         let shown = lighting.map_or_else(
             || graded(Grade::default(), false),
             |lighting| graded(lighting.grade, lighting.antialias),
@@ -139,12 +174,18 @@ impl GpuPart for Composite {
     }
 
     fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        cx.run(self.tone_pass);
         cx.run(self.pass);
     }
 
-    fn encode(&mut self, _pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
+    fn encode(&mut self, pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
+        let pipeline = if pass == self.tone_pass {
+            &self.tone
+        } else {
+            &self.pipeline
+        };
         cx.render(Attach::Declared).draw(
-            &self.pipeline,
+            pipeline,
             Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,

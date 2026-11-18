@@ -120,6 +120,8 @@ pub struct Mate {
     pub position: Vec3,
     pub health: f32,
     pub alive: bool,
+    pub human: bool,
+    pub yaw: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -212,6 +214,20 @@ pub struct Sense<'a> {
     pub smokes: &'a [Smoke],
     pub game: MatchSense,
     pub order: Order,
+    pub buy: BuySense,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BuySense {
+    pub gift_to: Option<Vec3>,
+    pub device_asked: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purchase {
+    Nothing,
+    Gift,
+    Own,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -243,7 +259,8 @@ pub struct Intent {
     pub defuse: bool,
     pub ability: Option<AbilityUse>,
     pub drop_device: bool,
-    pub buy: bool,
+    pub drop_gun: bool,
+    pub buy: Purchase,
     pub call: Option<Call>,
     pub goal: Vec3,
 }
@@ -265,7 +282,8 @@ impl Intent {
             defuse: false,
             ability: None,
             drop_device: false,
-            buy: false,
+            drop_gun: false,
+            buy: Purchase::Nothing,
             call: None,
             goal: sense.position,
         }

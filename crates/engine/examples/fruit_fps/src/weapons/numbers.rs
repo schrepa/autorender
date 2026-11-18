@@ -46,6 +46,7 @@ pub struct GunNumbers {
     pub run_speed_factor: f32,
     pub damage: Vec<DamageBand>,
     pub spread_deg: SpreadDeg,
+    pub spread_bloom: SpreadBloom,
     pub scope: Option<ScopeNumbers>,
     pub recoil: RecoilNumbers,
     pub tag_slow: f32,
@@ -76,6 +77,13 @@ pub struct SpreadDeg {
     pub air: f32,
     pub crouch_move: f32,
     pub land: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpreadBloom {
+    pub per_shot_deg: f32,
+    pub max_deg: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -151,6 +159,17 @@ pub struct CombatNumbers {
     pub pickup_reach_m: f32,
     pub pickup_aim_m: f32,
     pub device_hand: DeviceHand,
+    pub key_drop: KeyDrop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyDrop {
+    pub throw_m: f32,
+    pub lift_m: f32,
+    pub radius_m: f32,
+    pub floor_drop_m: f32,
+    pub back_steps: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

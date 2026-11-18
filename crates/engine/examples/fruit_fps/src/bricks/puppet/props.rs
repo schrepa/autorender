@@ -175,18 +175,17 @@ pub(super) fn show(
         .map(|(entity, prop)| ((prop.effect, prop.part), entity))
         .collect();
     let mut wanted = Vec::new();
-    let mut skipped = 0;
+    let mut skipped: Vec<String> = Vec::new();
     for prop in &props {
         let Some(abilities) = abilities.as_deref() else {
-            skipped += 1;
+            skipped.push(String::from("(ability numbers not read)"));
             continue;
         };
-        let key = abilities.ability(prop.ability).prop.clone();
-        let drawn = key
-            .as_deref()
-            .and_then(|key| drawn_of(scene.as_deref(), (key, key)).ok());
-        let Some(drawn) = drawn else {
-            skipped += 1;
+        let Some(key) = abilities.ability(prop.ability).prop.as_deref() else {
+            continue;
+        };
+        let Ok(drawn) = drawn_of(scene.as_deref(), (key, key)) else {
+            skipped.push(key.to_owned());
             continue;
         };
         let angle = spun(&mut spins, look, prop, fixed.delta_seconds);
@@ -222,7 +221,14 @@ pub(super) fn show(
     if stats.props != count {
         stats.props = count;
     }
-    if stats.props_skipped != skipped {
-        stats.props_skipped = skipped;
+    let missed = u32::try_from(skipped.len()).unwrap_or(u32::MAX);
+    if stats.props_skipped != missed {
+        stats.props_skipped = missed;
+    }
+    skipped.sort();
+    skipped.dedup();
+    skipped.truncate(4);
+    if stats.props_skipped_keys != skipped {
+        stats.props_skipped_keys = skipped;
     }
 }

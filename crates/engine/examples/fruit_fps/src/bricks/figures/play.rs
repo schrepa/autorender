@@ -13,10 +13,11 @@ use super::clock::{Clocks, FigureClocks};
 use super::files::{FigureFiles, Played, Rig, unreadable};
 use super::{FIGURES_PART, FigureHead, FigureRefused, FiguresBrick, FiguresStats};
 use crate::play::figures::{
-    FIGURE, Figure, FigureJoints, FigurePlay, GROUND, HIP, Held, Hold, HoldSpace, JointAt,
-    LEFT_ARM, LEFT_LEG, RIGHT_ARM, RIGHT_LEG,
+    Blended, FIGURE, Figure, FigureJoints, FigurePlay, GROUND, HIP, Held, Hold, HoldSpace, JointAt,
+    LEFT_ARM, LEFT_LEG, RIGHT_ARM, RIGHT_LEG, Stride,
 };
 use crate::play::light::Light;
+use engine_core::math::max;
 
 const DRAW_PART: &str = "figures_draw";
 
@@ -92,6 +93,14 @@ fn named_clips(rig: &Rig, play: Option<&FigurePlay>) -> Result<(), Error> {
     if !rig.clips.contains_key(&play.base.clip) {
         return Err(unknown("$.figure_play.base.clip", &play.base.clip, rig));
     }
+    if let Some(missing) = play
+        .base
+        .blend
+        .iter()
+        .find(|blended| !rig.clips.contains_key(&blended.clip))
+    {
+        return Err(unknown("$.figure_play.base.blend", &missing.clip, rig));
+    }
     if let Some(upper) = &play.upper
         && !rig.clips.contains_key(&upper.clip)
     {
@@ -121,6 +130,70 @@ fn crouched(rig: &Rig, drop: f32, posed: &mut [Posed]) -> Result<(), Error> {
     for (leg, foot) in legs.into_iter().zip(planted) {
         let reach = Reach {
             target: foot.position,
+            pole: posed[leg[1]].position - posed[leg[0]].position,
+            end_rotation: Some(foot.rotation),
+            weight: 1.0,
+        };
+        engine_rig::reach(skeleton, posed, leg, &reach).map_err(|error| rigged(&error))?;
+    }
+    Ok(())
+}
+
+fn mixed(
+    rig: &Rig,
+    (played, at): (&Played, f32),
+    blend: &[Blended],
+    scratch: &mut Scratch,
+) -> Result<(), Error> {
+    let skeleton = &*rig.skeleton;
+    let share = if played.duration() > 0.0 {
+        at / played.duration()
+    } else {
+        0.0
+    };
+    let mut held = 1.0 - blend.iter().map(|blended| blended.weight).sum::<f32>();
+    for blended in blend.iter().filter(|blended| blended.weight > 0.0) {
+        let Some(other) = rig.clips.get(&blended.clip) else {
+            return Err(unknown("$.figure_play.base.blend", &blended.clip, rig));
+        };
+        other
+            .bound
+            .sample(
+                &other.clip,
+                share * other.duration(),
+                skeleton,
+                &mut scratch.other,
+            )
+            .map_err(|error| rigged(&error))?;
+        let total = max(held, 0.0) + blended.weight;
+        scratch.weights.fill(blended.weight / total);
+        engine_rig::blend(
+            skeleton,
+            &scratch.base,
+            &scratch.other,
+            &scratch.weights,
+            played.bound.root_joint(),
+            &mut scratch.out,
+        )
+        .map_err(|error| rigged(&error))?;
+        std::mem::swap(&mut scratch.base, &mut scratch.out);
+        held = total;
+    }
+    Ok(())
+}
+
+fn strode(rig: &Rig, stride: Stride, posed: &mut [Posed]) -> Result<(), Error> {
+    let skeleton = &*rig.skeleton;
+    let (Some(hip), Some(legs)) = (rig.limbs.hip, rig.limbs.legs) else {
+        return Ok(());
+    };
+    let axis = Vec3::new(stride.axis[0], 0.0, stride.axis[1]).normalize_or_zero();
+    let centre = posed[hip].position;
+    for leg in legs {
+        let foot = posed[leg[2]];
+        let along = (foot.position - centre).dot(axis);
+        let reach = Reach {
+            target: foot.position + axis * along * (stride.scale - 1.0),
             pole: posed[leg[1]].position - posed[leg[0]].position,
             end_rotation: Some(foot.rotation),
             weight: 1.0,
@@ -266,6 +339,11 @@ fn posed(
         .map_err(|error| rigged(&error))?;
         std::mem::swap(&mut scratch.base, &mut scratch.out);
     }
+    if let Some(play) = play
+        && !play.base.blend.is_empty()
+    {
+        mixed(rig, (played, at), &play.base.blend, scratch)?;
+    }
     let upper = clocks
         .upper
         .as_ref()
@@ -320,6 +398,11 @@ fn posed(
     {
         crouched(rig, drop, &mut scratch.base)?;
     }
+    if let Some(stride) = play.and_then(|play| play.base.stride)
+        && (stride.scale - 1.0).abs() > 1.0e-3
+    {
+        strode(rig, stride, &mut scratch.base)?;
+    }
     if let Some(contact) = play.and_then(|play| play.pin_feet) {
         pinned(rig, played, contact, scratch)?;
     }
@@ -354,6 +437,31 @@ fn joint_at(world: Mat4, posed: Option<&Posed>) -> JointAt {
     }
 }
 
+fn measured(joints: &mut FigureJoints, rig: &Rig) {
+    if joints.strides.len() == rig.clips.len() {
+        return;
+    }
+    joints.strides = rig
+        .clips
+        .iter()
+        .map(|(name, played)| (name.clone(), played.stride_mps))
+        .collect();
+    joints.steps = rig
+        .clips
+        .iter()
+        .map(|(name, played)| (name.clone(), played.stride_mps * played.duration() * 0.5))
+        .collect();
+}
+
+fn head_top(rig: &Rig, pose: &[Posed], world: Mat4, top: f32) -> Option<Vec3> {
+    let head = rig.head?;
+    let inverse_bind = rig.skeleton.joints().get(head)?.inverse_bind;
+    let bound = inverse_bind.inverse().w_axis.truncate();
+    let local = inverse_bind.transform_point3(Vec3::new(bound.x, top, bound.z));
+    let joint = pose.get(head)?;
+    Some(world.transform_point3(joint.position + joint.rotation * local))
+}
+
 fn held_local(joint: &Posed, held: &Held) -> Transform {
     let offset = Quat::from_array(held.offset.rotation).normalize();
     Transform {
@@ -386,7 +494,11 @@ fn follow_figures(
     }
 }
 
-type TickReads<'w> = (Res<'w, FixedTime>, Res<'w, GlobalTransforms>);
+type TickReads<'w> = (
+    Res<'w, FixedTime>,
+    Res<'w, GlobalTransforms>,
+    Option<Res<'w, AssetLibrary>>,
+);
 
 type TickState<'w> = (
     ResMut<'w, FigureFiles>,
@@ -402,6 +514,7 @@ type TickFigures<'w, 's> = Query<
         &'static Figure,
         Option<&'static FigurePlay>,
         Option<&'static mut FigureJoints>,
+        Option<&'static Drawn>,
     ),
 >;
 
@@ -417,7 +530,7 @@ type Report<'w, 's> = (
 );
 
 pub fn figure_tick(
-    (fixed, globals): TickReads,
+    (fixed, globals, library): TickReads,
     (mut files, mut clocks, mut stats): TickState,
     mut figures: TickFigures,
     (holders, parents): Holders,
@@ -455,7 +568,7 @@ pub fn figure_tick(
     let delta = fixed.delta_seconds;
     let mut ticked = 0;
     for (entity, _) in &listed {
-        let Ok((_, _, play, joints)) = figures.get_mut(*entity) else {
+        let Ok((_, _, play, joints, drawn)) = figures.get_mut(*entity) else {
             continue;
         };
         let Some(clock) = clocks.held.get_mut(entity) else {
@@ -501,6 +614,11 @@ pub fn figure_tick(
                 .map(|name| joint_at(world, rig.skeleton.find(name).map(|at| &pose[at])))
                 .collect();
             let readout = clock.readout();
+            let top = drawn
+                .and_then(|drawn| drawn.geometry)
+                .and_then(|mesh| library.as_deref()?.mesh(mesh))
+                .map(|mesh| mesh.bounds().max().y);
+            joints.head_top = top.and_then(|top| head_top(&rig, pose, world, top));
             joints.joints = filled;
             joints.tick = fixed.tick;
             joints.base_seconds = readout.base_seconds;
@@ -509,20 +627,7 @@ pub fn figure_tick(
             joints.upper_seconds = readout.upper_seconds;
             joints.upper_done = readout.upper_done;
             joints.upper_cue = readout.upper_cue;
-            if joints.strides.len() != rig.clips.len() {
-                joints.strides = rig
-                    .clips
-                    .iter()
-                    .map(|(name, played)| (name.clone(), played.stride_mps))
-                    .collect();
-                joints.steps = rig
-                    .clips
-                    .iter()
-                    .map(|(name, played)| {
-                        (name.clone(), played.stride_mps * played.duration() * 0.5)
-                    })
-                    .collect();
-            }
+            measured(&mut joints, &rig);
         }
         for &(held_entity, held, parent) in wanted.into_iter().flatten() {
             let Some(joint) = rig.skeleton.find(&held.joint) else {
@@ -546,12 +651,19 @@ pub fn figure_tick(
 }
 
 fn placed(drawn: &Drawn, base: f32) -> Option<Drawn> {
-    (drawn.values.floats.first() != Some(&base)).then(|| Drawn {
-        values: InstanceValues {
-            floats: vec![base],
-            ..drawn.values.clone()
-        },
-        ..drawn.clone()
+    (drawn.values.floats.first() != Some(&base)).then(|| {
+        let mut floats = drawn.values.floats.clone();
+        match floats.first_mut() {
+            Some(first) => *first = base,
+            None => floats.push(base),
+        }
+        Drawn {
+            values: InstanceValues {
+                floats,
+                ..drawn.values.clone()
+            },
+            ..drawn.clone()
+        }
     })
 }
 

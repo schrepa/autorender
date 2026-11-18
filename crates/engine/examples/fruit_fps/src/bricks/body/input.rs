@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::names::PITCH_LIMIT_DEGREES;
 use crate::play::actors::{Equip, Gait, Human, Wish};
 use crate::play::numbers::{GameNumbers, Input, KeyMap, Numbers};
+use crate::play::round::Round;
 use crate::play::screen::{ScreenBuys, ScreenState};
 use crate::play::view::Controls;
 use crate::rules::AbilitySlot;
@@ -73,6 +74,25 @@ pub(super) struct Latched {
     equip: Option<Equip>,
     cast: Option<AbilitySlot>,
     buy_menu: bool,
+    ready: bool,
+    cycle: i32,
+    spun: f32,
+}
+
+fn cycled(latched: &Latched, turned: f32) -> (i32, f32) {
+    let mut spun = if turned * latched.spun < 0.0 {
+        turned
+    } else {
+        latched.spun + turned
+    };
+    let mut cycle = latched.cycle;
+    if cycle == 0 && spun.abs() >= 1.0 {
+        cycle = if spun > 0.0 { 1 } else { -1 };
+    }
+    if cycle != 0 {
+        spun = spun.fract();
+    }
+    (cycle, spun)
 }
 
 pub(super) fn adopt_numbers(files: Query<Ref<NumbersFile>>, mut numbers: ResMut<Numbers>) {
@@ -143,6 +163,9 @@ pub(super) fn latch(
     };
     let keys = &numbers.keys;
     let pressed = |binding: &[Input]| KeyMap::pressed(&devices, binding);
+    let turned =
+        KeyMap::turns(&devices, &keys.next_item) - KeyMap::turns(&devices, &keys.previous_item);
+    let (cycle, spun) = cycled(&latched, turned);
     let equips = [
         (&keys.primary, Equip::Primary),
         (&keys.sidearm, Equip::Sidearm),
@@ -160,7 +183,10 @@ pub(super) fn latch(
         jump: latched.jump || pressed(&keys.jump),
         buy_menu: latched.buy_menu || pressed(&keys.buy_menu),
         reload: latched.reload || pressed(&keys.reload),
+        ready: latched.ready || pressed(&keys.ready),
         drop: latched.drop || pressed(&keys.drop),
+        cycle,
+        spun,
         scope: latched.scope || pressed(&keys.scope),
         equip: equips
             .iter()
@@ -179,7 +205,7 @@ pub(super) fn latch(
 pub(super) fn wish(
     devices: Res<Devices>,
     numbers: Res<Numbers>,
-    screen: Option<Res<ScreenState>>,
+    (screen, round): (Option<Res<ScreenState>>, Option<Res<Round>>),
     swallow: Res<Swallow>,
     mut latched: ResMut<Latched>,
     mut humans: Query<&mut Wish, With<Human>>,
@@ -194,12 +220,14 @@ pub(super) fn wish(
         .map(|buys| std::mem::take(&mut buys.requests))
         .unwrap_or_default();
     let playing = !menu_open(screen.as_deref());
+    let buying = round.as_deref().is_some_and(|round| round.buy_lock);
     let held = |binding: &[Input]| KeyMap::held(&devices, binding);
     let played = |binding: &[Input]| playing && held(binding);
     let axis = |plus: bool, minus: bool| f32::from(u8::from(plus)) - f32::from(u8::from(minus));
     let ahead = axis(played(&keys.forward), played(&keys.back));
     let aside = axis(played(&keys.right), played(&keys.left));
     let spent = std::mem::take(&mut *latched);
+    latched.spun = spent.spun;
     for mut wish in &mut humans {
         let (sin, cos) = math::sin_cos(wish.yaw_radians);
         let forward = Vec3::new(-sin, 0.0, -cos);
@@ -215,7 +243,9 @@ pub(super) fn wish(
         wish.fire_held = played(&keys.fire) && !swallow.0;
         wish.fire_pressed = playing && spent.fire;
         wish.reload = playing && spent.reload;
+        wish.ready = playing && buying && spent.ready;
         wish.drop = playing && spent.drop;
+        wish.cycle = if playing { spent.cycle } else { 0 };
         wish.scope = playing && spent.scope;
         wish.equip = spent.equip.filter(|_| playing);
         wish.interact_held = played(&keys.interact);

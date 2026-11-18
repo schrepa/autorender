@@ -123,6 +123,7 @@ pub struct PropShown {
     pub team: Team,
     pub born_tick: u64,
     pub place: PropPlace,
+    pub enemy_share: f32,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
