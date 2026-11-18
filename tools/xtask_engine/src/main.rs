@@ -74,6 +74,8 @@ fn execute() -> Result<(), Failure> {
 fn commands() -> Vec<Command> {
     let mut commands = authoring_commands();
     commands.extend(xtask::agent::commands());
+    commands.push(xtask::compare::command());
+    commands.extend(xtask::runs::commands());
     commands.extend(checking_commands());
     commands
 }

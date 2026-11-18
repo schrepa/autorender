@@ -523,8 +523,10 @@ impl HostOptions {
             StartScene::File(path) => {
                 let workspace = std::env::current_dir().unwrap_or_default();
                 let path = path.strip_prefix(&workspace).unwrap_or(path);
-                let parts: Vec<_> = path.iter().map(|part| part.to_string_lossy()).collect();
-                json!(parts.join("/"))
+                json!(
+                    path.to_string_lossy()
+                        .replace(std::path::MAIN_SEPARATOR, "/")
+                )
             }
             StartScene::Declared { scene, .. } => json!(scene.name),
         };

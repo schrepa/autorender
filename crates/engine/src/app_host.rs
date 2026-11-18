@@ -91,6 +91,8 @@ impl AppHost {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        engine_profile::install_clock(now_ms);
         let install = engine_profile::open("launch", "install");
         let mut engine = engine_profile::caused(install, || {
             built(|| {
@@ -117,8 +119,6 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        #[cfg(any(feature = "dev", feature = "profiling"))]
-        engine_profile::install_clock(now_ms);
         wire(&mut engine, &renderer, (0, false));
         let gpu_ms = if renderer
             .features()

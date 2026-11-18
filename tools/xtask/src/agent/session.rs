@@ -224,12 +224,29 @@ impl Drop for Session {
     }
 }
 
+pub const NATIVE_REBUILD: &str = "native_program_cannot_be_swapped";
+
+fn unanswered_by_game() -> Value {
+    json!({"unavailable": "answered_by_driver"})
+}
+
 pub fn refusal(code: &str, got: Value) -> Value {
-    json!({"ok": false, "error": {"code": code, "path": "$", "got": got}})
+    json!({
+        "ok": false,
+        "frame": unanswered_by_game(),
+        "tick": unanswered_by_game(),
+        "error": {"code": code, "path": "$", "got": got},
+    })
 }
 
 pub fn accepted(value: Value) -> Value {
-    json!({"ok": true, "value": value})
+    json!({
+        "ok": true,
+        "frame": unanswered_by_game(),
+        "tick": unanswered_by_game(),
+        "ready": unanswered_by_game(),
+        "value": value,
+    })
 }
 
 pub fn panic_in(text: &str) -> Option<Value> {
@@ -696,7 +713,7 @@ impl Session {
             Host::Browser(browser) => browser.close(),
         }
         if self.exit.is_none() && self.closing {
-            self.exit = Some(refusal("session_closed", json!("call host.close")));
+            self.exit = Some(refusal("session_closed", json!({"by": "host.close"})));
         }
     }
 
@@ -746,7 +763,7 @@ impl Session {
         let none = json!({"type": "object", "additionalProperties": false});
         let mut rebuild = row("host.rebuild", "call", "call", none.clone(), json!({}));
         if self.native() {
-            rebuild["unavailable"] = json!("the native program cannot be swapped under a running game; close the session and start again");
+            rebuild["unavailable"] = json!(NATIVE_REBUILD);
         }
         names.push(rebuild);
         names.push(row("host.close", "call", "call", none, json!({})));
@@ -755,7 +772,7 @@ impl Session {
 
     fn unavailable(&self, source: Source) -> Option<&'static str> {
         (self.native() && source == Source::FailedFetches)
-            .then_some("the native host reads files itself and fetches nothing")
+            .then_some("native_host_fetches_nothing")
     }
 
     fn host_answer(&self, request: &Request) -> Value {
@@ -796,13 +813,20 @@ impl Session {
             }
         } else {
             let nearest: Vec<Value> = self.host_names().into_iter().map(|entry| entry["name"].clone()).collect();
-            return json!({"ok": false, "error": {"code": "unknown_name", "path": "name", "got": name, "nearest": nearest}});
+            let mut reply = refusal("unknown_name", json!(name));
+            reply["error"]["path"] = json!("name");
+            reply["error"]["nearest"] = json!(nearest);
+            return reply;
         };
         match args["pointer"].as_str() {
             None => accepted(value),
             Some(pointer) => match value.pointer(pointer) {
                 Some(found) => accepted(found.clone()),
-                None => json!({"ok": false, "error": {"code": "invalid_pointer", "path": "args.pointer", "got": pointer}}),
+                None => {
+                    let mut reply = refusal("invalid_pointer", json!(pointer));
+                    reply["error"]["path"] = json!("args.pointer");
+                    reply
+                }
             },
         }
     }

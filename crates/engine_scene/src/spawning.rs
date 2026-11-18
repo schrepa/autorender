@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
@@ -10,30 +11,29 @@ use crate::instance::spawn_entity;
 use crate::validation::identifier;
 use crate::{SceneKinds, SceneObject};
 
-fn no_scene() -> Error {
-    Error::new(ErrorCode::NoScene, "$").expected(Expected::Present)
-}
-
-fn scene_of(world: &World) -> Result<&OperationScene, Error> {
-    world.get_resource::<OperationScene>().ok_or_else(no_scene)
-}
-
 pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
-    let scene = scene_of(world)?;
+    if !world.contains_resource::<OperationScene>() {
+        world.insert_resource(OperationScene::new(String::new(), Arc::default()));
+    }
+    let context = world.get_resource::<SceneContext>().cloned();
+    let assets = context
+        .as_ref()
+        .map_or_else(Arc::default, |context| Arc::clone(&context.assets));
+    let kinds = SceneKinds::of(world);
+    let scene = world.resource::<OperationScene>();
     identifier(&object.id, "$.id")?;
     if scene.entity(&object.id).is_some() {
         return Err(Error::new(ErrorCode::DuplicateId, "$.id")
             .expected(Expected::Unique)
             .got(&object.id));
     }
-    let kinds = SceneKinds::of(world);
-    let transform = validate_object(object, "$", &BTreeSet::new(), &kinds)?;
-    kinds.check_placement(object, "$")?;
-    let mut skipped = Vec::new();
-    kinds.unlisted(object, "$", &mut skipped);
-    if let Some(first) = skipped.into_iter().next() {
-        return Err(first);
-    }
+    let transform = assets.scope(|| {
+        let transform = validate_object(object, "$", &BTreeSet::new(), &kinds)?;
+        kinds.check_placement(object, "$")?;
+        let mut skipped = Vec::new();
+        kinds.unlisted(object, "$", &mut skipped);
+        skipped.into_iter().next().map_or(Ok(transform), Err)
+    })?;
     let parent = object
         .parent
         .as_deref()
@@ -56,8 +56,7 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
         prefab_local_id: None,
     };
     let entity = spawn_entity(world, &scene_id, &expanded, transform);
-    let context = world.get_resource::<SceneContext>().cloned();
-    let landed = crate::loading::within(context.as_ref(), || {
+    let landed = assets.scope(|| {
         let cx = kinds.cx(context.as_ref(), None);
         kinds.read(world, entity, object, "$", &cx)?;
         if let Some(parent) = parent {
@@ -76,7 +75,10 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
 }
 
 pub fn remove(world: &mut World, id: &str) -> Result<usize, Error> {
-    let entity = scene_of(world)?.named_in(world, id, "$")?;
+    let entity = match world.get_resource::<OperationScene>() {
+        Some(scene) => scene.named_in(world, id, "$")?,
+        None => return Err(Error::new(ErrorCode::UnknownEntity, "$").got(id)),
+    };
     let gone = engine_core::subtree(world, entity);
     for &held in &gone {
         let _ = world.try_despawn(held);
@@ -84,13 +86,13 @@ pub fn remove(world: &mut World, id: &str) -> Result<usize, Error> {
     Ok(gone.len())
 }
 
-fn unused_id(world: &World) -> Result<String, Error> {
-    let scene = scene_of(world)?;
-    let mut at = scene.entity_count();
+fn unused_id(world: &World) -> String {
+    let scene = world.get_resource::<OperationScene>();
+    let mut at = scene.map_or(0, OperationScene::entity_count);
     loop {
         let id = format!("spawned-{at}");
-        if scene.entity(&id).is_none() {
-            return Ok(id);
+        if scene.is_none_or(|scene| scene.entity(&id).is_none()) {
+            return id;
         }
         at += 1;
     }
@@ -103,7 +105,7 @@ pub fn described(world: &World, mut described: Value) -> Result<SceneObject, Err
             .got(described));
     };
     if !fields.contains_key("id") {
-        fields.insert("id".to_owned(), Value::String(unused_id(world)?));
+        fields.insert("id".to_owned(), Value::String(unused_id(world)));
     }
     engine_settings::parse_value(described)
 }

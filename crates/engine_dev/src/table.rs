@@ -87,11 +87,9 @@ pub fn install(world: &mut World) {
             engine_core::schema_of::<RemoveArgs>(),
             json!({ "entities": ["spawned-0"] }),
         ),
-        NameEntry::call("digest", |reach, given| {
-            args::<NoArgs>(given)?;
+        NameEntry::call("digest", |reach, _| {
             Ok(engine_core::Answer::Value(reach.read(crate::digest::digest)))
-        })
-        .args(engine_core::schema_of::<NoArgs>(), json!({})),
+        }),
     ]);
     rows.push(crate::entities::row(world));
     for row in rows {
@@ -103,15 +101,15 @@ fn none(given: &Value) -> Result<(), Error> {
     args::<NoArgs>(given).map(drop)
 }
 
+pub(crate) fn shapeless(entry: &NameEntry) -> bool {
+    entry.args.as_object().is_some_and(Map::is_empty)
+}
+
 fn bare(
     name: &'static str,
     read: impl Fn(&Reach<'_>) -> Result<Value, Error> + Send + Sync + 'static,
 ) -> NameEntry {
-    NameEntry::read(name, Kind::State, move |reach, given| {
-        none(given)?;
-        read(reach)
-    })
-    .args(engine_core::schema_of::<NoArgs>(), json!({}))
+    NameEntry::read(name, Kind::State, move |reach, _| read(reach))
 }
 
 fn setting(section: &SettingsEntry) -> NameEntry {
@@ -149,11 +147,9 @@ fn setting(section: &SettingsEntry) -> NameEntry {
 
 fn stats(stats: &StatsEntry) -> NameEntry {
     let stats = *stats;
-    NameEntry::read(format!("stats.{}", stats.key), Kind::State, move |reach, given| {
-        none(given)?;
+    NameEntry::read(format!("stats.{}", stats.key), Kind::State, move |reach, _| {
         Ok(stats.read(reach.world))
     })
-    .args(engine_core::schema_of::<NoArgs>(), json!({}))
     .owned_by(stats.brick)
 }
 
@@ -444,7 +440,11 @@ fn listed(entry: &NameEntry) -> Value {
 
 fn described(entry: &NameEntry) -> Value {
     let mut row = listed(entry);
-    row["args"] = entry.args.clone();
+    row["args"] = if shapeless(entry) {
+        engine_core::schema_of::<NoArgs>()
+    } else {
+        entry.args.clone()
+    };
     row["examples"] = verbs(entry)
         .into_iter()
         .map(|verb| {

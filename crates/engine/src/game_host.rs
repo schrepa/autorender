@@ -18,6 +18,8 @@ pub struct GameHost<G: Game> {
     jobs: JobScheduler,
     #[cfg(feature = "dev")]
     pub(crate) development: crate::dev_host::DevHost,
+    #[cfg(feature = "dev")]
+    loading: Option<engine_profile::Cause>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     source: Option<std::path::PathBuf>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -51,6 +53,8 @@ impl<G: Game> GameHost<G> {
             jobs: JobScheduler::default(),
             #[cfg(feature = "dev")]
             development: crate::dev_host::DevHost::default(),
+            #[cfg(feature = "dev")]
+            loading: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
             source: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -85,6 +89,24 @@ impl<G: Game> GameHost<G> {
     }
 
     pub(crate) fn framed(
+        &mut self,
+        advance: Advance,
+        size: (u32, u32),
+        picture: Picture,
+    ) -> crate::Result<bool> {
+        #[cfg(feature = "dev")]
+        if let Some(loading) = self.loading {
+            let drawn = engine_profile::caused(loading, || self.frame_once(advance, size, picture));
+            let (readiness, _) = self.progress();
+            if readiness.settled() && !crate::host::in_flight(self, &readiness) {
+                self.loading = None;
+            }
+            return drawn;
+        }
+        self.frame_once(advance, size, picture)
+    }
+
+    fn frame_once(
         &mut self,
         advance: Advance,
         size: (u32, u32),
@@ -389,6 +411,10 @@ impl<G: Game> GameHost<G> {
             Arrival::Opening => engine_profile::open("launch", "scene"),
             Arrival::Reload => engine_profile::open("reload", &document.id),
         };
+        #[cfg(feature = "dev")]
+        if cause != engine_profile::Cause::default() {
+            self.loading = Some(cause);
+        }
         engine_profile::caused(cause, || {
             let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
             self.scene

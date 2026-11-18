@@ -135,7 +135,6 @@ error_codes! {
     InvalidPresentationAlpha => "invalid_presentation_alpha",
 
     GameRule => "game_rule",
-    NoScene => "no_scene",
     UnknownEntity => "unknown_entity",
     EntityRemoved => "entity_removed",
     MissingComponent => "missing_component",

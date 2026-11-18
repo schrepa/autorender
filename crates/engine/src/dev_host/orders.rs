@@ -132,6 +132,19 @@ fn shape<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).expect("schema_serializes")
 }
 
+fn step_shape() -> Value {
+    let mut shape = shape::<StepArgs>();
+    shape["examples"] = json!([
+        {"ticks": 600},
+        {"frames": 60, "ticks_per_frame": 1},
+        {"until": "settled", "frames": 600},
+        {"until": "stable", "frames": 600, "apart": 10, "tolerance": 2},
+        {"until": "multiple", "of": 2, "ticks_per_frame": 0},
+        {"wall_ms": 1000.0},
+    ]);
+    shape
+}
+
 fn parsed<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, Error> {
     engine_settings::parse_value_at(args.clone(), "$.args")
 }
@@ -142,7 +155,7 @@ pub(super) fn install(world: &mut World) {
         NameEntry::call("step", |_, args| {
             Ok(Answer::Loop(Box::new(Step::of(parsed(args)?)?)))
         })
-        .args(shape::<StepArgs>(), json!({"until": "settled", "frames": 600})),
+        .args(step_shape(), json!({"until": "settled", "frames": 600})),
     );
     register(
         world,
@@ -182,8 +195,50 @@ impl Step {
                 Ok(())
             }
         };
-        let missing = |path: &str| Error::new(ErrorCode::MissingField, path).expected(Expected::Present);
-        let stray = |path: &str| Error::new(ErrorCode::UnknownField, path).expected(Expected::Absent);
+        let (named, allowed): (&str, &[&str]) = match (args.until, args.ticks, args.frames) {
+            (Some(Until::Settled), ..) => ("settled", &["until", "frames", "ticks_per_frame", "alpha"]),
+            (Some(Until::Stable), ..) => (
+                "stable",
+                &["until", "frames", "apart", "tolerance", "ticks_per_frame", "alpha"],
+            ),
+            (Some(Until::Multiple), ..) => ("multiple", &["until", "of", "ticks_per_frame", "alpha"]),
+            (None, Some(_), _) => ("ticks", &["ticks"]),
+            (None, None, Some(_)) => ("frames", &["frames", "ticks_per_frame", "alpha"]),
+            (None, None, None) if args.wall_ms.is_some() => ("wall_ms", &["wall_ms"]),
+            (None, None, None) => {
+                return Err(Error::new(ErrorCode::MissingField, "$.args")
+                    .expected(Expected::Present)
+                    .variants(["ticks", "frames", "until", "wall_ms"]));
+            }
+        };
+        let given = [
+            ("ticks", args.ticks.is_some()),
+            ("frames", args.frames.is_some()),
+            ("until", args.until.is_some()),
+            ("apart", args.apart.is_some()),
+            ("tolerance", args.tolerance.is_some()),
+            ("of", args.of.is_some()),
+            ("wall_ms", args.wall_ms.is_some()),
+            ("ticks_per_frame", args.ticks_per_frame.is_some()),
+            ("alpha", args.alpha.is_some()),
+        ];
+        let with = |field: &str, code: ErrorCode, expected: Expected| {
+            Error::new(code, format!("$.args.{field}"))
+                .expected(expected)
+                .variants(allowed.iter().copied())
+                .got_whole(json!({"form": named}))
+        };
+        if let Some((field, _)) = given
+            .iter()
+            .find(|(field, present)| *present && !allowed.contains(field))
+        {
+            return Err(with(field, ErrorCode::UnknownField, Expected::Absent));
+        }
+        let required = |value: Option<u32>, field: &str| {
+            let value = value.ok_or_else(|| with(field, ErrorCode::MissingField, Expected::Present))?;
+            at_least_one(&format!("$.args.{field}"), u64::from(value))?;
+            Ok::<u32, Error>(value)
+        };
         if let Some(alpha) = args.alpha
             && !(0.0..=1.0).contains(&alpha)
         {
@@ -191,72 +246,35 @@ impl Step {
                 .range(0.0, 1.0)
                 .got(alpha));
         }
-        let stable = matches!(args.until, Some(Until::Stable));
-        if !stable && args.apart.is_some() {
-            return Err(stray("$.args.apart"));
-        }
-        if !stable && args.tolerance.is_some() {
-            return Err(stray("$.args.tolerance"));
-        }
-        if !matches!(args.until, Some(Until::Multiple)) && args.of.is_some() {
-            return Err(stray("$.args.of"));
-        }
-        let form = match (args.ticks, args.frames, args.until, args.wall_ms) {
-            (Some(ticks), None, None, None) => {
-                at_least_one("$.args.ticks", u64::from(ticks))?;
-                Form::Ticks(ticks)
-            }
-            (None, Some(frames), None, None) => {
-                at_least_one("$.args.frames", u64::from(frames))?;
-                Form::Frames(frames)
-            }
-            (None, Some(limit), Some(Until::Settled), None) => {
-                at_least_one("$.args.frames", u64::from(limit))?;
-                Form::Settled(limit)
-            }
-            (None, Some(limit), Some(Until::Stable), None) => {
-                at_least_one("$.args.frames", u64::from(limit))?;
-                let apart = args.apart.ok_or_else(|| missing("$.args.apart"))?;
-                at_least_one("$.args.apart", u64::from(apart))?;
-                Form::Stable {
-                    limit,
-                    apart,
-                    tolerance: args.tolerance.ok_or_else(|| missing("$.args.tolerance"))?,
-                    asked: None,
-                    last: None,
-                }
-            }
-            (None, None, Some(Until::Settled | Until::Stable), None) => {
-                return Err(missing("$.args.frames"));
-            }
-            (None, None, Some(Until::Multiple), None) => {
-                let of = args.of.ok_or_else(|| missing("$.args.of"))?;
+        let form = match (args.until, args.ticks) {
+            (Some(Until::Settled), _) => Form::Settled(required(args.frames, "frames")?),
+            (Some(Until::Stable), _) => Form::Stable {
+                limit: required(args.frames, "frames")?,
+                apart: required(args.apart, "apart")?,
+                tolerance: args.tolerance.ok_or_else(|| {
+                    with("tolerance", ErrorCode::MissingField, Expected::Present)
+                })?,
+                asked: None,
+                last: None,
+            },
+            (Some(Until::Multiple), _) => {
+                let of = args
+                    .of
+                    .ok_or_else(|| with("of", ErrorCode::MissingField, Expected::Present))?;
                 at_least_one("$.args.of", of)?;
                 Form::Multiple { of, target: None }
             }
-            (None, None, None, Some(ms)) => {
-                if !(ms.is_finite() && ms > 0.0) {
+            (None, Some(_)) => Form::Ticks(required(args.ticks, "ticks")?),
+            (None, None) => match args.wall_ms {
+                Some(ms) if !(ms.is_finite() && ms > 0.0) => {
                     return Err(Error::new(ErrorCode::OutOfRange, "$.args.wall_ms")
                         .expected(Expected::Above)
                         .got(ms));
                 }
-                Form::Wall { ms, since: None }
-            }
-            _ => {
-                return Err(Error::new(ErrorCode::InvalidArguments, "$.args")
-                    .variants(["ticks", "frames", "until", "wall_ms"]));
-            }
+                Some(ms) => Form::Wall { ms, since: None },
+                None => Form::Frames(required(args.frames, "frames")?),
+            },
         };
-        let framed = matches!(
-            form,
-            Form::Frames(_) | Form::Settled(_) | Form::Stable { .. } | Form::Multiple { .. }
-        );
-        if !framed && args.ticks_per_frame.is_some() {
-            return Err(stray("$.args.ticks_per_frame"));
-        }
-        if !framed && args.alpha.is_some() {
-            return Err(stray("$.args.alpha"));
-        }
         Ok(Self {
             form,
             rate: Rate {

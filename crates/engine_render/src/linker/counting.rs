@@ -1,9 +1,10 @@
 use serde_json::{Map, Value, json};
 use wesl::syntax::{
     AssignmentOperator, Attribute, CompoundStatement, DeclarationKind, ElseClause, Expression,
-    Function, FunctionCall, GlobalDeclaration, IfStatement, LiteralExpression, Spanned, Statement,
-    StatementNode, TranslationUnit, UnaryOperator,
+    Function, FunctionCall, GlobalDeclaration, IfStatement, LiteralExpression, PathOrigin,
+    Spanned, Statement, StatementNode, TranslationUnit, UnaryOperator,
 };
+use wesl::Mangler as _;
 
 use super::Ty;
 use crate::machine::Stage;
@@ -169,7 +170,9 @@ impl Counting {
                     continue;
                 }
                 let entry = stage.entry.name();
-                let (kind, taken, counted) = copy(&stage.composed.text, entry, counting.words);
+                let main = super::path_of((stage.entry.module(), entry)).0;
+                let (kind, taken, counted) =
+                    copy(&stage.composed.text, (entry, main), counting.words);
                 if let Ok(made) = &counted {
                     counting.words += 2 * made.paths.len() as u32;
                 }
@@ -284,7 +287,7 @@ impl Counting {
 
 fn copy(
     text: &str,
-    entry: &str,
+    (entry, main): (&str, &str),
     base: u32,
 ) -> (&'static str, bool, Result<Copied, &'static str>) {
     let Ok(mut unit) = text.parse::<TranslationUnit>() else {
@@ -308,7 +311,7 @@ fn copy(
     } else if text.contains(COUNTED) {
         Err("name_taken")
     } else {
-        counted(&mut unit, entry, base).map(|paths| Copied {
+        counted(&mut unit, (entry, main), base).map(|paths| Copied {
             text: unit.to_string(),
             base,
             paths,
@@ -332,6 +335,22 @@ fn stage_of(unit: &TranslationUnit, entry: &str) -> Option<&'static str> {
                 .find(|(stage, _)| stage == attribute.node())
                 .map(|(_, name)| name)
         })
+}
+
+fn source_name(name: &str, (entry, main): (&str, &str)) -> String {
+    if name == entry {
+        return name.to_owned();
+    }
+    let unmangled = wesl::mangler::EscapeMangler
+        .unmangle(name)
+        .filter(|(path, item)| {
+            path.origin == PathOrigin::Absolute
+                && wesl::mangler::EscapeMangler.mangle(path, item) == name
+        });
+    match unmangled {
+        Some((path, item)) => format!("{}::{item}", path.components.join("::")),
+        None => format!("{main}::{name}"),
+    }
 }
 
 fn literal(expression: &Expression) -> Option<i64> {
@@ -361,7 +380,7 @@ fn functions(unit: &TranslationUnit) -> impl Iterator<Item = &Function> {
 
 fn counted(
     unit: &mut TranslationUnit,
-    entry: &str,
+    (entry, main): (&str, &str),
     base: u32,
 ) -> Result<Vec<Path>, &'static str> {
     let discarding = discarding(unit);
@@ -376,10 +395,11 @@ fn counted(
     };
     for declaration in &mut unit.global_declarations {
         if let GlobalDeclaration::Function(function) = declaration.node_mut() {
-            walker.function = function.ident.name().clone();
-            if folded.iter().any(|(name, _)| *name == walker.function) {
+            let name = function.ident.name().clone();
+            if folded.iter().any(|(known, _)| *known == name) {
                 continue;
             }
+            walker.function = source_name(&name, (entry, main));
             walker.at = 0;
             walker.compound(&mut function.body, Cost::default())?;
         }
