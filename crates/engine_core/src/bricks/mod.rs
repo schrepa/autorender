@@ -114,7 +114,7 @@ impl Bricks<'_> {
     }
 
     pub fn draw_kind(&mut self, kind: KindDecl) -> &mut Self {
-        self.record.render.push(Box::new(kind));
+        self.record.render.push(Arc::new(kind));
         self
     }
 

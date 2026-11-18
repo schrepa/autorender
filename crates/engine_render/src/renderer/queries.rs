@@ -108,7 +108,7 @@ impl Renderer {
 
     pub fn is_texture_resident(&self, handle: engine_core::TextureHandle) -> bool {
         self.held_assets()
-            .is_some_and(|assets| assets.materials.is_texture_resident(handle))
+            .is_some_and(|assets| assets.textures.is_texture_resident(handle))
     }
 
     pub fn pipelines_compiling(&mut self) -> u32 {

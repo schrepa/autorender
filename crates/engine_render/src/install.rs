@@ -95,18 +95,6 @@ pub(crate) struct PassDecl {
     pub(crate) makes_records: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FragmentUse {
-    Always,
-    Masked,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Faces {
-    Declared,
-    Material(FragmentUse),
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct RenderDecl {
     pub(crate) vertex: Entry,
@@ -117,7 +105,7 @@ pub(crate) struct RenderDecl {
     pub(crate) stencil: wgpu::StencilState,
     pub(crate) targets: Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
     pub(crate) samples: u32,
-    pub(crate) faces: Faces,
+    pub(crate) per_batch: crate::PerBatch,
 }
 
 #[derive(Clone, Debug)]
@@ -204,6 +192,13 @@ pub(crate) struct Declared {
     pub(crate) pipelines: Vec<PipelineDecl>,
     pub(crate) inputs: Vec<DrawInputDecl>,
     pub(crate) frame: Vec<FrameBind>,
+    pub(crate) batch_groups: Vec<BatchDecl>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct BatchDecl {
+    pub(crate) module: engine_core::Module,
+    pub(crate) index: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -215,6 +210,7 @@ pub(crate) struct Counts {
     pipelines: usize,
     inputs: usize,
     frame: usize,
+    batch_groups: usize,
 }
 
 impl Declared {
@@ -227,6 +223,7 @@ impl Declared {
             pipelines: self.pipelines.len(),
             inputs: self.inputs.len(),
             frame: self.frame.len(),
+            batch_groups: self.batch_groups.len(),
         }
     }
 
@@ -244,6 +241,7 @@ impl Declared {
             pipelines: kept(&self.pipelines, counts.pipelines),
             inputs: kept(&self.inputs, counts.inputs),
             frame: kept(&self.frame, counts.frame),
+            batch_groups: kept(&self.batch_groups, counts.batch_groups),
         }
     }
 }
@@ -262,6 +260,7 @@ pub(crate) struct InstallCore {
     pub(crate) declared: Declared,
     pub(crate) draws: Vec<KindMember>,
     pub(crate) passes: engine_core::ScenePasses,
+    pub(crate) entries: crate::registration::Entries,
     pub(crate) linker: Linker,
     pub(crate) problems: Vec<Error>,
 }
@@ -274,6 +273,7 @@ impl InstallCore {
             declared: Declared::default(),
             draws: Vec::new(),
             passes: engine_core::ScenePasses::default(),
+            entries: crate::registration::Entries::default(),
             linker,
             problems: Vec::new(),
         }
@@ -418,12 +418,6 @@ impl InstallCore {
             .filter(|declared| declared.part == part)
     }
 
-    pub(crate) fn speedup_only(&mut self, pipeline: u32) {
-        if let Some(declared) = self.declared.pipelines.get_mut(pipeline as usize) {
-            declared.speedup_only = true;
-        }
-    }
-
     pub(crate) fn pipeline(
         &mut self,
         scope: Scoped,
@@ -560,6 +554,7 @@ pub(crate) fn pipeline_facts(decl: &PipelineDecl) -> serde_json::Value {
             "stencil": compute,
             "blend": compute,
             "depth": compute,
+            "per_batch": compute,
             "constants": constants,
         });
     };
@@ -633,6 +628,11 @@ pub(crate) fn pipeline_facts(decl: &PipelineDecl) -> serde_json::Value {
         "stencil": stencil,
         "blend": blend,
         "depth": depth,
+        "per_batch": {
+            "state": render.per_batch.state,
+            "cull": render.per_batch.cull,
+            "fragment": render.per_batch.fragment,
+        },
         "constants": constants,
     })
 }
@@ -658,11 +658,16 @@ impl Declared {
                     )
                 },
             );
+            let clear = match target.clear {
+                Clear::Color(color) => serde_json::json!({"color": color}),
+                Clear::Depth(depth) => serde_json::json!({"depth": depth}),
+            };
             targets.insert(
                 target.name.name().to_owned(),
                 serde_json::json!({
                     "format": format!("{:?}", target.format),
                     "samples": target.samples,
+                    "clear": clear,
                     "part": part,
                     "brick": brick,
                 }),

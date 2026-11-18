@@ -64,13 +64,13 @@ pub use engine_place::{
     AuthoredId, Named, OperationScene, SCENE_SCHEMA, SceneEntity, entity_removed, schema_of,
 };
 pub use engine_place::{
-    Asked, Awaits, BlendedPass, Board, Census, Changed, Changes, Clock, ColorPass, Cursor,
-    DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events, Feed, FeedView,
-    GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef, KindCell, KindDecl, KindJoin,
-    Layers, List, MaterialHandle, Mobility, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass,
-    PassBit, PassEntry, PassMask, PassName, PassRole, PassViews, PositionReach, Progress,
-    Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, SlotSet, Stamp,
-    StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, gpu_consts,
+    Asked, Awaits, Board, Census, Changed, Changes, Clock, Cursor, DrawKind, Drawn, DrawnBounds,
+    DrawnProjection, Error, ErrorCode, Events, Feed, FeedView, GeometryHandle, GpuStruct,
+    InstanceValues, Interest, JobRef, KindCell, KindDecl, KindJoin, Layers, List, MaterialHandle,
+    Mobility, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassEntry, PassMask,
+    PassName, PassViews, Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses,
+    Settling, Since, Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes,
+    gpu_consts,
 };
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,

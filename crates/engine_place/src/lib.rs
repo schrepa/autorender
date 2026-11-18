@@ -10,7 +10,6 @@ mod feeds;
 mod names;
 mod nodes;
 mod passes;
-mod point;
 mod readback;
 mod readiness;
 mod requests;
@@ -23,7 +22,6 @@ pub use asks::Asked;
 pub use calls::{SCENE_SCHEMA, schema_of};
 pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, Layers, NodeId,
-    PositionReach,
 };
 pub use engine_assets::{
     AttributeFormat, GeometryHandle, MaterialHandle, StreamShape, TextureHandle,
@@ -33,10 +31,9 @@ pub use feeds::{Changed, Changes, Cursor, Events, Feed, FeedView, Ring, Since, S
 pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
-    BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass, PassBit, PassEntry, PassMask,
-    PassName, PassRole, PassViews, ScenePass, ScenePasses, SlotSet, TargetName, Writes, wgsl_name,
+    KindCell, KindJoin, Pass, PassBit, PassEntry, PassMask, PassName, PassViews, ScenePass,
+    ScenePasses, TargetName, Writes,
 };
-pub use point::{PointInput, PointSet};
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
 pub use requests::{Board, Census, Interest, Progress, Request, Requests, Settling, Ticket};

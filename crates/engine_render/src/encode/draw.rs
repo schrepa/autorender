@@ -3,11 +3,6 @@ use engine_core::{Asset, DropReason, GeometryStream};
 use super::*;
 use crate::mesh_arena::MeshDraw;
 
-type Painted = (
-    Option<crate::surface::MaterialVariant>,
-    Option<Option<MaterialHandle>>,
-);
-
 fn instances_of(shape: &RawShape) -> Option<u32> {
     match shape {
         RawShape::Pulled { instances, .. }
@@ -37,24 +32,22 @@ fn mesh_draw<'a>(
 
 fn handles_of(shape: &RawShape) -> (Option<GeometryHandle>, Option<MaterialHandle>) {
     match shape {
-        RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
-            (Some(*mesh), *material)
+        RawShape::MeshIndirect { mesh, key, .. } | RawShape::Mesh { mesh, key, .. } => {
+            (Some(*mesh), *key)
         }
-        RawShape::Pulled { material, .. } | RawShape::Indirect { material, .. } => {
-            (None, *material)
-        }
+        RawShape::Pulled { key, .. } | RawShape::Indirect { key, .. } => (None, *key),
         RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => (None, None),
     }
 }
 
 fn dropped_asset(
     reason: DropReason,
-    (mesh, material): (Option<GeometryHandle>, Option<MaterialHandle>),
+    (mesh, key): (Option<GeometryHandle>, Option<MaterialHandle>),
 ) -> Option<Asset> {
     if reason == DropReason::GeometryNotResident {
         mesh.map(Asset::Mesh)
     } else if reason == DropReason::MaterialNotResident {
-        material.map(Asset::Material)
+        key.map(Asset::Material)
     } else {
         None
     }
@@ -197,7 +190,7 @@ impl Run {
         if built
             .ready
             .iter()
-            .any(|ready| ready.layout == layout && ready.bits.is_none())
+            .any(|ready| ready.layout == layout && ready.variant.is_none())
         {
             return true;
         }
@@ -245,34 +238,19 @@ impl Run {
         recorded
     }
 
-    fn drawn_variant(&self, shape: &RawShape) -> Result<Painted, DropReason> {
-        match shape {
-            RawShape::MeshIndirect { mesh, material, .. }
-            | RawShape::Mesh { mesh, material, .. } => {
-                if self.assets.meshes.get(*mesh).is_none() {
-                    return Err(DropReason::GeometryNotResident);
-                }
-                let variant = self
-                    .assets
-                    .materials
-                    .variant(*material)
-                    .ok_or(DropReason::MaterialNotResident)?;
-                Ok((Some(variant), None))
+    fn batch_variant(
+        &self,
+        (mesh, key): (Option<GeometryHandle>, Option<MaterialHandle>),
+    ) -> Result<Option<std::sync::Arc<crate::Variant>>, DropReason> {
+        if mesh.is_some_and(|mesh| self.assets.meshes.get(mesh).is_none()) {
+            return Err(DropReason::GeometryNotResident);
+        }
+        match self.assets.batches.held(key) {
+            Some(variant) => Ok(variant),
+            None if key.is_some() && !self.machine.declared.batch_groups.is_empty() => {
+                Err(DropReason::MaterialNotResident)
             }
-            RawShape::Pulled { material, .. } | RawShape::Indirect { material, .. } => {
-                match material {
-                    Some(handle) => {
-                        let variant = self
-                            .assets
-                            .materials
-                            .variant(Some(*handle))
-                            .ok_or(DropReason::MaterialNotResident)?;
-                        Ok((Some(variant), Some(*material)))
-                    }
-                    None => Ok((None, Some(None))),
-                }
-            }
-            RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => Ok((None, Some(None))),
+            None => Ok(None),
         }
     }
 
@@ -305,8 +283,9 @@ impl Run {
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
-        let (variant, painted) = self.drawn_variant(&shape)?;
-        let ready = self.render_pipeline(pipeline, variant)?;
+        let (mesh, key) = handles_of(&shape);
+        let variant = self.batch_variant((mesh, key))?;
+        let ready = self.render_pipeline(pipeline, variant.as_deref())?;
         if self.recording.collecting() {
             return Ok(crate::Recorded::Waiting);
         }
@@ -374,14 +353,12 @@ impl Run {
             let made = filled_group.or(owned).ok_or(DropReason::MissingBindGroup)?;
             bound.draw_group(render, group.index, made, dynamic);
         }
-        if let Some(material) = painted
-            && built.material
-        {
+        for &(index, batch) in &built.batches {
             let group = assets
-                .materials
-                .group(material)
+                .batches
+                .group(batch, key)
                 .ok_or(DropReason::MaterialNotResident)?;
-            bound.draw_group(render, 1, group, &[]);
+            bound.draw_group(render, index, group, &[]);
         }
         let input = |input: u32| input_of(machine, (&*tables, set), part, input);
         let geometry = &built.geometry;
@@ -462,18 +439,13 @@ impl Run {
             }
             RawShape::MeshIndirect {
                 mesh,
-                material,
                 args,
                 offset,
                 streams,
+                ..
             } => {
                 let draw = mesh_draw(assets, mesh, geometry)?;
-                let group = assets
-                    .materials
-                    .group(material)
-                    .ok_or(DropReason::MaterialNotResident)?;
                 let (args, offset) = indirect_args((machine, arena), input, (args, offset, true))?;
-                bound.draw_group(render, 1, group, &[]);
                 let buffers = geometry.iter().filter_map(|&stream| draw.stream(stream));
                 for (slot, buffer) in buffers.enumerate() {
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
@@ -488,17 +460,8 @@ impl Run {
                     render.draw_indexed_indirect(args, offset)
                 });
             }
-            RawShape::Mesh {
-                mesh,
-                material,
-                instances,
-            } => {
+            RawShape::Mesh { mesh, instances, .. } => {
                 let draw = mesh_draw(assets, mesh, geometry)?;
-                let group = assets
-                    .materials
-                    .group(material)
-                    .ok_or(DropReason::MaterialNotResident)?;
-                bound.draw_group(render, 1, group, &[]);
                 let buffers = geometry.iter().filter_map(|&stream| draw.stream(stream));
                 for (slot, buffer) in buffers.enumerate() {
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
@@ -530,7 +493,7 @@ impl Run {
                 let found = if bound == Bound::Asset {
                     let texture = textures.get(hole).copied();
                     hole += 1;
-                    match texture.and_then(|texture| self.assets.materials.texture_view(texture)) {
+                    match texture.and_then(|texture| self.assets.textures.texture_view(texture)) {
                         Some(view) => Resolved::View(view.clone()),
                         None => Resolved::Placeholder(ty),
                     }

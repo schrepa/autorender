@@ -95,6 +95,7 @@ pub(crate) struct Work {
 pub(crate) struct CountedAsk {
     pub(crate) counted: (u64, u64),
     pub(crate) plain: (u64, u64),
+    pub(crate) pipeline: u32,
     pub(crate) generation: u64,
 }
 
@@ -577,7 +578,7 @@ impl Run {
             .declared
             .samplers
             .iter()
-            .map(|desc| crate::materials::gpu_sampler(&device, "engine/part-sampler", *desc))
+            .map(|desc| crate::textures::gpu_sampler(&device, "engine/part-sampler", *desc))
             .collect();
         let count = parts.len();
         let features = device.features();

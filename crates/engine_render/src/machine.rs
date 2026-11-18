@@ -15,7 +15,7 @@ use crate::{Access, DepthUse, Lifetime, SharedTarget, VertexLayout};
 
 mod composing;
 
-pub(crate) use composing::{Composing, compose};
+pub(crate) use composing::{BatchEntry, BatchLayout, Composing, batch_path, compose};
 
 pub(crate) const CAMERA_STRIDE: u64 = 512;
 const TARGET_KEY: u64 = 1 << 62;
@@ -37,6 +37,14 @@ pub(crate) fn final_target(name: TargetName) -> Target {
 impl Declared {
     pub(crate) fn shared_target(&self, name: TargetName) -> Option<&SharedTarget> {
         self.targets.iter().find(|target| target.name == name)
+    }
+
+    fn depth_clear(&self) -> Clear {
+        match self.depth_target() {
+            Some(Target::Shared(name)) => self.shared_target(name).map(|target| target.clear),
+            Some(Target::Canvas) | None => None,
+        }
+        .unwrap_or(Clear::Depth(FAR))
     }
 
     pub(crate) fn target_format(&self, target: Target) -> Option<wgpu::TextureFormat> {
@@ -78,13 +86,7 @@ impl Declared {
             .iter()
             .filter_map(|name| self.shared_target(*name))
             .filter(|target| !target.format.is_depth_stencil_format())
-            .map(|target| {
-                (
-                    Target::Shared(target.name),
-                    target.format,
-                    Clear::Color(BLACK),
-                )
-            })
+            .map(|target| (Target::Shared(target.name), target.format, target.clear))
             .collect()
     }
 }
@@ -118,7 +120,7 @@ fn unknown_targets(declared: &Declared) -> Vec<Error> {
             }
         }
         for name in pass.scene.iter().flat_map(|scene| scene.pass.writes.targets()) {
-            if declared.shared_target(*name).is_none() {
+            if !named(*name) {
                 let path = format!("$.passes.{}.writes.{}", pass.name, name.name());
                 problems.push(Error::new(ErrorCode::UnknownVariable, path).got(name.name()));
             }
@@ -186,7 +188,7 @@ pub(crate) struct OwnGroup {
 
 pub(crate) struct Ready {
     pub(crate) layout: crate::encode::PassLayout,
-    pub(crate) bits: Option<crate::surface::MaterialVariant>,
+    pub(crate) variant: Option<u64>,
     pub(crate) made: wgpu::RenderPipeline,
     pub(crate) exact: bool,
 }
@@ -207,7 +209,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) compute_ready: Option<wgpu::ComputePipeline>,
     pub(crate) geometry: Vec<engine_core::GeometryStream>,
     pub(crate) holes: bool,
-    pub(crate) material: bool,
+    pub(crate) batches: Vec<(u32, u32)>,
     pub(crate) home: u32,
     pub(crate) layout_key: String,
     pub(crate) program_key: u64,
@@ -235,6 +237,7 @@ pub(crate) struct Machine {
     pub(crate) frame_slots: BTreeMap<u32, FrameSlot>,
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
+    pub(crate) batches: Vec<BatchLayout>,
     pub(crate) binding_bytes: BTreeMap<(Option<usize>, u32, u32), u64>,
     pub(crate) linker: Linker,
 }
@@ -278,15 +281,6 @@ pub(crate) fn writes_depth(depth: DepthUse) -> bool {
 
 pub(crate) fn shared(pass: &PassDecl) -> bool {
     pass.scene.is_some_and(|scene| scene.core)
-}
-
-fn written_module(declared: &Declared, decl: &PipelineDecl) -> Option<(String, String)> {
-    declared
-        .passes
-        .iter()
-        .enumerate()
-        .any(|(index, pass)| decl_in_pass(decl, index as u32, pass) && lit_set(&declared.pass_set(pass)))
-        .then(crate::shared::pass_module)
 }
 
 pub(crate) fn lit_set(set: &[SetFormat]) -> bool {
@@ -432,12 +426,10 @@ fn handle_of(bound: &Bound) -> Option<Handle> {
 
 type Reached = Vec<(String, crate::linker::Declaration, ShaderStages)>;
 
-fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Handle> {
+fn own_writes(decl: &PipelineDecl, reached: &Reached) -> Vec<Handle> {
     reached
         .iter()
-        .filter(|(module, found, _)| {
-            found.group > 0 && found.ty.writes() && !(found.group == 1 && linker.is_core(module))
-        })
+        .filter(|(_, found, _)| found.group > 0 && found.ty.writes())
         .filter_map(|(module, found, _)| {
             decl.bound.iter().find_map(|(var, bound)| {
                 let (known, name) = crate::linker::path_of((var.module(), var.name()));
@@ -486,7 +478,7 @@ impl Machine {
             core_frame,
             numbers,
             frame_bound,
-            material_entries,
+            batch_entries,
             depth_writes,
             reaches,
             staged,
@@ -496,17 +488,23 @@ impl Machine {
             problems.append(&mut unknown);
             return None;
         }
-        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/material-group"),
-            entries: &material_entries,
-        });
+        let batches: Vec<BatchLayout> = batch_entries
+            .into_iter()
+            .map(|entries| BatchLayout {
+                layout: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("engine/batch-group"),
+                    entries: &entries.iter().map(BatchEntry::layout).collect::<Vec<_>>(),
+                }),
+                entries,
+            })
+            .collect();
         let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/empty-group"),
             entries: &[],
         });
         let owned: Vec<Vec<Handle>> = staged
             .iter()
-            .map(|(decl, _, reached)| own_writes(decl, reached, &linker))
+            .map(|(decl, _, reached)| own_writes(decl, reached))
             .collect();
         let writes: Vec<Vec<(Handle, Usage)>> = staged
             .iter()
@@ -639,12 +637,18 @@ impl Machine {
                 (variant, format!("{layout:?}"))
             })
             .unzip();
-        let material_key = format!("{material_entries:?}");
         let mut pipelines = Vec::with_capacity(staged.len());
         for (index, (decl, stages, reached)) in staged.into_iter().enumerate() {
-            let material = reached
-                .iter()
-                .any(|(module, found, _)| found.group == 1 && linker.is_core(module));
+            let mut batched: Vec<(u32, u32)> = (declared.batch_groups.iter().enumerate())
+                .filter(|(_, batch)| {
+                    let path = batch_path(batch);
+                    (reached.iter()).any(|(module, found, _)| {
+                        module.as_str() == path && found.group == batch.index
+                    })
+                })
+                .map(|(at, batch)| (batch.index, at as u32))
+                .collect();
+            batched.sort_unstable();
             let mut groups: Vec<OwnGroup> = Vec::new();
             let mut reads = Vec::new();
             let mut writes = Vec::new();
@@ -718,14 +722,16 @@ impl Machine {
             }
             let variant = of_pipeline.get(index).copied().unwrap_or(0);
             let frame_key = frame_keys.get(variant as usize).map_or("", String::as_str);
-            let material_shown = if material { material_key.as_str() } else { "" };
-            layout_key.push_str(&format!(
-                "frame {variant} {frame_key} material {material_shown}"
-            ));
+            batched.retain(|&(at, _)| groups.iter().all(|group| group.index != at));
+            layout_key.push_str(&format!("frame {variant} {frame_key}"));
+            for &(at, batch) in &batched {
+                let entries = &batches[batch as usize].entries;
+                layout_key.push_str(&format!(" batch {at} {batch}:{entries:?}"));
+            }
             let top = groups
                 .last()
                 .map_or(0, |group| group.index)
-                .max(u32::from(material));
+                .max(batched.last().map_or(0, |&(at, _)| at));
             let mut layouts: Vec<&wgpu::BindGroupLayout> = Vec::new();
             let frame_layout = variants
                 .get(variant as usize)
@@ -734,8 +740,10 @@ impl Machine {
             for at in 1..=top {
                 let layout = match groups.iter().find(|group| group.index == at) {
                     Some(group) => &group.layout,
-                    None if material && at == 1 => &material_layout,
-                    None => &empty,
+                    None => batched
+                        .iter()
+                        .find(|&&(index, _)| index == at)
+                        .map_or(&empty, |&(_, batch)| &batches[batch as usize].layout),
                 };
                 layouts.push(layout);
             }
@@ -775,7 +783,6 @@ impl Machine {
                 .enumerate()
                 .find(|(at, pass)| decl_in_pass(&decl, *at as u32, pass))
                 .map_or(u32::MAX, |(at, _)| at as u32);
-            let material = material && groups.iter().all(|group| group.index != 1);
             pipelines.push(BuiltPipeline {
                 decl,
                 stages,
@@ -792,7 +799,7 @@ impl Machine {
                 compute_ready: None,
                 geometry,
                 holes,
-                material,
+                batches: batched,
                 home,
                 layout_key,
                 program_key,
@@ -824,6 +831,7 @@ impl Machine {
             frame_slots,
             frame_bound,
             variants,
+            batches,
             binding_bytes,
             linker,
         })
@@ -1029,7 +1037,7 @@ fn graph_of(
                 let access = if direct_depth {
                     GraphAccess::ReadOnly
                 } else {
-                    GraphAccess::Draw(Clear::Depth(FAR))
+                    GraphAccess::Draw(declared.depth_clear())
                 };
                 depth = Some((id, access));
             }

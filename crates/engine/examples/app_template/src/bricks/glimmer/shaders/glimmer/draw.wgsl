@@ -1,10 +1,10 @@
 import package::engine::drawn::{drawn_emission, drawn_float_count, drawn_floats, drawn_model,
     drawn_slot, drawn_tint};
-import package::engine::shading::flat;
-import package::engine::slots::flat_point;
+import package::surfaces::shading::flat;
+import package::surfaces::slots::flat_point;
 import package::engine::view::{camera, stable_normalize, view_clip};
 import package::generated::glimmer::GlimmerLook;
-import package::generated::writes::{Outputs, outputs};
+import package::surfaces::writes::{Outputs, outputs};
 @group(2) @binding(0) var<uniform> glimmer_look: GlimmerLook;
 
 const GLIMMER_UP: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);

@@ -26,7 +26,6 @@ mod gpu_calls;
 mod gpu_data;
 mod graph;
 mod install;
-mod kinds;
 mod linker;
 mod machine;
 mod pipelines;
@@ -35,10 +34,8 @@ mod render_bricks;
 mod shaders;
 mod shared;
 mod sizes;
-mod surface;
 mod uploads;
 
-mod materials;
 mod mesh_arena;
 mod mipmaps;
 mod platform;
@@ -46,17 +43,12 @@ mod profiling;
 mod readback;
 mod renderer;
 mod targets;
+mod textures;
+mod variant;
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod whatif;
 
-pub use engine_place::{PointInput, PointSet};
-pub use gpu_data::{mip_levels, pack_color, pack_surface};
-pub use install::FragmentUse;
-pub use kinds::{
-    Form, FormPass, FormSide, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
-    RoleFragments, Varyings,
-};
-pub use materials::gpu_format as texture_format;
+pub use gpu_data::mip_levels;
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub use profiling::INSTRUMENTS as GPU_INSTRUMENTS;
 #[doc(hidden)]
@@ -64,6 +56,7 @@ pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use platform::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
+pub use registration::{Entries, Made};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
 #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -74,12 +67,10 @@ pub use renderer::{
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub use renderer::gpu_names;
 pub use shaders::FULLSCREEN;
-pub use surface::{
-    DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, ModelForm, OpenSlot,
-    SlotModule, SlotPrepare, SurfaceKind, SurfaceTerms, material_state,
-};
-pub use targets::SharedTarget;
+pub use targets::{SharedTarget, TargetClear};
+pub use textures::gpu_format as texture_format;
 pub use uploads::{UploadRange, listed_ranges};
+pub use variant::{PerBatch, Variant};
 
 pub const DEV: bool = cfg!(feature = "dev");
 
@@ -138,6 +129,7 @@ handle!(Pass<P>);
 handle!(Pipeline<P, S>);
 handle!(ComputePipeline<P>);
 handle!(DrawInput<P, S>);
+handle!(BatchGroup<P>);
 
 pub struct Own;
 
@@ -234,6 +226,38 @@ pub enum Bind<P> {
     Asset,
 }
 
+impl<P> Clone for Bind<P> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Texture(texture) => Self::Texture(*texture),
+            Self::Slice {
+                texture,
+                mips,
+                layers,
+            } => Self::Slice {
+                texture: *texture,
+                mips: mips.clone(),
+                layers: layers.clone(),
+            },
+            Self::Buffer(buffer) => Self::Buffer(*buffer),
+            Self::Sampler(sampler) => Self::Sampler(*sampler),
+            Self::Target(name) => Self::Target(*name),
+            Self::Asset => Self::Asset,
+        }
+    }
+}
+
+pub enum GroupEntry<P> {
+    Range {
+        buffer: Buffer<P>,
+        offset: u64,
+        size: u64,
+    },
+    Texture(Texture<P>),
+    Asset(TextureHandle),
+    AssetSampler(engine_core::Sampler),
+}
+
 pub enum Copied<P> {
     Buffer(Buffer<P>),
     Texture(Texture<P>),
@@ -293,7 +317,7 @@ pub enum Shape<'a, P, S> {
     Pulled {
         vertices: Range<u32>,
         instances: Range<u32>,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
     },
     Buffers {
         vertices: &'a [DrawInput<P, S>],
@@ -306,7 +330,7 @@ pub enum Shape<'a, P, S> {
         indices: Option<DrawInput<P, S>>,
         args: DrawInput<P, S>,
         offset: u64,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
     },
     IndirectAt {
         vertices: &'a [(DrawInput<P, S>, u64)],
@@ -316,14 +340,14 @@ pub enum Shape<'a, P, S> {
     },
     MeshIndirect {
         mesh: GeometryHandle,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
         args: DrawInput<P, S>,
         offset: u64,
         streams: &'a [(DrawInput<P, S>, u64)],
     },
     Mesh {
         mesh: GeometryHandle,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
         instances: Range<u32>,
     },
 }
@@ -354,6 +378,7 @@ pub struct RenderPipeline<'a> {
     pub samples: u32,
     pub targets: &'a [(Option<wgpu::BlendState>, wgpu::ColorWrites)],
     pub constants: &'a [(&'static str, f64)],
+    pub per_batch: PerBatch,
 }
 
 fn bound_of<P>(bound: &Bind<P>) -> install::Bound {
@@ -515,7 +540,7 @@ impl<P: GpuPart> Install<'_, P> {
             stencil: desc.stencil.clone(),
             targets: desc.targets.to_vec(),
             samples: desc.samples,
-            faces: install::Faces::Declared,
+            per_batch: desc.per_batch,
         });
         let pipeline = self
             .core
@@ -554,32 +579,39 @@ impl<P: GpuPart> Install<'_, P> {
         DrawInput(self.core.args_input(scoped(&scope), buffer.0), PhantomData)
     }
 
-    pub fn scene<N: PassName>(&mut self) -> PassBuilder<'_, P> {
-        let pass = self.core.pass(N::NAME, install::Work::Render);
-        self.core.draws_scene(pass, N::NAME, N::PASS);
-        PassBuilder {
-            core: &mut *self.core,
-            pass,
-            part: PhantomData,
+    pub fn batch_group(
+        &mut self,
+        module: engine_core::Module,
+        index: u32,
+        buffers: &[(Var, Buffer<P>)],
+    ) -> Result<BatchGroup<P>, Error> {
+        let core = &mut *self.core;
+        core.linker.add_source(module.source());
+        let (path, _) = linker::path_of((module, ""));
+        let at = format!("$.batch_groups.{path}.{index}");
+        if index == 0 {
+            return Err(Error::new(engine_core::ErrorCode::UnknownVariable, at).got(index));
         }
-    }
-
-    pub fn screen<N: PassName>(&mut self) -> PassBuilder<'_, P> {
-        if N::PASS.scene() {
-            let path = format!("$.passes.{}", N::NAME);
-            self.core
-                .problems
-                .push(Error::new(engine_core::ErrorCode::PassMismatch, path));
+        let groups = &core.declared.batch_groups;
+        if groups
+            .iter()
+            .any(|known| known.module == module && known.index == index)
+        {
+            return Err(Error::new(engine_core::ErrorCode::NameTwice, at));
         }
-        let pass = self.core.pass(N::NAME, install::Work::Render);
-        if let Some(declared) = self.core.pass_mut(pass) {
-            declared.views = N::PASS.views;
+        for (var, buffer) in buffers {
+            let declared = core.linker.declared(*var);
+            if var.module() != module || declared.is_none_or(|found| found.group != index) {
+                return Err(Error::new(engine_core::ErrorCode::UnknownVariable, at).got(var.name()));
+            }
+            let usage = core.linker.buffer_usage(*var);
+            core.use_buffer(buffer.0, usage);
         }
-        PassBuilder {
-            core: &mut *self.core,
-            pass,
-            part: PhantomData,
-        }
+        core.declared.batch_groups.push(install::BatchDecl { module, index });
+        Ok(BatchGroup(
+            (core.declared.batch_groups.len() - 1) as u32,
+            PhantomData,
+        ))
     }
 
     pub fn passes(&self) -> &engine_core::ScenePasses {
@@ -714,13 +746,44 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.uniforms.camera_slot
     }
 
-    pub fn drawable(&self, mesh: GeometryHandle, material: Option<MaterialHandle>) -> bool {
-        self.core.assets.meshes.get(mesh).is_some()
-            && self.core.assets.materials.group(material).is_some()
+    pub fn set_batch(
+        &mut self,
+        group: BatchGroup<P>,
+        key: Option<MaterialHandle>,
+        entries: &[(Var, GroupEntry<P>)],
+        variant: Option<Variant>,
+    ) -> Result<(), Error> {
+        let raw: Vec<(Var, encode::BatchEntryRaw)> = entries
+            .iter()
+            .map(|(var, entry)| {
+                let raw = match entry {
+                    GroupEntry::Range {
+                        buffer,
+                        offset,
+                        size,
+                    } => encode::BatchEntryRaw::Range {
+                        buffer: buffer.0,
+                        offset: *offset,
+                        size: *size,
+                    },
+                    GroupEntry::Texture(texture) => encode::BatchEntryRaw::Texture(texture.0),
+                    GroupEntry::Asset(texture) => encode::BatchEntryRaw::Asset(*texture),
+                    GroupEntry::AssetSampler(sampler) => {
+                        encode::BatchEntryRaw::AssetSampler(*sampler)
+                    }
+                };
+                (*var, raw)
+            })
+            .collect();
+        self.core.set_batch(group.0, key, &raw, variant)
     }
 
-    pub fn mipped(&self, material: Option<MaterialHandle>) -> bool {
-        self.core.assets.materials.mipped(material)
+    pub fn clear_batch(&mut self, group: BatchGroup<P>, key: Option<MaterialHandle>) {
+        self.core.clear_batch(group.0, key);
+    }
+
+    pub fn texture_resident(&self, texture: TextureHandle) -> bool {
+        self.core.assets.textures.is_texture_resident(texture)
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
@@ -907,6 +970,10 @@ impl<P: GpuPart> Prepare<'_, P> {
         );
     }
 
+    pub fn report(&mut self, error: Error) {
+        self.core.fault(error);
+    }
+
     pub fn refuse(&mut self, error: Error) {
         self.core.refuse(error);
     }
@@ -1020,11 +1087,11 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
             Shape::Pulled {
                 vertices,
                 instances,
-                material,
+                key,
             } => encode::RawShape::Pulled {
                 vertices,
                 instances,
-                material,
+                key,
             },
             Shape::Buffers {
                 vertices,
@@ -1042,13 +1109,13 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 indices,
                 args,
                 offset,
-                material,
+                key,
             } => encode::RawShape::Indirect {
                 vertices: inputs(vertices),
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
-                material,
+                key,
             },
             Shape::IndirectAt {
                 vertices,
@@ -1063,24 +1130,24 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
             },
             Shape::MeshIndirect {
                 mesh,
-                material,
+                key,
                 args,
                 offset,
                 streams: given,
             } => encode::RawShape::MeshIndirect {
                 mesh,
-                material,
+                key,
                 args: args.0,
                 offset,
                 streams: streams(given),
             },
             Shape::Mesh {
                 mesh,
-                material,
+                key,
                 instances,
             } => encode::RawShape::Mesh {
                 mesh,
-                material,
+                key,
                 instances,
             },
         };
@@ -1088,6 +1155,34 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let run = self.raw.run();
         let point = run.point;
         run.draw(part, point, pipeline.0, shape, timer)
+    }
+}
+
+impl<P: GpuPart> Draw<'_, P, Scene> {
+    pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>) {
+        for batch in self.raw.batches() {
+            let recorded = self.draw(
+                pipeline,
+                Shape::Pulled {
+                    vertices: vertices.clone(),
+                    instances: batch.instances.clone(),
+                    key: batch.material,
+                },
+            );
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            if engine_profile::tracing()
+                && matches!(recorded, Recorded::Exact | Recorded::StandIn)
+                && !batch.drawn.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                self.raw.run().first_drawn(pipeline.0, batch.cause);
+            }
+            #[cfg(not(any(feature = "dev", feature = "profiling")))]
+            let _ = recorded;
+        }
+    }
+
+    pub fn pass(&mut self) -> Option<Scene> {
+        self.raw.run().point.map(Scene::named)
     }
 }
 

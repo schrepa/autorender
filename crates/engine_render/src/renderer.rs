@@ -5,8 +5,8 @@ use glam::Mat4;
 
 use crate::encode::{Assets, Run};
 use crate::graph::PlanCache;
-use crate::materials::MaterialStore;
 use crate::mesh_arena::GpuMeshes;
+use crate::textures::TextureStore;
 use crate::platform::{RenderTarget, failed, failed_with};
 use crate::profiling::GpuProfiler;
 
@@ -32,10 +32,11 @@ pub use health::DeviceHealth;
 pub use install::{Ahead, Installation, device_limits, install_noop};
 pub use startup::StartingRenderer;
 
-pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Assets {
+pub(crate) fn new_assets(device: &wgpu::Device) -> Assets {
     Assets {
         meshes: GpuMeshes::new(device),
-        materials: MaterialStore::new(device, queue),
+        textures: TextureStore::new(device),
+        batches: crate::encode::HeldBatches::default(),
     }
 }
 

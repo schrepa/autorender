@@ -1,9 +1,5 @@
-import package::engine::materials::{SURFACE_EMISSION, alpha_cutoff, emissive_factor};
-import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint};
-
-fn position(input: PositionInput) -> vec3<f32> {
-    return input.world;
-}
+import package::surfaces::materials::{SURFACE_EMISSION, alpha_cutoff, emissive_factor};
+import package::surfaces::shading::{Shaded, SurfaceInput, SurfacePoint};
 
 fn base_color(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
     return input.color.rgb;

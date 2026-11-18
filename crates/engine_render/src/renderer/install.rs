@@ -6,7 +6,7 @@ use super::*;
 use crate::install::{InstallCore, PartInfo, Reinstall, Scoped};
 use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::Machine;
-use crate::registration::{Generated, Installed, KindDraw, KindMember, PartRecord};
+use crate::registration::{Entries, Generated, Installed, KindDraw, KindMember, Modules, PartRecord};
 
 struct Listed {
     record: PartRecord,
@@ -22,7 +22,6 @@ pub(crate) struct Built {
     pub(crate) draws: Vec<KindMember>,
     pub(crate) machine: Machine,
     pub(crate) passes: Vec<&'static str>,
-    pub(crate) material: crate::surface::MaterialLayout,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,83 +74,6 @@ fn listing(built: &mut Built) -> Installation {
 
 fn core_part<P: crate::GpuPart>() -> PartRecord {
     PartRecord::of::<P>()
-}
-
-fn material_layout(
-    registry: &Registry,
-    linker: &mut Linker,
-    roots: &mut Vec<(String, String)>,
-    problems: &mut Vec<Error>,
-) -> crate::surface::MaterialLayout {
-    use crate::surface::{
-        LightingModule, MaterialLayout, OpenSlot, SlotModule, SlotPrepare, SurfaceDecls,
-        SurfaceKind, SurfaceTerms,
-    };
-    use engine_place::{PointInput, PointSet};
-    let package = |brick: engine_registry::BrickId| {
-        registry
-            .record(brick)
-            .map_or(CORE_PACKAGE, |record| record.package)
-    };
-    let mut declared = SurfaceDecls {
-        slots: crate::surface::core_slots(),
-        ..SurfaceDecls::default()
-    };
-    for (slot, path, _) in &declared.slots {
-        roots.push((path.clone(), slot.slot.to_owned()));
-    }
-    for (brick, slot) in registry.render_entries::<SlotModule>() {
-        linker.add_source(slot.module.source());
-        let (path, name) = crate::linker::path_of((slot.module, slot.slot));
-        roots.push((path.to_owned(), name));
-        declared
-            .slots
-            .push((*slot, path.to_owned(), package(brick)));
-    }
-    for (brick, open) in registry.render_entries::<OpenSlot>() {
-        linker.add_source(open.standard.source());
-        let (path, name) = crate::linker::path_of((open.standard, open.input.name));
-        roots.push((path.to_owned(), name));
-        declared.open.push((*open, path.to_owned(), package(brick)));
-    }
-    for (brick, input) in registry.render_entries::<PointInput>() {
-        declared.inputs.push((*input, package(brick)));
-    }
-    for (brick, set) in registry.render_entries::<PointSet>() {
-        declared.sets.push((*set, package(brick)));
-    }
-    for (_, terms) in registry.render_entries::<SurfaceTerms>() {
-        linker.add_source(terms.derive.source());
-        let (path, name) = crate::linker::path_of((terms.derive, crate::surface::DERIVE_ENTRY));
-        roots.push((path.to_owned(), name));
-        declared.terms.push((*terms, path.to_owned()));
-    }
-    for (_, model) in registry.render_entries::<LightingModule>() {
-        linker.add_source(model.module.source());
-        let (path, name) = crate::linker::path_of((model.module, model.form.entry()));
-        roots.push((path.to_owned(), name));
-        declared.models.push((*model, path.to_owned()));
-    }
-    for (_, prepare) in registry.render_entries::<SlotPrepare>() {
-        linker.add_source(prepare.module.source());
-        let (path, name) = crate::linker::path_of((prepare.module, crate::surface::PREPARE_ENTRY));
-        roots.push((path.to_owned(), name));
-        declared.prepares.push(path.to_owned());
-    }
-    declared.kinds = registry
-        .render_entries::<SurfaceKind>()
-        .map(|(_, kind)| *kind)
-        .collect();
-    let layout = MaterialLayout::of(&declared, problems);
-    for (path, text) in [
-        (crate::surface::SHADING_MODULE, layout.shading_source()),
-        (crate::surface::MATERIALS_MODULE, layout.materials_source()),
-        (crate::surface::SLOTS_MODULE, layout.slots_source(true)),
-        (crate::surface::SURFACES_MODULE, layout.surfaces_source()),
-    ] {
-        linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
-    }
-    layout
 }
 
 fn prefix_of(
@@ -245,14 +167,13 @@ pub struct Ahead {
     edited: std::collections::BTreeMap<String, String>,
     lint: Lint,
     problems: Vec<Error>,
-    roots: Vec<(String, String)>,
+    notices: Vec<Error>,
     composing: crate::machine::Composing,
     parts: Vec<Option<Box<dyn Installed>>>,
     gates: Vec<Option<BrickId>>,
     reinstalls: Vec<Reinstall>,
     draws: Vec<KindMember>,
     passes: Vec<&'static str>,
-    material: crate::surface::MaterialLayout,
 }
 
 pub(crate) fn install(
@@ -276,13 +197,14 @@ pub(crate) fn ahead(
 pub(crate) fn finish(
     device: &wgpu::Device,
     world: &mut World,
-    ahead: Ahead,
+    mut ahead: Ahead,
 ) -> Result<Built, Vec<Error>> {
+    let notices = std::mem::take(&mut ahead.notices);
     let built =
         world.resource_scope::<Registry, _>(|_, registry| built(device, &registry, ahead))?;
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
-        for notice in built.material.notices() {
-            registry.report_notice(notice.clone());
+        for notice in notices {
+            registry.report_notice(notice);
         }
     }
     Ok(built)
@@ -298,34 +220,32 @@ fn install_with(
     (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
 ) -> Ahead {
     let mut problems = Vec::new();
-    let mut roots = Vec::new();
     let mut linker = Linker::edited(crate::shared::core_source(), edited.clone());
     for (path, text) in crate::shaders::generated_core() {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
-    let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
-    linker.add_generated(
-        crate::shared::PASSES_MODULE.to_owned(),
-        CORE_PACKAGE,
-        scene_passes(world).wgsl(),
-    );
-    linker.add_generated(
-        crate::shared::KINDS_MODULE.to_owned(),
-        CORE_PACKAGE,
-        world
-            .get_resource::<engine_core::DrawnTable>()
-            .map(engine_core::DrawnTable::wgsl)
-            .unwrap_or_default(),
-    );
     hand_generated(registry, &mut linker);
+    let entries = Entries::of_registry(registry);
+    let mut notices = Vec::new();
+    for (_, record) in registry.iter() {
+        for modules in record.render_entries::<Modules>() {
+            let made = (modules.0)(&entries);
+            for module in made.sources {
+                linker.add_source(module.source());
+            }
+            for (path, text) in made.modules {
+                linker.add_generated(path, record.package, text);
+            }
+            for (path, name) in &made.keep {
+                linker.keep(path, name);
+            }
+            problems.extend(made.problems);
+            notices.extend(made.notices);
+        }
+    }
     let mut listed: Vec<Listed> = vec![
         Listed {
             record: core_part::<crate::shared::ScenePart>(),
-            package: CORE_PACKAGE,
-            brick: None,
-        },
-        Listed {
-            record: core_part::<crate::render_bricks::Composite>(),
             package: CORE_PACKAGE,
             brick: None,
         },
@@ -364,6 +284,7 @@ fn install_with(
     }
     let mut core = InstallCore::new(linker);
     core.passes = scene_passes(world);
+    core.entries = entries;
     for entry in &listed {
         core.declared.parts.push(PartInfo {
             ty: entry.record.part,
@@ -426,14 +347,13 @@ fn install_with(
         edited,
         lint,
         problems,
-        roots,
+        notices,
         composing,
         parts,
         gates,
         reinstalls,
         draws: entries,
         passes,
-        material,
     }
 }
 
@@ -458,7 +378,7 @@ fn built(device: &wgpu::Device, registry: &Registry, ahead: Ahead) -> Result<Bui
                     .map(|stage| std::sync::Arc::clone(&stage.composed))
             })
             .collect();
-        problems.extend(machine.linker.unused(&composed, &ahead.roots));
+        problems.extend(machine.linker.unused(&composed));
     }
     machine.linker.forget_wholes();
     let pass_gates = pass_gates(registry, &machine.declared.passes);
@@ -471,7 +391,6 @@ fn built(device: &wgpu::Device, registry: &Registry, ahead: Ahead) -> Result<Bui
             draws: ahead.draws,
             machine,
             passes: ahead.passes,
-            material: ahead.material,
         })
     } else {
         Err(problems)
@@ -516,15 +435,12 @@ impl Renderer {
                 (assets, Some(kept))
             }
             (None, Some(assets)) => (assets, None),
-            (None, None) => (new_assets(&self.core.device, &self.core.queue), None),
+            (None, None) => (new_assets(&self.core.device), None),
         };
-        assets
-            .materials
-            .configure(&self.core.device, installed.material.clone());
         crate::mesh_arena::configure(
             &self.core.device,
             world,
-            (&mut assets.meshes, &mut assets.materials),
+            (&mut assets.meshes, &mut assets.textures),
         );
         let mut run = Run::new(
             (self.core.device.clone(), self.core.queue.clone()),
@@ -592,10 +508,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let mut listed = listing(&mut installed);
     listed.stages = stage_texts(&installed.machine);
     let queue = crate::gpu_calls::Queue::new(queue);
-    let mut assets = new_assets(&device, &queue);
-    assets
-        .materials
-        .configure(&device, installed.material.clone());
+    let assets = new_assets(&device);
     let scope = crate::gpu_calls::validation_scope(&device);
     let mut run = Run::new(
         (device.clone(), queue.clone()),
@@ -719,6 +632,13 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
             .map(|input| (input.part, input.scope, input.buffer))
             .collect::<Vec<_>>()
     };
+    let batch_groups = |declared: &crate::install::Declared| {
+        declared
+            .batch_groups
+            .iter()
+            .map(|batch| (batch.module.index(), batch.index))
+            .collect::<Vec<_>>()
+    };
     parts(old) == parts(new)
         && textures(old) == textures(new)
         && buffers(old) == buffers(new)
@@ -726,6 +646,7 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
         && passes(old) == passes(new)
         && pipelines(old) == pipelines(new)
         && inputs(old) == inputs(new)
+        && batch_groups(old) == batch_groups(new)
 }
 
 fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
@@ -776,6 +697,10 @@ pub(crate) fn reinstall(
     );
     let mut core = InstallCore::new(linker);
     core.passes = scene_passes(world);
+    core.entries = world
+        .get_resource::<Registry>()
+        .map(Entries::of_registry)
+        .unwrap_or_default();
     core.part = part;
     core.package = again.package;
     core.declared = run.machine.declared.before(again.from);

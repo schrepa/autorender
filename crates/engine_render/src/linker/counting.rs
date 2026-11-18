@@ -53,14 +53,68 @@ pub(crate) struct Counter {
     counting: Counting,
     words: Vec<u32>,
     through_frame: Option<u64>,
+    twins: Vec<Twins>,
+}
+
+#[derive(Clone, Copy)]
+struct Twins {
+    waiting: u32,
+    from: u64,
+    failed: Option<&'static str>,
 }
 
 impl Counter {
-    pub(crate) fn new(counting: Counting) -> Self {
+    pub(crate) fn new(counting: Counting, on: u64) -> Self {
+        let twins = vec![
+            Twins {
+                waiting: 0,
+                from: on,
+                failed: None,
+            };
+            counting.copies.len()
+        ];
         Self {
             counting,
             words: Vec::new(),
             through_frame: None,
+            twins,
+        }
+    }
+
+    fn copies_of<'a>(&'a self, stages: &'a [Stage]) -> impl Iterator<Item = usize> + 'a {
+        let copies = &self.counting.copies;
+        (stages.iter()).filter_map(|stage| {
+            let key = stage.text_key();
+            copies.iter().position(|copy| copy.key == key && copy.counted.is_ok())
+        })
+    }
+
+    pub(crate) fn asked(&mut self, stages: &[Stage]) {
+        let found: Vec<usize> = self.copies_of(stages).collect();
+        for at in found {
+            self.twins[at].waiting += 1;
+        }
+    }
+
+    pub(crate) fn twin(&mut self, stages: &[Stage], made: Result<u64, &'static str>) {
+        let found: Vec<usize> = self.copies_of(stages).collect();
+        for at in found {
+            let twins = &mut self.twins[at];
+            twins.waiting = twins.waiting.saturating_sub(1);
+            match made {
+                Ok(from) => twins.from = twins.from.max(from),
+                Err(reason) => twins.failed = Some(reason),
+            }
+        }
+    }
+
+    fn status(&self, at: usize) -> Result<u64, &'static str> {
+        let twins = self.twins[at];
+        self.counting.copies[at].counted.as_ref().map_err(|reason| *reason)?;
+        match twins.failed {
+            Some(reason) => Err(reason),
+            None if twins.waiting > 0 => Err("compiling"),
+            None => Ok(twins.from),
         }
     }
 
@@ -87,15 +141,17 @@ impl Counter {
             OPERATIONS => Measure::Operations,
             SAMPLES => Measure::Samples,
             _ => {
-                let mut state = self.counting.entries();
+                let mut state = self.counting.entries(&|at| self.status(at));
                 state["through_frame"] = json!(frame);
                 state["limits"] = json!(LIMITS);
                 return state;
             }
         };
-        self.counting.read(&self.words, measure)
+        self.counting.read(&self.words, measure, &|at| self.status(at))
     }
 }
+
+type Status<'a> = &'a dyn Fn(usize) -> Result<u64, &'static str>;
 
 #[derive(Clone, Copy)]
 enum Measure {
@@ -165,7 +221,9 @@ impl Counting {
             for stage in stages {
                 let key = stage.text_key();
                 if let Some(known) = counting.copies.iter_mut().find(|copy| copy.key == key) {
-                    known.pipelines.push(pipeline.clone());
+                    if !known.pipelines.contains(&pipeline) {
+                        known.pipelines.push(pipeline.clone());
+                    }
                     continue;
                 }
                 let entry = stage.entry.name();
@@ -227,20 +285,21 @@ impl Counting {
         }
     }
 
-    fn entries(&self) -> Value {
+    fn entries(&self, status: Status<'_>) -> Value {
         let mut entries = Map::new();
-        for copy in &self.copies {
+        for (at, copy) in self.copies.iter().enumerate() {
             let mut about = json!({
                 "entry": copy.entry,
                 "stage": copy.stage,
                 "pipelines": copy.pipelines,
             });
-            match &copy.counted {
-                Ok(made) => {
-                    about["paths"] = (made.paths.iter())
-                        .map(|path| json!(format!("{}#{}", path.function, path.at)))
-                        .collect();
-                }
+            if let Ok(made) = &copy.counted {
+                about["paths"] = (made.paths.iter())
+                    .map(|path| json!(format!("{}#{}", path.function, path.at)))
+                    .collect();
+            }
+            match status(at) {
+                Ok(from) => about["from_frame"] = json!(from),
                 Err(reason) => about["unavailable"] = json!(reason),
             }
             entries.insert(copy.label.clone(), about);
@@ -248,7 +307,7 @@ impl Counting {
         json!({"words": self.words, "entries": entries})
     }
 
-    fn read(&self, words: &[u32], measure: Measure) -> Value {
+    fn read(&self, words: &[u32], measure: Measure, status: Status<'_>) -> Value {
         if words.len() < self.words as usize {
             return json!({"unavailable": "not_yet_read"});
         }
@@ -256,8 +315,10 @@ impl Counting {
             u64::from(words[at as usize]) | (u64::from(words[at as usize + 1]) << 32)
         };
         let mut entries = Map::new();
-        for copy in &self.copies {
-            let Ok(made) = &copy.counted else {
+        for (at, copy) in self.copies.iter().enumerate() {
+            let (Ok(made), Ok(from)) = (&copy.counted, status(at)) else {
+                let reason = status(at).err().unwrap_or("uncounted");
+                entries.insert(copy.label.clone(), json!({"unavailable": reason}));
                 continue;
             };
             let (mut total, mut paths) = (0, Map::new());
@@ -276,7 +337,10 @@ impl Counting {
                 }
                 paths.insert(format!("{}#{}", path.function, path.at), json!(value));
             }
-            entries.insert(copy.label.clone(), json!({"total": total, "paths": paths}));
+            entries.insert(
+                copy.label.clone(),
+                json!({"total": total, "paths": paths, "from_frame": from}),
+            );
         }
         Value::Object(entries)
     }

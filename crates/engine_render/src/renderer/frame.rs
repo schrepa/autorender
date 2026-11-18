@@ -216,7 +216,7 @@ impl Renderer {
             return;
         };
         run.deliver(world);
-        let refused = run.assets.materials.take_refused();
+        let refused = run.assets.textures.take_refused();
         if !refused.is_empty()
             && let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>()
         {
@@ -408,7 +408,7 @@ impl Renderer {
         let (mut compiler, assets) = run.split();
         let (mut texture_bytes, _) =
             assets
-                .materials
+                .textures
                 .sync(&device, &self.core.queue, world, (&mut mips, &mut compiler));
         if let Some(encoder) = mips.take() {
             self.core.queue.hand(Handover::from(encoder));
@@ -483,7 +483,7 @@ impl Renderer {
                 if let Some(source) = library.texture(texture) {
                     let revision = library.revision_of(texture).unwrap_or_default();
                     let (mut compiler, assets) = run.split();
-                    let (bytes, _) = assets.materials.upload_texture(
+                    let (bytes, _) = assets.textures.upload_texture(
                         &device,
                         &self.core.queue,
                         (texture, revision),
@@ -925,7 +925,7 @@ fn canvas_of(
         )),
         (engine_core::Target::Surface, None) => Some((None, None, run.canvas.surface, display)),
         (engine_core::Target::Texture(handle), _) => {
-            let (texture, _) = run.assets.materials.target(handle)?;
+            let (texture, _) = run.assets.textures.target(handle)?;
             let format = texture.format().remove_srgb_suffix();
             let drawing = texture.create_view(&wgpu::TextureViewDescriptor {
                 format: Some(format),
@@ -1174,12 +1174,12 @@ pub(super) mod names {
     }
 
     fn resident(_: &Renderer, run: &Run, _: &World) -> Value {
-        let (textures, _, _) = run.assets.materials.texture_totals();
+        let (textures, _, _) = run.assets.textures.texture_totals();
         json!({"meshes": run.assets.meshes.len(), "textures": textures})
     }
 
     fn asset_bytes(_: &Renderer, run: &Run, world: &World) -> Value {
-        let (_, textures, mips) = run.assets.materials.texture_totals();
+        let (_, textures, mips) = run.assets.textures.texture_totals();
         let meshes = world.get_resource::<AssetResidency>().map_or_else(
             || unavailable("no_asset_residency"),
             |residency| {

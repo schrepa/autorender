@@ -1,5 +1,4 @@
 use super::*;
-use crate::install::Faces;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Asked {
@@ -22,7 +21,7 @@ pub(super) struct WarmShape {
     pub(super) formats: Vec<Option<wgpu::TextureFormat>>,
     pub(super) depth: Option<wgpu::TextureFormat>,
     pub(super) shown: (bool, bool),
-    pub(super) variant: Option<crate::surface::MaterialVariant>,
+    pub(super) variant: Option<crate::Variant>,
 }
 
 pub(super) struct Warm {
@@ -106,7 +105,7 @@ impl Run {
                     warm.pipeline,
                     (&shape.formats, shape.depth),
                     shape.shown,
-                    shape.variant,
+                    shape.variant.as_ref(),
                     asked,
                 );
             }
@@ -190,7 +189,7 @@ impl Run {
             listed: false,
         };
         let (formats, depth, shown) = self.pass_formats(pass);
-        if self.mesh_drawn(pipeline, shown.0) {
+        if self.mesh_drawn(pipeline) {
             return Vec::new();
         }
         let mut warms = Vec::new();
@@ -218,25 +217,14 @@ impl Run {
         warms
     }
 
-    fn mesh_drawn(&self, pipeline: usize, plain: bool) -> bool {
+    fn mesh_drawn(&self, pipeline: usize) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline) else {
             return false;
         };
         let Program::Render(desc) = &built.decl.program else {
             return false;
         };
-        let used = crate::surface::MaterialVariant::PLAIN
-            .constants()
-            .iter()
-            .any(|&offered| {
-                built
-                    .stages
-                    .iter()
-                    .any(|stage| !stage.composed.constants(&[offered]).is_empty())
-            });
-        let styled = !plain && desc.targets.iter().any(|(_, writes)| !writes.is_empty());
-        let faced = desc.faces != Faces::Declared;
-        !built.geometry.is_empty() && (used || styled || faced)
+        !built.geometry.is_empty() && desc.per_batch != crate::PerBatch::NONE
     }
 
     fn reached_warms(&self) -> Vec<Warm> {
@@ -299,7 +287,7 @@ impl Run {
                         shape: None,
                         listed: false,
                     }],
-                    Program::Render(desc) if desc.faces == Faces::Declared => {
+                    Program::Render(desc) if !desc.per_batch.cull && !desc.per_batch.fragment => {
                         self.pass_warms(pipeline, pass as u32)
                     }
                     Program::Render(_) => Vec::new(),
@@ -376,7 +364,7 @@ impl Run {
                 formats: key.formats.clone(),
                 depth: key.depth,
                 shown: (key.plain, key.main),
-                variant: specialized(key),
+                variant: key.variant.clone(),
             }),
             listed: true,
         }

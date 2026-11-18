@@ -1,14 +1,11 @@
+import package::engine::color::encode_srgb;
 import package::engine::drawn::{drawn_model, drawn_slot};
-import package::engine::view::{stable_normalize, view_clip};
-
-const PLATE_WHITE: u32 = 0xffffffffu;
-const PLATE_ROUGH: u32 = 0xffu;
+import package::engine::view::view_clip;
+import package::plates::checker::checker;
 
 struct PlateCorner {
     @invariant @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal_u: vec4<f32>,
-    @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(0) uv: vec2<f32>,
 }
 
 fn corner_unit(corner: u32) -> vec2<f32> {
@@ -20,11 +17,12 @@ fn corner_unit(corner: u32) -> vec2<f32> {
     let pose = drawn_model(drawn_slot(index));
     let uv = corner_unit(corner);
     let offset = pose[0].xyz * (uv.x - 0.5) + pose[2].xyz * (uv.y - 0.5);
-    let world = pose[3].xyz + offset;
     var out: PlateCorner;
-    out.clip_position = view_clip(world);
-    out.normal_u = vec4<f32>(stable_normalize(cross(pose[2].xyz, pose[0].xyz)), uv.x);
-    out.world_v = vec4<f32>(world, uv.y);
-    out.material = vec4<u32>(PLATE_WHITE, PLATE_WHITE, PLATE_ROUGH, 0u);
+    out.clip_position = view_clip(pose[3].xyz + offset);
+    out.uv = uv;
     return out;
+}
+
+@fragment fn fs_plate(corner: PlateCorner) -> @location(0) vec4<f32> {
+    return vec4<f32>(encode_srgb(checker(corner.uv)), 1.0);
 }

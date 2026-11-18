@@ -1,4 +1,5 @@
 use std::any::{Any, TypeId};
+use std::sync::Arc;
 
 use bevy_ecs::component::ComponentId;
 use bevy_ecs::resource::Resource;
@@ -29,7 +30,7 @@ pub struct BrickRecord {
     pub package: &'static str,
     game: bool,
     pub entries: Vec<Box<dyn Any + Send + Sync>>,
-    pub render: Vec<Box<dyn Any + Send + Sync>>,
+    pub render: Vec<Arc<dyn Any + Send + Sync>>,
     brick: TypeId,
     crate_name: &'static str,
     source: [u8; 32],

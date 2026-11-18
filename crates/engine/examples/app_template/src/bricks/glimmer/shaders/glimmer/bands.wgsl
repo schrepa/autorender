@@ -1,4 +1,4 @@
-import package::engine::shading::{Shaded, SurfacePoint, unlit};
+import package::surfaces::shading::{Shaded, SurfacePoint, unlit};
 
 const GLIMMER_BANDS: f32 = 4.0;
 

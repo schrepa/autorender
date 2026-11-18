@@ -12,8 +12,6 @@ macro_rules! shader_modules {
             ),)*
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_POSE_MODULE),
-            crate::shared::generated(crate::kinds::SURFACED_MODULE),
-            crate::shared::generated(crate::shared::WRITES_MODULE),
         ];
     };
 }
@@ -24,11 +22,6 @@ shader_modules! {
     "engine::math" = "math.wgsl";
     "engine::mipmaps" = "mipmaps.wgsl";
     "engine::view" = "frame/view.wgsl";
-    "engine::standard" = "standard.wgsl";
-    "engine::mapped" = "mapped.wgsl";
-    "engine::surface" = "surface.wgsl";
-    "engine::geometry::vertex" = "geometry/vertex.wgsl";
-    "engine::kinds" = "kinds.wgsl";
     "engine::post::frame" = "effects.wgsl";
 }
 
@@ -36,8 +29,6 @@ pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, 
 
 pub const FULLSCREEN: engine_core::Entry =
     engine_core::Entry::generated(Module::generated(&CORE, 0), "vs_fullscreen");
-pub const FS_COMPOSITE: engine_core::Entry =
-    engine_core::Entry::generated(Module::generated(&CORE, 10), "fs_composite");
 
 pub(crate) fn core_module(path: &str) -> Module {
     let index = TEXTS.iter().position(|text| text.path() == path);
@@ -96,20 +87,11 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 9] {
-    let standard = crate::surface::MaterialLayout::standard();
+pub fn generated_core() -> [(&'static str, String); 4] {
     [
         (PRESENTATION_MODULE, presentation_source()),
-        (crate::surface::SHADING_MODULE, standard.shading_source()),
-        (
-            crate::surface::MATERIALS_MODULE,
-            standard.materials_source(),
-        ),
-        (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
-        (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
         (VIEW_MODULE, view_source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_POSE_MODULE, crate::drawn::pose_source()),
-        (crate::shared::WRITES_MODULE, crate::shared::pass_module().1),
     ]
 }

@@ -5,15 +5,20 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    Attributes, Brick, Bricks, Camera, Clear, ColorPass, Cursor, DrawKind, Drawn, DrawnTable,
-    EMISSIVE_MAP, Error, ErrorCode, Events, Expected, Feed, FrameTime, GpuStruct, Interest,
-    KindDecl, Node, Pass, PassName, PassViews, Rect, Refusals, Requests, Schedule, SlotSet, Source,
-    Spawner, SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
+    Attributes, Brick, Bricks, Camera, Clear, Cursor, DrawKind, Drawn, DrawnTable, EMISSIVE_MAP,
+    Error, ErrorCode, Events, Expected, Feed, FrameTime, GpuStruct, Interest, KindDecl, Node, Pass,
+    PassName, PassViews, Rect, Refusals, Requests, Schedule, Source, Spawner, SurfaceSlot, Ticket,
+    Transform, View, gpu_struct, settings, stats,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, DepthUse, Draw, FaceCull, Form, FormSide, FragmentUse, GpuPart,
-    Install, KindForm, Lifetime, LightingModule, ModelForm, PassFragment, PointInput, Prepare,
-    RenderBricks, Scene, SlotModule, Varyings, wgpu,
+    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Prepare, RenderBricks,
+    Scene, wgpu,
+};
+
+use crate::bricks::scene_pipeline::{ColorPass, LIT};
+use crate::bricks::surfaces::{
+    FaceCull, Form, FormDraw, FormSide, FragmentUse, KindForm, LightingModule, ModelForm,
+    PassFragment, PointInput, SlotModule, SurfaceBricks, SurfaceForms, Varyings,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -83,8 +88,7 @@ pub struct GlimmerPass;
 impl PassName for GlimmerPass {
     const NAME: &'static str = "glimmer";
     const PASS: Pass = Pass {
-        writes: Writes::LIT,
-        reads: SlotSet::POSITION,
+        writes: LIT,
         views: PassViews::Main,
     };
 }

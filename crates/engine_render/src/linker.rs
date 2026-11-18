@@ -136,13 +136,13 @@ pub(crate) struct Linker {
     sources: Vec<&'static Source>,
     handed: Vec<(String, &'static str, Vec<Part>)>,
     numbers: BTreeMap<(String, String), u32>,
-    composed: BTreeMap<(String, String, String), Arc<Composed>>,
+    composed: BTreeMap<(String, String), Arc<Composed>>,
     numbered: bool,
     edited: BTreeMap<String, String>,
     kept: Vec<(String, String)>,
     prepared: Option<Result<driver::Prepared, String>>,
     parsed: driver::Parsed,
-    wholes: engine_core::collections::HashMap<(String, String), driver::Slot>,
+    wholes: engine_core::collections::HashMap<String, driver::Slot>,
     bound: BTreeMap<(String, String), Option<Vec<String>>>,
 }
 
@@ -375,13 +375,9 @@ impl Linker {
             .copied()
     }
 
-    pub(crate) fn compose_in(
-        &mut self,
-        entry: Entry,
-        pass: Option<&(String, String)>,
-    ) -> Result<Arc<Composed>, Error> {
+    pub(crate) fn compose_in(&mut self, entry: Entry) -> Result<Arc<Composed>, Error> {
         let (path, name) = path_of((entry.module(), entry.name()));
-        self.link(path, Some(&name), pass)
+        self.link(path, Some(&name))
     }
 
     pub(crate) fn compose_named(
@@ -389,22 +385,16 @@ impl Linker {
         module: &str,
         entry: &str,
     ) -> Result<Arc<Composed>, Error> {
-        self.link(module, Some(entry), None)
+        self.link(module, Some(entry))
     }
 
     pub(crate) fn compose_module(&mut self, module: &str) -> Result<Arc<Composed>, Error> {
-        self.link(module, None, None)
+        self.link(module, None)
     }
 
-    fn link(
-        &mut self,
-        module: &str,
-        kept: Option<&str>,
-        pass: Option<&(String, String)>,
-    ) -> Result<Arc<Composed>, Error> {
+    fn link(&mut self, module: &str, kept: Option<&str>) -> Result<Arc<Composed>, Error> {
         let entry = kept.unwrap_or_default();
-        let written = pass.map_or("", |(key, _)| key.as_str());
-        let key = (module.to_owned(), entry.to_owned(), written.to_owned());
+        let key = (module.to_owned(), entry.to_owned());
         if let Some(composed) = self.composed.get(&key) {
             return Ok(Arc::clone(composed));
         }
@@ -424,19 +414,16 @@ impl Linker {
             .as_ref()
             .map_err(|error| failed(error))?;
         let main = module_path(module).map_err(|error| failed(&error))?;
-        let writes = pass.map(|(_, text)| text.as_str());
         let whole = kept.and_then(|entry| {
-            let key = (module.to_owned(), written.to_owned());
-            let texts = (prepared, writes);
             driver::entry(
                 &mut self.wholes,
-                (key, entry),
-                (&main, texts, &mut self.parsed),
+                (module.to_owned(), entry),
+                (&main, prepared, &mut self.parsed),
             )
         });
         let linked = match whole {
             Some(linked) => linked,
-            None => driver::linked_entry(&main, kept, (prepared, writes), &mut self.parsed)
+            None => driver::linked_entry(&main, kept, prepared, &mut self.parsed)
                 .map_err(|error| failed(&error))?,
         };
         let text = linked.text;
@@ -481,7 +468,7 @@ impl Linker {
             .as_ref()
             .ok()?;
         let main = module_path(module).ok()?;
-        driver::bindings(&main, entry, (prepared, None), &mut self.parsed).ok()
+        driver::bindings(&main, entry, prepared, &mut self.parsed).ok()
     }
 
     pub(crate) fn reached(&self, composed: &Composed) -> Vec<(String, Declaration)> {
@@ -535,11 +522,7 @@ impl Linker {
             .is_some_and(|module| defines_function(&module.text, function))
     }
 
-    pub(crate) fn unused(
-        &mut self,
-        composed: &[Arc<Composed>],
-        roots: &[(String, String)],
-    ) -> Vec<Error> {
+    pub(crate) fn unused(&mut self, composed: &[Arc<Composed>]) -> Vec<Error> {
         let mut texts: Vec<(String, String)> = composed
             .iter()
             .map(|composed| (composed.module.clone(), composed.text.clone()))
@@ -554,12 +537,7 @@ impl Linker {
                     .map(|name| (module.path.clone(), name))
             })
             .collect();
-        let roots: Vec<(String, String)> = roots
-            .iter()
-            .chain(&self.kept)
-            .cloned()
-            .chain(entries)
-            .collect();
+        let roots: Vec<(String, String)> = self.kept.iter().cloned().chain(entries).collect();
         for (module, name) in &roots {
             if called(&texts, module, name) || !self.defines(module, name) {
                 continue;
@@ -621,10 +599,6 @@ fn prepare(
         texts: modules
             .iter()
             .map(|source| numbered_text(numbers, source))
-            .collect(),
-        writes: modules
-            .iter()
-            .map(|source| source.path == crate::shared::WRITES_MODULE)
             .collect(),
         overrides: modules
             .iter()

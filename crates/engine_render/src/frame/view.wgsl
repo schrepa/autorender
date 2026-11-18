@@ -12,7 +12,7 @@ fn view_clip(world: vec3<f32>) -> vec4<f32> {
     return clip;
 }
 
-fn material_bias() -> f32 {
+fn view_mip_bias() -> f32 {
     return camera.mip_bias;
 }
 

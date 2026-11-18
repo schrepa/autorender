@@ -1,7 +1,7 @@
-import package::engine::materials::{MAP_BASE_COLOR, MAP_EMISSIVE, MAP_NORMAL, MASK_MIP_SCALE,
+import package::surfaces::materials::{MAP_BASE_COLOR, MAP_EMISSIVE, MAP_NORMAL, MASK_MIP_SCALE,
     SURFACE_EMISSION, alpha_cutoff, base_color_map, base_color_sampler, emissive_factor,
     emissive_map, emissive_sampler, map_present, map_uv, normal_map, normal_sampler, normal_scale};
-import package::engine::shading::{SurfaceInput, SurfacePoint};
+import package::surfaces::shading::{SurfaceInput, SurfacePoint};
 import package::engine::view::stable_normalize;
 
 fn base_texel(input: SurfaceInput) -> vec4<f32> {

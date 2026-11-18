@@ -56,11 +56,14 @@ pub fn texel(
     texture
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub use crate::graph::Clear as TargetClear;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SharedTarget {
     pub name: engine_core::TargetName,
     pub format: wgpu::TextureFormat,
     pub samples: u32,
+    pub clear: TargetClear,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

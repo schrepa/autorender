@@ -145,7 +145,7 @@ impl Renderer {
         {
             self.core.pipeline_cache = super::cache::open(&device, &adapter.get_info());
         }
-        self.assets = Some(new_assets(&device, &queue));
+        self.assets = Some(new_assets(&device));
         self.core.device = device;
         self.core.queue = queue;
         Ok(())
@@ -186,7 +186,7 @@ impl Renderer {
         )?;
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device, queue.get_timestamp_period());
-        let assets = new_assets(&device, &queue);
+        let assets = new_assets(&device);
         let validation = Box::pin(scope.pop());
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
         let ledger = crate::pipelines::Ledger::default();

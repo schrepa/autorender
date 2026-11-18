@@ -1,4 +1,4 @@
-import package::engine::shading::{SurfaceInput, SurfacePoint};
+import package::surfaces::shading::{SurfaceInput, SurfacePoint};
 
 fn opacity(input: SurfaceInput, point: SurfacePoint) -> f32 {
     let unit = input.uv * 2.0 - 1.0;

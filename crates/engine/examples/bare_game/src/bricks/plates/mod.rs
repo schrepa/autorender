@@ -1,31 +1,24 @@
 engine::brick!(plates);
 
 use engine_core::{
-    Attributes, Brick, Bricks, DrawKind, Error, KindDecl, Pass, PassName, PassViews, SlotSet,
-    Source, SurfaceSlot, Writes,
+    Attributes, Brick, Bricks, DrawKind, Error, KindDecl, Pass, PassName, PassViews, Source,
+    TargetName, Writes,
 };
 use engine_render::{
-    Draw, Form, FormSide, FragmentUse, GpuPart, Install, KindForm, Prepare, RenderBricks, Scene,
-    SlotModule, Varyings,
+    DepthUse, Draw, GpuPart, Install, PerBatch, Pipeline, Prepare, RenderBricks, RenderPipeline,
+    Scene, SharedTarget, TargetClear, wgpu,
 };
 
 pub const PLATE: DrawKind = DrawKind("plate");
 
-pub const PLATE_MODULE: &str = "plate";
-
-const FORM: KindForm = KindForm {
-    kind: PLATE,
-    placed: FormSide::pulled(shaders::plates::draw::VS_PLATE),
-    varyings: Varyings::Surface(FragmentUse::Masked),
-};
+pub const PLATES_DEPTH: TargetName = TargetName("plates_depth");
 
 pub struct PlatesPass;
 
 impl PassName for PlatesPass {
     const NAME: &'static str = "plates";
     const PASS: Pass = Pass {
-        writes: Writes::LIT,
-        reads: SlotSet::ALL,
+        writes: Writes(&[TargetName::CANVAS, PLATES_DEPTH]),
         views: PassViews::Main,
     };
 }
@@ -44,29 +37,51 @@ impl Brick for PlatesBrick {
                 passes: &[PlatesPass::NAME],
             })
             .pass::<PlatesPass>()
-            .material_slot(SlotModule {
-                slot: SurfaceSlot::BaseColor.name(),
-                name: PLATE_MODULE,
-                module: shaders::plates::checker::MODULE,
-                maps: &[],
-                values: &[],
-                reach: 0.0,
-            })
             .draws::<PlatesGpu>(PLATE, PlatesGpu::draw);
     }
 }
 
 struct PlatesGpu {
-    form: Form<Self>,
+    pipeline: Pipeline<Self, Scene>,
 }
 
 impl GpuPart for PlatesGpu {
     type Reads = ();
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        Ok(Self {
-            form: cx.form(&FORM, &[])?,
-        })
+        use shaders::plates::draw;
+        cx.shared_target(SharedTarget {
+            name: PLATES_DEPTH,
+            format: wgpu::TextureFormat::Depth32Float,
+            samples: 1,
+            clear: TargetClear::Depth(0.0),
+        });
+        let pipeline = cx.render_pipeline(
+            Scene::of::<PlatesPass>(),
+            &RenderPipeline {
+                vertex: draw::VS_PLATE,
+                fragment: Some(draw::FS_PLATE),
+                vertices: &[],
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..wgpu::PrimitiveState::default()
+                },
+                depth: DepthUse::Compare {
+                    compare: wgpu::CompareFunction::GreaterEqual,
+                    write: true,
+                    bias: wgpu::DepthBiasState::default(),
+                },
+                stencil: wgpu::StencilState::default(),
+                samples: 1,
+                targets: &[(None, wgpu::ColorWrites::ALL)],
+                constants: &[],
+                per_batch: PerBatch::NONE,
+            },
+            &[],
+        )?;
+        Ok(Self { pipeline })
     }
 
     fn prepare(&mut self, (): (), _: &mut Prepare<'_, Self>) {}
@@ -74,8 +89,6 @@ impl GpuPart for PlatesGpu {
 
 impl PlatesGpu {
     fn draw(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if let Some(pipeline) = draw.form(&self.form) {
-            draw.batches(&pipeline, 0..6);
-        }
+        draw.batches(&self.pipeline, 0..6);
     }
 }

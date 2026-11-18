@@ -30,12 +30,6 @@ impl KindDecl {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PositionReach {
-    pub module: &'static str,
-    pub reach: f32,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Layers(pub u32);

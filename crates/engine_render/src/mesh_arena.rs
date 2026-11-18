@@ -107,10 +107,10 @@ pub(crate) fn arena_shape(device: &wgpu::Device) -> ArenaShape {
 pub(crate) fn configure(
     device: &wgpu::Device,
     world: &mut World,
-    (meshes, materials): (&mut GpuMeshes, &mut crate::materials::MaterialStore),
+    (meshes, textures): (&mut GpuMeshes, &mut crate::textures::TextureStore),
 ) {
     meshes.placed = engine_core::Cursor::default();
-    materials.forget_sync();
+    textures.forget_sync();
     engine_core::configure_assets(world, arena_shape(device));
 }
 

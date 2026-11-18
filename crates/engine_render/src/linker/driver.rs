@@ -12,7 +12,6 @@ use wesl::{Feature, Features, Mangler as _, Resolver};
 pub(super) struct Prepared {
     pub(super) at: HashMap<ModulePath, usize>,
     pub(super) texts: Vec<String>,
-    pub(super) writes: Vec<bool>,
     pub(super) named: HashMap<String, usize>,
     pub(super) overrides: Vec<Vec<(String, String)>>,
     pub(super) declared: Vec<Vec<String>>,
@@ -21,7 +20,7 @@ pub(super) struct Prepared {
 #[derive(Default)]
 pub(super) struct Parsed {
     stamp: u64,
-    units: HashMap<(ModulePath, Option<String>), Unit>,
+    units: HashMap<ModulePath, Unit>,
 }
 
 struct Unit {
@@ -47,34 +46,19 @@ impl Drop for Names {
     }
 }
 
-struct Texts<'a> {
-    prepared: &'a Prepared,
-    writes: Option<&'a str>,
-}
-
-impl Texts<'_> {
-    fn written(&self, at: usize) -> Option<&str> {
-        self.writes
-            .filter(|_| self.prepared.writes.get(at).copied().unwrap_or(false))
-    }
-}
-
-impl Resolver for Texts<'_> {
+impl Resolver for Prepared {
     fn resolve_source<'b>(&'b self, path: &ModulePath) -> Result<Cow<'b, str>, ResolveError> {
-        let at = self.prepared.at.get(path).copied().ok_or_else(|| {
+        let at = self.at.get(path).copied().ok_or_else(|| {
             ResolveError::ModuleNotFound(path.clone(), "virtual module".to_string())
         })?;
-        Ok(Cow::Borrowed(
-            self.written(at)
-                .unwrap_or_else(|| self.prepared.texts[at].as_str()),
-        ))
+        Ok(Cow::Borrowed(self.texts[at].as_str()))
     }
 }
 
 struct Linking<'a> {
     main: &'a ModulePath,
     kept: Option<&'a str>,
-    texts: Texts<'a>,
+    texts: &'a Prepared,
     parsed: &'a mut Parsed,
     features: Features,
     names: Names,
@@ -119,12 +103,11 @@ impl CompilerDriver for Linking<'_> {
     }
 
     fn load_module(&mut self, path: &ModulePath) -> Result<TranslationUnit, Error> {
-        let Some(at) = self.texts.prepared.at.get(path).copied() else {
-            return pass::load_module(path, &self.texts);
+        let Some(at) = self.texts.at.get(path).copied() else {
+            return pass::load_module(path, self.texts);
         };
-        let written = self.texts.written(at);
-        let source = written.unwrap_or(&self.texts.prepared.texts[at]);
-        let key = (path.clone(), written.map(str::to_owned));
+        let source = self.texts.texts[at].as_str();
+        let key = path.clone();
         let stamp = self.parsed.stamp;
         let kept = match self.parsed.units.get_mut(&key) {
             Some(unit) if unit.stamp == stamp => true,
@@ -135,7 +118,7 @@ impl CompilerDriver for Linking<'_> {
             Some(_) | None => false,
         };
         if !kept {
-            let mut syntax = pass::load_module(path, &self.texts)?;
+            let mut syntax = pass::load_module(path, self.texts)?;
             pass::condcomp(&mut syntax, &self.features)?;
             pass::retarget_idents(&mut syntax);
             let source = source.to_owned();
@@ -160,7 +143,7 @@ impl CompilerDriver for Linking<'_> {
         modules: &mut Vec<Module>,
         used_items: &UsedItems,
     ) -> Result<TranslationUnit, Error> {
-        pass::retarget_modules(modules, used_items, &self.texts);
+        pass::retarget_modules(modules, used_items, self.texts);
         for module in modules.iter_mut() {
             if module.path != *self.main {
                 pass::mangle(
@@ -258,12 +241,12 @@ fn assemble(modules: &mut [Module], used: Option<&UsedItems>) -> TranslationUnit
 pub(super) fn linked_entry(
     main: &ModulePath,
     kept: Option<&str>,
-    texts: (&Prepared, Option<&str>),
+    prepared: &Prepared,
     parsed: &mut Parsed,
 ) -> Result<Linked, Error> {
-    let (result, _names) = compile(main, kept, texts, parsed);
+    let (result, _names) = compile(main, kept, prepared, parsed);
     let mut result = result?;
-    sort(&mut result.modules, main, texts.0);
+    sort(&mut result.modules, main, prepared);
     Ok(linked(&assemble(
         &mut result.modules,
         Some(&result.used_items),
@@ -273,10 +256,10 @@ pub(super) fn linked_entry(
 pub(super) fn bindings(
     main: &ModulePath,
     kept: &str,
-    texts: (&Prepared, Option<&str>),
+    prepared: &Prepared,
     parsed: &mut Parsed,
 ) -> Result<Vec<String>, Error> {
-    let (result, _names) = compile(main, Some(kept), texts, parsed);
+    let (result, _names) = compile(main, Some(kept), prepared, parsed);
     let result = result?;
     let mut linked = Linked::default();
     for module in &result.modules {
@@ -306,9 +289,9 @@ pub(super) struct Whole {
 }
 
 pub(super) fn entry(
-    slots: &mut HashMap<(String, String), Slot>,
-    (key, name): ((String, String), &str),
-    (main, texts, parsed): (&ModulePath, (&Prepared, Option<&str>), &mut Parsed),
+    slots: &mut HashMap<String, Slot>,
+    (key, name): (String, &str),
+    (main, prepared, parsed): (&ModulePath, &Prepared, &mut Parsed),
 ) -> Option<Linked> {
     match slots.get_mut(&key) {
         None => {
@@ -316,7 +299,7 @@ pub(super) fn entry(
             return None;
         }
         Some(slot @ Slot::Seen) => {
-            *slot = whole(main, texts, parsed).map_or(Slot::Refused, Slot::Whole);
+            *slot = whole(main, prepared, parsed).map_or(Slot::Refused, Slot::Whole);
         }
         Some(Slot::Whole(_) | Slot::Refused) => {}
     }
@@ -330,12 +313,8 @@ pub(super) fn entry(
     clippy::mutable_key_type,
     reason = "identifiers hash and compare by address, as the wesl passes key them"
 )]
-fn whole(
-    main: &ModulePath,
-    texts: (&Prepared, Option<&str>),
-    parsed: &mut Parsed,
-) -> Option<Whole> {
-    let (result, _names) = compile(main, None, texts, parsed);
+fn whole(main: &ModulePath, prepared: &Prepared, parsed: &mut Parsed) -> Option<Whole> {
+    let (result, _names) = compile(main, None, prepared, parsed);
     let mut result = result.ok()?;
     let plain = result.modules.iter().all(|module| {
         module.syntax.global_directives.is_empty()
@@ -348,7 +327,7 @@ fn whole(
     if !plain {
         return None;
     }
-    sort(&mut result.modules, main, texts.0);
+    sort(&mut result.modules, main, prepared);
     let main = result.modules.first()?.syntax.global_declarations.len();
     let unit = assemble(&mut result.modules, None);
     let mut at: HashMap<Ident, usize> = HashMap::default();
@@ -445,7 +424,7 @@ impl Whole {
 fn compile(
     main: &ModulePath,
     kept: Option<&str>,
-    (prepared, writes): (&Prepared, Option<&str>),
+    prepared: &Prepared,
     parsed: &mut Parsed,
 ) -> (Result<CompileResult, Error>, Names) {
     let mut features = Features::new();
@@ -453,7 +432,7 @@ fn compile(
     let mut linking = Linking {
         main,
         kept,
-        texts: Texts { prepared, writes },
+        texts: prepared,
         parsed,
         features,
         names: Names::default(),

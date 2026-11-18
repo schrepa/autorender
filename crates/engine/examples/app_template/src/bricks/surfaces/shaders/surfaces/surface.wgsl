@@ -1,8 +1,8 @@
-import package::engine::materials::material_model;
-import package::engine::shading::{SurfaceInput, SurfacePoint};
-import package::engine::slots::{derived, open_slots, prepare_slots, slot_base_color, slot_cutoff,
+import package::surfaces::materials::material_model;
+import package::surfaces::shading::{SurfaceInput, SurfacePoint};
+import package::surfaces::slots::{derived, open_slots, prepare_slots, slot_base_color, slot_cutoff,
     slot_emissive, slot_kind, slot_normal, slot_opacity, standard_point};
-import package::engine::surfaces::SURFACE_SOLID;
+import package::surfaces::surfaces::SURFACE_SOLID;
 import package::engine::view::stable_normalize;
 
 fn geometric_normal(surface_normal: vec3<f32>, front: bool) -> vec3<f32> {

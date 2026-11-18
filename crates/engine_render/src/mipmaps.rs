@@ -35,7 +35,7 @@ impl crate::GpuPart for Mipmaps {
                 stencil: wgpu::StencilState::default(),
                 targets: vec![(None, wgpu::ColorWrites::ALL)],
                 samples: 1,
-                faces: crate::install::Faces::Declared,
+                per_batch: crate::PerBatch::NONE,
             }),
             vec![
                 (Var::generated(module, "source"), Bound::Asset),
@@ -54,7 +54,7 @@ pub struct MipGenerator {
 
 impl MipGenerator {
     pub fn new(device: &wgpu::Device) -> Self {
-        let sampler = crate::materials::gpu_sampler(
+        let sampler = crate::textures::gpu_sampler(
             device,
             "engine/texture-mip-sampler",
             engine_core::Sampler {

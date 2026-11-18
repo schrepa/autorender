@@ -59,7 +59,7 @@ impl Run {
                 self.bindings.wanted_textures.push(*texture);
             }
         }
-        let generation = self.assets.materials.generation();
+        let generation = self.assets.textures.generation();
         let base = self.machine.pipelines.len() as u32;
         if let Some(at) = self.filled.iter().position(|filled| {
             filled.base == pipeline
@@ -674,12 +674,12 @@ fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
     match ty {
         Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
         Ty::Storage { .. } => buffer(wgpu::BufferUsages::STORAGE),
-        Ty::Sampler => Placeholder::Sampler(crate::materials::gpu_sampler(
+        Ty::Sampler => Placeholder::Sampler(crate::textures::gpu_sampler(
             device,
             "engine/placeholder",
             engine_core::Sampler::NEAREST,
         )),
-        Ty::Comparison => Placeholder::Sampler(crate::materials::gpu_sampler(
+        Ty::Comparison => Placeholder::Sampler(crate::textures::gpu_sampler(
             device,
             "engine/placeholder",
             engine_core::Sampler {

@@ -53,6 +53,11 @@ fn counted_layout(
     }))
 }
 
+type Drawn<'f> = (
+    (&'f [Option<wgpu::TextureFormat>], Option<wgpu::TextureFormat>),
+    (bool, bool),
+);
+
 struct Prepared {
     counted: (u64, u64),
     layout: wgpu::PipelineLayout,
@@ -67,15 +72,21 @@ impl Compiler<'_> {
         if work.asked.iter().any(|ask| ask.counted == counted) {
             return None;
         }
+        let machine = &mut *self.machine;
+        let built = machine.pipelines.get(pipeline as usize)?;
+        work.counter.counting().texts(&built.stages)?;
         work.asked.push(CountedAsk {
             counted,
             plain,
+            pipeline,
             generation: work.generation,
         });
-        let machine = &mut *self.machine;
-        let built = machine.pipelines.get(pipeline as usize)?;
+        work.counter.asked(&built.stages);
+        let Some(layout) = counted_layout(self.device, built, live) else {
+            work.counter.twin(&built.stages, Err("group_3_taken"));
+            return None;
+        };
         let texts = work.counter.counting().texts(&built.stages)?;
-        let layout = counted_layout(self.device, built, live)?;
         let modules = (built.stages.iter().zip(texts))
             .map(|(stage, text)| {
                 module(
@@ -92,11 +103,27 @@ impl Compiler<'_> {
         })
     }
 
-    pub(super) fn count_render(&mut self, pipeline: u32, plain: (u64, u64), shape: Shape<'_>) {
+    pub(super) fn count_ready(
+        &mut self,
+        pipeline: u32,
+        (targets, shown): Drawn<'_>,
+        plain: (u64, u64),
+        variant: Option<&crate::Variant>,
+    ) {
+        let Some(keyed) = self.keyed(pipeline, targets, shown, variant) else {
+            return;
+        };
+        if (keyed.program, keyed.key) == plain {
+            self.count_render(pipeline, plain, keyed.shape(targets.0, targets.1));
+        }
+    }
+
+    fn count_render(&mut self, pipeline: u32, plain: (u64, u64), shape: Shape<'_>) {
         let Some(prepared) = self.prepare(pipeline, plain) else {
             return;
         };
         let Some(mut job) = self.render_job(pipeline, shape) else {
+            self.twin_failed(pipeline, "twin_unbuilt");
             return;
         };
         let mut modules = prepared.modules.into_iter();
@@ -126,6 +153,7 @@ impl Compiler<'_> {
         let (Some(stage), Some(module)) =
             (built.stages.first(), prepared.modules.into_iter().next())
         else {
+            self.twin_failed(pipeline, "twin_unbuilt");
             return;
         };
         let job = ComputeJob {
@@ -150,31 +178,37 @@ impl Compiler<'_> {
         );
     }
 
+    fn twin_failed(&mut self, pipeline: u32, reason: &'static str) {
+        let (Some(work), Some(built)) = (
+            self.pipelines.work.as_mut(),
+            self.machine.pipelines.get(pipeline as usize),
+        ) else {
+            return;
+        };
+        work.counter.twin(&built.stages, Err(reason));
+    }
+
     pub(super) fn counted_arrived(&mut self, finished: Finished) -> Option<Finished> {
         let done = (finished.program, finished.key);
-        let Some(work) = self.pipelines.work.as_ref() else {
+        let Some(work) = self.pipelines.work.as_mut() else {
             return Some(finished);
         };
         let Some(ask) = work.asked.iter().find(|ask| ask.counted == done) else {
             return Some(finished);
         };
         let current = ask.generation == work.generation && work.live.is_some();
-        let (program, key) = ask.plain;
+        let ((program, key), pipeline) = (ask.plain, ask.pipeline);
         let pipelines = &self.machine.pipelines;
-        let from = (pipelines.iter())
+        let pad = (pipelines.iter())
             .find(|built| built.program_key == program)
             .and_then(|built| u32::try_from(built.group_layouts.len()).ok())
             .unwrap_or(counting::GROUP);
-        match (finished.made, self.bound.swap.as_mut()) {
+        let outcome = match (finished.made, self.bound.swap.as_mut()) {
             (Ok(Created::Render(counted)), Some(swap)) if current => {
-                if let Some(plain) = made_by_program(pipelines, program, key) {
-                    swap.render.push((plain, counted, from));
-                }
+                made_by_program(pipelines, program, key).map(|plain| swap.render.push((plain, counted, pad)))
             }
             (Ok(Created::Compute(counted)), Some(swap)) if current => {
-                if let Some(plain) = computed_by_program(pipelines, program, key) {
-                    swap.compute.push((plain, counted, from));
-                }
+                computed_by_program(pipelines, program, key).map(|plain| swap.compute.push((plain, counted, pad)))
             }
             (Err(error), _) => {
                 let error = error.to_string();
@@ -186,8 +220,16 @@ impl Compiler<'_> {
                         ("error", engine_profile::Fact::Text(&error)),
                     ],
                 );
+                if current && let Some(built) = pipelines.get(pipeline as usize) {
+                    work.counter.twin(&built.stages, Err("twin_refused"));
+                }
+                return None;
             }
-            (Ok(_), _) => {}
+            (Ok(_), _) => return None,
+        };
+        if let Some(built) = pipelines.get(pipeline as usize) {
+            let paired = outcome.map(|()| self.frame + 1).ok_or("twin_unpaired");
+            work.counter.twin(&built.stages, paired);
         }
         None
     }
@@ -256,7 +298,7 @@ impl Run {
             .take()
             .map_or((0, Vec::new()), |work| (work.generation + 1, work.asked));
         self.pipelines.work = Some(Work {
-            counter: Counter::new(counting),
+            counter: Counter::new(counting, self.frames.asked),
             generation,
             asked,
             live: Some(Live {

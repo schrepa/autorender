@@ -163,8 +163,8 @@ pub mod prelude {
         world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
     };
     pub use engine_core::{
-        GpuStruct, Pass, PassName, PassViews, ScenePass, SlotSet, TargetName, Writes, gpu_struct,
-        settings, stats,
+        GpuStruct, Pass, PassName, PassViews, ScenePass, TargetName, Writes, gpu_struct, settings,
+        stats,
     };
     pub use engine_render::{
         Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,

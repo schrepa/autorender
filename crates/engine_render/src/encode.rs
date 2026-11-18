@@ -33,6 +33,7 @@ mod warming;
 pub(crate) use arena::Arena;
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
+pub(crate) use resources::{BatchEntryRaw, HeldBatches};
 pub(crate) use run::{Bindings, DroppedTally, Pipelines, Run};
 pub(crate) use views::Tables;
 
@@ -199,7 +200,7 @@ pub(crate) struct Compiled {
     depth: Option<wgpu::TextureFormat>,
     plain: bool,
     main: bool,
-    variant: Option<crate::surface::MaterialVariant>,
+    variant: Option<crate::Variant>,
     needed: Needed,
 }
 
@@ -217,14 +218,14 @@ impl Compiled {
             self.depth,
             self.plain,
             self.main,
-            self.variant,
+            &self.variant,
         ) == (
             other.program,
             &other.formats,
             other.depth,
             other.plain,
             other.main,
-            other.variant,
+            &other.variant,
         )
     }
 }
@@ -233,10 +234,6 @@ impl Compiled {
 struct Listing {
     canvas: wgpu::TextureFormat,
     compiled: Vec<Compiled>,
-}
-
-fn specialized(compiled: &Compiled) -> Option<crate::surface::MaterialVariant> {
-    compiled.variant
 }
 
 const GROUPED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "profiling"));
@@ -373,7 +370,8 @@ pub(crate) struct Open {
 
 pub(crate) struct Assets {
     pub(crate) meshes: crate::mesh_arena::GpuMeshes,
-    pub(crate) materials: crate::materials::MaterialStore,
+    pub(crate) textures: crate::textures::TextureStore,
+    pub(crate) batches: HeldBatches,
 }
 
 #[derive(Default)]
@@ -408,7 +406,7 @@ pub(crate) enum RawShape {
     Pulled {
         vertices: Range<u32>,
         instances: Range<u32>,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
     },
     Buffers {
         vertices: Streams,
@@ -421,7 +419,7 @@ pub(crate) enum RawShape {
         indices: Option<u32>,
         args: u32,
         offset: u64,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
     },
     IndirectAt {
         vertices: Streams,
@@ -431,14 +429,14 @@ pub(crate) enum RawShape {
     },
     MeshIndirect {
         mesh: GeometryHandle,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
         args: u32,
         offset: u64,
         streams: Streams,
     },
     Mesh {
         mesh: GeometryHandle,
-        material: Option<MaterialHandle>,
+        key: Option<MaterialHandle>,
         instances: Range<u32>,
     },
 }

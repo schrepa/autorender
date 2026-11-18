@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::ops::Range;
 
 use bevy_ecs::change_detection::Mut;
@@ -189,14 +188,6 @@ impl DrawnTable {
         self.kinds.iter().position(|decl| decl.kind == kind)
     }
 
-    pub fn wgsl(&self) -> String {
-        let mut text = String::new();
-        for (at, decl) in self.kinds.iter().enumerate() {
-            let name = engine_place::wgsl_name(decl.kind.name());
-            let _ = writeln!(text, "const KIND_{name}: u32 = {}u;", at + 1);
-        }
-        text
-    }
 
     pub fn state(&self, entity: Entity) -> Option<&DrawnState> {
         self.held.get(&entity).map(|held| &held.state)
