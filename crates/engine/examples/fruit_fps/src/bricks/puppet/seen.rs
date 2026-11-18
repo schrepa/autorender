@@ -9,6 +9,7 @@ use crate::names::CAMERA;
 use crate::play::actors::Actor;
 use crate::play::camera::TestCamera;
 use crate::play::figures::{Figure, FigureJoints, Form};
+use crate::play::lobby::LobbyView;
 use crate::play::puppet::{FormsTable, PuppetFile, Seen, ViewTest};
 use crate::play::screen::Covered;
 use crate::play::view::Watched;
@@ -220,6 +221,7 @@ type Reads<'w, 's> = (
         Option<Res<'w, TestCamera>>,
         Option<Res<'w, Watched>>,
         Option<Res<'w, Covered>>,
+        Option<Res<'w, LobbyView>>,
     ),
 );
 
@@ -230,7 +232,7 @@ fn shown(spawner: &mut Spawner<PuppetBrick>, (entity, node): (Entity, &Node), vi
 }
 
 pub(super) fn cull(
-    ((time, globals), (scene, cameras), (arena, files), (test, watched, covered)): Reads,
+    ((time, globals), (scene, cameras), (arena, files), (test, watched, covered, lobby)): Reads,
     (actors, items): (Actors, Items),
     (mut seen, mut memo, mut stats): (ResMut<Seen>, Local<Memo>, ResMut<PuppetStats>),
     mut spawner: Spawner<PuppetBrick>,
@@ -250,6 +252,10 @@ pub(super) fn cull(
     let outside = test.as_deref().is_some_and(|test| test.outside);
     let followed = watched.as_deref().and_then(|watched| watched.entity);
     let own = followed.filter(|_| !outside);
+    let lobby = !outside && lobby.as_deref().is_some_and(|lobby| lobby.camera.is_some());
+    if stats.lobby != lobby {
+        stats.lobby = lobby;
+    }
     let Some(eye) = eye_of((scene.as_deref(), &globals), &cameras, table.aspect_max) else {
         return;
     };
@@ -299,7 +305,7 @@ pub(super) fn cull(
         let exempt = revealed || followed == Some(entity);
         let bounds = joint_bounds(joints, table.mesh_margin_m);
         let judgement = judged(entity, bounds, exempt);
-        let visible = counted(&mut fresh, judgement) && own != Some(entity);
+        let visible = !lobby && counted(&mut fresh, judgement) && own != Some(entity);
         if figure.forms.is_none() && !formless.contains(&actor.character) {
             formless.push(actor.character.clone());
         }
@@ -330,7 +336,7 @@ pub(super) fn cull(
                 Bounds { low: at, high: at }.padded(table.item_radius_m)
             });
         let judgement = judged(entity, bounds, false);
-        let visible = counted(&mut fresh, judgement);
+        let visible = !lobby && counted(&mut fresh, judgement);
         shown(&mut spawner, (entity, node), visible);
     }
     let alive: Vec<Entity> = actors

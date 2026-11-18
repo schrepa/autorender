@@ -197,6 +197,7 @@ const BACK_ROW: usize = 15;
 pub(super) struct MenuState {
     focus: usize,
     on: Option<Shown>,
+    under: Option<(Option<Shown>, usize)>,
     pub quit_asked: u32,
 }
 
@@ -594,8 +595,13 @@ pub(super) fn navigate(
 ) {
     let shown = chosen_screen(flow);
     if shown != state.on {
+        let back = state
+            .under
+            .filter(|(under, _)| *under == shown)
+            .map(|(_, focus)| focus);
+        state.under = (shown == Some(Shown::Settings)).then_some((state.on, state.focus));
         state.on = shown;
-        state.focus = 0;
+        state.focus = back.unwrap_or(0);
     }
     match shown {
         Some(Shown::Settings) => settings(nav, state, flow, values),

@@ -79,9 +79,7 @@ impl EffectsDrawing {
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Device {
-    pub stand_in: bool,
-}
+pub struct Device {}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -150,6 +148,7 @@ stats! {
         pub shatters: u32,
         pub faded_wires: u32,
         pub covered: bool,
+        pub lobby: bool,
         pub shadows: u32,
         pub puffs: u32,
         pub meshed: u32,

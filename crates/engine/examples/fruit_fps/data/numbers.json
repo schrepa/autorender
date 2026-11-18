@@ -1753,16 +1753,7 @@
       "sight_fade_m": 2.0
     },
     "device": {
-      "size_m": [
-        0.35,
-        0.18,
-        0.25
-      ],
-      "body": [
-        0.15,
-        0.16,
-        0.18
-      ],
+      "lamp_m": 0.25,
       "light": [
         4.0,
         0.3,
@@ -2046,10 +2037,10 @@
         "pick": {
           "clip": "victory",
           "window": [
-            0.6,
-            1.7
+            0.9,
+            2.2
           ],
-          "weight": 0.55
+          "weight": 0.8
         }
       },
       "strawberry": {
@@ -2057,10 +2048,10 @@
         "pick": {
           "clip": "victory",
           "window": [
-            0.6,
-            1.7
+            0.9,
+            2.2
           ],
-          "weight": 0.55
+          "weight": 0.8
         }
       },
       "orange": {
@@ -2068,10 +2059,10 @@
         "pick": {
           "clip": "victory",
           "window": [
-            0.6,
-            1.7
+            0.9,
+            2.2
           ],
-          "weight": 0.55
+          "weight": 0.8
         }
       },
       "watermelon": {
@@ -2079,10 +2070,10 @@
         "pick": {
           "clip": "victory",
           "window": [
-            0.6,
-            1.7
+            0.9,
+            2.2
           ],
-          "weight": 0.55
+          "weight": 0.8
         }
       },
       "eggplant": {
@@ -2090,10 +2081,10 @@
         "pick": {
           "clip": "victory",
           "window": [
-            0.6,
-            1.7
+            0.9,
+            2.2
           ],
-          "weight": 0.55
+          "weight": 0.8
         }
       }
     },

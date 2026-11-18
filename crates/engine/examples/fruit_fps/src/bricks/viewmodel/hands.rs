@@ -342,9 +342,12 @@ pub(super) fn draw(
     ),
 ) {
     let book = files.iter().find_map(PuppetFile::book);
-    let scale = book.map_or(1.0, |book| book.table.view.scale);
+    let (scale, rest) = book.map_or((1.0, Vec3::ZERO), |book| {
+        let view = &book.table.view;
+        (view.scale, Vec3::from_array(view.hands.rest))
+    });
     let placed = Transform {
-        translation: gun.offset() * scale,
+        translation: (rest + gun.offset()) * scale,
         rotation: Quat::IDENTITY,
         scale: Vec3::splat(scale),
     };

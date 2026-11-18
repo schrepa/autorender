@@ -464,14 +464,6 @@
     },
     "Device": {
       "additionalProperties": false,
-      "properties": {
-        "stand_in": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "stand_in"
-      ],
       "type": "object"
     },
     "DrawnForm": {

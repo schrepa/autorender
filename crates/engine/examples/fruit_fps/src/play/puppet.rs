@@ -20,6 +20,8 @@ pub struct BaseClip {
     pub fade_seconds: f32,
     #[serde(default)]
     pub looping: Option<bool>,
+    #[serde(default)]
+    pub whole: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -37,6 +39,8 @@ pub struct CastClip {
     pub event_seconds: f32,
     #[serde(default)]
     pub still_from: Option<String>,
+    #[serde(default)]
+    pub whole: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -205,6 +209,8 @@ pub struct OneShot {
     pub speed: f32,
     #[serde(default)]
     pub window: Option<[f32; 2]>,
+    #[serde(default)]
+    pub whole: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -230,6 +236,8 @@ pub struct Death {
     pub headshot: String,
     pub speed: f32,
     pub fade_seconds: f32,
+    #[serde(default)]
+    pub whole: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -541,6 +549,7 @@ pub struct HandCast {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandsTable {
+    pub rest: [f32; 3],
     pub socket: String,
     pub ready: String,
     pub hold: String,

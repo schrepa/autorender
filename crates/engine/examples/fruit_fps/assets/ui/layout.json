@@ -29,6 +29,7 @@
    "min": 17,
    "label": 0.34,
    "figure": 0.46,
+   "outline_from": 34,
    "outline_per_px": 12,
    "outline_min": 3,
    "outline_max": 8
@@ -973,17 +974,6 @@
      "weight": "bold",
      "align": "center",
      "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "!round.planted",
       "round.decider"
@@ -4954,10 +4944,11 @@
        "soft": 0,
        "color": "ink"
       }
-     ]
+     ],
+     "when": "weapon.mag_size"
     },
     {
-     "id": "weapon_icon",
+     "id": "ammo_card_icon",
      "kind": "icon",
      "rect": [
       1555,
@@ -4968,7 +4959,95 @@
      "anchor": "bottom_right",
      "icon": "{weapon.icon}",
      "atlas": "stickers",
-     "when": "weapon.icon"
+     "when": [
+      "weapon.mag_size",
+      "weapon.icon"
+     ]
+    },
+    {
+     "id": "ammo_card_down",
+     "kind": "plate",
+     "rect": [
+      1539,
+      937,
+      344,
+      100
+     ],
+     "anchor": "bottom_right",
+     "fill": "wash",
+     "radius": 50.0,
+     "when": [
+      "weapon.mag_size",
+      "weapon.down"
+     ]
+    },
+    {
+     "id": "bare_card",
+     "kind": "plate",
+     "rect": [
+      1707,
+      937,
+      176,
+      100
+     ],
+     "anchor": "bottom_right",
+     "fill": "paper",
+     "radius": 50.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        6
+       ],
+       "grow": 5,
+       "soft": 0,
+       "color": "ink"
+      },
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 5,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": "!weapon.mag_size"
+    },
+    {
+     "id": "bare_card_icon",
+     "kind": "icon",
+     "rect": [
+      1723,
+      949,
+      144,
+      76
+     ],
+     "anchor": "bottom_right",
+     "icon": "{weapon.icon}",
+     "atlas": "stickers",
+     "when": [
+      "!weapon.mag_size",
+      "weapon.icon"
+     ]
+    },
+    {
+     "id": "bare_card_down",
+     "kind": "plate",
+     "rect": [
+      1707,
+      937,
+      176,
+      100
+     ],
+     "anchor": "bottom_right",
+     "fill": "wash",
+     "radius": 50.0,
+     "when": [
+      "!weapon.mag_size",
+      "weapon.down"
+     ]
     },
     {
      "id": "ammo_mag",
@@ -5038,7 +5117,7 @@
      "value": "weapon.reload",
      "max": 1,
      "fill": "sun",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 4.0,
      "shadows": [
@@ -5053,20 +5132,6 @@
       }
      ],
      "when": "weapon.reload"
-    },
-    {
-     "id": "weapon_down_wash",
-     "kind": "plate",
-     "rect": [
-      1539,
-      937,
-      344,
-      100
-     ],
-     "anchor": "bottom_right",
-     "fill": "wash",
-     "radius": 50.0,
-     "when": "weapon.down"
     },
     {
      "id": "weapon_chip",
@@ -5100,7 +5165,10 @@
        "color": "ink"
       }
      ],
-     "when": "weapon.name"
+     "when": [
+      "weapon.mag_size",
+      "weapon.name"
+     ]
     },
     {
      "id": "weapon_chip_label",
@@ -5118,7 +5186,70 @@
      "weight": "bold",
      "align": "center",
      "color": "ink",
-     "when": "weapon.name"
+     "when": [
+      "weapon.mag_size",
+      "weapon.name"
+     ]
+    },
+    {
+     "id": "bare_chip",
+     "kind": "plate",
+     "rect": [
+      1707,
+      877,
+      128,
+      36
+     ],
+     "anchor": "bottom_right",
+     "fill": "sun",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        6
+       ],
+       "grow": 5,
+       "soft": 0,
+       "color": "ink"
+      },
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 5,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "!weapon.mag_size",
+      "weapon.name",
+      "!weapon.down"
+     ]
+    },
+    {
+     "id": "bare_chip_label",
+     "kind": "text",
+     "rect": [
+      1707,
+      877,
+      128,
+      36
+     ],
+     "anchor": "bottom_right",
+     "text": "{weapon.name|upper}",
+     "size": 17,
+     "face": "text_bold",
+     "weight": "bold",
+     "align": "center",
+     "color": "ink",
+     "when": [
+      "!weapon.mag_size",
+      "weapon.name",
+      "!weapon.down"
+     ]
     },
     {
      "id": "reload_chip",
@@ -5152,7 +5283,10 @@
        "color": "ink"
       }
      ],
-     "when": "weapon.reload"
+     "when": [
+      "weapon.reload",
+      "weapon.mag_size"
+     ]
     },
     {
      "id": "reload_chip_label",
@@ -5170,7 +5304,10 @@
      "weight": "bold",
      "align": "center",
      "color": "paper",
-     "when": "weapon.reload"
+     "when": [
+      "weapon.reload",
+      "weapon.mag_size"
+     ]
     },
     {
      "id": "weapon_down",
@@ -5988,17 +6125,6 @@
      "weight": "bold",
      "align": "center",
      "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "round.buying",
       "round.decider"
@@ -7012,17 +7138,6 @@
      "weight": "bold",
      "align": "center",
      "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": "round.decider"
     },
     {
@@ -7885,7 +8000,7 @@
      "value": "buy.weapons.0.stats.damage",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -7958,7 +8073,7 @@
      "value": "buy.weapons.0.stats.rate",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -8031,7 +8146,7 @@
      "value": "buy.weapons.0.stats.range",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -8113,7 +8228,7 @@
      "rect": [
       202,
       558,
-      200,
+      96,
       52
      ],
      "anchor": "center",
@@ -8582,7 +8697,7 @@
      "value": "buy.weapons.1.stats.damage",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -8655,7 +8770,7 @@
      "value": "buy.weapons.1.stats.rate",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -8728,7 +8843,7 @@
      "value": "buy.weapons.1.stats.range",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -8810,7 +8925,7 @@
      "rect": [
       622,
       558,
-      200,
+      96,
       52
      ],
      "anchor": "center",
@@ -9279,7 +9394,7 @@
      "value": "buy.weapons.2.stats.damage",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -9352,7 +9467,7 @@
      "value": "buy.weapons.2.stats.rate",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -9425,7 +9540,7 @@
      "value": "buy.weapons.2.stats.range",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -9507,7 +9622,7 @@
      "rect": [
       1042,
       558,
-      200,
+      96,
       52
      ],
      "anchor": "center",
@@ -9976,7 +10091,7 @@
      "value": "buy.weapons.3.stats.damage",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -10049,7 +10164,7 @@
      "value": "buy.weapons.3.stats.rate",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -10122,7 +10237,7 @@
      "value": "buy.weapons.3.stats.range",
      "max": 1,
      "fill": "ink",
-     "track": "track",
+     "track": "paper",
      "dir": "ltr",
      "radius": 7.0,
      "shadows": [
@@ -10204,7 +10319,7 @@
      "rect": [
       1462,
       558,
-      200,
+      96,
       52
      ],
      "anchor": "center",
@@ -10438,7 +10553,7 @@
      "kind": "text",
      "rect": [
       238,
-      670,
+      666,
       268,
       40
      ],
@@ -10482,7 +10597,7 @@
      "rect": [
       238,
       714,
-      140,
+      92,
       28
      ],
      "anchor": "center",
@@ -10657,7 +10772,7 @@
      "kind": "text",
      "rect": [
       658,
-      670,
+      666,
       268,
       40
      ],
@@ -10701,7 +10816,7 @@
      "rect": [
       658,
       714,
-      140,
+      92,
       28
      ],
      "anchor": "center",
@@ -10876,7 +10991,7 @@
      "kind": "text",
      "rect": [
       1078,
-      670,
+      666,
       268,
       40
      ],
@@ -10892,9 +11007,9 @@
      "id": "ability_0_price",
      "kind": "text",
      "rect": [
-      1202,
+      1298,
       706,
-      148,
+      52,
       44
      ],
      "anchor": "center",
@@ -10920,7 +11035,7 @@
      "rect": [
       1078,
       718,
-      120,
+      56,
       20
      ],
      "anchor": "center",
@@ -10943,9 +11058,9 @@
      "id": "ability_0_sell",
      "kind": "flow",
      "rect": [
-      1206,
+      1142,
       706,
-      140,
+      148,
       44
      ],
      "anchor": "center",
@@ -10990,9 +11105,9 @@
      "id": "ability_0_full",
      "kind": "text",
      "rect": [
-      1202,
+      1298,
       706,
-      148,
+      52,
       44
      ],
      "anchor": "center",
@@ -11097,7 +11212,7 @@
      "kind": "text",
      "rect": [
       1498,
-      670,
+      666,
       268,
       40
      ],
@@ -11113,9 +11228,9 @@
      "id": "ability_1_price",
      "kind": "text",
      "rect": [
-      1622,
+      1718,
       706,
-      148,
+      52,
       44
      ],
      "anchor": "center",
@@ -11141,7 +11256,7 @@
      "rect": [
       1498,
       718,
-      120,
+      56,
       20
      ],
      "anchor": "center",
@@ -11164,9 +11279,9 @@
      "id": "ability_1_sell",
      "kind": "flow",
      "rect": [
-      1626,
+      1562,
       706,
-      140,
+      148,
       44
      ],
      "anchor": "center",
@@ -11211,9 +11326,9 @@
      "id": "ability_1_full",
      "kind": "text",
      "rect": [
-      1622,
+      1718,
       706,
-      148,
+      52,
       44
      ],
      "anchor": "center",
@@ -13089,6 +13204,34 @@
     },
     {
      "id": "row_left_0_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      230.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.left.0",
+      "board.left.0.ult_ready"
+     ]
+    },
+    {
+     "id": "row_left_0_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -13103,17 +13246,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.left.0",
       "board.left.0.ult_ready"
@@ -13351,6 +13483,34 @@
     },
     {
      "id": "row_left_1_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      304.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.left.1",
+      "board.left.1.ult_ready"
+     ]
+    },
+    {
+     "id": "row_left_1_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -13365,17 +13525,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.left.1",
       "board.left.1.ult_ready"
@@ -13613,6 +13762,34 @@
     },
     {
      "id": "row_left_2_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      378.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.left.2",
+      "board.left.2.ult_ready"
+     ]
+    },
+    {
+     "id": "row_left_2_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -13627,17 +13804,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.left.2",
       "board.left.2.ult_ready"
@@ -13875,6 +14041,34 @@
     },
     {
      "id": "row_left_3_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      452.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.left.3",
+      "board.left.3.ult_ready"
+     ]
+    },
+    {
+     "id": "row_left_3_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -13889,17 +14083,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.left.3",
       "board.left.3.ult_ready"
@@ -14137,6 +14320,34 @@
     },
     {
      "id": "row_left_4_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      526.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.left.4",
+      "board.left.4.ult_ready"
+     ]
+    },
+    {
+     "id": "row_left_4_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -14151,17 +14362,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.left.4",
       "board.left.4.ult_ready"
@@ -14559,6 +14759,34 @@
     },
     {
      "id": "row_right_0_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      652.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.right.0",
+      "board.right.0.ult_ready"
+     ]
+    },
+    {
+     "id": "row_right_0_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -14573,17 +14801,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.right.0",
       "board.right.0.ult_ready"
@@ -14821,6 +15038,34 @@
     },
     {
      "id": "row_right_1_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      726.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.right.1",
+      "board.right.1.ult_ready"
+     ]
+    },
+    {
+     "id": "row_right_1_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -14835,17 +15080,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.right.1",
       "board.right.1.ult_ready"
@@ -15083,6 +15317,34 @@
     },
     {
      "id": "row_right_2_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      800.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.right.2",
+      "board.right.2.ult_ready"
+     ]
+    },
+    {
+     "id": "row_right_2_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -15097,17 +15359,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.right.2",
       "board.right.2.ult_ready"
@@ -15345,6 +15596,34 @@
     },
     {
      "id": "row_right_3_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      874.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.right.3",
+      "board.right.3.ult_ready"
+     ]
+    },
+    {
+     "id": "row_right_3_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -15359,17 +15638,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.right.3",
       "board.right.3.ult_ready"
@@ -15607,6 +15875,34 @@
     },
     {
      "id": "row_right_4_ult_ready",
+     "kind": "plate",
+     "rect": [
+      1540,
+      948.0,
+      92,
+      36
+     ],
+     "anchor": "center",
+     "fill": "ink",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ],
+     "when": [
+      "board.right.4",
+      "board.right.4.ult_ready"
+     ]
+    },
+    {
+     "id": "row_right_4_ult_ready_label",
      "kind": "text",
      "rect": [
       1540,
@@ -15621,17 +15917,6 @@
      "weight": "bold",
      "align": "center",
      "color": "sun",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ],
      "when": [
       "board.right.4",
       "board.right.4.ult_ready"
@@ -15716,176 +16001,17 @@
      ]
     },
     {
-     "id": "score_left_plate",
-     "kind": "plate",
-     "rect": [
-      770,
-      201,
-      90,
-      90
-     ],
-     "anchor": "center",
-     "fill": "@teams.left.color",
-     "radius": 45.0,
-     "shadows": [
-      {
-       "offset": [
-        0,
-        6
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      },
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      }
-     ]
-    },
-    {
-     "id": "score_left",
-     "kind": "text",
-     "rect": [
-      770,
-      201,
-      90,
-      90
-     ],
-     "anchor": "center",
-     "text": "{score.left}",
-     "size": 60,
-     "face": "display_bold",
-     "weight": "bold",
-     "align": "center",
-     "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      }
-     ]
-    },
-    {
-     "id": "score_right_plate",
-     "kind": "plate",
-     "rect": [
-      1060,
-      201,
-      90,
-      90
-     ],
-     "anchor": "center",
-     "fill": "@teams.right.color",
-     "radius": 45.0,
-     "shadows": [
-      {
-       "offset": [
-        0,
-        6
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      },
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      }
-     ]
-    },
-    {
-     "id": "score_right",
-     "kind": "text",
-     "rect": [
-      1060,
-      201,
-      90,
-      90
-     ],
-     "anchor": "center",
-     "text": "{score.right}",
-     "size": 60,
-     "face": "display_bold",
-     "weight": "bold",
-     "align": "center",
-     "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      }
-     ]
-    },
-    {
-     "id": "score_dash",
-     "kind": "text",
-     "rect": [
-      860,
-      201,
-      200,
-      90
-     ],
-     "anchor": "center",
-     "text": "-",
-     "size": 60,
-     "face": "display_bold",
-     "weight": "bold",
-     "align": "center",
-     "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        5
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      },
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 5,
-       "soft": 0,
-       "color": "ink"
-      }
-     ]
-    },
-    {
      "id": "mvp_card",
      "kind": "plate",
      "rect": [
       250,
-      315,
+      201,
       520,
-      536
+      478.0
      ],
      "anchor": "center",
      "fill": "paper",
-     "radius": 48,
+     "radius": 34.0,
      "shadows": [
       {
        "offset": [
@@ -15912,36 +16038,36 @@
      "kind": "plate",
      "rect": [
       266,
-      331,
+      217,
       488,
-      310
+      288.0
      ],
      "anchor": "center",
      "fill": "@result.mvp_color",
-     "radius": 32
+     "radius": 18.0
     },
     {
      "id": "mvp_portrait",
      "kind": "image",
      "rect": [
-      282,
-      347,
-      456,
-      278
+      366.0,
+      217,
+      288.0,
+      288.0
      ],
      "anchor": "center",
      "image": "portraits.png",
      "atlas": "portraits.json",
      "key": "{result.mvp_portrait}",
      "color": "paper",
-     "radius": 16
+     "radius": 18.0
     },
     {
      "id": "mvp_chip",
      "kind": "plate",
      "rect": [
       266,
-      655,
+      519.0,
       140,
       36
      ],
@@ -15965,7 +16091,7 @@
      "kind": "text",
      "rect": [
       266,
-      655,
+      519.0,
       140,
       36
      ],
@@ -15982,7 +16108,7 @@
      "kind": "text",
      "rect": [
       266,
-      699,
+      563.0,
       488,
       56
      ],
@@ -15999,7 +16125,7 @@
      "kind": "text",
      "rect": [
       266,
-      759,
+      623.0,
       488,
       40
      ],
@@ -16016,13 +16142,13 @@
      "kind": "plate",
      "rect": [
       800,
-      315,
+      201,
       870,
-      536
+      552
      ],
      "anchor": "center",
      "fill": "paper",
-     "radius": 48,
+     "radius": 34.0,
      "shadows": [
       {
        "offset": [
@@ -16045,13 +16171,54 @@
      ]
     },
     {
+     "id": "team_left_chip",
+     "kind": "plate",
+     "rect": [
+      816,
+      217,
+      230,
+      36
+     ],
+     "anchor": "center",
+     "fill": "@teams.left.color",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ]
+    },
+    {
+     "id": "team_left_chip_label",
+     "kind": "text",
+     "rect": [
+      816,
+      217,
+      230,
+      36
+     ],
+     "anchor": "center",
+     "text": "{teams.left.name|upper}",
+     "size": 17,
+     "face": "text_bold",
+     "weight": "bold",
+     "align": "center",
+     "color": "ink"
+    },
+    {
      "id": "head_left_k",
      "kind": "text",
      "rect": [
       1360,
-      331,
+      217,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "K",
@@ -16066,9 +16233,9 @@
      "kind": "text",
      "rect": [
       1430,
-      331,
+      217,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "D",
@@ -16083,9 +16250,9 @@
      "kind": "text",
      "rect": [
       1500,
-      331,
+      217,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "A",
@@ -16100,9 +16267,9 @@
      "kind": "text",
      "rect": [
       1570,
-      331,
+      217,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "ADR",
@@ -16117,7 +16284,7 @@
      "kind": "plate",
      "rect": [
       816,
-      359,
+      261,
       838,
       36
      ],
@@ -16139,7 +16306,7 @@
      "kind": "icon",
      "rect": [
       820,
-      363,
+      265,
       28,
       28
      ],
@@ -16153,7 +16320,7 @@
      "kind": "text",
      "rect": [
       856,
-      359,
+      261,
       400,
       36
      ],
@@ -16171,7 +16338,7 @@
      "kind": "text",
      "rect": [
       1360,
-      359,
+      261,
       80,
       36
      ],
@@ -16189,7 +16356,7 @@
      "kind": "text",
      "rect": [
       1430,
-      359,
+      261,
       80,
       36
      ],
@@ -16207,7 +16374,7 @@
      "kind": "text",
      "rect": [
       1500,
-      359,
+      261,
       80,
       36
      ],
@@ -16225,7 +16392,7 @@
      "kind": "text",
      "rect": [
       1570,
-      359,
+      261,
       80,
       36
      ],
@@ -16243,7 +16410,7 @@
      "kind": "plate",
      "rect": [
       816,
-      403,
+      305,
       838,
       36
      ],
@@ -16265,7 +16432,7 @@
      "kind": "icon",
      "rect": [
       820,
-      407,
+      309,
       28,
       28
      ],
@@ -16279,7 +16446,7 @@
      "kind": "text",
      "rect": [
       856,
-      403,
+      305,
       400,
       36
      ],
@@ -16297,7 +16464,7 @@
      "kind": "text",
      "rect": [
       1360,
-      403,
+      305,
       80,
       36
      ],
@@ -16315,7 +16482,7 @@
      "kind": "text",
      "rect": [
       1430,
-      403,
+      305,
       80,
       36
      ],
@@ -16333,7 +16500,7 @@
      "kind": "text",
      "rect": [
       1500,
-      403,
+      305,
       80,
       36
      ],
@@ -16351,7 +16518,7 @@
      "kind": "text",
      "rect": [
       1570,
-      403,
+      305,
       80,
       36
      ],
@@ -16369,7 +16536,7 @@
      "kind": "plate",
      "rect": [
       816,
-      447,
+      349,
       838,
       36
      ],
@@ -16391,7 +16558,7 @@
      "kind": "icon",
      "rect": [
       820,
-      451,
+      353,
       28,
       28
      ],
@@ -16405,7 +16572,7 @@
      "kind": "text",
      "rect": [
       856,
-      447,
+      349,
       400,
       36
      ],
@@ -16423,7 +16590,7 @@
      "kind": "text",
      "rect": [
       1360,
-      447,
+      349,
       80,
       36
      ],
@@ -16441,7 +16608,7 @@
      "kind": "text",
      "rect": [
       1430,
-      447,
+      349,
       80,
       36
      ],
@@ -16459,7 +16626,7 @@
      "kind": "text",
      "rect": [
       1500,
-      447,
+      349,
       80,
       36
      ],
@@ -16477,7 +16644,7 @@
      "kind": "text",
      "rect": [
       1570,
-      447,
+      349,
       80,
       36
      ],
@@ -16495,7 +16662,7 @@
      "kind": "plate",
      "rect": [
       816,
-      491,
+      393,
       838,
       36
      ],
@@ -16517,7 +16684,7 @@
      "kind": "icon",
      "rect": [
       820,
-      495,
+      397,
       28,
       28
      ],
@@ -16531,7 +16698,7 @@
      "kind": "text",
      "rect": [
       856,
-      491,
+      393,
       400,
       36
      ],
@@ -16549,7 +16716,7 @@
      "kind": "text",
      "rect": [
       1360,
-      491,
+      393,
       80,
       36
      ],
@@ -16567,7 +16734,7 @@
      "kind": "text",
      "rect": [
       1430,
-      491,
+      393,
       80,
       36
      ],
@@ -16585,7 +16752,7 @@
      "kind": "text",
      "rect": [
       1500,
-      491,
+      393,
       80,
       36
      ],
@@ -16603,7 +16770,7 @@
      "kind": "text",
      "rect": [
       1570,
-      491,
+      393,
       80,
       36
      ],
@@ -16621,7 +16788,7 @@
      "kind": "plate",
      "rect": [
       816,
-      535,
+      437,
       838,
       36
      ],
@@ -16643,7 +16810,7 @@
      "kind": "icon",
      "rect": [
       820,
-      539,
+      441,
       28,
       28
      ],
@@ -16657,7 +16824,7 @@
      "kind": "text",
      "rect": [
       856,
-      535,
+      437,
       400,
       36
      ],
@@ -16675,7 +16842,7 @@
      "kind": "text",
      "rect": [
       1360,
-      535,
+      437,
       80,
       36
      ],
@@ -16693,7 +16860,7 @@
      "kind": "text",
      "rect": [
       1430,
-      535,
+      437,
       80,
       36
      ],
@@ -16711,7 +16878,7 @@
      "kind": "text",
      "rect": [
       1500,
-      535,
+      437,
       80,
       36
      ],
@@ -16729,7 +16896,7 @@
      "kind": "text",
      "rect": [
       1570,
-      535,
+      437,
       80,
       36
      ],
@@ -16743,13 +16910,54 @@
      "when": "board.left.4"
     },
     {
+     "id": "team_right_chip",
+     "kind": "plate",
+     "rect": [
+      816,
+      481,
+      230,
+      36
+     ],
+     "anchor": "center",
+     "fill": "@teams.right.color",
+     "radius": 18.0,
+     "shadows": [
+      {
+       "offset": [
+        0,
+        0
+       ],
+       "grow": 3,
+       "soft": 0,
+       "color": "ink"
+      }
+     ]
+    },
+    {
+     "id": "team_right_chip_label",
+     "kind": "text",
+     "rect": [
+      816,
+      481,
+      230,
+      36
+     ],
+     "anchor": "center",
+     "text": "{teams.right.name|upper}",
+     "size": 17,
+     "face": "text_bold",
+     "weight": "bold",
+     "align": "center",
+     "color": "ink"
+    },
+    {
      "id": "head_right_k",
      "kind": "text",
      "rect": [
       1360,
-      579,
+      481,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "K",
@@ -16764,9 +16972,9 @@
      "kind": "text",
      "rect": [
       1430,
-      579,
+      481,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "D",
@@ -16781,9 +16989,9 @@
      "kind": "text",
      "rect": [
       1500,
-      579,
+      481,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "A",
@@ -16798,9 +17006,9 @@
      "kind": "text",
      "rect": [
       1570,
-      579,
+      481,
       80,
-      20
+      36
      ],
      "anchor": "center",
      "text": "ADR",
@@ -16815,7 +17023,7 @@
      "kind": "plate",
      "rect": [
       816,
-      607,
+      525,
       838,
       36
      ],
@@ -16837,7 +17045,7 @@
      "kind": "icon",
      "rect": [
       820,
-      611,
+      529,
       28,
       28
      ],
@@ -16851,7 +17059,7 @@
      "kind": "text",
      "rect": [
       856,
-      607,
+      525,
       400,
       36
      ],
@@ -16869,7 +17077,7 @@
      "kind": "text",
      "rect": [
       1360,
-      607,
+      525,
       80,
       36
      ],
@@ -16887,7 +17095,7 @@
      "kind": "text",
      "rect": [
       1430,
-      607,
+      525,
       80,
       36
      ],
@@ -16905,7 +17113,7 @@
      "kind": "text",
      "rect": [
       1500,
-      607,
+      525,
       80,
       36
      ],
@@ -16923,7 +17131,7 @@
      "kind": "text",
      "rect": [
       1570,
-      607,
+      525,
       80,
       36
      ],
@@ -16941,7 +17149,7 @@
      "kind": "plate",
      "rect": [
       816,
-      651,
+      569,
       838,
       36
      ],
@@ -16963,7 +17171,7 @@
      "kind": "icon",
      "rect": [
       820,
-      655,
+      573,
       28,
       28
      ],
@@ -16977,7 +17185,7 @@
      "kind": "text",
      "rect": [
       856,
-      651,
+      569,
       400,
       36
      ],
@@ -16995,7 +17203,7 @@
      "kind": "text",
      "rect": [
       1360,
-      651,
+      569,
       80,
       36
      ],
@@ -17013,7 +17221,7 @@
      "kind": "text",
      "rect": [
       1430,
-      651,
+      569,
       80,
       36
      ],
@@ -17031,7 +17239,7 @@
      "kind": "text",
      "rect": [
       1500,
-      651,
+      569,
       80,
       36
      ],
@@ -17049,7 +17257,7 @@
      "kind": "text",
      "rect": [
       1570,
-      651,
+      569,
       80,
       36
      ],
@@ -17067,7 +17275,7 @@
      "kind": "plate",
      "rect": [
       816,
-      695,
+      613,
       838,
       36
      ],
@@ -17089,7 +17297,7 @@
      "kind": "icon",
      "rect": [
       820,
-      699,
+      617,
       28,
       28
      ],
@@ -17103,7 +17311,7 @@
      "kind": "text",
      "rect": [
       856,
-      695,
+      613,
       400,
       36
      ],
@@ -17121,7 +17329,7 @@
      "kind": "text",
      "rect": [
       1360,
-      695,
+      613,
       80,
       36
      ],
@@ -17139,7 +17347,7 @@
      "kind": "text",
      "rect": [
       1430,
-      695,
+      613,
       80,
       36
      ],
@@ -17157,7 +17365,7 @@
      "kind": "text",
      "rect": [
       1500,
-      695,
+      613,
       80,
       36
      ],
@@ -17175,7 +17383,7 @@
      "kind": "text",
      "rect": [
       1570,
-      695,
+      613,
       80,
       36
      ],
@@ -17193,7 +17401,7 @@
      "kind": "plate",
      "rect": [
       816,
-      739,
+      657,
       838,
       36
      ],
@@ -17215,7 +17423,7 @@
      "kind": "icon",
      "rect": [
       820,
-      743,
+      661,
       28,
       28
      ],
@@ -17229,7 +17437,7 @@
      "kind": "text",
      "rect": [
       856,
-      739,
+      657,
       400,
       36
      ],
@@ -17247,7 +17455,7 @@
      "kind": "text",
      "rect": [
       1360,
-      739,
+      657,
       80,
       36
      ],
@@ -17265,7 +17473,7 @@
      "kind": "text",
      "rect": [
       1430,
-      739,
+      657,
       80,
       36
      ],
@@ -17283,7 +17491,7 @@
      "kind": "text",
      "rect": [
       1500,
-      739,
+      657,
       80,
       36
      ],
@@ -17301,7 +17509,7 @@
      "kind": "text",
      "rect": [
       1570,
-      739,
+      657,
       80,
       36
      ],
@@ -17319,7 +17527,7 @@
      "kind": "plate",
      "rect": [
       816,
-      783,
+      701,
       838,
       36
      ],
@@ -17341,7 +17549,7 @@
      "kind": "icon",
      "rect": [
       820,
-      787,
+      705,
       28,
       28
      ],
@@ -17355,7 +17563,7 @@
      "kind": "text",
      "rect": [
       856,
-      783,
+      701,
       400,
       36
      ],
@@ -17373,7 +17581,7 @@
      "kind": "text",
      "rect": [
       1360,
-      783,
+      701,
       80,
       36
      ],
@@ -17391,7 +17599,7 @@
      "kind": "text",
      "rect": [
       1430,
-      783,
+      701,
       80,
       36
      ],
@@ -17409,7 +17617,7 @@
      "kind": "text",
      "rect": [
       1500,
-      783,
+      701,
       80,
       36
      ],
@@ -17427,7 +17635,7 @@
      "kind": "text",
      "rect": [
       1570,
-      783,
+      701,
       80,
       36
      ],
@@ -17445,7 +17653,7 @@
      "kind": "plate",
      "rect": [
       660,
-      875,
+      777,
       600,
       52
      ],
@@ -17478,7 +17686,7 @@
      "kind": "text",
      "rect": [
       660,
-      875,
+      777,
       600,
       52
      ],
@@ -17495,7 +17703,7 @@
      "kind": "plate",
      "rect": [
       520,
-      951,
+      853,
       420,
       64
      ],
@@ -17556,7 +17764,7 @@
      "kind": "text",
      "rect": [
       520,
-      951,
+      853,
       420,
       64
      ],
@@ -17573,7 +17781,7 @@
      "kind": "plate",
      "rect": [
       980,
-      951,
+      853,
       420,
       64
      ],
@@ -17634,7 +17842,7 @@
      "kind": "text",
      "rect": [
       980,
-      951,
+      853,
       420,
       64
      ],
@@ -25990,27 +26198,7 @@
      "face": "display_bold",
      "weight": "bold",
      "align": "left",
-     "color": "paper",
-     "shadows": [
-      {
-       "offset": [
-        0,
-        3
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      },
-      {
-       "offset": [
-        0,
-        0
-       ],
-       "grow": 3,
-       "soft": 0,
-       "color": "ink"
-      }
-     ]
+     "color": "paper"
     }
    ]
   }

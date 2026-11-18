@@ -1921,9 +1921,9 @@
     {
       "id": "mercato_16",
       "color": [
-        1.0,
-        1.0,
-        1.0,
+        0.65837485,
+        0.40197778,
+        0.1746474,
         1.0
       ],
       "normal_scale": 1.0,
@@ -1933,7 +1933,7 @@
           "module": "figure",
           "maps": {
             "base_color": {
-              "id": "mercato_14_base_color",
+              "id": "mercato_2_base_color",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -1942,7 +1942,7 @@
               "tex_coord": 0
             },
             "normal": {
-              "id": "mercato_14_normal",
+              "id": "mercato_2_normal",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -1951,7 +1951,154 @@
               "tex_coord": 0
             },
             "orm": {
-              "id": "mercato_14_orm",
+              "id": "mercato_2_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_scale": 4.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_17",
+      "color": [
+        0.29177064,
+        0.41788507,
+        0.23839757,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_2_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_2_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_2_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_scale": 4.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_18",
+      "color": [
+        0.2746773,
+        0.4677838,
+        0.65837485,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_2_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_2_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_2_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_scale": 4.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_19",
+      "color": [
+        0.45641103,
+        0.09084171,
+        0.045186203,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_2_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_2_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_2_orm",
               "wrap_u": "repeat",
               "wrap_v": "repeat",
               "mag_filter": "linear",
@@ -4347,27 +4494,6 @@
       }
     },
     {
-      "id": "mercato_2_detail_0_5_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_2_detail_0_5_s1.emb"
-      }
-    },
-    {
-      "id": "mercato_2_detail_0_5_s2",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_2_detail_0_5_s2.emb"
-      }
-    },
-    {
-      "id": "mercato_2_detail_0_5_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_2_detail_0_5_s3.emb"
-      }
-    },
-    {
       "id": "mercato_2_detail_0_6_s1",
       "source": {
         "kind": "buffer",
@@ -4956,6 +5082,27 @@
       }
     },
     {
+      "id": "mercato_3_detail_1_4_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_1_4_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_3_detail_1_4_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_1_4_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_3_detail_1_4_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_1_4_s3.emb"
+      }
+    },
+    {
       "id": "mercato_3_detail_1_5_s1",
       "source": {
         "kind": "buffer",
@@ -5037,27 +5184,6 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_3_detail_2_6_s3.emb"
-      }
-    },
-    {
-      "id": "mercato_3_detail_3_1_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_3_detail_3_1_s1.emb"
-      }
-    },
-    {
-      "id": "mercato_3_detail_3_1_s2",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_3_detail_3_1_s2.emb"
-      }
-    },
-    {
-      "id": "mercato_3_detail_3_1_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_3_detail_3_1_s3.emb"
       }
     },
     {
@@ -5166,27 +5292,6 @@
       }
     },
     {
-      "id": "mercato_3_detail_5_2_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_3_detail_5_2_s1.emb"
-      }
-    },
-    {
-      "id": "mercato_3_detail_5_2_s2",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_3_detail_5_2_s2.emb"
-      }
-    },
-    {
-      "id": "mercato_3_detail_5_2_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_3_detail_5_2_s3.emb"
-      }
-    },
-    {
       "id": "mercato_3_detail_5_6_s1",
       "source": {
         "kind": "buffer",
@@ -5226,27 +5331,6 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_4_detail_0_2_s3.emb"
-      }
-    },
-    {
-      "id": "mercato_4_detail_0_5_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_0_5_s1.emb"
-      }
-    },
-    {
-      "id": "mercato_4_detail_0_5_s2",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_0_5_s2.emb"
-      }
-    },
-    {
-      "id": "mercato_4_detail_0_5_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_0_5_s3.emb"
       }
     },
     {
@@ -5754,27 +5838,6 @@
       }
     },
     {
-      "id": "mercato_4_detail_6_6_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_6_6_s1.emb"
-      }
-    },
-    {
-      "id": "mercato_4_detail_6_6_s2",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_6_6_s2.emb"
-      }
-    },
-    {
-      "id": "mercato_4_detail_6_6_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_6_6_s3.emb"
-      }
-    },
-    {
       "id": "mercato_5_1_2",
       "source": {
         "kind": "buffer",
@@ -5887,31 +5950,59 @@
       }
     },
     {
-      "id": "mercato_16_detail_0_1_s0",
+      "id": "mercato_16_detail_0_3_s0",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_0_1_s0.emb"
+        "uri": "assets/cooked/mercato_16_detail_0_3_s0.emb"
       }
     },
     {
-      "id": "mercato_16_detail_0_1_s1",
+      "id": "mercato_16_detail_0_3_s1",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_0_1_s1.emb"
+        "uri": "assets/cooked/mercato_16_detail_0_3_s1.emb"
       }
     },
     {
-      "id": "mercato_16_detail_0_1_s2",
+      "id": "mercato_16_detail_0_3_s2",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_0_1_s2.emb"
+        "uri": "assets/cooked/mercato_16_detail_0_3_s2.emb"
       }
     },
     {
-      "id": "mercato_16_detail_0_1_s3",
+      "id": "mercato_16_detail_0_3_s3",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_0_1_s3.emb"
+        "uri": "assets/cooked/mercato_16_detail_0_3_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_1_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_1_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_1_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_1_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_1_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_1_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_1_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_1_s3.emb"
       }
     },
     {
@@ -5919,13 +6010,6 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_16_detail_1_2_s0.emb"
-      }
-    },
-    {
-      "id": "mercato_16_detail_1_2_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_1_2_s1.emb"
       }
     },
     {
@@ -5947,6 +6031,13 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_16_detail_1_3_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_3_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_3_s1.emb"
       }
     },
     {
@@ -5989,20 +6080,6 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_16_detail_1_5_s3.emb"
-      }
-    },
-    {
-      "id": "mercato_16_detail_2_1_s0",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_2_1_s0.emb"
-      }
-    },
-    {
-      "id": "mercato_16_detail_2_1_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_2_1_s3.emb"
       }
     },
     {
@@ -6062,31 +6139,31 @@
       }
     },
     {
-      "id": "mercato_16_detail_3_5_s0",
+      "id": "mercato_16_detail_3_4_s0",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_3_5_s0.emb"
+        "uri": "assets/cooked/mercato_16_detail_3_4_s0.emb"
       }
     },
     {
-      "id": "mercato_16_detail_3_5_s1",
+      "id": "mercato_16_detail_3_4_s1",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_3_5_s1.emb"
+        "uri": "assets/cooked/mercato_16_detail_3_4_s1.emb"
       }
     },
     {
-      "id": "mercato_16_detail_3_5_s2",
+      "id": "mercato_16_detail_3_4_s2",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_3_5_s2.emb"
+        "uri": "assets/cooked/mercato_16_detail_3_4_s2.emb"
       }
     },
     {
-      "id": "mercato_16_detail_3_5_s3",
+      "id": "mercato_16_detail_3_4_s3",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_16_detail_3_5_s3.emb"
+        "uri": "assets/cooked/mercato_16_detail_3_4_s3.emb"
       }
     },
     {
@@ -6094,6 +6171,13 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_16_detail_3_6_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_6_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_6_s2.emb"
       }
     },
     {
@@ -6139,6 +6223,13 @@
       }
     },
     {
+      "id": "mercato_16_detail_5_3_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_3_s1.emb"
+      }
+    },
+    {
       "id": "mercato_16_detail_5_3_s2",
       "source": {
         "kind": "buffer",
@@ -6150,6 +6241,146 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_16_detail_5_3_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_17_detail_3_4_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_17_detail_3_4_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_17_detail_3_4_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_17_detail_3_4_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_17_detail_3_4_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_17_detail_3_4_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_17_detail_5_2_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_17_detail_5_2_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_17_detail_5_2_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_17_detail_5_2_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_17_detail_5_2_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_17_detail_5_2_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_18_detail_0_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_18_detail_0_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_18_detail_0_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_18_detail_0_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_18_detail_0_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_18_detail_0_5_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_18_detail_5_3_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_18_detail_5_3_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_18_detail_5_3_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_18_detail_5_3_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_18_detail_5_3_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_18_detail_5_3_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_0_1_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_0_1_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_0_1_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_0_1_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_0_1_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_0_1_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_3_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_3_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_3_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_3_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_3_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_3_5_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_5_2_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_5_2_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_19_detail_5_2_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_19_detail_5_2_s3.emb"
       }
     },
     {
@@ -7941,7 +8172,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.23903465
+        "largest_m": 0.2478733
       },
       "transform": {}
     },
@@ -7953,7 +8184,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -7989,7 +8220,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767733
+        "largest_m": 0.2478733
       },
       "transform": {}
     },
@@ -8001,7 +8232,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -8037,7 +8268,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767733
+        "largest_m": 0.22666168
       },
       "transform": {}
     },
@@ -8061,7 +8292,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971237
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8085,7 +8316,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -8109,7 +8340,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.99557114
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8121,7 +8352,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 6.000885
+        "largest_m": 6.00082
       },
       "transform": {}
     },
@@ -8133,7 +8364,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.23983383
       },
       "transform": {}
     },
@@ -8145,7 +8376,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49500465
+        "largest_m": 0.49990082
       },
       "transform": {}
     },
@@ -8181,7 +8412,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.24673617
       },
       "transform": {}
     },
@@ -8193,7 +8424,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49754715
+        "largest_m": 0.49713516
       },
       "transform": {}
     },
@@ -8205,7 +8436,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9999355
+        "largest_m": 0.9570689
       },
       "transform": {}
     },
@@ -8229,7 +8460,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.14358377
       },
       "transform": {}
     },
@@ -8241,7 +8472,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -8253,7 +8484,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9749837
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8265,7 +8496,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 6.002512
+        "largest_m": 6.0021687
       },
       "transform": {}
     },
@@ -8277,7 +8508,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24848747
+        "largest_m": 0.2483406
       },
       "transform": {}
     },
@@ -8301,7 +8532,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.9719391
       },
       "transform": {}
     },
@@ -8313,7 +8544,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 6.0016747
+        "largest_m": 6.0014496
       },
       "transform": {}
     },
@@ -8325,7 +8556,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.22499943
       },
       "transform": {}
     },
@@ -8373,7 +8604,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767733
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -8421,7 +8652,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -8433,7 +8664,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -8445,7 +8676,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9785099
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8469,7 +8700,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.24724579
       },
       "transform": {}
     },
@@ -8481,7 +8712,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49007797
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -8493,7 +8724,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.98400116
       },
       "transform": {}
     },
@@ -8517,7 +8748,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.15999997
       },
       "transform": {}
     },
@@ -8565,7 +8796,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24998093
+        "largest_m": 0.24833298
       },
       "transform": {}
     },
@@ -8589,7 +8820,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971237
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8613,7 +8844,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -8637,7 +8868,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8661,7 +8892,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.22793198
       },
       "transform": {}
     },
@@ -8673,7 +8904,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49951458
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -8685,7 +8916,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.9289589
       },
       "transform": {}
     },
@@ -8757,7 +8988,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -8781,7 +9012,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8829,7 +9060,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9785099
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -8853,7 +9084,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24988365
+        "largest_m": 0.2499981
       },
       "transform": {}
     },
@@ -8901,7 +9132,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767756
+        "largest_m": 0.23000336
       },
       "transform": {}
     },
@@ -8913,7 +9144,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49089813
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -8925,7 +9156,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.99712014
+        "largest_m": 0.9910588
       },
       "transform": {}
     },
@@ -8949,7 +9180,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767756
+        "largest_m": 0.24858856
       },
       "transform": {}
     },
@@ -8973,7 +9204,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971204
+        "largest_m": 0.9100001
       },
       "transform": {}
     },
@@ -8997,7 +9228,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24882889
+        "largest_m": 0.24658117
       },
       "transform": {}
     },
@@ -9009,7 +9240,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49340904
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -9021,7 +9252,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971202
+        "largest_m": 0.9815275
       },
       "transform": {}
     },
@@ -9045,7 +9276,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767736
+        "largest_m": 0.24164486
       },
       "transform": {}
     },
@@ -9093,7 +9324,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24833965
+        "largest_m": 0.24000004
       },
       "transform": {}
     },
@@ -9105,7 +9336,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49692452
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -9141,7 +9372,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24917743
+        "largest_m": 0.24219072
       },
       "transform": {}
     },
@@ -9165,7 +9396,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -9189,7 +9420,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767756
+        "largest_m": 0.2499981
       },
       "transform": {}
     },
@@ -9201,7 +9432,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49283487
+        "largest_m": 0.4932249
       },
       "transform": {}
     },
@@ -9213,7 +9444,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971202
+        "largest_m": 0.9838867
       },
       "transform": {}
     },
@@ -9225,7 +9456,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 4.6677055
+        "largest_m": 4.721298
       },
       "transform": {}
     },
@@ -9237,7 +9468,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.24605942
       },
       "transform": {}
     },
@@ -9285,7 +9516,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.22666359
       },
       "transform": {}
     },
@@ -9297,7 +9528,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -9309,7 +9540,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -9333,7 +9564,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.14358377
       },
       "transform": {}
     },
@@ -9345,7 +9576,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47999954
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -9381,7 +9612,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.22666264
       },
       "transform": {}
     },
@@ -9393,7 +9624,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.48000002
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -9405,7 +9636,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.92004824
       },
       "transform": {}
     },
@@ -9429,7 +9660,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24810028
+        "largest_m": 0.23695636
       },
       "transform": {}
     },
@@ -9441,7 +9672,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.4998808
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -9453,7 +9684,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9307146
+        "largest_m": 0.9000015
       },
       "transform": {}
     },
@@ -9477,7 +9708,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24795914
+        "largest_m": 0.24843597
       },
       "transform": {}
     },
@@ -9489,7 +9720,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.497579
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -9501,7 +9732,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.99778366
+        "largest_m": 0.98802567
       },
       "transform": {}
     },
@@ -9525,7 +9756,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.24938011
       },
       "transform": {}
     },
@@ -9537,7 +9768,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -9549,7 +9780,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -9585,7 +9816,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49523354
+        "largest_m": 0.49401665
       },
       "transform": {}
     },
@@ -9597,7 +9828,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -9621,7 +9852,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24914503
+        "largest_m": 0.24106407
       },
       "transform": {}
     },
@@ -9633,7 +9864,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49858856
+        "largest_m": 0.48000002
       },
       "transform": {}
     },
@@ -9669,7 +9900,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24914503
+        "largest_m": 0.24762917
       },
       "transform": {}
     },
@@ -9681,7 +9912,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49858856
+        "largest_m": 0.49609947
       },
       "transform": {}
     },
@@ -9693,7 +9924,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.90999985
+        "largest_m": 0.9582911
       },
       "transform": {}
     },
@@ -9705,7 +9936,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 3.7400017
+        "largest_m": 3.9716926
       },
       "transform": {}
     },
@@ -9717,7 +9948,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.15999997
       },
       "transform": {}
     },
@@ -9729,7 +9960,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.4911375
       },
       "transform": {}
     },
@@ -9765,7 +9996,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -9789,7 +10020,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -9813,7 +10044,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.24577427
       },
       "transform": {}
     },
@@ -9825,7 +10056,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49757898
+        "largest_m": 0.49545288
       },
       "transform": {}
     },
@@ -9837,7 +10068,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.91101074
       },
       "transform": {}
     },
@@ -9861,7 +10092,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24914503
+        "largest_m": 0.24999917
       },
       "transform": {}
     },
@@ -9873,7 +10104,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49333572
+        "largest_m": 0.4926777
       },
       "transform": {}
     },
@@ -9897,7 +10128,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 4.385166
+        "largest_m": 4.0
       },
       "transform": {}
     },
@@ -9909,7 +10140,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24914503
+        "largest_m": 0.23766232
       },
       "transform": {}
     },
@@ -9957,7 +10188,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2476778
+        "largest_m": 0.23851013
       },
       "transform": {}
     },
@@ -9969,7 +10200,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49500465
+        "largest_m": 0.49990082
       },
       "transform": {}
     },
@@ -9981,7 +10212,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971199
+        "largest_m": 0.8599999
       },
       "transform": {}
     },
@@ -10005,7 +10236,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24767685
+        "largest_m": 0.22666359
       },
       "transform": {}
     },
@@ -10017,7 +10248,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.47446442
+        "largest_m": 0.49113846
       },
       "transform": {}
     },
@@ -10029,7 +10260,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.99557114
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -10053,7 +10284,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.23235703
+        "largest_m": 0.22666168
       },
       "transform": {}
     },
@@ -10077,7 +10308,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9971237
+        "largest_m": 0.91000366
       },
       "transform": {}
     },
@@ -10158,42 +10389,6 @@
       "drawn": {
         "kind": "level_detail",
         "mesh": "mercato_2_detail_0_4_s3",
-        "material": "mercato_2"
-      },
-      "level_piece": {
-        "largest_m": 2.261
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_2_detail_0_5_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_2_detail_0_5_s1",
-        "material": "mercato_2"
-      },
-      "level_piece": {
-        "largest_m": 0.46899986
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_2_detail_0_5_s2",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_2_detail_0_5_s2",
-        "material": "mercato_2"
-      },
-      "level_piece": {
-        "largest_m": 0.8013
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_2_detail_0_5_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_2_detail_0_5_s3",
         "material": "mercato_2"
       },
       "level_piece": {
@@ -10521,7 +10716,7 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 2.2900002
+        "largest_m": 2.261
       },
       "transform": {}
     },
@@ -10701,7 +10896,7 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 2.2900002
+        "largest_m": 1.5
       },
       "transform": {}
     },
@@ -11193,7 +11388,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 0.75930023
+        "largest_m": 0.92999995
       },
       "transform": {}
     },
@@ -11206,6 +11401,42 @@
       },
       "level_piece": {
         "largest_m": 2.9900007
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_1_4_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_1_4_s1",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 0.48235
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_1_4_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_1_4_s2",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 0.8013
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_1_4_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_1_4_s3",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 2.261
       },
       "transform": {}
     },
@@ -11354,42 +11585,6 @@
       "transform": {}
     },
     {
-      "id": "mercato_3_detail_3_1_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_3_detail_3_1_s1",
-        "material": "mercato_3"
-      },
-      "level_piece": {
-        "largest_m": 0.38000005
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_3_detail_3_1_s2",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_3_detail_3_1_s2",
-        "material": "mercato_3"
-      },
-      "level_piece": {
-        "largest_m": 0.63750005
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_3_detail_3_1_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_3_detail_3_1_s3",
-        "material": "mercato_3"
-      },
-      "level_piece": {
-        "largest_m": 1.5
-      },
-      "transform": {}
-    },
-    {
       "id": "mercato_3_detail_3_5_s1",
       "drawn": {
         "kind": "level_detail",
@@ -11397,7 +11592,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 0.38000107
+        "largest_m": 0.3920002
       },
       "transform": {}
     },
@@ -11445,7 +11640,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 0.8013
+        "largest_m": 0.9000001
       },
       "transform": {}
     },
@@ -11457,7 +11652,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 2.261
+        "largest_m": 3.5999985
       },
       "transform": {}
     },
@@ -11570,42 +11765,6 @@
       "transform": {}
     },
     {
-      "id": "mercato_3_detail_5_2_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_3_detail_5_2_s1",
-        "material": "mercato_3"
-      },
-      "level_piece": {
-        "largest_m": 0.3800001
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_3_detail_5_2_s2",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_3_detail_5_2_s2",
-        "material": "mercato_3"
-      },
-      "level_piece": {
-        "largest_m": 0.9000001
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_3_detail_5_2_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_3_detail_5_2_s3",
-        "material": "mercato_3"
-      },
-      "level_piece": {
-        "largest_m": 3.5999985
-      },
-      "transform": {}
-    },
-    {
       "id": "mercato_3_detail_5_6_s1",
       "drawn": {
         "kind": "level_detail",
@@ -11661,7 +11820,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 0.75930023
+        "largest_m": 0.92999995
       },
       "transform": {}
     },
@@ -11674,42 +11833,6 @@
       },
       "level_piece": {
         "largest_m": 5.668
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_4_detail_0_5_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_4_detail_0_5_s1",
-        "material": "mercato_4"
-      },
-      "level_piece": {
-        "largest_m": 0.46899986
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_4_detail_0_5_s2",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_4_detail_0_5_s2",
-        "material": "mercato_4"
-      },
-      "level_piece": {
-        "largest_m": 0.8013
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_4_detail_0_5_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_4_detail_0_5_s3",
-        "material": "mercato_4"
-      },
-      "level_piece": {
-        "largest_m": 3.5
       },
       "transform": {}
     },
@@ -11769,7 +11892,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 0.8013
+        "largest_m": 0.92999995
       },
       "transform": {}
     },
@@ -11805,7 +11928,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 0.8013
+        "largest_m": 0.92999995
       },
       "transform": {}
     },
@@ -11817,7 +11940,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 2.261
+        "largest_m": 3.5
       },
       "transform": {}
     },
@@ -12153,7 +12276,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 0.3800006
+        "largest_m": 0.3920002
       },
       "transform": {}
     },
@@ -12578,42 +12701,6 @@
       "transform": {}
     },
     {
-      "id": "mercato_4_detail_6_6_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_4_detail_6_6_s1",
-        "material": "mercato_4"
-      },
-      "level_piece": {
-        "largest_m": 0.38000107
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_4_detail_6_6_s2",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_4_detail_6_6_s2",
-        "material": "mercato_4"
-      },
-      "level_piece": {
-        "largest_m": 0.63750005
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_4_detail_6_6_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_4_detail_6_6_s3",
-        "material": "mercato_4"
-      },
-      "level_piece": {
-        "largest_m": 1.5
-      },
-      "transform": {}
-    },
-    {
       "id": "mercato_5_1_2",
       "drawn": {
         "kind": "level",
@@ -12758,10 +12845,58 @@
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_0_1_s0",
+      "id": "mercato_16_detail_0_3_s0",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_0_1_s0",
+        "mesh": "mercato_16_detail_0_3_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.14999986
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_3_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_3_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3200028
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_3_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_3_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.88
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_3_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_3_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 3.2299995
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_1_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_1_s0",
         "material": "mercato_16"
       },
       "level_piece": {
@@ -12770,10 +12905,10 @@
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_0_1_s1",
+      "id": "mercato_16_detail_1_1_s1",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_0_1_s1",
+        "mesh": "mercato_16_detail_1_1_s1",
         "material": "mercato_16"
       },
       "level_piece": {
@@ -12782,10 +12917,10 @@
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_0_1_s2",
+      "id": "mercato_16_detail_1_1_s2",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_0_1_s2",
+        "mesh": "mercato_16_detail_1_1_s2",
         "material": "mercato_16"
       },
       "level_piece": {
@@ -12794,14 +12929,14 @@
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_0_1_s3",
+      "id": "mercato_16_detail_1_1_s3",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_0_1_s3",
+        "mesh": "mercato_16_detail_1_1_s3",
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 2.4
+        "largest_m": 1.3373327
       },
       "transform": {}
     },
@@ -12814,18 +12949,6 @@
       },
       "level_piece": {
         "largest_m": 0.14999986
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_16_detail_1_2_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_16_detail_1_2_s1",
-        "material": "mercato_16"
-      },
-      "level_piece": {
-        "largest_m": 0.3600006
       },
       "transform": {}
     },
@@ -12866,6 +12989,18 @@
       "transform": {}
     },
     {
+      "id": "mercato_16_detail_1_3_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_3_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.46565437
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_16_detail_1_3_s2",
       "drawn": {
         "kind": "level_detail",
@@ -12885,7 +13020,7 @@
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 6.420002
+        "largest_m": 3.2300014
       },
       "transform": {}
     },
@@ -12938,30 +13073,6 @@
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_2_1_s0",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_16_detail_2_1_s0",
-        "material": "mercato_16"
-      },
-      "level_piece": {
-        "largest_m": 0.10000229
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_16_detail_2_1_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_16_detail_2_1_s3",
-        "material": "mercato_16"
-      },
-      "level_piece": {
-        "largest_m": 2.4
-      },
-      "transform": {}
-    },
-    {
       "id": "mercato_16_detail_2_6_s0",
       "drawn": {
         "kind": "level_detail",
@@ -13005,7 +13116,7 @@
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 2.4
+        "largest_m": 1.2840004
       },
       "transform": {}
     },
@@ -13053,15 +13164,15 @@
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 2.4
+        "largest_m": 2.2900002
       },
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_3_5_s0",
+      "id": "mercato_16_detail_3_4_s0",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_3_5_s0",
+        "mesh": "mercato_16_detail_3_4_s0",
         "material": "mercato_16"
       },
       "level_piece": {
@@ -13070,38 +13181,38 @@
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_3_5_s1",
+      "id": "mercato_16_detail_3_4_s1",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_3_5_s1",
+        "mesh": "mercato_16_detail_3_4_s1",
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 0.3600006
+        "largest_m": 0.3920002
       },
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_3_5_s2",
+      "id": "mercato_16_detail_3_4_s2",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_3_5_s2",
+        "mesh": "mercato_16_detail_3_4_s2",
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 0.6546669
+        "largest_m": 0.73066676
       },
       "transform": {}
     },
     {
-      "id": "mercato_16_detail_3_5_s3",
+      "id": "mercato_16_detail_3_4_s3",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_16_detail_3_5_s3",
+        "mesh": "mercato_16_detail_3_4_s3",
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 2.4
+        "largest_m": 1.2400017
       },
       "transform": {}
     },
@@ -13118,6 +13229,18 @@
       "transform": {}
     },
     {
+      "id": "mercato_16_detail_3_6_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_6_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.52000046
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_16_detail_3_6_s3",
       "drawn": {
         "kind": "level_detail",
@@ -13125,7 +13248,7 @@
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 2.4
+        "largest_m": 1.2839985
       },
       "transform": {}
     },
@@ -13190,6 +13313,18 @@
       "transform": {}
     },
     {
+      "id": "mercato_16_detail_5_3_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_3_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_16_detail_5_3_s2",
       "drawn": {
         "kind": "level_detail",
@@ -13209,7 +13344,247 @@
         "material": "mercato_16"
       },
       "level_piece": {
-        "largest_m": 2.4
+        "largest_m": 1.3540001
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_17_detail_3_4_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_17_detail_3_4_s1",
+        "material": "mercato_17"
+      },
+      "level_piece": {
+        "largest_m": 0.3920002
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_17_detail_3_4_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_17_detail_3_4_s2",
+        "material": "mercato_17"
+      },
+      "level_piece": {
+        "largest_m": 0.7306668
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_17_detail_3_4_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_17_detail_3_4_s3",
+        "material": "mercato_17"
+      },
+      "level_piece": {
+        "largest_m": 2.04
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_17_detail_5_2_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_17_detail_5_2_s1",
+        "material": "mercato_17"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_17_detail_5_2_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_17_detail_5_2_s2",
+        "material": "mercato_17"
+      },
+      "level_piece": {
+        "largest_m": 0.6546664
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_17_detail_5_2_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_17_detail_5_2_s3",
+        "material": "mercato_17"
+      },
+      "level_piece": {
+        "largest_m": 1.3540001
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_18_detail_0_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_18_detail_0_5_s1",
+        "material": "mercato_18"
+      },
+      "level_piece": {
+        "largest_m": 0.3920002
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_18_detail_0_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_18_detail_0_5_s2",
+        "material": "mercato_18"
+      },
+      "level_piece": {
+        "largest_m": 0.73066664
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_18_detail_0_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_18_detail_0_5_s3",
+        "material": "mercato_18"
+      },
+      "level_piece": {
+        "largest_m": 1.3373318
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_18_detail_5_3_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_18_detail_5_3_s1",
+        "material": "mercato_18"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_18_detail_5_3_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_18_detail_5_3_s2",
+        "material": "mercato_18"
+      },
+      "level_piece": {
+        "largest_m": 0.65466666
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_18_detail_5_3_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_18_detail_5_3_s3",
+        "material": "mercato_18"
+      },
+      "level_piece": {
+        "largest_m": 2.2900002
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_0_1_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_0_1_s1",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_0_1_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_0_1_s2",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_0_1_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_0_1_s3",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 1.3373327
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_3_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_3_5_s1",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 0.3920002
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_3_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_3_5_s2",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 0.73066664
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_3_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_3_5_s3",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 2.2900002
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_5_2_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_5_2_s2",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_19_detail_5_2_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_19_detail_5_2_s3",
+        "material": "mercato_19"
+      },
+      "level_piece": {
+        "largest_m": 1.3339996
       },
       "transform": {}
     },
@@ -13239,9 +13614,7 @@
       "drawn": {
         "kind": "device"
       },
-      "device": {
-        "stand_in": true
-      },
+      "device": {},
       "node": {
         "mobility": "moving",
         "visible": false

@@ -31,6 +31,7 @@ pub struct ActorStats {
     pub hold: f32,
     pub crouch: f32,
     pub aim: f32,
+    pub look_weight: f32,
     pub weapon: Option<String>,
     pub dead: bool,
     pub look_yaw: f32,
@@ -62,6 +63,7 @@ stats! {
         pub missing_count: u32,
         pub formless: Vec<String>,
         pub carried: Vec<CarriedStats>,
+        pub lobby: bool,
         pub refusal: Option<String>,
     }
 }

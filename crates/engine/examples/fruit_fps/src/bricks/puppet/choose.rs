@@ -78,6 +78,7 @@ struct Upper {
     added: Option<Added>,
     next: Option<String>,
     ease: Option<f32>,
+    whole: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -103,6 +104,8 @@ pub(super) struct Memory {
     upper: Option<Upper>,
     upper_cue: u32,
     hold: f32,
+    look: f32,
+    gaze: [f32; 2],
     fallen: From,
     aiming: f32,
     feet_yaw: Option<f32>,
@@ -199,6 +202,8 @@ impl Default for Memory {
             upper: None,
             upper_cue: 0,
             hold: 0.0,
+            look: 1.0,
+            gaze: [0.0; 2],
             fallen: From::Front,
             aiming: 0.0,
             feet_yaw: None,
@@ -391,6 +396,7 @@ fn shot(one: &OneShot, lasting: bool) -> Upper {
         added: None,
         next: None,
         ease: None,
+        whole: one.whole,
     }
 }
 
@@ -420,6 +426,7 @@ fn layer_shot(
         }),
         next: None,
         ease: None,
+        whole: false,
     })
 }
 
@@ -449,6 +456,7 @@ fn melee_upper(memory: &mut Memory, facts: &Facts<'_>, slot: u32) -> Option<Uppe
         added: None,
         next: None,
         ease: Some(melee.fade_seconds),
+        whole: false,
     })
 }
 
@@ -482,6 +490,7 @@ fn draw_upper(memory: &Memory, facts: &Facts<'_>, slot: u32) -> Option<Upper> {
         added: None,
         next: None,
         ease: Some(draw.fade_seconds),
+        whole: false,
     })
 }
 
@@ -599,6 +608,7 @@ fn cast_upper(
                 added: None,
                 next: None,
                 ease: Some(casts.fade_seconds),
+                whole: cast.whole,
             })
         }
         None => None,
@@ -1009,6 +1019,7 @@ fn upper_from_events(
             added: None,
             next: None,
             ease: None,
+            whole: false,
         });
     }
     start(memory, wanted);
@@ -1111,12 +1122,13 @@ fn base_of(
     if turning { Base::Turn } else { Base::Idle }
 }
 
-fn base_clip(table: &PuppetTable, base: Base) -> (String, f32, bool) {
+fn base_clip(table: &PuppetTable, base: Base) -> (String, f32, bool, bool) {
     let of = |clip: &BaseClip, looping: bool| {
         (
             clip.clip.clone(),
             clip.fade_seconds,
             clip.looping.unwrap_or(looping),
+            clip.whole,
         )
     };
     let crouched = |standing: &BaseClip| {
@@ -1145,6 +1157,7 @@ fn base_clip(table: &PuppetTable, base: Base) -> (String, f32, bool) {
             },
             death.fade_seconds,
             false,
+            death.whole,
         ),
     }
 }
@@ -1173,6 +1186,7 @@ pub(super) struct Shaped {
     rate: f32,
     crouch: f32,
     aim: f32,
+    whole: bool,
     moving: Option<Moved>,
 }
 
@@ -1193,8 +1207,13 @@ fn shaped(
             )
         })
         .flatten();
-    let (clip, fade_seconds, looping) = match &moving {
-        Some(moved) => (moved.clip.clone(), table.locomotion.fade_seconds, true),
+    let (clip, fade_seconds, looping, whole) = match &moving {
+        Some(moved) => (
+            moved.clip.clone(),
+            table.locomotion.fade_seconds,
+            true,
+            false,
+        ),
         None if base.on_device() && !has(&base_clip(table, base).0) => base_clip(table, Base::Idle),
         None => base_clip(table, base),
     };
@@ -1215,10 +1234,10 @@ fn shaped(
         | Base::Stand
         | Base::Dead(_) => false,
     };
-    let (crouch, aim) = match (alive, posed_crouched) {
-        (false, _) => (0.0, 0.0),
-        (true, true) => (0.0, pitch * table.aim.share),
-        (true, false) => (body.crouch * table.crouch.drop_m, pitch * table.aim.share),
+    let crouch = if alive && !posed_crouched {
+        body.crouch * table.crouch.drop_m
+    } else {
+        0.0
     };
     Shaped {
         clip,
@@ -1226,7 +1245,8 @@ fn shaped(
         looping,
         rate,
         crouch,
-        aim,
+        aim: pitch * table.aim.share,
+        whole,
         moving,
     }
 }
@@ -1597,6 +1617,7 @@ fn actor_stats(
         hold: if holding { memory.hold } else { 0.0 },
         crouch: shape.crouch,
         aim: shape.aim,
+        look_weight: memory.look,
         weapon: weapon.map(str::to_owned),
         dead: !alive,
         look_yaw,
@@ -1632,6 +1653,34 @@ fn held_blend(memory: &mut Memory, table: &PuppetTable, delta: f32) {
         .unwrap_or(table.hold_blend_seconds);
     let blend = delta / max(seconds, delta);
     memory.hold = toward(memory.hold, goal, blend);
+}
+
+fn pitch_of(memory: &Memory, alive: bool, (wish, offsets): (&Wish, Option<&ViewOffsets>)) -> f32 {
+    if alive {
+        wish.pitch_radians + offsets.map_or(0.0, ViewOffsets::pitch_radians)
+    } else {
+        memory.gaze[0]
+    }
+}
+
+fn gazed(
+    memory: &mut Memory,
+    (table, shape): (&PuppetTable, &mut Shaped),
+    (alive, pitch, look_yaw): (bool, f32, f32),
+    delta: f32,
+) -> f32 {
+    if alive {
+        memory.gaze = [pitch, look_yaw];
+    }
+    let owner = memory.upper.as_ref().filter(|upper| upper.whole);
+    let goal = f32::from(u8::from(!shape.whole && owner.is_none()));
+    let seconds = owner
+        .and_then(|upper| upper.ease)
+        .filter(|_| goal == 0.0)
+        .unwrap_or(table.hold_blend_seconds);
+    memory.look = toward(memory.look, goal, delta / max(seconds, delta));
+    shape.aim *= memory.look;
+    look_yaw * memory.look
 }
 
 pub(super) fn animate(
@@ -1695,18 +1744,20 @@ pub(super) fn animate(
         let look_yaw = if alive {
             feet_follow(memory, table, (body, wish), facts.delta)
         } else {
-            0.0
+            memory.gaze[1]
         };
         let base = stepped(memory, &facts, (actor, body, wish), (alive, joints));
         memory.hand = alive
             .then(|| hand_of(memory.hand.take(), &facts, (entity, actor)))
             .flatten()
             .filter(|_| !viewed);
-        let pitch = wish.pitch_radians + offsets.map_or(0.0, |offsets| offsets.pitch_radians());
-        let shape = shaped(table, base, (alive, body, wish), (pitch, &memory.clips));
+        let pitch = pitch_of(memory, alive, (wish, offsets));
+        let mut shape = shaped(table, base, (alive, body, wish), (pitch, &memory.clips));
         memory.slide = slid(memory, joints, facts.delta);
         let weapon = tasked(memory, &book, arms.filter(|_| alive));
         held_blend(memory, table, facts.delta);
+        let gaze = (alive, pitch, look_yaw);
+        let look_yaw = gazed(memory, (table, &mut shape), gaze, facts.delta);
         let pose = Pose {
             pitch: shape.aim,
             weight: memory.hold,

@@ -7,9 +7,7 @@ use super::models::{ShowcaseModels, traps_layout};
 use super::numbers::{
     BarrierLook, DeviceLook, EffectsNumbers, OrbLook, PropsLook, SmokeLook, Spray,
 };
-use super::{
-    Device, EffectsDrawing, EffectsFrame, EffectsShow, EffectsStats, Item, ScreenStats, Show,
-};
+use super::{EffectsDrawing, EffectsFrame, EffectsShow, EffectsStats, Item, ScreenStats, Show};
 use crate::abilities::OrbState;
 use crate::play::actors::{Body, Human, Wish};
 use crate::play::camera::TestCamera;
@@ -22,6 +20,7 @@ use super::previews::preview_items;
 use crate::play::actors::Actor;
 use crate::play::flow::{Flow, Stage};
 use crate::play::light::Lighting;
+use crate::play::lobby::LobbyView;
 use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::view::Watched;
@@ -37,7 +36,6 @@ const HALO: f32 = 3.0;
 const RIND: f32 = 4.0;
 const CURTAIN: f32 = 5.0;
 const GLOWING: f32 = 1.0;
-const BODY: f32 = 2.0;
 const STRAND: f32 = 3.0;
 
 const DECAL: f32 = 0.0;
@@ -761,7 +759,6 @@ struct DeviceSeen {
     spot: Option<(Vec3, Option<u32>)>,
     lamp: Option<Vec3>,
     showcase: bool,
-    stand_in: bool,
 }
 
 fn device_items(
@@ -773,36 +770,14 @@ fn device_items(
     let Some((at, left)) = seen.spot else {
         return (Vec::new(), None);
     };
-    let stand_in = seen.stand_in;
     let device = &look.device;
-    let [width, height, depth] = device.size_m;
-    let mut items = Vec::new();
-    let base = Solid {
-        shape: Boxed {
-            centre: at + Vec3::Y * height * 0.5,
-            half: Vec3::new(width, height, depth) * 0.5,
-            axes: Mat3::IDENTITY,
-        },
-        kind: BODY,
-        fill: device.body,
-        glow: 1.0,
-        edge: device.light,
-        armed: false,
-        strength: 1.0,
-        pulse_hz: 0.0,
-    };
-    if stand_in {
-        items.push(solid_item(&base, look));
-    }
     let left_seconds = match left {
         Some(ticks) => Some((ticks as f32 - alpha) * tick_seconds),
         None if seen.showcase => Some(fuse_seconds - (now % f64::from(fuse_seconds)) as f32),
         None => None,
     };
     let glow = lamp_glow(device, left_seconds, fuse_seconds);
-    let lamp = seen
-        .lamp
-        .unwrap_or(at + Vec3::Y * (height + device.light_size_m * 0.5));
+    let lamp = seen.lamp.unwrap_or(at + Vec3::Y * device.lamp_m);
     let light = Solid {
         shape: Boxed {
             centre: lamp,
@@ -812,17 +787,22 @@ fn device_items(
         kind: GLOWING,
         fill: device.light,
         glow,
-        ..base
+        edge: device.light,
+        armed: false,
+        strength: 1.0,
+        pulse_hz: 0.0,
     };
-    items.push(solid_item(&light, look));
     let halo = device.light.map(|value| value * glow * 0.5);
-    (items, Some((halo_item(lamp, halo, device.halo_m), glow)))
+    (
+        vec![solid_item(&light, look)],
+        Some((halo_item(lamp, halo, device.halo_m), glow)),
+    )
 }
 
 fn device_part(
     look: &EffectsNumbers,
     seen: &Seen<'_, '_>,
-    (round, show, human, stand_in): (Option<&Round>, Show, Option<(&Body, &Wish)>, bool),
+    (round, show, human): (Option<&Round>, Show, Option<(&Body, &Wish)>),
     (timing, now): ((f32, f32, f32), f64),
     (items, stats): (&mut Vec<Item>, &mut EffectsStats),
 ) -> Vec<Item> {
@@ -830,7 +810,6 @@ fn device_part(
         spot: device_spot(round, show, human, look),
         lamp: seen.lamp.as_deref().and_then(|lamp| lamp.position),
         showcase: matches!(show, Show::Device | Show::All),
-        stand_in,
     };
     let (solids, halo) = device_items(look, &seen_device, timing, now);
     if let Some((item, glow)) = halo {
@@ -1353,6 +1332,14 @@ fn covered_frame(drawing: &mut EffectsDrawing, stats: &mut EffectsStats) {
     };
 }
 
+fn lobby_frame(drawing: &mut EffectsDrawing, stats: &mut EffectsStats) {
+    *drawing = EffectsDrawing::default();
+    *stats = EffectsStats {
+        lobby: true,
+        ..EffectsStats::default()
+    };
+}
+
 fn span(items: &[Item], start: usize) -> std::ops::Range<u32> {
     start as u32..items.len() as u32
 }
@@ -1364,6 +1351,7 @@ pub(super) struct Seen<'w, 's> {
     barrier: Option<Res<'w, Barrier>>,
     camera: Option<Res<'w, TestCamera>>,
     covered: Option<Res<'w, Covered>>,
+    lobby: Option<Res<'w, LobbyView>>,
     watched: Option<Res<'w, Watched>>,
     powers: Option<Res<'w, Powers>>,
     flow: Option<Res<'w, Flow>>,
@@ -1407,6 +1395,13 @@ impl Seen<'_, '_> {
         self.covered.as_deref().is_some_and(|covered| covered.0)
     }
 
+    fn lobby(&self) -> bool {
+        self.lobby
+            .as_deref()
+            .is_some_and(|lobby| lobby.camera.is_some())
+            && !self.camera.as_deref().is_some_and(|camera| camera.outside)
+    }
+
     fn playing(&self) -> bool {
         self.flow
             .as_deref()
@@ -1430,7 +1425,6 @@ pub(super) fn assemble(
     round: Option<Res<Round>>,
     humans: Query<(&Body, &Wish), With<Human>>,
     seen: Seen,
-    devices: Query<&Device>,
     mut drawing: ResMut<EffectsDrawing>,
     mut stats: ResMut<EffectsStats>,
 ) {
@@ -1447,6 +1441,9 @@ pub(super) fn assemble(
     };
     if seen.covered() {
         return covered_frame(&mut drawing, &mut stats);
+    }
+    if seen.lobby() {
+        return lobby_frame(&mut drawing, &mut stats);
     }
     let (look, now) = (&parsed.look, time.elapsed);
     let human = humans.iter().next();
@@ -1467,9 +1464,8 @@ pub(super) fn assemble(
         (&mut items, &mut sorted.marks),
         &mut next,
     );
-    let stand_in = devices.iter().any(|device| device.stand_in);
     let timing = (parsed.fuse_seconds, fixed.delta_seconds, time.alpha);
-    let place = (round.as_deref(), show.show, human, stand_in);
+    let place = (round.as_deref(), show.show, human);
     let device_solids = device_part(look, &seen, place, (timing, now), (&mut items, &mut next));
     let glow = span(&items, 0);
     let mut shown = feed.shown.clone();

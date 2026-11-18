@@ -248,7 +248,8 @@
       "fp_ability_place": {
         "clip": "cast_place",
         "event_seconds": 0.22,
-        "still_from": "Hip"
+        "still_from": "Hip",
+        "whole": true
       },
       "fp_ability_press": {
         "clip": "cast_press",
@@ -361,7 +362,8 @@
     "from": "Hip",
     "feather": 0,
     "weight": 1.0,
-    "speed": 1.0
+    "speed": 1.0,
+    "whole": true
   },
   "death": {
     "from_front": "death_back",
@@ -369,24 +371,29 @@
     "from_side": "death_side",
     "headshot": "death_headshot",
     "speed": 1.0,
-    "fade_seconds": 0.1
+    "fade_seconds": 0.1,
+    "whole": true
   },
   "device": {
     "kneel": {
       "clip": "device_kneel",
-      "fade_seconds": 0.2
+      "fade_seconds": 0.2,
+      "whole": true
     },
     "plant": {
       "clip": "device_plant_loop",
-      "fade_seconds": 0.0
+      "fade_seconds": 0.0,
+      "whole": true
     },
     "defuse": {
       "clip": "device_defuse_loop",
-      "fade_seconds": 0.0
+      "fade_seconds": 0.0,
+      "whole": true
     },
     "stand": {
       "clip": "device_stand",
-      "fade_seconds": 0.15
+      "fade_seconds": 0.15,
+      "whole": true
     }
   },
   "land": {
@@ -394,7 +401,8 @@
     "from": "Hip",
     "feather": 0,
     "weight": 1.0,
-    "speed": 1.0
+    "speed": 1.0,
+    "whole": true
   },
   "switch": {
     "dip_m": 0.25,
@@ -667,6 +675,11 @@
   },
   "view": {
     "hands": {
+      "rest": [
+        -0.04,
+        0.01,
+        0.0
+      ],
       "socket": "item_r",
       "ready": "fp_ability_ready",
       "hold": "fp_ability_hold",
@@ -863,8 +876,8 @@
     "weapons": {
       "rifle": {
         "rest": [
-          0.14,
-          -0.15,
+          0.25,
+          -0.105,
           -0.36
         ],
         "scoped": [
@@ -873,7 +886,7 @@
           -0.26
         ],
         "lowered": [
-          0.16,
+          0.27,
           -0.36,
           -0.21
         ],
@@ -881,9 +894,9 @@
       },
       "smg": {
         "rest": [
-          0.13,
-          -0.14,
-          -0.32
+          0.21,
+          -0.1,
+          -0.33
         ],
         "scoped": [
           0.0,
@@ -891,7 +904,7 @@
           -0.24
         ],
         "lowered": [
-          0.15,
+          0.23,
           -0.34,
           -0.19
         ],
@@ -899,9 +912,9 @@
       },
       "sniper": {
         "rest": [
-          0.16,
-          -0.17,
-          -0.4
+          0.29,
+          -0.11,
+          -0.42
         ],
         "scoped": [
           0.16,
@@ -909,7 +922,7 @@
           -0.4
         ],
         "lowered": [
-          0.18,
+          0.31,
           -0.38,
           -0.25
         ],
@@ -918,9 +931,9 @@
       },
       "sidearm": {
         "rest": [
-          0.12,
-          -0.13,
-          -0.31
+          0.17,
+          -0.11,
+          -0.33
         ],
         "scoped": [
           0.0,
@@ -928,7 +941,7 @@
           -0.28
         ],
         "lowered": [
-          0.14,
+          0.19,
           -0.32,
           -0.19
         ],

@@ -191,8 +191,7 @@ pub(super) struct ScreenLook {
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeviceLook {
-    pub size_m: [f32; 3],
-    pub body: [f32; 3],
+    pub lamp_m: f32,
     pub light: [f32; 3],
     pub light_size_m: f32,
     pub blink_slow_seconds: f32,

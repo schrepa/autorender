@@ -642,7 +642,7 @@
       "budgets": {
         "triangles": 370000,
         "vertices": 575000,
-        "materials": 17,
+        "materials": 20,
         "object_vertices": 131072
       },
       "textures": [
@@ -677,6 +677,18 @@
               "normal": 512
             },
             "m_rooftile": {
+              "base_color": 512,
+              "normal": 512
+            },
+            "m_wood_sage": {
+              "base_color": 512,
+              "normal": 512
+            },
+            "m_wood_sky": {
+              "base_color": 512,
+              "normal": 512
+            },
+            "m_wood_brick": {
               "base_color": 512,
               "normal": 512
             }

@@ -339,7 +339,7 @@ fn result(words: &Words) -> ResultFacts {
         mvp_color: Tone::Attack,
         mvp_portrait: "char_banana".to_owned(),
         mvp_name: LEFT[0].to_owned(),
-        mvp_stats: "24 kills   12 deaths   5 assists   ADR 168".to_owned(),
+        mvp_stats: "14 kills   7 deaths   3 assists   ADR 172".to_owned(),
         mvp_char: "Bananito  entry".to_owned(),
         next_seconds: 9.0,
     }
