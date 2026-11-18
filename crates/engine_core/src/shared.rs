@@ -25,6 +25,11 @@ pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
     if let Some(cooking) = world.get_resource::<crate::cook::Cooking>() {
         readiness.settle(CORE_ROW, u32::try_from(cooking.left()).unwrap_or(u32::MAX));
     }
+    if let Some(refusals) = world.get_resource::<crate::Refusals>() {
+        for (_, refused) in refusals.iter() {
+            readiness.fail(refused.part, refused.reason.clone());
+        }
+    }
     if world.get_resource::<Readiness>() != Some(&readiness) {
         world.insert_resource(readiness);
     }

@@ -3,8 +3,8 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
     AssetLibrary, Drawn, GeometryHandle, GlobalTransforms, Kind, Lands, MaterialHandle, NameEntry,
-    OperationScene, Parent, Reach, ReachMut, Transform, scene_component, scene_components,
-    unavailable,
+    OperationScene, Parent, Reach, ReachMut, Refusals, Transform, scene_component,
+    scene_components, unavailable,
 };
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -135,6 +135,21 @@ fn listing(
         return Value::Array(rows);
     }
     json!({ "total": total, "offset": first, "page": rows })
+}
+
+pub(crate) fn refused(reach: &Reach<'_>) -> Value {
+    let world = reach.world;
+    world
+        .get_resource::<Refusals>()
+        .into_iter()
+        .flat_map(Refusals::iter)
+        .map(|(entity, refused)| {
+            let mut row = header(world, entity);
+            row.insert("part".to_owned(), json!(refused.part));
+            row.insert("error".to_owned(), json!(refused.reason));
+            Value::Object(row)
+        })
+        .collect()
 }
 
 fn one(reach: &Reach<'_>, entity: Entity, covered: &[ComponentId]) -> Value {

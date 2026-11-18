@@ -74,6 +74,7 @@ pub fn install(world: &mut World) {
         bare("status", |reach| Ok(status(reach))),
         bare("assets", assets),
         bare("bricks", |reach| Ok(bricks(reach.world))),
+        bare("entities.refused", |reach| Ok(crate::entities::refused(reach))),
         bare("records", |reach| {
             Ok(json!(reach.world.get_resource::<engine_core::Records>()))
         }),
