@@ -29,6 +29,11 @@ export function connectDevelopment(host: Host): Development {
   if (!game.dev_push || !game.dev_take || !game.dev_pixels || !game.dev_reloaded || !game.dev_reload_failed) {
     throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "present", got: "dev_push" });
   }
+  const asked = new URLSearchParams(location.search).get("record");
+  let args: unknown;
+  try { args = asked === null ? undefined : JSON.parse(asked); }
+  catch { throw engineFailure({ code: "invalid_json", path: "?record", got: asked }); }
+  let record = args === undefined ? undefined : game.dev_push(JSON.stringify({ verb: "call", name: "record", args }));
   const waiting = new Map<number, { resolve(reply: string): void; reject(error: Error): void }>();
   let closed: string | undefined;
   let reloading = false;
@@ -56,6 +61,12 @@ export function connectDevelopment(host: Host): Development {
       else console.error(JSON.stringify({ event: "file_dropped", name: written.name }));
     }
     for (const [ticket, reply] of replies) {
+      if (ticket === record) {
+        record = undefined;
+        const answer = JSON.parse(reply) as { ok: boolean; error?: unknown };
+        if (!answer.ok) host.fail(engineFailure({ code: "invalid_arguments", path: "?record", got: answer.error }));
+        continue;
+      }
       waiting.get(ticket)?.resolve(reply);
       waiting.delete(ticket);
     }

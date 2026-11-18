@@ -100,6 +100,21 @@ impl<G: Game> PageHost<G> {
         let bricks = (game.bricks)(BrickList::default());
         #[cfg(feature = "dev")]
         CANVAS.set(Some(canvas.clone()));
+        #[cfg(feature = "dev")]
+        if js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("location"))
+            .and_then(|location| js_sys::Reflect::get(&location, &JsValue::from_str("search")))
+            .ok()
+            .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search.as_string()?).ok())
+            .and_then(|parameters| parameters.get("record"))
+            .and_then(|args| serde_json::from_str::<serde_json::Value>(&args).ok())
+            .is_some_and(|args| {
+                args["instruments"]
+                    .as_array()
+                    .is_some_and(|names| names.iter().any(|name| name == "causes"))
+            })
+        {
+            engine_profile::trace(true);
+        }
         let target = engine_render::RenderTarget::Canvas(canvas);
         let mut host = GameHost::launch(target, move |_| bricks, game.build)
             .await
