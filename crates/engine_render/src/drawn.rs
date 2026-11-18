@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use bevy_ecs::system::{Res, SystemParamItem};
 use engine_core::{
-    DrawnPoses, DrawnRecord, DrawnTable, Entry, Error, GlobalTransforms, GpuStruct, Layers,
-    MAX_HIERARCHY_DEPTH, MaterialHandle, NodeInfo, NodePose, NodeStreams, PassBit, PassMask,
-    PoseRows, Var, ViewFacts, gpu_struct,
+    DrawnPoses, DrawnRecord, DrawnTable, Entry, Error, GeometryHandle, GlobalTransforms, GpuStruct,
+    Layers, MAX_HIERARCHY_DEPTH, MaterialHandle, NodeInfo, NodePose, NodeStreams, PassBit,
+    PassMask, PoseRows, Var, ViewFacts, gpu_struct,
 };
 use engine_place::Changed;
 
@@ -195,6 +195,7 @@ pub(crate) fn pose_source() -> String {
 
 pub(crate) struct KindBatch {
     pub(crate) instances: Range<u32>,
+    pub(crate) geometry: Option<GeometryHandle>,
     pub(crate) material: Option<MaterialHandle>,
     passes: Option<PassMask>,
     layers: Layers,
@@ -229,6 +230,7 @@ impl Batches {
             .batches(kind)
             .map(|batch| KindBatch {
                 instances: batch.instances.clone(),
+                geometry: batch.geometry,
                 material: batch.material,
                 passes: batch.passes,
                 layers: batch.layers,
@@ -239,6 +241,7 @@ impl Batches {
                     .iter()
                     .any(|known| {
                         known.cause == batch.cause
+                            && known.geometry == batch.geometry
                             && known.material == batch.material
                             && known.passes == batch.passes
                             && known.layers == batch.layers

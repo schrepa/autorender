@@ -1169,14 +1169,19 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
 impl<P: GpuPart> Draw<'_, P, Scene> {
     pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>) {
         for batch in self.raw.batches() {
-            let recorded = self.draw(
-                pipeline,
-                Shape::Pulled {
+            let shape = match batch.geometry {
+                Some(mesh) => Shape::Mesh {
+                    mesh,
+                    key: batch.material,
+                    instances: batch.instances.clone(),
+                },
+                None => Shape::Pulled {
                     vertices: vertices.clone(),
                     instances: batch.instances.clone(),
                     key: batch.material,
                 },
-            );
+            };
+            let recorded = self.draw(pipeline, shape);
             #[cfg(any(feature = "dev", feature = "profiling"))]
             if engine_profile::tracing()
                 && matches!(recorded, Recorded::Exact | Recorded::StandIn)
