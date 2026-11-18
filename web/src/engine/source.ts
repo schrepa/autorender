@@ -73,7 +73,7 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
 }
 
 export async function fetchBytes(url: string, signal?: AbortSignal): Promise<Uint8Array> {
-  const response = await fetch(url, { cache: "no-cache", signal });
+  const response = await fetch(url, { signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
     throw engineFailure({ code: "missing_file", path: "$", got: { url, status: response.status } });

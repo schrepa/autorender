@@ -49,8 +49,8 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
   warmAdapter();
   const loading = settled(loadGame(game.load, game.worker));
   const bindings = () => loading;
-  const folder = clients.find(client => client.wasm === game.wasm)?.folder;
-  const declared = import.meta.env.DEV && game.scene && folder ? `/_engine/source/${folder}/${game.scene}` : undefined;
+  const client = clients.find(client => client.wasm === game.wasm);
+  const declared = game.scene && client ? import.meta.env.DEV ? `/_engine/source/${client.folder}/${game.scene}` : `${client.game}/${game.scene}` : undefined;
   const url = new URLSearchParams(location.search).get("scene") ?? declared;
   const sceneUrl = () => checkedScene(url ?? "", location.href);
   const source = url === undefined ? undefined : {
