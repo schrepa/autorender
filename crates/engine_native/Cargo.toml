@@ -12,6 +12,8 @@ dev = ["engine/dev", "dep:base64", "dep:engine_registry", "dep:sha2"]
 profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
+cpal.workspace = true
+lewton.workspace = true
 engine.workspace = true
 engine_core.workspace = true
 engine_profile.workspace = true

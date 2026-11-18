@@ -5,6 +5,7 @@ import type { Development } from "./dev";
 import { BrowserInput } from "./input";
 import { type JobPool, jobPool } from "./jobs";
 import { fatal, panicReport } from "./panic";
+import { PageSound } from "./sound";
 import "./style.css";
 
 export type { Runtime };
@@ -187,6 +188,7 @@ const message = element("message");
 const pause = element<HTMLButtonElement>("pause");
 const reset = element<HTMLButtonElement>("reset");
 const input = new BrowserInput(canvas);
+const sound = new PageSound(canvas);
 const instrumented = import.meta.env.MODE === "profiling";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
 canvas.style.visibility = "hidden";
@@ -351,6 +353,7 @@ function run(current: Live<T>, at: number, early: boolean) {
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     if (phase === FRAME_PHASES.playing) pace.submitted(since, early);
     input.setCursorMode(game.cursor_mode());
+    sound.exchange(game);
     jobs?.exchange();
     dev?.turned();
     if (current.kind === "preparing") hud.preparing(game, phase);
@@ -453,7 +456,7 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
   jobs?.detach();
   lifecycle.abort();
-  stopClock(); observer.disconnect(); input.dispose(); ticks.port1.close(); pace.dispose();
+  stopClock(); observer.disconnect(); input.dispose(); sound.dispose(); ticks.port1.close(); pace.dispose();
   state = { kind: "disposed" };
   current?.game.free();
 });

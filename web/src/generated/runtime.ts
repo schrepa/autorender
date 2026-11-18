@@ -1,4 +1,5 @@
 import type { JobOrder } from "../engine/jobs";
+import type { SoundOrder } from "../engine/sound";
 import type { FrameStats } from "./stats";
 
 export interface DevTake {
@@ -43,6 +44,13 @@ export interface Runtime {
   set_file_root(root: string): void;
   set_pixel_ratio(ratio: number): void;
   apply_host_settings(query: string): void;
+  take_sound(): SoundOrder[];
+  sound_opened(running: boolean, rate: number, channels: number, latency_seconds: number): void;
+  sound_open_failed(error: string): void;
+  sound_decoded(sound: number, frames: number, rate: number, channels: number): void;
+  sound_failed(sound: number, error: string): void;
+  voice_ended(voice: number): void;
+  voice_dropped(voice: number, error: string): void;
   stats(): Json<FrameStats>;
   cursor_mode(): number;
   job_hash(): Uint8Array;

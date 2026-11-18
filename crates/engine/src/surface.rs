@@ -34,6 +34,13 @@ macro_rules! __game_surface {
                 fn set_file_root(root: &str);
                 fn set_pixel_ratio(ratio: f64);
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
+                fn take_sound() -> $crate::browser::SoundOrderList;
+                fn sound_opened(running: bool, rate: u32, channels: u32, latency_seconds: f32);
+                fn sound_open_failed(error: String);
+                fn sound_decoded(sound: u32, frames: f64, rate: u32, channels: u32);
+                fn sound_failed(sound: u32, error: String);
+                fn voice_ended(voice: u32);
+                fn voice_dropped(voice: u32, error: String);
             }
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
@@ -339,6 +346,7 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
     use std::fmt::Write;
     let mut output = String::from(
         "import type { JobOrder } from \"../engine/jobs\";\n\
+         import type { SoundOrder } from \"../engine/sound\";\n\
          import type { FrameStats } from \"./stats\";\n\n\
          export interface DevTake {\n  replies: [number, string][];\n  pictures: { run: string | null; file: string; width: number; height: number }[];\n  reload: boolean;\n}\n\n\
          export type Json<T> = string & { readonly json?: T };\n\n\
@@ -417,6 +425,7 @@ fn typescript_type(ty: &str) -> String {
         "Vec<f32>" => "Float32Array",
         "Vec<u32>" => "Uint32Array",
         "Array" => "JobOrder[]",
+        "SoundOrderList" => "SoundOrder[]",
         "SceneFileSet" => "unknown",
         _ => panic!("surface_typescript_type {ty}"),
     }

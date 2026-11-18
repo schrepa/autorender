@@ -33,6 +33,7 @@ mod schedules;
 mod section;
 mod services;
 mod shared;
+mod sound;
 mod source;
 mod statistics;
 mod ticks;
@@ -106,6 +107,10 @@ pub use services::{
     scene_components,
 };
 pub use shared::FeedSettings;
+pub use sound::{
+    Length, Loaded, Output, Play, Refusal, RefusalCounts, SoundCounts, SoundId, SoundOrder,
+    SoundReply, SoundReport, Sounds, Tune, VoiceCounts, VoiceId,
+};
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
@@ -362,6 +367,7 @@ impl Engine {
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<Devices>()
             .init_resource::<CursorMode>()
+            .init_resource::<Sounds>()
             .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
             .init_resource::<DrawnPoses>()
@@ -427,6 +433,8 @@ impl Engine {
         core_names(world);
         #[cfg(any(feature = "dev", feature = "profiling"))]
         drawn::object_names(world);
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        sound::names(world);
         let mut registry = world.resource_mut::<Registry>();
         for error in twice {
             registry.report(error);

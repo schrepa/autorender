@@ -65,6 +65,7 @@ struct Running<G: Game> {
     size: (u32, u32),
     title: Title,
     jobs: JobPool,
+    speaker: crate::sound::Speaker,
     #[cfg(feature = "dev")]
     session: crate::dev::Session,
 }
@@ -115,6 +116,7 @@ impl<'a, G: Game> App<'a, G> {
             size,
             title: Title::new(&self.options.title),
             jobs,
+            speaker: crate::sound::Speaker::default(),
             #[cfg(feature = "dev")]
             session,
         })
@@ -259,6 +261,7 @@ impl<G: Game> Running<G> {
         let (width, height) = self.size;
         self.exchange_jobs();
         let phase = self.host.animation_frame(timestamp, width, height)?;
+        self.speaker.exchange(&mut self.host);
         self.exchange_jobs();
         #[cfg(feature = "dev")]
         self.session.after(&mut self.host)?;

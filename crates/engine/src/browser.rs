@@ -7,6 +7,8 @@ use engine_settings::js_error as js;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
+pub type SoundOrderList = js_sys::Array;
+
 #[doc(hidden)]
 pub struct SceneLoading {
     load: Option<crate::host::SceneLoad>,
@@ -201,6 +203,116 @@ impl<G: Game> PageHost<G> {
 
     pub fn cursor_mode(&self) -> u32 {
         self.host.cursor_mode() as u32
+    }
+
+    pub fn take_sound(&mut self) -> SoundOrderList {
+        use engine_core::SoundOrder;
+        let out = js_sys::Array::new();
+        let set = |object: &js_sys::Object, field: &str, value: JsValue| {
+            let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), &value);
+        };
+        for order in self.host.take_sound() {
+            let object = js_sys::Object::new();
+            match order {
+                SoundOrder::Open { latency_seconds } => {
+                    set(&object, "open", JsValue::TRUE);
+                    set(
+                        &object,
+                        "latency",
+                        latency_seconds.map_or(JsValue::NULL, |seconds| {
+                            JsValue::from_f64(f64::from(seconds))
+                        }),
+                    );
+                }
+                SoundOrder::Decode { sound, bytes } => {
+                    set(&object, "decode", JsValue::from(sound.0));
+                    set(
+                        &object,
+                        "bytes",
+                        js_sys::Uint8Array::from(&bytes[..]).into(),
+                    );
+                }
+                SoundOrder::Start { voice, play } => {
+                    set(&object, "start", JsValue::from(voice.0));
+                    set(&object, "sound", JsValue::from(play.sound.0));
+                    set(&object, "gain", JsValue::from(play.gain));
+                    set(&object, "pan", JsValue::from(play.pan));
+                    set(&object, "rate", JsValue::from(play.rate));
+                    set(&object, "looping", JsValue::from(play.looping));
+                    set(&object, "offset", JsValue::from(play.offset_seconds));
+                }
+                SoundOrder::Tune { voice, tune } => {
+                    set(&object, "tune", JsValue::from(voice.0));
+                    set(&object, "gain", JsValue::from(tune.gain));
+                    set(&object, "pan", JsValue::from(tune.pan));
+                    set(&object, "rate", JsValue::from(tune.rate));
+                    set(&object, "seconds", JsValue::from(tune.seconds));
+                }
+                SoundOrder::Stop {
+                    voice,
+                    fade_seconds,
+                } => {
+                    set(&object, "stop", JsValue::from(voice.0));
+                    set(&object, "seconds", JsValue::from(fade_seconds));
+                }
+                SoundOrder::Master { gain, seconds } => {
+                    set(&object, "master", JsValue::from(gain));
+                    set(&object, "seconds", JsValue::from(seconds));
+                }
+            }
+            out.push(&object);
+        }
+        out
+    }
+
+    pub fn sound_opened(&mut self, running: bool, rate: u32, channels: u32, latency_seconds: f32) {
+        self.host.hear_sound(engine_core::SoundReply::Opened {
+            running,
+            rate,
+            channels,
+            latency_seconds,
+        });
+    }
+
+    pub fn sound_open_failed(&mut self, error: String) {
+        self.host
+            .hear_sound(engine_core::SoundReply::OpenFailed { error });
+    }
+
+    pub fn sound_decoded(&mut self, sound: u32, frames: f64, rate: u32, channels: u32) {
+        let frames = if frames.is_finite() && frames >= 0.0 {
+            frames as u64
+        } else {
+            0
+        };
+        self.host.hear_sound(engine_core::SoundReply::Decoded {
+            sound: engine_core::SoundId(sound),
+            length: engine_core::Length {
+                frames,
+                rate,
+                channels,
+            },
+        });
+    }
+
+    pub fn sound_failed(&mut self, sound: u32, error: String) {
+        self.host.hear_sound(engine_core::SoundReply::DecodeFailed {
+            sound: engine_core::SoundId(sound),
+            error,
+        });
+    }
+
+    pub fn voice_ended(&mut self, voice: u32) {
+        self.host.hear_sound(engine_core::SoundReply::Ended {
+            voice: engine_core::VoiceId(voice),
+        });
+    }
+
+    pub fn voice_dropped(&mut self, voice: u32, error: String) {
+        self.host.hear_sound(engine_core::SoundReply::Dropped {
+            voice: engine_core::VoiceId(voice),
+            error,
+        });
     }
 
     pub fn take_jobs(&mut self) -> js_sys::Array {

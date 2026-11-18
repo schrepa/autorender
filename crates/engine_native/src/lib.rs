@@ -10,10 +10,13 @@ pub mod files;
 mod input;
 mod job_cache;
 mod jobs;
+mod mixer;
 mod offscreen;
 mod options;
+mod output;
 #[cfg(feature = "dev")]
 mod pure;
+mod sound;
 mod window;
 
 use std::process::ExitCode;

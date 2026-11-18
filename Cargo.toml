@@ -10,6 +10,8 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
+cpal = { version = "=0.18.2", default-features = false }
+lewton = { version = "=0.10.2", default-features = false, features = ["ogg"] }
 engine = { path = "crates/engine" }
 engine_core = { path = "crates/engine_core" }
 engine_math = { path = "crates/engine_math" }

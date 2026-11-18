@@ -281,6 +281,27 @@ impl<G: Game> GameHost<G> {
         self.input.clear();
     }
 
+    pub fn take_sound(&mut self) -> Vec<engine_core::SoundOrder> {
+        let world = self.app.engine_mut().app.world_mut();
+        world
+            .try_resource_scope(
+                |world, mut sounds: bevy_ecs::world::Mut<engine_core::Sounds>| {
+                    world
+                        .get_resource_mut::<engine_core::Files>()
+                        .map(|mut files| sounds.take_orders(&mut files))
+                },
+            )
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    pub fn hear_sound(&mut self, reply: engine_core::SoundReply) {
+        let world = self.app.engine_mut().app.world_mut();
+        if let Some(mut sounds) = world.get_resource_mut::<engine_core::Sounds>() {
+            sounds.hear(reply);
+        }
+    }
+
     pub fn set_job_workers(&mut self, workers: u32) -> bool {
         let set = self.jobs.set_workers(workers);
         self.app.set_job_workers(self.jobs.working());

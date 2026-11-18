@@ -9,6 +9,7 @@ pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
     size: (u32, u32),
     jobs: JobPool,
+    speaker: crate::sound::Speaker,
 }
 
 impl<G: Game> Offscreen<G> {
@@ -26,7 +27,12 @@ impl<G: Game> Offscreen<G> {
             target, bricks, build,
         )))?);
         jobs.attach(&mut host);
-        Ok(Self { host, size, jobs })
+        Ok(Self {
+            host,
+            size,
+            jobs,
+            speaker: crate::sound::Speaker::silent(),
+        })
     }
 
     pub fn host(&self) -> &GameHost<G> {
@@ -45,6 +51,7 @@ impl<G: Game> Offscreen<G> {
         let (width, height) = self.size;
         self.jobs.exchange(&mut self.host);
         let phase = self.host.animation_frame(timestamp, width, height)?;
+        self.speaker.exchange(&mut self.host);
         self.jobs.exchange(&mut self.host);
         self.host.wait_for_gpu()?;
         Ok(phase)
