@@ -426,6 +426,10 @@ fn stamp(cause: Carried) -> Caused {
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
 fn stamp(_: Carried) {}
 
+pub fn caused_now() -> impl Bundle {
+    stamp(engine_profile::carry())
+}
+
 fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T, cause: Carried) {
     let Ok(mut spawned) = world.get_entity_mut(entity) else {
         return;

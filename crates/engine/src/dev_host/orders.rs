@@ -482,11 +482,15 @@ impl<G: Game> GameHost<G> {
                 } else {
                     Advance::Clock(timestamp)
                 };
-                if !self.framed(advance, shoot.size, Picture::Shown)? {
+                let drawn = self.framed(advance, shoot.size, Picture::Shown)?;
+                shoot.frame = Some(self.frame_times().frame);
+                if let Some(mark) = &shoot.mark {
+                    self.reach(|reach| engine_dev::record::marked(reach, mark));
+                }
+                if !drawn {
                     let picture = unavailable("frame_not_acquired");
                     return Ok((FramePhase::Playing, Some(Ok(self.pictured(shoot, picture)))));
                 }
-                shoot.frame = Some(self.frame_times().frame);
                 FramePhase::Playing
             }
             Some(_) => self.idle(timestamp, size, held)?,
@@ -502,12 +506,13 @@ impl<G: Game> GameHost<G> {
         let picture = match read {
             Ok((width, height, rgba)) => {
                 let frame = shoot.frame.unwrap_or_default();
-                let file = shoot
-                    .mark
-                    .as_ref()
-                    .map_or_else(|| format!("{frame}.png"), |mark| mark.file.clone());
+                let file = shoot.mark.as_ref().map_or_else(
+                    || format!("{frame}.png"),
+                    |mark| format!("{frame}-{}.png", mark.name),
+                );
                 let picture = json!({
                     "path": file,
+                    "frame": frame,
                     "width": width,
                     "height": height,
                     "sha256": hex(&rgba),

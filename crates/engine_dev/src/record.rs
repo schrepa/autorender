@@ -27,7 +27,7 @@ pub type Switch = fn(&mut ReachMut<'_>, &str, bool) -> Result<&'static str, &'st
 
 pub struct MarkPicture {
     pub run: String,
-    pub file: String,
+    pub name: String,
     pub size: [u32; 2],
 }
 
@@ -238,12 +238,26 @@ pub fn frame_end(reach: &mut ReachMut<'_>, frame: u64, tick: u64, seconds: f64) 
     reach.world.insert_resource(recording);
 }
 
+pub fn marked(reach: &mut ReachMut<'_>, mark: &MarkPicture) {
+    let Some(at) = reach.world.get_resource::<Moment>().copied() else {
+        return;
+    };
+    let Some(mut recording) = reach.world.remove_resource::<Recording>() else {
+        return;
+    };
+    if recording.name == mark.run {
+        let entry = recording.entry(reach, at, Some(&mark.name));
+        recording.held.push((mark.name.clone(), entry));
+    }
+    reach.world.insert_resource(recording);
+}
+
 pub fn pictured(world: &mut World, mark: &MarkPicture, picture: Value) -> Value {
     let Some(mut recording) = world.get_resource_mut::<Recording>() else {
         return json!({"picture": picture, "record": unavailable("record_stopped")});
     };
     let Some(index) = (recording.name == mark.run)
-        .then(|| recording.held.iter().position(|(held, _)| *held == mark.file))
+        .then(|| recording.held.iter().position(|(held, _)| *held == mark.name))
         .flatten()
     else {
         return json!({"picture": picture, "record": unavailable("record_stopped")});
@@ -401,21 +415,17 @@ fn mark(reach: &mut ReachMut<'_>, args: &Value) -> Result<Answer, Error> {
         .world
         .remove_resource::<Recording>()
         .ok_or_else(not_recording)?;
-    let entry = recording.entry(reach, at, Some(&mark.name));
     let answer = match mark.picture {
         None => {
+            let entry = recording.entry(reach, at, Some(&mark.name));
             recording.send(entry);
             Answer::Value(json!({"name": mark.name, "frame": at.frame}))
         }
-        Some(size) => {
-            let file = format!("{}-{}.png", at.frame, mark.name);
-            recording.held.push((file.clone(), entry));
-            Answer::Loop(Box::new(MarkPicture {
-                run: recording.name.clone(),
-                file,
-                size,
-            }))
-        }
+        Some(size) => Answer::Loop(Box::new(MarkPicture {
+            run: recording.name.clone(),
+            name: mark.name,
+            size,
+        })),
     };
     reach.world.insert_resource(recording);
     Ok(answer)
