@@ -99,7 +99,8 @@ function failure(line: string | undefined): Failure | undefined {
 function failed(status: HTMLElement, message: HTMLElement) {
   const [summary = "", ...lines] = (message.textContent ?? "").split("\n");
   const found = failure(lines[0]);
-  part("failure-title").textContent = `Fruit FPS stopped: ${(status.textContent ?? "").trim() || "error"}`;
+  const title = part("failure-title");
+  title.textContent = `${title.dataset.name} stopped: ${(status.textContent ?? "").trim() || "error"}`;
   part("failure-summary").textContent = summary;
   part("failure-code").textContent = found?.code ?? "—";
   part("failure-path").textContent = found?.path ?? "—";

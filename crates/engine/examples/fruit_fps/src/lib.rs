@@ -79,7 +79,7 @@ pub fn bricks<L: Listing>(list: L) -> L {
 
 engine::game!(
     pub struct FruitFpsGame(FruitFps),
-    "Fruit FPS",
+    "Pulp Vendetta",
     bricks,
     scene = "fruit_fps.scene.json"
 );

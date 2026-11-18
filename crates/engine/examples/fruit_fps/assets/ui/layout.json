@@ -6,6 +6,18 @@
   1080
  ],
  "stroke_rim": 0,
+ "name": {
+  "lines": [
+   "PULP",
+   "VENDETTA"
+  ],
+  "spoken": "Pulp Vendetta",
+  "tagline": "5 v 5 juicy tactics",
+  "colors": [
+   "sun",
+   "attack"
+  ]
+ },
  "rules": {
   "about": "how every element is built, in reference px at 1080 (sizes scale by s = min(W/1920, H/1080))",
   "unit": 4,
@@ -17859,17 +17871,17 @@
   "title": {
    "elements": [
     {
-     "id": "logo_top",
+     "id": "logo_0",
      "kind": "text",
      "rect": [
       120,
-      230,
-      600,
-      150
+      208,
+      580,
+      165
      ],
      "anchor": "left",
-     "text": "FRUIT",
-     "size": 150,
+     "text": "PULP",
+     "size": 238,
      "face": "display_bold",
      "weight": "bold",
      "align": "left",
@@ -17896,17 +17908,17 @@
      ]
     },
     {
-     "id": "logo_bottom",
+     "id": "logo_1",
      "kind": "text",
      "rect": [
       120,
-      380,
-      600,
-      150
+      401,
+      580,
+      76
      ],
      "anchor": "left",
-     "text": "FPS!",
-     "size": 150,
+     "text": "VENDETTA",
+     "size": 110,
      "face": "display_bold",
      "weight": "bold",
      "align": "left",
@@ -17937,7 +17949,7 @@
      "kind": "flow",
      "rect": [
       120,
-      546,
+      517,
       600,
       44
      ],
@@ -17984,7 +17996,7 @@
      "kind": "plate",
      "rect": [
       120,
-      614,
+      585,
       400,
       88
      ],
@@ -18045,7 +18057,7 @@
      "kind": "text",
      "rect": [
       120,
-      614,
+      585,
       400,
       88
      ],
@@ -18062,7 +18074,7 @@
      "kind": "plate",
      "rect": [
       120,
-      730,
+      701,
       400,
       72
      ],
@@ -18123,7 +18135,7 @@
      "kind": "text",
      "rect": [
       120,
-      730,
+      701,
       400,
       72
      ],
@@ -18140,7 +18152,7 @@
      "kind": "plate",
      "rect": [
       120,
-      830,
+      801,
       400,
       72
      ],
@@ -18202,7 +18214,7 @@
      "kind": "text",
      "rect": [
       120,
-      830,
+      801,
       400,
       72
      ],
