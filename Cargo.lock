@@ -1033,6 +1033,7 @@ dependencies = [
  "base64",
  "engine",
  "engine_core",
+ "engine_profile",
  "engine_profiler",
  "engine_registry",
  "engine_worker",
@@ -1082,9 +1083,12 @@ name = "engine_profiler"
 version = "0.1.0"
 dependencies = [
  "backtrace",
+ "bevy_ecs",
  "engine",
+ "engine_profile",
+ "engine_registry",
  "fxprof-processed-profile",
- "iced-x86",
+ "serde",
  "serde_json",
  "windows-sys 0.61.2",
 ]
@@ -1564,15 +1568,6 @@ name = "hermit-abi"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
-
-[[package]]
-name = "iced-x86"
-version = "1.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c447cff8c7f384a7d4f741cfcff32f75f3ad02b406432e8d6c878d56b1edf6b"
-dependencies = [
- "lazy_static",
-]
 
 [[package]]
 name = "indexmap"
@@ -4079,11 +4074,16 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "engine_command_line",
+ "engine_panic",
  "engine_scene",
  "engine_worker",
+ "png",
  "serde_json",
  "sha2",
  "toml_edit",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

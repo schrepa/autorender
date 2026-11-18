@@ -61,7 +61,6 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
   const opening = new AbortController();
   const firstText = source && settled(Promise.resolve().then(() => source.load(opening.signal)));
   startGame<T>({
-    parameters: { scene: "PATH" },
     source,
     async create(canvas, signal) {
       signal.addEventListener("abort", () => opening.abort(signal.reason), { once: true });

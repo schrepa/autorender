@@ -3,46 +3,39 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-pub const MAX_EVENTS: usize = 65_536;
-
 #[derive(Clone, Copy, Debug)]
-pub struct Row {
-    pub name: &'static str,
-    pub ms: f64,
-    pub worst_ms: f64,
-    pub runs: u64,
-    pub allocations: u64,
+pub enum Fact<'a> {
+    Count(u64),
+    Number(f64),
+    Text(&'a str),
+    Unavailable(&'static str),
 }
 
-#[cfg(feature = "enabled")]
+#[cfg(feature = "profiling")]
 mod allocator;
+#[cfg(feature = "dev")]
+mod collector;
 #[cfg(target_arch = "wasm32")]
 mod heap;
+#[cfg(feature = "profiling")]
+mod threads;
+#[cfg(feature = "profiling")]
+pub use allocator::{ALWAYS_SAMPLED_BYTES, SAMPLE_EVERY, TrackingAllocator, sample_allocations};
+#[cfg(feature = "dev")]
+pub use collector::*;
 #[cfg(target_arch = "wasm32")]
 pub use heap::GrowingHeap;
-#[cfg(feature = "enabled")]
-mod collector;
-#[cfg(feature = "rows")]
-mod rows;
-#[cfg(feature = "enabled")]
-mod threads;
-#[cfg(feature = "enabled")]
-pub use allocator::{
-    ALWAYS_SAMPLED_BYTES, AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot,
-    sample_allocations,
-};
-#[cfg(feature = "enabled")]
-pub use collector::*;
-#[cfg(feature = "rows")]
-pub use rows::{
-    RowScope, install_clock, mark_speed, now_ms, row, take_rows, take_speed, take_waits, tally,
-    timed, waited,
-};
-#[cfg(feature = "enabled")]
+#[cfg(feature = "profiling")]
 pub use threads::{announce_thread, listen_to_threads};
 
-#[cfg(not(feature = "enabled"))]
+#[cfg(not(feature = "profiling"))]
+#[inline(always)]
+pub fn announce_thread(_: std::fmt::Arguments<'_>) {}
+
+#[cfg(not(feature = "dev"))]
 mod disabled {
+    const UNMEASURED: &str = "measured_in_dev_builds_only";
+
     pub struct Span;
     impl Drop for Span {
         #[inline(always)]
@@ -55,75 +48,36 @@ mod disabled {
     #[inline(always)]
     pub fn counter(_: &'static str, _: f64) {}
     #[inline(always)]
-    pub fn active() -> bool {
-        false
-    }
+    pub fn event(_: &'static str, _: &str, _: &[(&'static str, crate::Fact<'_>)]) {}
     #[inline(always)]
-    pub fn capture_id() -> Option<u64> {
-        None
+    pub fn recording() -> bool {
+        false
     }
     #[inline(always)]
     pub fn set_frame(_: u64) {}
     #[inline(always)]
-    pub fn current_frame() -> u64 {
-        0
-    }
-    #[cfg(not(feature = "rows"))]
-    pub struct RowScope;
-    #[cfg(not(feature = "rows"))]
-    impl Drop for RowScope {
-        #[inline(always)]
-        fn drop(&mut self) {}
-    }
-    #[cfg(not(feature = "rows"))]
-    #[inline(always)]
-    pub fn row(_: &'static str) -> usize {
-        0
-    }
-    #[cfg(not(feature = "rows"))]
-    #[inline(always)]
-    pub fn timed(_: usize) -> RowScope {
-        RowScope
-    }
-    #[cfg(not(feature = "rows"))]
-    #[inline(always)]
-    pub fn tally(_: &'static str, _: u64) {}
-    #[cfg(not(feature = "rows"))]
-    #[inline(always)]
-    pub fn now_ms() -> f64 {
-        0.0
-    }
-    #[cfg(not(feature = "rows"))]
-    #[inline(always)]
-    pub fn waited(_: &str, _: f64) {}
-    #[cfg(not(feature = "rows"))]
-    #[inline(always)]
-    pub fn mark_speed() {}
-    #[inline(always)]
-    pub fn announce_thread(_: std::fmt::Arguments<'_>) {}
-    #[cfg(not(feature = "rows"))]
-    pub fn take_rows() -> Vec<crate::Row> {
-        Vec::new()
-    }
-    #[cfg(not(feature = "rows"))]
-    pub fn take_waits() -> Vec<crate::Row> {
-        Vec::new()
-    }
-    #[cfg(not(feature = "rows"))]
-    pub fn take_speed() -> Option<(f64, f64)> {
-        None
-    }
-    pub struct Aggregate;
-    impl Aggregate {
-        #[inline(always)]
-        pub fn new(_: &'static str, _: &'static str) -> Self {
-            Self
+    pub fn install_clock(_: fn() -> f64) {}
+
+    #[derive(Default)]
+    pub struct Runs;
+    impl Runs {
+        pub fn runs(&self) -> Result<u64, &'static str> {
+            Err(UNMEASURED)
         }
-        #[inline(always)]
-        pub fn measure<T>(&mut self, run: impl FnOnce() -> T) -> T {
-            run()
+        pub fn ns(&self) -> Result<u64, &'static str> {
+            Err(UNMEASURED)
         }
+        pub fn allocations(&self) -> Result<u64, &'static str> {
+            Err(UNMEASURED)
+        }
+        pub fn allocated_bytes(&self) -> Result<u64, &'static str> {
+            Err(UNMEASURED)
+        }
+    }
+    #[inline(always)]
+    pub fn run<T>(_: &Runs, _: &'static str, _: &'static str, work: impl FnOnce() -> T) -> T {
+        work()
     }
 }
-#[cfg(not(feature = "enabled"))]
+#[cfg(not(feature = "dev"))]
 pub use disabled::*;

@@ -89,8 +89,6 @@ enum Reported {
 
 struct Slot {
     orders: Sender<Order>,
-    #[cfg(feature = "profiling")]
-    sampled: Option<engine_profiler::sampler::SampledThread>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -134,34 +132,19 @@ impl JobPool {
                 let (orders, inbox) = channel();
                 let report = self.report.clone();
                 let list = Arc::clone(list);
-                #[cfg(feature = "profiling")]
-                let (register, registered) = channel();
                 let thread = std::thread::Builder::new()
                     .name(format!("engine-jobs-{index}"))
                     .spawn(move || {
-                        #[cfg(feature = "profiling")]
-                        let _ = register.send(engine_profiler::sampler::SampledThread::current(
-                            format!("Job worker {index}"),
-                        ));
+                        engine_profile::announce_thread(format_args!("Job worker {index}"));
                         work(index as u32, list, &inbox, &report);
                     })
                     .expect("thread_starts");
                 Slot {
                     orders,
-                    #[cfg(feature = "profiling")]
-                    sampled: registered.recv().ok().flatten(),
                     thread: Some(thread),
                 }
             })
             .collect();
-    }
-
-    #[cfg(feature = "profiling")]
-    pub fn sampled_threads(&self) -> Vec<engine_profiler::sampler::SampledThread> {
-        self.slots
-            .iter()
-            .filter_map(|slot| slot.sampled.clone())
-            .collect()
     }
 
     pub fn size(&self) -> usize {

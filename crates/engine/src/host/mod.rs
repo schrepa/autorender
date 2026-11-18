@@ -16,8 +16,11 @@ pub use engine_core::{
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
-pub use engine_registry::{call, run_operation};
 pub use frame_loop::{FrameLoop, FramePhase, HostPause};
+#[cfg(feature = "dev")]
+pub(crate) use frame_loop::in_flight;
+#[cfg(feature = "dev")]
+pub use crate::dev_host::{DevTake, Shot, instrument, instruments};
 pub use input::{DeviceGatherer, InputSource};
 pub use jobs::JobOrder;
 pub(crate) use jobs::{Finished, JobScheduler};

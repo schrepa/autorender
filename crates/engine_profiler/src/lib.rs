@@ -4,12 +4,9 @@
 )]
 
 #[cfg(feature = "profiling")]
-mod capabilities;
-#[cfg(feature = "profiling")]
 mod deep;
 #[cfg(feature = "profiling")]
 pub mod sampler;
-pub mod stack;
 
 #[cfg(feature = "profiling")]
-pub use deep::{DeepCapture, ProfileFiles};
+pub use deep::{DeepCapture, DeepFiles, DeepSizes, deep_setting, deep_sizes};

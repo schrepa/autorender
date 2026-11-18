@@ -1,6 +1,11 @@
 import type { JobOrder } from "../engine/jobs";
-import type { Reply, Step } from "./reply";
 import type { FrameStats } from "./stats";
+
+export interface DevTake {
+  replies: [number, string][];
+  pictures: { run: string | null; file: string; width: number; height: number }[];
+  reload: boolean;
+}
 
 export type Json<T> = string & { readonly json?: T };
 
@@ -9,7 +14,6 @@ export function parseJson<T>(json: Json<T>): T {
 }
 
 export interface Runtime {
-  frame(timestamp: number, width: number, height: number): void;
   key(code: string, down: boolean): void;
   mouse_button(button: number, down: boolean): void;
   motion(dx: number, dy: number): void;
@@ -42,9 +46,10 @@ export interface Runtime {
   stats(): Json<FrameStats>;
   cursor_mode(): number;
   job_hash(): Uint8Array;
-  dev_request?(line: string, context: string): Json<Step>;
-  dev_resume?(outcome: string, context: string): Json<Step>;
-  dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;
-  dev_refusal?(error: string): Json<Reply>;
+  dev_push?(line: string): number;
+  dev_take?(): Json<DevTake>;
+  dev_pixels?(): Uint8Array;
+  dev_reloaded?(source: string, files?: unknown): void;
+  dev_reload_failed?(error: string): void;
   free(): void;
 }

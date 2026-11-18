@@ -5,22 +5,6 @@ use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::authoring;
 use serde_json::{Value, json};
 
-pub fn verbs() -> Result<Value, String> {
-    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let verbs = engine_dev::schemas::verbs(engine.app.world())?;
-    Ok(Value::Array(
-        verbs
-            .into_iter()
-            .map(|(verb, request)| json!({ "verb": verb, "request": request }))
-            .collect(),
-    ))
-}
-
-pub fn calls() -> Result<Value, String> {
-    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    engine_dev::schemas::calls(engine.app.world())
-}
-
 pub fn scene(arguments: &[String]) -> Result<(), String> {
     let result = scene_command(arguments);
     let succeeded = result.is_ok();

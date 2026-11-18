@@ -1,17 +1,13 @@
 import { FRAME_INTERVAL_MS, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
 import { engineError, engineFailure } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
-import type { FrameStats } from "../generated/stats";
+import type { Development } from "./dev";
 import { BrowserInput } from "./input";
 import { type JobPool, jobPool } from "./jobs";
 import { fatal, panicReport } from "./panic";
-import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
-export type { FrameStats, Runtime };
-export function readStats(runtime: Pick<Runtime, "stats">): FrameStats {
-  return parseJson(runtime.stats());
-}
+export type { Runtime };
 const PAGE_ELEMENTS = ["scene", "status", "message", "pause", "reset", "fps", "simulation", "extraction", "draws", "uploads", "render-time"];
 
 function ensurePage() {
@@ -53,6 +49,8 @@ class FrameHud {
   private simulation = 0;
   private extraction = 0;
   private submission = 0;
+  private gpu = 0;
+  private timed = 0;
   private samples = 0;
   private marked = { at: -Infinity, phase: -1 };
 
@@ -60,18 +58,17 @@ class FrameHud {
     const at = performance.now();
     if (phase === this.marked.phase && at - this.marked.at < 250) return;
     this.marked = { at, phase };
-    const stats = readStats(runtime);
+    const stats = parseJson(runtime.stats());
     performance.mark("engine-preparing", { detail: {
       phase, tick: stats.tick, preparation_ms: stats.preparation_ms, readiness: stats.readiness,
       pipelines: stats.pipelines, pipelines_created: stats.pipelines_created, jobs: stats.jobs, upload_bytes: stats.upload_bytes,
-      waiting: stats.kind_passes.filter(pass => pass.state.state === "waiting"),
     } });
   }
 
   reset() {
     this.span = undefined;
     this.intervals = 0; this.elapsed = 0;
-    this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0;
+    this.simulation = 0; this.extraction = 0; this.submission = 0; this.gpu = 0; this.timed = 0; this.samples = 0;
   }
 
   frame(runtime: Runtime, timestamp: number) {
@@ -81,20 +78,22 @@ class FrameHud {
     if (timestamp - span.start < 250) return;
     this.elapsed += timestamp - span.start; this.intervals += span.frames;
     this.span = { start: timestamp, frames: 0 };
-    const stats = readStats(runtime);
+    const stats = parseJson(runtime.stats());
+    const gpu = stats.resolution.gpu_ms;
     this.simulation += stats.simulation_ms;
     this.extraction += stats.extraction_ms;
     this.submission += stats.render_ms;
+    if (typeof gpu === "number") { this.gpu += gpu; this.timed++; }
     this.samples++;
     metric("fps", this.elapsed > 0 ? (this.intervals * 1000 / this.elapsed).toFixed(0) : "—", "FPS");
     metric("simulation", (this.simulation / this.samples).toFixed(2), "ms");
     metric("extraction", (this.extraction / this.samples).toFixed(2), "ms");
     metric("draws", String(stats.draw_calls));
     element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
-    const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
-    element("render-time").textContent = `${stats.instances} drawn${triangles} · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
+    const gpuTime = typeof gpu === "number" ? `GPU ${(this.gpu / this.timed).toFixed(2)} ms` : `GPU time unavailable: ${gpu.unavailable}`;
+    element("render-time").textContent = `${stats.instances.toLocaleString("en-US")} instances · ${stats.indirect_draws} indirect draws · CPU render ${(this.submission / this.samples).toFixed(2)} ms · ${gpuTime}`;
     if (this.samples >= 4) {
-      this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0; this.elapsed = 0; this.intervals = 0;
+      this.simulation = 0; this.extraction = 0; this.submission = 0; this.gpu = 0; this.timed = 0; this.samples = 0; this.elapsed = 0; this.intervals = 0;
     }
   }
 }
@@ -170,13 +169,11 @@ class GpuPace {
 
 export interface GameOptions<T extends Runtime> {
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
-  controls?: Record<string, { values: string; run(game: T, args: Record<string, unknown>): unknown }>;
-  parameters?: Record<string, string>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
 }
 
-interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; busy: boolean; shown: boolean }
-type HostState<T> = { kind: "starting" } | Live<T> | { kind: "failed"; stopped: string | undefined; busy: boolean } | { kind: "disposed" };
+interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; shown: boolean }
+type HostState<T> = { kind: "starting" } | Live<T> | { kind: "failed" } | { kind: "disposed" };
 
 export function startGame<T extends Runtime>(options: GameOptions<T>) {
 ensurePage();
@@ -192,16 +189,14 @@ const reset = element<HTMLButtonElement>("reset");
 const input = new BrowserInput(canvas);
 const instrumented = import.meta.env.MODE === "profiling";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
-const preparedDevelopment = development && new URLSearchParams(location.search).get("prepare") === "1";
-const prepares = !development || preparedDevelopment;
-if (prepares) canvas.style.visibility = "hidden";
+canvas.style.visibility = "hidden";
 let state: HostState<T> = { kind: "starting" };
-let disposeDevelopment: (() => void) | undefined;
+let dev: Development | undefined;
 let request = 0;
 const hud = new FrameHud();
 const pace = new GpuPace(canvas, () => {
   const current = live();
-  if (current?.kind === "playing" && current.shown && !current.paused && !document.hidden) run(current, performance.now(), true);
+  if (current?.kind === "playing" && current.shown && !halted(current)) run(current, performance.now(), true);
 });
 let jobs: JobPool | undefined;
 const ticks = new MessageChannel();
@@ -221,16 +216,9 @@ function live(): Live<T> | undefined {
   return state.kind === "preparing" || state.kind === "playing" ? state : undefined;
 }
 
-function disposed() { return state.kind === "disposed"; }
+function halted(current: Live<T>) { return current.paused || document.hidden; }
 
-function exclusive<R>(work: () => Promise<R>): Promise<R> | undefined {
-  const current = state;
-  if (current.kind === "starting" || current.kind === "disposed" || current.busy) return undefined;
-  current.busy = true;
-  return work().finally(() => {
-    if (state.kind !== "starting" && state.kind !== "disposed") state.busy = false;
-  });
-}
+function disposed() { return state.kind === "disposed"; }
 
 function clearInput() { input.clear(); }
 
@@ -280,10 +268,16 @@ function stopClock() {
   suspendGame();
 }
 
+function wake() {
+  if (request || !live()) return;
+  request = -++tickCount;
+  ticks.port2.postMessage(request);
+}
+
 function fail(error: unknown) {
   if (state.kind === "disposed" || state.kind === "failed") return;
   const stopped = fatal(error) ? panicReport(error)?.message ?? String(error) : undefined;
-  state = { kind: "failed", stopped, busy: state.kind !== "starting" && state.busy };
+  state = { kind: "failed" };
   connectInput();
   const refused = engineError(error);
   setStatus(stopped ? "Engine stopped" : refused ? "Engine error" : "Renderer unavailable", "error");
@@ -294,6 +288,7 @@ function fail(error: unknown) {
   pause.disabled = true;
   reset.disabled = true;
   halt();
+  dev?.close(stopped ? `runtime_panicked ${stopped}` : `runtime_failed ${refused?.message ?? String(error)}`);
   (jobs ?? jobPool())?.terminate();
   jobs = undefined;
   console.error(error);
@@ -303,18 +298,14 @@ function guarded(work: () => void) {
   try { work(); } catch (error) { fail(error); }
 }
 
-function gpuQueue(): GPUQueue | undefined {
-  return (canvas.getContext("webgpu") as GPUCanvasContext | null)?.getConfiguration()?.device.queue;
-}
-
 function starting(current: Live<T>) {
   current.kind = "playing";
-  const queue = gpuQueue();
+  const queue = (canvas.getContext("webgpu") as GPUCanvasContext | null)?.getConfiguration()?.device.queue;
   if (!queue) { started(current); return; }
   void queue.onSubmittedWorkDone().then(() => {
     if (live() !== current || current.shown) return;
     started(current);
-    if (!request && !current.paused && !document.hidden) request = requestAnimationFrame(frame);
+    if (!request && !halted(current)) request = requestAnimationFrame(frame);
   }, () => undefined);
 }
 
@@ -324,14 +315,18 @@ function started(current: Live<T>) {
   hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;
-  if (!current.paused && !document.hidden) setStatus("WebGPU active", "running");
+  if (!halted(current)) setStatus("WebGPU active", "running");
 }
 
 function frame(timestamp: number) {
   request = 0;
   const current = live();
-  if (!current || current.paused || document.hidden) return;
+  if (!current) return;
   if (current.kind === "playing" && !current.shown) return;
+  if (halted(current)) {
+    if (dev?.pending()) run(current, timestamp, false);
+    return;
+  }
   if (current.kind === "playing" && pace.animation(timestamp)) {
     request = requestAnimationFrame(frame);
     return;
@@ -351,17 +346,21 @@ function run(current: Live<T>, at: number, early: boolean) {
     if (phase === FRAME_PHASES.playing) pace.submitted(since, early);
     input.setCursorMode(game.cursor_mode());
     jobs?.exchange();
+    dev?.turned();
     if (current.kind === "preparing") hud.preparing(game, phase);
     if (phase === FRAME_PHASES.started) {
       starting(current);
     } else if (phase === FRAME_PHASES.playing) {
       hud.frame(game, timestamp);
-    } else if (phase === FRAME_PHASES.idle) {
+    } else if (phase === FRAME_PHASES.idle || phase === FRAME_PHASES.paused) {
       pace.stop();
       hud.reset();
+      if (dev?.pending()) wake();
       return;
     }
-    if (live() && !request && (current.kind === "preparing" || current.shown)) schedule(phase);
+    if (!live() || request || (current.kind === "playing" && !current.shown)) return;
+    if (!halted(current)) schedule(phase);
+    else if (dev?.pending()) wake();
   } catch (error) { fail(error); }
 }
 
@@ -404,23 +403,19 @@ document.addEventListener("visibilitychange", () => {
   resumeGame("hidden");
   if (state.kind !== "failed") resume();
 }, listenerOptions);
-function setPaused(value: boolean) {
-  const current = live();
-  if (!current || current.paused === value) return;
-  current.paused = value;
-  pause.textContent = value ? "Resume" : "Pause";
-  pause.setAttribute("aria-pressed", String(value));
-  stopClock();
-  if (value) setStatus("Paused", "paused");
-  else resume();
-}
 pause.addEventListener("click", () => {
   const current = live();
-  if (current && !current.busy) setPaused(!current.paused);
+  if (!current) return;
+  current.paused = !current.paused;
+  pause.textContent = current.paused ? "Resume" : "Pause";
+  pause.setAttribute("aria-pressed", String(current.paused));
+  stopClock();
+  if (current.paused) setStatus("Paused", "paused");
+  else resume();
 }, listenerOptions);
 reset.addEventListener("click", () => {
   const current = live();
-  if (current && !current.busy) guarded(() => current.game.reset_camera());
+  if (current) guarded(() => current.game.reset_camera());
 }, listenerOptions);
 async function start() {
   if (disposed()) return;
@@ -429,9 +424,8 @@ async function start() {
   if (!("gpu" in navigator)) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "gpu" });
   const created = await options.create(canvas, lifecycle.signal);
   if (disposed()) { created.free(); return; }
-  state = { kind: prepares ? "preparing" : "playing", game: created, paused: development && !preparedDevelopment, busy: false, shown: !prepares };
+  state = { kind: "preparing", game: created, paused: false, shown: false };
   created.apply_host_settings(location.search);
-  created.set_preparation(prepares);
   connectInput();
   jobs = jobPool();
   jobs?.attach(created, fail);
@@ -442,26 +436,7 @@ async function start() {
   if (development) {
     const { connectDevelopment } = await import("./dev");
     if (disposed()) return;
-    disposeDevelopment = connectDevelopment({
-      game: created, signal: lifecycle.signal, paused: () => live()?.paused ?? false,
-      setPaused, exclusive,
-      size: () => [pixelWidth, pixelHeight],
-      poll: () => input.setCursorMode(created.cursor_mode()),
-      frame(timestamp) {
-        created.frame(timestamp, pixelWidth, pixelHeight);
-        jobs?.exchange();
-      },
-      source: options.source,
-      gpuWorkDone: () => gpuQueue()?.onSubmittedWorkDone(),
-      fail, stopped: () => state.kind === "failed" ? state.stopped : undefined,
-      controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {
-        values: control.values, run: (args: Record<string, unknown>) => control.run(created, args),
-      }])),
-      parameters: { ...HOST_PARAMETERS, ...options.parameters },
-    });
-    pause.textContent = "Resume";
-    pause.setAttribute("aria-pressed", "true");
-    await window.__engineDev!.request({ verb: "control", name: "render" });
+    dev = connectDevelopment({ game: created, signal: lifecycle.signal, source: options.source, wake, fail });
   }
   resume();
 }
@@ -471,7 +446,6 @@ window.addEventListener("pageshow", () => { resumeGame("suspended"); resume(); }
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
   jobs?.detach();
-  disposeDevelopment?.();
   lifecycle.abort();
   stopClock(); observer.disconnect(); input.dispose(); ticks.port1.close(); pace.dispose();
   state = { kind: "disposed" };
@@ -508,7 +482,7 @@ if (import.meta.hot && source && followed) {
   const follow = async () => {
     following = true;
     while (edited && (state.kind === "starting" || live())) {
-      await (exclusive(reloadSource) ?? new Promise(resolve => setTimeout(resolve, 100)));
+      await (live() ? reloadSource() : new Promise(resolve => setTimeout(resolve, 100)));
     }
     following = false;
   };

@@ -7,7 +7,7 @@ use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, List};
 
-use crate::entries::{JoinEntry, Kept, OperationEntry, Owned, SettingsEntry, StatsEntry};
+use crate::entries::{JoinEntry, Kept, Owned, SettingsEntry, StatsEntry};
 use crate::jobs::JobMember;
 use crate::scene::SpawnedBy;
 use crate::state::SwitchFn;
@@ -42,7 +42,6 @@ pub struct BrickRecord {
     owned: Vec<Owned>,
     settings: Vec<SettingsEntry>,
     stats: Vec<StatsEntry>,
-    operations: Vec<OperationEntry>,
     problems: Vec<Error>,
 }
 
@@ -70,7 +69,6 @@ impl BrickRecord {
             owned: Vec::new(),
             settings: Vec::new(),
             stats: Vec::new(),
-            operations: Vec::new(),
             problems: Vec::new(),
         }
     }
@@ -134,10 +132,6 @@ impl BrickRecord {
 
     pub fn stats_entries(&self) -> &[StatsEntry] {
         &self.stats
-    }
-
-    pub fn operations(&self) -> &[OperationEntry] {
-        &self.operations
     }
 
     pub fn entries<T: Any>(&self) -> impl Iterator<Item = &T> + '_ {
@@ -205,17 +199,6 @@ impl BrickRecord {
         }
         self.own(entry.owned());
         self.stats.push(entry);
-    }
-
-    pub fn operation(&mut self, mut entry: OperationEntry) {
-        entry.brick = self.package;
-        if self.operations.iter().any(|known| known.name == entry.name) {
-            let path = format!("$.operations.{}", entry.name);
-            self.problems
-                .push(Error::new(ErrorCode::NameTwice, path).got(self.package));
-            return;
-        }
-        self.operations.push(entry);
     }
 
     pub(crate) fn take_problems(&mut self) -> Vec<Error> {

@@ -1,26 +1,28 @@
 use engine::collections::HashMap;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use engine::host::median;
-use engine::{Error, ErrorCode, Expected, Game, GameHost};
+use bevy_ecs::resource::Resource;
+use bevy_ecs::world::World;
+use engine::{Error, ErrorCode, Expected};
+use engine_profile::{Event, Facts};
+use engine_registry::{Kind, Lands, NameEntry};
 use fxprof_processed_profile::{
     CategoryColor, CategoryHandle, CpuDelta, Frame, FrameFlags, FrameInfo, MarkerFieldFlags,
     MarkerFieldFormat, MarkerTiming, Profile, ReferenceTimestamp, SamplingInterval,
     StaticSchemaMarker, StaticSchemaMarkerField, StringHandle, Timestamp,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::sampler::{SampledThread, Sampler, Samples};
 
 const INTERVAL: Duration = Duration::from_millis(1);
-const HEAP_SAMPLES: usize = 65_536;
 const HEAP_FRAMES: usize = 48;
 const HEAP_STACKS: usize = 24;
-const STACKS_SHOWN: usize = 30;
-const SPANS_PER_BRICK: usize = 15;
 const ALLOCATOR_FRAMES: &[&str] = &[
     "backtrace::",
     "engine_profiler::deep::",
@@ -39,7 +41,18 @@ struct HeapSample {
     stack: Vec<u64>,
 }
 
-static HEAP: Mutex<Vec<HeapSample>> = Mutex::new(Vec::new());
+struct Heap {
+    samples: Vec<HeapSample>,
+    limit: usize,
+    dropped: u64,
+}
+
+static HEAP: Mutex<Heap> = Mutex::new(Heap {
+    samples: Vec::new(),
+    limit: 0,
+    dropped: 0,
+});
+static HEAP_BUSY: AtomicU64 = AtomicU64::new(0);
 
 fn sample_heap(bytes: usize) {
     let mut frames = [0_u64; HEAP_FRAMES];
@@ -49,82 +62,146 @@ fn sample_heap(bytes: usize) {
         depth += 1;
         depth < HEAP_FRAMES
     });
-    let Ok(mut samples) = HEAP.try_lock() else {
+    let Ok(mut heap) = HEAP.try_lock() else {
+        HEAP_BUSY.fetch_add(1, Relaxed);
         return;
     };
-    if samples.len() < HEAP_SAMPLES {
-        samples.push(HeapSample {
+    if heap.samples.len() < heap.limit {
+        heap.samples.push(HeapSample {
             bytes,
             stack: frames[..depth].to_vec(),
         });
+    } else {
+        heap.dropped += 1;
     }
 }
 
-pub struct DeepCapture {
-    sampler: Option<Sampler>,
+const UNSET: &str = "settings.deep_not_set";
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeepSizes {
+    pub heap_samples: usize,
+    pub thread_samples: usize,
+    pub events: usize,
+    pub rows: usize,
 }
 
-pub struct ProfileFiles {
-    pub report: PathBuf,
-    pub firefox: PathBuf,
-    pub summary: PathBuf,
+#[derive(Resource, Default)]
+struct DeepSetting(Option<DeepSizes>);
+
+pub fn deep_setting(world: &mut World) {
+    world.init_resource::<DeepSetting>();
+    let entry = NameEntry::read("settings.deep", Kind::Setting, |reach, _| {
+        Ok(reach
+            .world
+            .get_resource::<DeepSetting>()
+            .and_then(|setting| setting.0)
+            .map_or_else(|| json!({ "unavailable": UNSET }), |sizes| json!(sizes)))
+    })
+    .args(
+        json!({ "value": "heap_samples, thread_samples, events, rows (set, all four)" }),
+        json!({ "value": { "heap_samples": 65_536, "thread_samples": 60_000, "events": 65_536, "rows": 30 } }),
+    )
+    .set(Lands::ThisFrame, |reach, args| {
+        let sizes: DeepSizes = args
+            .get("value")
+            .cloned()
+            .ok_or_else(|| Error::new(ErrorCode::InvalidArguments, "$.args.value").expected(Expected::Present))
+            .and_then(|value| {
+                serde_json::from_value(value).map_err(|error| {
+                    Error::new(ErrorCode::InvalidArguments, "$.args.value").got(error.to_string())
+                })
+            })?;
+        reach.world.insert_resource(DeepSetting(Some(sizes)));
+        Ok(json!(sizes))
+    });
+    engine_registry::register(world, entry);
+}
+
+pub fn deep_sizes(world: &World) -> Result<DeepSizes, &'static str> {
+    world
+        .get_resource::<DeepSetting>()
+        .and_then(|setting| setting.0)
+        .ok_or(UNSET)
+}
+
+pub struct DeepCapture {
+    sampler: Result<Sampler, &'static str>,
+    sizes: DeepSizes,
+    recorded: bool,
+}
+
+pub struct DeepFiles {
+    pub viewer: PathBuf,
+    pub digest: PathBuf,
     pub complete: bool,
 }
 
 impl DeepCapture {
-    pub fn start<G: Game>(
-        host: &mut GameHost<G>,
-        threads: Vec<SampledThread>,
-        max_events: usize,
-    ) -> Result<Self, Error> {
-        host.profiling_start(max_events)?;
-        HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
-        engine::profiling::sample_allocations(Some(sample_heap));
-        let sampler = (!threads.is_empty())
-            .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
-            .flatten();
-        Ok(Self { sampler })
+    pub fn start(threads: Vec<SampledThread>, sizes: DeepSizes) -> Self {
+        {
+            let mut heap = HEAP.lock().unwrap_or_else(PoisonError::into_inner);
+            heap.samples = Vec::with_capacity(sizes.heap_samples);
+            heap.limit = sizes.heap_samples;
+            heap.dropped = 0;
+        }
+        HEAP_BUSY.store(0, Relaxed);
+        engine_profile::sample_allocations(Some(sample_heap));
+        engine_profile::keep(sizes.events);
+        let sampler = if threads.is_empty() {
+            Err("no_threads_named")
+        } else {
+            Sampler::start(
+                threads,
+                INTERVAL,
+                engine::host::now_ms,
+                sizes.thread_samples,
+            )
+            .ok_or("sampler_unavailable_on_this_host")
+        };
+        Self {
+            sampler,
+            sizes,
+            recorded: engine_profile::recording(),
+        }
     }
 
-    pub fn finish<G: Game>(
-        self,
-        host: &mut GameHost<G>,
-        folder: &Path,
-        stem: &str,
-        context: Value,
-    ) -> Result<ProfileFiles, Error> {
+    pub fn finish(self, folder: &Path, stem: &str) -> Result<DeepFiles, Error> {
+        let (events, events_dropped) = engine_profile::take_kept();
         let samples = self.sampler.map(Sampler::finish);
-        engine::profiling::sample_allocations(None);
-        let heap = std::mem::take(&mut *HEAP.lock().unwrap_or_else(PoisonError::into_inner));
-        let mut report = host.profiling_stop()?;
-        host.wait_for_gpu()?;
-        host.profiling_poll();
-        report["gpu"] = host.profiling_report();
-        report["context"] = context;
-        let symbols = Symbols::of(samples.as_ref(), &heap);
-        report["heap_samples"] = heap_samples(&heap, &symbols);
-        let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
-        let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
-        std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
-        let files = ProfileFiles {
-            report: folder.join(format!("{stem}.json")),
-            firefox: folder.join(format!("{stem}.firefox.json")),
-            summary: folder.join(format!("{stem}.summary.json")),
-            complete: report["gpu"]["complete"] == true
-                && report["cpu"]["complete"] == true
-                && samples.is_some(),
+        let unsampled = samples.as_ref().err().copied();
+        let samples = samples.ok();
+        engine_profile::sample_allocations(None);
+        let (heap, dropped) = {
+            let mut heap = HEAP.lock().unwrap_or_else(PoisonError::into_inner);
+            let dropped = heap.dropped + HEAP_BUSY.load(Relaxed);
+            (std::mem::take(&mut heap.samples), dropped)
         };
-        write(&files.report, &report)?;
-        write(&files.firefox, &profile)?;
-        let mut summary = summary;
-        summary["heap_samples"] = report["heap_samples"].clone();
-        summary["spans_by_brick"] = spans_by_brick(&report);
-        summary["gpu_memory"] = host.gpu_allocations();
-        summary["files"] = json!({
-            "report": files.report.display().to_string(),
-            "firefox": files.firefox.display().to_string(),
-        });
-        write(&files.summary, &summary)?;
+        let symbols = Symbols::of(samples.as_ref(), &heap);
+        let viewer = firefox_profile(&events, samples.as_ref(), &symbols);
+        let mut digest = digest(samples.as_ref(), &symbols, self.sizes);
+        digest["events"] = if self.recorded {
+            json!({ "kept": events.len(), "dropped": events_dropped })
+        } else {
+            json!({ "unavailable": "no_record_running" })
+        };
+        if let Some(reason) = unsampled {
+            digest["cpu_samples"] = json!({ "unavailable": reason });
+        }
+        digest["heap"] = heap_samples(&heap, dropped, &symbols, self.sizes);
+        std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
+        let files = DeepFiles {
+            viewer: folder.join(format!("{stem}.firefox.json")),
+            digest: folder.join(format!("{stem}.digest.json")),
+            complete: samples.as_ref().is_some_and(|samples| {
+                samples.threads.iter().all(|thread| thread.missed == 0)
+            }) && dropped == 0
+                && events_dropped == 0
+                && self.recorded,
+        };
+        write(&files.viewer, &viewer)?;
+        write(&files.digest, &digest)?;
         Ok(files)
     }
 }
@@ -163,7 +240,6 @@ mod erased {
 #[derive(Clone, Default)]
 struct Resolved {
     frames: Vec<SymbolFrame>,
-    start: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -218,9 +294,6 @@ fn resolve(address: u64) -> Resolved {
             file: symbol.filename().map(|file| file.display().to_string()),
             line: symbol.lineno(),
         });
-        if let Some(start) = symbol.addr() {
-            resolved.start = Some(start as u64);
-        }
     });
     resolved
 }
@@ -282,16 +355,52 @@ fn at(ms: f64) -> Timestamp {
     Timestamp::from_millis_since_reference(ms.max(0.0))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
-fn firefox_profile(
-    report: &Value,
-    samples: Option<&Samples>,
-    symbols: &Symbols,
-    adapter: &engine::AdapterInfo,
-) -> Profile {
+struct Spanned<'a> {
+    start: f64,
+    end: f64,
+    depth: u32,
+    category: &'static str,
+    name: &'a str,
+}
+
+fn spans(events: &[Event]) -> Vec<Spanned<'_>> {
+    let mut spans: Vec<Spanned<'_>> = events
+        .iter()
+        .filter_map(|event| match event.facts {
+            Facts::Span {
+                category,
+                ms,
+                depth,
+            } => Some(Spanned {
+                start: event.at_ms,
+                end: event.at_ms + ms,
+                depth,
+                category,
+                name: &event.name,
+            }),
+            Facts::Counter(_) | Facts::Listed { .. } => None,
+        })
+        .collect();
+    spans.sort_by(|a, b| a.start.total_cmp(&b.start));
+    spans
+}
+
+fn bounds(spans: &[Spanned<'_>], samples: Option<&Samples>) -> (f64, f64) {
+    let times = spans
+        .iter()
+        .flat_map(|span| [span.start, span.end])
+        .chain(
+            samples
+                .into_iter()
+                .flat_map(|samples| &samples.threads)
+                .flat_map(|thread| thread.samples.iter().map(|sample| sample.time_ms)),
+        );
+    times.fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), time| {
+        (low.min(time), high.max(time))
+    })
+}
+
+fn firefox_profile(events: &[Event], samples: Option<&Samples>, symbols: &Symbols) -> Profile {
     let now = engine::host::now_ms();
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -300,19 +409,18 @@ fn firefox_profile(
     let interval = samples.map_or(INTERVAL, |samples| {
         Duration::from_secs_f64(samples.interval_ms / 1000.0)
     });
-    let product = format!("engine_native on {}", adapter.name);
     let mut profile = Profile::new(
-        &product,
+        "engine_native",
         ReferenceTimestamp::from_millis_since_unix_epoch(epoch),
         SamplingInterval::from_nanos(interval.as_nanos() as u64),
     );
     profile.set_os_name(std::env::consts::OS);
-    let start = report["cpu"]["start_ms"].as_f64().unwrap_or(0.0);
-    let end = report["cpu"]["end_ms"].as_f64().unwrap_or(now);
-    let process = profile.add_process(&product, std::process::id(), at(start));
+    let spans = spans(events);
+    let (start, end) = bounds(&spans, samples);
+    let start = if start.is_finite() { start } else { now };
+    let process = profile.add_process("engine_native", std::process::id(), at(start));
     let native = profile.add_category("Native code", CategoryColor::Blue);
     let engine_category = profile.add_category("Engine spans", CategoryColor::Green);
-    let gpu_category = profile.add_category("GPU", CategoryColor::Orange);
     let mut main = None;
     for (index, thread) in samples
         .into_iter()
@@ -327,8 +435,7 @@ fn firefox_profile(
         }
         profile.add_initial_visible_thread(handle);
         for sample in &thread.samples {
-            let names = functions(&sample.stack, symbols);
-            let frames: Vec<FrameInfo> = names
+            let frames: Vec<FrameInfo> = functions(&sample.stack, symbols)
                 .iter()
                 .map(|name| FrameInfo {
                     frame: Frame::Label(profile.intern_string(name)),
@@ -344,141 +451,58 @@ fn firefox_profile(
             profile.add_sample(handle, at(sample.time_ms), stack, cpu, 1);
         }
     }
-    let events: Vec<&Value> = report["cpu"]["events"]
-        .as_array()
-        .map(|events| {
-            events
-                .iter()
-                .filter(|event| event["kind"] == "span")
-                .collect()
-        })
-        .unwrap_or_default();
-    let spans = profile.add_thread(process, 0, at(start), false);
-    profile.set_thread_name(spans, "Engine spans");
-    profile.add_initial_visible_thread(spans);
-    let span_kind = profile.intern_string("engine span");
-    let mut nested: Vec<(f64, f64, u64, String)> = Vec::with_capacity(events.len());
-    for event in &events {
-        let (Some(begin), Some(duration)) =
-            (event["start_ms"].as_f64(), event["duration_ms"].as_f64())
-        else {
-            continue;
-        };
-        let name = event["name"].as_str().unwrap_or("span");
+    let track = profile.add_thread(process, 0, at(start), false);
+    profile.set_thread_name(track, "Engine spans");
+    profile.add_initial_visible_thread(track);
+    for span in &spans {
         let marker = SpanMarker {
-            name: profile.intern_string(name),
-            kind: span_kind,
+            name: profile.intern_string(span.name),
+            kind: profile.intern_string(span.category),
             category: engine_category,
         };
         profile.add_marker(
-            main.unwrap_or(spans),
-            MarkerTiming::Interval(at(begin), at(begin + duration)),
+            main.unwrap_or(track),
+            MarkerTiming::Interval(at(span.start), at(span.end)),
             marker,
         );
-        nested.push((
-            begin,
-            begin + duration,
-            event["depth"].as_u64().unwrap_or(0),
-            name.to_owned(),
-        ));
     }
-    nested.sort_by(|a, b| a.0.total_cmp(&b.0));
     let step = interval.as_secs_f64() * 1000.0;
-    let mut active: Vec<&(f64, f64, u64, String)> = Vec::new();
+    let mut active: Vec<&Spanned<'_>> = Vec::new();
     let mut next = 0;
     let mut time = start;
     while time < end {
-        while next < nested.len() && nested[next].0 <= time {
-            active.push(&nested[next]);
+        while next < spans.len() && spans[next].start <= time {
+            active.push(&spans[next]);
             next += 1;
         }
-        active.retain(|span| span.1 > time);
+        active.retain(|span| span.end > time);
         if !active.is_empty() {
             let mut stack = active.clone();
-            stack.sort_by_key(|span| span.2);
+            stack.sort_by_key(|span| span.depth);
             let frames: Vec<FrameInfo> = stack
                 .iter()
                 .map(|span| FrameInfo {
-                    frame: Frame::Label(profile.intern_string(&span.3)),
+                    frame: Frame::Label(profile.intern_string(span.name)),
                     category_pair: engine_category.into(),
                     flags: FrameFlags::empty(),
                 })
                 .collect();
-            let stack = profile.intern_stack_frames(spans, frames.into_iter());
-            profile.add_sample(spans, at(time), stack, CpuDelta::from_millis(step), 1);
+            let stack = profile.intern_stack_frames(track, frames.into_iter());
+            profile.add_sample(track, at(time), stack, CpuDelta::from_millis(step), 1);
         }
         time += step;
     }
-    let submissions: HashMap<String, f64> = events
-        .iter()
-        .filter(|event| event["name"] == "submit_and_present")
-        .filter_map(|event| {
-            Some((
-                event["frame"].as_u64()?.to_string(),
-                event["start_ms"].as_f64()?,
-            ))
-        })
-        .collect();
-    let gpu = &report["gpu"];
-    for (track, list, kind_name) in [
-        ("GPU passes", &gpu["samples"], "gpu pass"),
-        ("GPU draws", &gpu["draw_samples"], "gpu draw"),
-    ] {
-        let Some(list) = list.as_array().filter(|list| !list.is_empty()) else {
-            continue;
-        };
-        let handle = profile.add_thread(process, 0, at(start), false);
-        profile.set_thread_name(handle, track);
-        profile.set_thread_show_markers_in_timeline(handle, true);
-        profile.add_initial_visible_thread(handle);
-        let kind = profile.intern_string(kind_name);
-        for sample in list {
-            let (Some(frame), Some(offset), Some(duration)) = (
-                sample["frame"]
-                    .as_str()
-                    .and_then(|frame| submissions.get(frame)),
-                sample["start_ms"].as_f64(),
-                sample["duration_ms"].as_f64(),
-            ) else {
-                continue;
-            };
-            let name = sample["name"]
-                .as_str()
-                .or_else(|| sample["label"].as_str())
-                .unwrap_or("gpu");
-            let marker = SpanMarker {
-                name: profile.intern_string(name),
-                kind,
-                category: gpu_category,
-            };
-            let begin = frame + offset;
-            profile.add_marker(
-                handle,
-                MarkerTiming::Interval(at(begin), at(begin + duration)),
-                marker,
-            );
-        }
-    }
-    let mut counters: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
-    for event in report["cpu"]["events"].as_array().into_iter().flatten() {
-        if event["kind"] == "counter"
-            && event["name"].as_str().is_some_and(|name| {
-                name == "memory.live_requested_bytes" || name == "memory.allocations_total"
-            })
-            && let (Some(name), Some(time), Some(value)) = (
-                event["name"].as_str(),
-                event["start_ms"].as_f64(),
-                event["value"].as_f64(),
-            )
-        {
+    let mut counters: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
+    for event in events {
+        if let Facts::Counter(value) = event.facts {
             counters
-                .entry(name.to_owned())
+                .entry(&event.name)
                 .or_default()
-                .push((time, value));
+                .push((event.at_ms, value));
         }
     }
     for (name, values) in counters {
-        let counter = profile.add_counter(process, &name, "Engine", &name);
+        let counter = profile.add_counter(process, name, "Engine", name);
         let mut last = 0.0;
         for (time, value) in values {
             profile.add_counter_sample(counter, at(time), value - last, 1);
@@ -488,7 +512,7 @@ fn firefox_profile(
     profile
 }
 
-fn heap_samples(samples: &[HeapSample], symbols: &Symbols) -> Value {
+fn heap_samples(samples: &[HeapSample], dropped: u64, symbols: &Symbols, sizes: DeepSizes) -> Value {
     let mut stacks: HashMap<Vec<String>, (u64, u64)> = HashMap::default();
     let mut bytes = 0;
     for sample in samples {
@@ -509,82 +533,20 @@ fn heap_samples(samples: &[HeapSample], symbols: &Symbols) -> Value {
     let mut stacks: Vec<(Vec<String>, (u64, u64))> = stacks.into_iter().collect();
     stacks.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
     json!({
-        "every": engine::profiling::SAMPLE_EVERY,
-        "always_at_bytes": engine::profiling::ALWAYS_SAMPLED_BYTES,
+        "every": engine_profile::SAMPLE_EVERY,
+        "always_at_bytes": engine_profile::ALWAYS_SAMPLED_BYTES,
         "samples": samples.len(),
+        "dropped": dropped,
         "sampled_bytes": bytes,
         "stacks": stacks
             .into_iter()
-            .take(STACKS_SHOWN)
+            .take(sizes.rows)
             .map(|(frames, (samples, bytes))| json!({
                 "samples": samples,
                 "sampled_bytes": bytes,
                 "frames": frames,
             }))
             .collect::<Vec<_>>(),
-    })
-}
-
-fn spans_by_brick(report: &Value) -> Value {
-    let mut open: Vec<Option<String>> = Vec::new();
-    let mut frames: Vec<u64> = Vec::new();
-    let mut totals: BTreeMap<String, BTreeMap<String, (f64, u64)>> = BTreeMap::new();
-    for event in report["cpu"]["events"].as_array().into_iter().flatten() {
-        if event["kind"] != "span" {
-            continue;
-        }
-        let (Some(name), Some(depth), Some(duration)) = (
-            event["name"].as_str(),
-            event["depth"].as_u64(),
-            event["duration_ms"].as_f64(),
-        ) else {
-            continue;
-        };
-        if let Some(frame) = event["frame"].as_u64()
-            && !frames.contains(&frame)
-        {
-            frames.push(frame);
-        }
-        open.truncate(depth as usize);
-        let enclosing = open.iter().rev().find_map(Clone::clone);
-        if event["category"] == "brick" {
-            open.push(Some(name.to_owned()));
-            continue;
-        }
-        if let Some(brick) = &enclosing {
-            let (total, count) = totals
-                .entry(brick.clone())
-                .or_default()
-                .entry(name.to_owned())
-                .or_default();
-            *total += duration;
-            *count += 1;
-        }
-        open.push(enclosing);
-    }
-    let count = frames.len().max(1) as f64;
-    let bricks: serde_json::Map<String, Value> = totals
-        .into_iter()
-        .map(|(brick, spans)| {
-            let mut spans: Vec<(String, (f64, u64))> = spans.into_iter().collect();
-            spans.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
-            let rows: Vec<Value> = spans
-                .into_iter()
-                .take(SPANS_PER_BRICK)
-                .map(|(name, (total, calls))| {
-                    json!({
-                        "name": name,
-                        "ms_per_frame": total / count,
-                        "calls": calls,
-                    })
-                })
-                .collect();
-            (brick, Value::Array(rows))
-        })
-        .collect();
-    json!({
-        "frames": frames.len(),
-        "bricks": bricks,
     })
 }
 
@@ -600,18 +562,7 @@ fn ranked(counts: HashMap<String, u64>, total: u64, limit: usize) -> Vec<Value> 
         .collect()
 }
 
-type Hot = (u64, BTreeMap<u64, u64>);
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
-fn summary(
-    report: &Value,
-    samples: Option<&Samples>,
-    symbols: &Symbols,
-    adapter: &engine::AdapterInfo,
-) -> Value {
+fn digest(samples: Option<&Samples>, symbols: &Symbols, sizes: DeepSizes) -> Value {
     let mut threads = Vec::new();
     for thread in samples.into_iter().flat_map(|samples| &samples.threads) {
         let mut own: HashMap<String, u64> = HashMap::default();
@@ -635,193 +586,41 @@ fn summary(
             "name": thread.name,
             "samples": total,
             "missed": thread.missed,
-            "self": ranked(own, total, 25),
-            "total": ranked(inclusive, total, 25),
+            "self": ranked(own, total, sizes.rows),
+            "total": ranked(inclusive, total, sizes.rows),
         }));
     }
     let main = samples.and_then(|samples| samples.threads.first());
     let mut lines: HashMap<String, u64> = HashMap::default();
-    let mut hot: HashMap<u64, Hot> = HashMap::default();
     for sample in main.into_iter().flat_map(|thread| &thread.samples) {
         let Some(&leaf) = sample.stack.first() else {
             continue;
         };
-        let resolved = symbols.get(leaf, true);
-        if let Some(frame) = resolved.and_then(|resolved| resolved.frames.first()) {
+        if let Some(frame) = symbols
+            .get(leaf, true)
+            .and_then(|resolved| resolved.frames.first())
+        {
             let line = match (&frame.file, frame.line) {
                 (Some(file), Some(line)) => format!("{file}:{line} ({})", frame.function),
                 _ => frame.function.clone(),
             };
             *lines.entry(line).or_default() += 1;
         }
-        let sourced = resolved
-            .and_then(|resolved| resolved.frames.first())
-            .is_some_and(|frame| frame.file.is_some());
-        if let Some(start) = resolved
-            .and_then(|resolved| resolved.start)
-            .filter(|_| sourced)
-        {
-            let (count, addresses) = hot.entry(start).or_default();
-            *count += 1;
-            *addresses.entry(leaf).or_default() += 1;
-        }
     }
     let main_total = main.map_or(0, |thread| thread.samples.len() as u64);
-    let mut functions_hot: Vec<(u64, Hot)> = hot.into_iter().collect();
-    functions_hot.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
-    let instructions: Vec<Value> = functions_hot
-        .iter()
-        .take(3)
-        .map(|(start, (count, addresses))| annotated(*start, *count, addresses, symbols))
-        .collect();
-    let gpu = &report["gpu"];
-    let mut passes: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-    for sample in gpu["samples"].as_array().into_iter().flatten() {
-        if let (Some(name), Some(duration)) =
-            (sample["name"].as_str(), sample["duration_ms"].as_f64())
-        {
-            passes.entry(name.to_owned()).or_default().push(duration);
-        }
-    }
-    let mut passes: Vec<(String, f64, usize)> = passes
-        .into_iter()
-        .filter_map(|(name, values)| Some((name, median(&values)?, values.len())))
-        .collect();
-    passes.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let mut draws: BTreeMap<String, (Vec<f64>, Option<Value>)> = BTreeMap::new();
-    for draw in gpu["draw_samples"].as_array().into_iter().flatten() {
-        let Some(label) = draw["label"].as_str() else {
-            continue;
-        };
-        let entry = draws.entry(label.to_owned()).or_default();
-        if let Some(duration) = draw["duration_ms"].as_f64() {
-            entry.0.push(duration);
-        }
-        if entry.1.is_none() && !draw["vertex_invocations"].is_null() {
-            entry.1 = Some(json!({
-                "vertex_invocations": draw["vertex_invocations"],
-                "primitives": draw["primitives"],
-                "fragment_invocations": draw["fragment_invocations"],
-            }));
-        }
-    }
-    let mut draws: Vec<(String, f64, Option<Value>)> = draws
-        .into_iter()
-        .filter_map(|(label, (values, statistics))| Some((label, median(&values)?, statistics)))
-        .collect();
-    draws.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let sampled = samples.is_some();
     json!({
-        "machine": crate::capabilities::machine(adapter),
-        "captured": {
-            "cpu_samples": samples.map(|samples| json!({
-                "method": samples.method,
-                "interval_ms": samples.interval_ms,
-                "threads": samples.threads.iter().map(|thread| json!({
-                    "name": thread.name, "samples": thread.samples.len(), "missed": thread.missed,
-                })).collect::<Vec<_>>(),
-                "symbols": "in_process",
-            })),
-            "cpu_samples_unavailable": (!sampled).then(|| {
-                Error::new(ErrorCode::ProfilingUnavailable, "$.cpu_samples")
-                    .expected(Expected::Supported)
-            }),
-            "engine_spans": {
-                "events": report["cpu"]["events"].as_array().map_or(0, Vec::len),
-                "complete": report["cpu"]["complete"],
-            },
-            "gpu": {
-                "frames": gpu["completed"],
-                "complete": gpu["complete"],
-                "draws": gpu["draws"],
-            },
-            "privileges": "none",
+        "sizes": {
+            "heap_samples": sizes.heap_samples,
+            "thread_samples": sizes.thread_samples,
+            "events": sizes.events,
+            "rows": sizes.rows,
         },
+        "cpu_samples": samples.map(|samples| json!({
+            "method": samples.method,
+            "interval_ms": samples.interval_ms,
+            "symbols": "in_process",
+        })),
         "threads": threads,
-        "hot_lines": ranked(lines, main_total, 30),
-        "hot_instructions": instructions,
-        "gpu_passes_ms": passes.iter().take(40).map(|(name, ms, frames)| json!({"name": name, "median_ms": ms, "frames": frames})).collect::<Vec<_>>(),
-        "gpu_draws_ms": draws.iter().take(25).map(|(label, ms, statistics)| json!({"draw": label, "median_ms": ms, "statistics": statistics})).collect::<Vec<_>>(),
-        "viewers": ["https://profiler.firefox.com", "https://ui.perfetto.dev"],
+        "hot_lines": ranked(lines, main_total, sizes.rows),
     })
-}
-
-fn annotated(start: u64, count: u64, addresses: &BTreeMap<u64, u64>, symbols: &Symbols) -> Value {
-    let function = resolve(start)
-        .frames
-        .last()
-        .map_or_else(|| format!("{start:#x}"), |frame| frame.function.clone());
-    let last = addresses.keys().next_back().copied().unwrap_or(start);
-    let line_of = |address: u64| {
-        symbols
-            .get(address, true)
-            .and_then(|resolved| resolved.frames.first())
-            .and_then(|frame| Some(format!("{}:{}", frame.file.as_deref()?, frame.line?)))
-    };
-    let instructions = disassemble(start, last, addresses, &line_of);
-    json!({
-        "function": function,
-        "samples": count,
-        "start": format!("{start:#x}"),
-        "instructions": instructions,
-    })
-}
-
-#[cfg(target_arch = "x86_64")]
-fn disassemble(
-    start: u64,
-    last: u64,
-    addresses: &BTreeMap<u64, u64>,
-    line_of: &dyn Fn(u64) -> Option<String>,
-) -> Vec<Value> {
-    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
-    let length = ((last.saturating_sub(start)) as usize + 16).min(1 << 18);
-    let code = crate::sampler::code(start, length);
-    let mut decoder = Decoder::with_ip(64, &code, start, DecoderOptions::NONE);
-    let mut formatter = IntelFormatter::new();
-    let decoded: Vec<_> = std::iter::from_fn(|| decoder.can_decode().then(|| decoder.decode()))
-        .take_while(|instruction| instruction.ip() <= last)
-        .collect();
-    let near = |index: usize| {
-        decoded[index.saturating_sub(4)..(index + 5).min(decoded.len())]
-            .iter()
-            .any(|instruction| addresses.contains_key(&instruction.ip()))
-    };
-    let mut text = String::new();
-    let mut out = Vec::new();
-    let mut skipped = false;
-    for (index, instruction) in decoded.iter().enumerate() {
-        if !near(index) {
-            skipped = true;
-            continue;
-        }
-        if std::mem::take(&mut skipped) {
-            out.push(json!({"skipped": true}));
-        }
-        text.clear();
-        formatter.format(instruction, &mut text);
-        let samples = addresses.get(&instruction.ip()).copied().unwrap_or(0);
-        out.push(json!({
-            "offset": instruction.ip() - start,
-            "samples": samples,
-            "text": text,
-            "line": (samples > 0).then(|| line_of(instruction.ip())).flatten(),
-        }));
-    }
-    out
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-fn disassemble(
-    start: u64,
-    _: u64,
-    addresses: &BTreeMap<u64, u64>,
-    line_of: &dyn Fn(u64) -> Option<String>,
-) -> Vec<Value> {
-    addresses
-        .iter()
-        .map(|(&address, &samples)| {
-            json!({"offset": address - start, "samples": samples, "line": line_of(address)})
-        })
-        .collect()
 }

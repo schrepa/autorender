@@ -2,116 +2,13 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{
-    Callable, Error, ErrorCode, Expected, OperationScene, Rows, SceneContext, set_parents,
-};
-use serde::{Deserialize, Serialize};
+use engine_core::{Error, ErrorCode, Expected, OperationScene, SceneContext, set_parents};
 use serde_json::Value;
 
 use crate::hierarchy::{ExpandedObject, validate_object};
 use crate::instance::spawn_entity;
 use crate::validation::identifier;
 use crate::{SceneKinds, SceneObject};
-
-pub struct SpawnOperation;
-
-impl Callable for SpawnOperation {
-    const NAME: &'static str = "spawn";
-    type Request = SpawnRequest;
-    type Reply = Rows<SpawnedEntity>;
-
-    fn answer(world: &mut World, request: SpawnRequest) -> Result<Self::Reply, Error> {
-        Ok(Rows::each("entities", request.entities, |description| {
-            let object = described(world, description)?;
-            spawn(world, &object)?;
-            Ok(SpawnedEntity { entity: object.id })
-        }))
-    }
-
-    fn request_schema(world: &World) -> Value {
-        spawn_request(world)
-    }
-}
-
-pub struct RemoveOperation;
-
-impl Callable for RemoveOperation {
-    const NAME: &'static str = "remove";
-    type Request = RemoveRequest;
-    type Reply = Rows<RemovedEntity>;
-
-    fn answer(world: &mut World, request: RemoveRequest) -> Result<Self::Reply, Error> {
-        Ok(Rows::each("entities", request.entities, |id| {
-            let removed = remove(world, &id)?;
-            Ok(RemovedEntity {
-                entity: id,
-                removed,
-            })
-        }))
-    }
-}
-
-fn spawn_request(world: &World) -> Value {
-    let mut schema = engine_core::schema_of::<SpawnRequest>();
-    if let Some(object) = schema
-        .get_mut("$defs")
-        .and_then(|definitions| definitions.get_mut(SPAWNED))
-        .and_then(Value::as_object_mut)
-    {
-        if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
-            for kind in engine_core::scene_components(world) {
-                properties.insert(
-                    kind.key().to_owned(),
-                    engine_core::authored_component(kind.key()),
-                );
-            }
-        }
-        object.insert("additionalProperties".to_owned(), Value::Bool(false));
-    }
-    schema
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub struct SpawnedEntity {
-    pub entity: String,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub struct RemovedEntity {
-    pub entity: String,
-    pub removed: usize,
-}
-
-struct Described;
-
-const SPAWNED: &str = "SpawnedObject";
-
-impl schemars::JsonSchema for Described {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        SPAWNED.into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let mut schema = <SceneObject as schemars::JsonSchema>::json_schema(generator);
-        if let Some(Value::Array(required)) = schema.get_mut("required") {
-            required.retain(|field| field != "id");
-        }
-        schema
-    }
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SpawnRequest {
-    #[schemars(with = "Vec<Described>")]
-    pub entities: Vec<Value>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RemoveRequest {
-    pub entities: Vec<String>,
-}
 
 fn no_scene() -> Error {
     Error::new(ErrorCode::NoScene, "$").expected(Expected::Present)
@@ -199,7 +96,7 @@ fn unused_id(world: &World) -> Result<String, Error> {
     }
 }
 
-fn described(world: &World, mut described: Value) -> Result<SceneObject, Error> {
+pub fn described(world: &World, mut described: Value) -> Result<SceneObject, Error> {
     let Value::Object(fields) = &mut described else {
         return Err(Error::new(ErrorCode::InvalidType, "$")
             .expected(Expected::Object)

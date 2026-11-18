@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
-use bevy_ecs::system::{Res, ResMut, SystemParamItem};
 use engine_core::{
-    AlphaMode, AssetLibrary, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED,
-    MAPPED_MAPS, MAPPED_SLOTS, Material, Operation, Sampler, SceneContext, TextureHandle,
+    AlphaMode, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED,
+    MAPPED_MAPS, MAPPED_SLOTS, Material, Sampler, TextureHandle,
     TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
@@ -595,88 +594,5 @@ impl SceneTextureMap {
             },
             ..Sampler::REPEAT
         }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneMaterialControl {
-    pub material: SceneMaterial,
-}
-
-#[cfg(not(feature = "schema"))]
-impl schemars::JsonSchema for SceneMaterialControl {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "SceneMaterialControl".into()
-    }
-
-    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "type": "object",
-            "properties": { "material": { "type": "object" } },
-            "required": ["material"],
-        })
-    }
-}
-
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct SceneMaterialReply {
-    pub temporary: bool,
-    pub material: String,
-}
-
-impl Operation for SceneMaterialControl {
-    const NAME: &'static str = "scene_material";
-    type Params = (
-        Option<Res<'static, SceneContext>>,
-        Option<ResMut<'static, AssetLibrary>>,
-    );
-    type Request = Self;
-    type Reply = SceneMaterialReply;
-
-    fn run(
-        (context, assets): SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<SceneMaterialReply, Error> {
-        let id = request.material.id.as_str();
-        let unknown = |names: Vec<&str>| {
-            Error::new(ErrorCode::UnknownReference, "$.material.id")
-                .got(id)
-                .variants(names)
-        };
-        let Some(context) = context else {
-            return Err(unknown(Vec::new()));
-        };
-        let handle = context.assets.materials.get(id).copied().ok_or_else(|| {
-            unknown(
-                context
-                    .assets
-                    .materials
-                    .keys()
-                    .map(String::as_str)
-                    .collect(),
-            )
-        })?;
-        let textures = &context.assets.textures;
-        for (field, texture) in request.material.texture_ids() {
-            if !textures.contains_key(texture) {
-                return Err(
-                    Error::new(ErrorCode::UnknownReference, format!("$.material.{field}"))
-                        .got(texture)
-                        .variants(textures.keys().map(String::as_str)),
-                );
-            }
-        }
-        let material = request
-            .material
-            .prepare("$.material")?
-            .material(|texture| textures[texture]);
-        let mut assets = assets.ok_or_else(|| Error::new(ErrorCode::MissingAssetLibrary, "$"))?;
-        assets.replace_material(handle, material)?;
-        Ok(SceneMaterialReply {
-            temporary: true,
-            material: id.to_owned(),
-        })
     }
 }

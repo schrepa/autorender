@@ -513,6 +513,24 @@
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
+        },
+        "timer_draws": {
+          "default": 2048,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timer_slots": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timer_spans": {
+          "default": 128,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"

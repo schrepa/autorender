@@ -3,24 +3,14 @@
     reason = "implements the standard allocator's unsafe contract"
 )]
 
-use serde::Serialize;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Mutex, PoisonError};
 
 pub const SAMPLE_EVERY: u32 = 1021;
 pub const ALWAYS_SAMPLED_BYTES: usize = 65_536;
 
-static AVAILABLE: AtomicBool = AtomicBool::new(false);
-static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static DEALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static REALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static REQUESTED: AtomicU64 = AtomicU64::new(0);
-static FREED: AtomicU64 = AtomicU64::new(0);
-static LIVE: AtomicU64 = AtomicU64::new(0);
-static PEAK: AtomicU64 = AtomicU64::new(0);
-static FAILURES: AtomicU64 = AtomicU64::new(0);
 static SAMPLING: AtomicBool = AtomicBool::new(false);
 type Sampler = fn(usize);
 
@@ -29,33 +19,7 @@ static SAMPLER: Mutex<Option<Sampler>> = Mutex::new(None);
 thread_local! {
     static UNTIL_SAMPLE: Cell<u32> = const { Cell::new(SAMPLE_EVERY) };
     static SAMPLING_HERE: Cell<bool> = const { Cell::new(false) };
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize)]
-pub struct AllocationSnapshot {
-    pub available: bool,
-    pub allocations: u64,
-    pub deallocations: u64,
-    pub reallocations: u64,
-    pub requested_bytes: u64,
-    pub freed_bytes: u64,
-    pub live_bytes: u64,
-    pub peak_live_bytes: u64,
-    pub failures: u64,
-}
-
-pub fn allocation_snapshot() -> AllocationSnapshot {
-    AllocationSnapshot {
-        available: AVAILABLE.load(Relaxed),
-        allocations: ALLOCATIONS.load(Relaxed),
-        deallocations: DEALLOCATIONS.load(Relaxed),
-        reallocations: REALLOCATIONS.load(Relaxed),
-        requested_bytes: REQUESTED.load(Relaxed),
-        freed_bytes: FREED.load(Relaxed),
-        live_bytes: LIVE.load(Relaxed),
-        peak_live_bytes: PEAK.load(Relaxed),
-        failures: FAILURES.load(Relaxed),
-    }
+    static HERE: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
 }
 
 pub fn sample_allocations(sampler: Option<fn(usize)>) {
@@ -70,16 +34,16 @@ impl<A> TrackingAllocator<A> {
     }
 }
 
-fn allocated(bytes: usize) {
-    REQUESTED.fetch_add(bytes as u64, Relaxed);
-    let live = LIVE
-        .fetch_add(bytes as u64, Relaxed)
-        .wrapping_add(bytes as u64);
-    PEAK.fetch_max(live, Relaxed);
+pub(crate) fn thread_heap() -> (u64, u64) {
+    HERE.try_with(Cell::get).unwrap_or((0, 0))
 }
-fn freed(bytes: usize) {
-    FREED.fetch_add(bytes as u64, Relaxed);
-    LIVE.fetch_sub(bytes as u64, Relaxed);
+
+fn allocated(bytes: usize) {
+    _ = HERE.try_with(|here| {
+        let (allocations, requested) = here.get();
+        here.set((allocations.wrapping_add(1), requested.wrapping_add(bytes as u64)));
+    });
+    sampled(bytes);
 }
 
 fn sampled(bytes: usize) {
@@ -108,56 +72,39 @@ fn sampled(bytes: usize) {
 }
 
 // SAFETY: every call is forwarded unchanged to the wrapped allocator, which
-// upholds the contract. Null failures do not affect live counts. Accounting
-// allocates no memory and cannot panic; the optional allocation sampler runs
-// after the wrapped allocator returned, never inside it, and a thread already
-// sampling skips sampling, so nested allocations do not recurse into it.
+// upholds the contract. Accounting allocates no memory and cannot panic; the
+// optional allocation sampler runs after the wrapped allocator returned, never
+// inside it, and a thread already sampling skips sampling, so nested
+// allocations do not recurse into it.
 unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        AVAILABLE.store(true, Relaxed);
         // SAFETY: the caller passes a layout of nonzero size.
         let pointer = unsafe { self.0.alloc(layout) };
-        if pointer.is_null() {
-            FAILURES.fetch_add(1, Relaxed);
-            return pointer;
+        if !pointer.is_null() {
+            allocated(layout.size());
         }
-        ALLOCATIONS.fetch_add(1, Relaxed);
-        allocated(layout.size());
-        sampled(layout.size());
         pointer
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        AVAILABLE.store(true, Relaxed);
         // SAFETY: the caller passes a layout of nonzero size.
         let pointer = unsafe { self.0.alloc_zeroed(layout) };
-        if pointer.is_null() {
-            FAILURES.fetch_add(1, Relaxed);
-            return pointer;
+        if !pointer.is_null() {
+            allocated(layout.size());
         }
-        ALLOCATIONS.fetch_add(1, Relaxed);
-        allocated(layout.size());
-        sampled(layout.size());
         pointer
     }
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
         // SAFETY: the caller passes a pointer this allocator returned with this
         // same layout, and the wrapped allocator returned it.
         unsafe { self.0.dealloc(pointer, layout) };
-        DEALLOCATIONS.fetch_add(1, Relaxed);
-        freed(layout.size());
     }
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: the caller passes a pointer this allocator returned with this
         // same layout and a nonzero size that forms a valid layout with it.
         let grown = unsafe { self.0.realloc(pointer, layout, new_size) };
-        if grown.is_null() {
-            FAILURES.fetch_add(1, Relaxed);
-            return grown;
+        if !grown.is_null() {
+            allocated(new_size);
         }
-        REALLOCATIONS.fetch_add(1, Relaxed);
-        freed(layout.size());
-        allocated(new_size);
-        sampled(new_size);
         grown
     }
 }

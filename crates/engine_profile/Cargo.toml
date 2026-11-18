@@ -7,8 +7,8 @@ publish.workspace = true
 
 [features]
 default = []
-rows = []
-enabled = ["dep:serde", "rows"]
+dev = ["dep:serde"]
+profiling = ["dev"]
 
 [dependencies]
 serde = { workspace = true, optional = true }

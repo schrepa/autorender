@@ -5,18 +5,13 @@ use engine_core::{
 use engine_registry::Registry;
 use engine_render::{Picture, RenderTarget, Renderer};
 
-use crate::frame_stats::{FrameStats, PassPipelines, ResolutionStats};
+use crate::frame_stats::{FrameStats, GpuTime, ResolutionStats};
 use crate::host::InputSource;
 use crate::host::policy::FRAME_INTERVAL_MS;
 use crate::{Error, Result};
 
 #[path = "app_attribution.rs"]
 mod attribution;
-#[cfg(feature = "profiling")]
-#[path = "app_profiling.rs"]
-mod profiling;
-#[cfg(feature = "profiling")]
-pub use profiling::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 
 pub fn now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]
@@ -40,6 +35,7 @@ pub fn now_ms() -> f64 {
 
 fn wire(engine: &mut Engine, renderer: &Renderer, (workers, verifying): (u32, bool)) {
     let world = engine.app.world_mut();
+    world.init_resource::<FrameStats>();
     if let Some(mut records) = world.get_resource_mut::<RecordExchange>() {
         records.set_sampling(Some(renderer.texture_sampling()));
     }
@@ -56,19 +52,24 @@ pub(crate) enum Focus {
     Lost,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Advance {
+    Clock(f64),
+    #[cfg(feature = "dev")]
+    Stepped { ticks: u32, alpha: Option<f32> },
+}
+
 pub(crate) struct AppHost {
     pub(crate) engine: Engine,
     pub(crate) renderer: Box<Renderer>,
     focus: Focus,
-    stats: FrameStats,
+    preparation_ms: f64,
     size: (u32, u32),
     overlay: crate::host::SettingsLog,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
     refresh: f64,
-    gpu_ms: Option<f32>,
-    #[cfg(feature = "profiling")]
-    profile_frame: u64,
+    gpu_ms: GpuTime,
 }
 
 fn log_notice(error: &engine_core::Error) {
@@ -116,19 +117,27 @@ impl AppHost {
         #[cfg(any(feature = "dev", feature = "profiling"))]
         engine_profile::install_clock(now_ms);
         wire(&mut engine, &renderer, (0, false));
+        let gpu_ms = if renderer
+            .features()
+            .contains(engine_render::wgpu::Features::TIMESTAMP_QUERY)
+        {
+            GpuTime::default()
+        } else {
+            GpuTime::Unavailable {
+                unavailable: "timestamp_query_unavailable",
+            }
+        };
         Self {
             engine,
             renderer,
             focus: Focus::Held,
-            stats: FrameStats::default(),
+            preparation_ms: 0.0,
             size: (0, 0),
             overlay: crate::host::SettingsLog::default(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
             refresh: FRAME_INTERVAL_MS,
-            gpu_ms: None,
-            #[cfg(feature = "profiling")]
-            profile_frame: 0,
+            gpu_ms,
         }
     }
 
@@ -153,26 +162,6 @@ impl AppHost {
                 self.engine.resume(PauseReason::Focus);
             }
         }
-    }
-
-    pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
-        let jobs = self
-            .engine
-            .app
-            .world()
-            .get_resource::<JobExchange>()
-            .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
-        wire(&mut engine, &self.renderer, jobs);
-        let replaced = std::mem::replace(&mut self.engine, engine);
-        self.reloaded();
-        if let Err(error) = self.claim_passes(None) {
-            panic!("{error}");
-        }
-        if let Err(error) = self.replay_settings() {
-            panic!("{error}");
-        }
-        self.suspend();
-        replaced
     }
 
     pub(crate) fn prepare_pipelines(
@@ -239,12 +228,12 @@ impl AppHost {
     }
 
     pub(crate) fn set_preparation_ms(&mut self, milliseconds: f64) {
-        self.stats.preparation_ms = milliseconds;
+        self.preparation_ms = milliseconds;
     }
 
     fn report_timing(&mut self) {
         if let Some((ms, _)) = self.renderer.take_frame_time() {
-            self.gpu_ms = Some(ms as f32);
+            self.gpu_ms = GpuTime::Ms(ms as f32);
         }
     }
 
@@ -346,80 +335,51 @@ impl AppHost {
         self.renderer.deliver(self.engine.app.world_mut());
     }
 
-    pub fn frame(
+    pub(crate) fn frame(
         &mut self,
-        timestamp_ms: f64,
-        (width, height): (u32, u32),
+        advance: Advance,
+        size: (u32, u32),
         picture: Picture,
     ) -> Result<bool> {
-        if !timestamp_ms.is_finite() {
-            return Err(Error::new(ErrorCode::InvalidInput, "$.timestamp")
-                .expected(crate::Expected::Finite)
-                .got(timestamp_ms));
-        }
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
+        engine_profile::set_frame(self.engine.frame_time().frame + 1);
         let _profile = engine_profile::span("cpu", "host.frame");
         self.deliver();
         let start = now_ms();
-        self.engine.frame(timestamp_ms * 0.001)?;
+        let fixed_steps = self.advance(advance)?;
+        engine_profile::set_frame(self.engine.frame_time().frame);
         let simulation_ms = now_ms() - start;
-        let time = self.engine.frame_time();
-        let drawn = self.render_frame((width, height), (simulation_ms, time.ticks), picture)?;
+        let drawn = self.render_frame(size, (simulation_ms, fixed_steps), picture)?;
         self.engine.exchange();
         Ok(drawn)
     }
 
-    #[cfg(feature = "dev")]
-    pub fn dev_step(&mut self, ticks: u32, width: u32, height: u32) -> Result<()> {
-        engine_core::check_dev_ticks(ticks)?;
-        self.follow_focus(InputSource::Agent);
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        let _profile = engine_profile::span("cpu", "host.step");
-        self.deliver();
-        let start = now_ms();
-        self.engine.step_fixed(1)?;
-        let mut fixed_steps = self.engine.frame_time().ticks;
-        for _ in 1..ticks {
-            self.engine.start_frame();
-            self.keep_held();
-            self.engine.step_fixed(1)?;
-            fixed_steps += self.engine.frame_time().ticks;
+    fn advance(&mut self, advance: Advance) -> Result<u32> {
+        match advance {
+            Advance::Clock(timestamp_ms) => {
+                self.engine.frame(timestamp_ms * 0.001)?;
+                Ok(self.engine.frame_time().ticks)
+            }
+            #[cfg(feature = "dev")]
+            Advance::Stepped { ticks, alpha } => {
+                if ticks == 0 {
+                    self.engine.frame_without_ticks();
+                }
+                let mut fixed_steps = 0;
+                for tick in 0..ticks {
+                    if tick > 0 {
+                        self.engine.start_frame();
+                        engine_core::hold_input(self.engine.app.world_mut());
+                    }
+                    self.engine.step_fixed(1)?;
+                    fixed_steps += self.engine.frame_time().ticks;
+                }
+                if let Some(alpha) = alpha {
+                    self.engine
+                        .present(engine_core::Presented::Between { alpha })?;
+                }
+                Ok(fixed_steps)
+            }
         }
-        let simulation_ms = now_ms() - start;
-        self.render_frame(
-            (width, height),
-            (simulation_ms, fixed_steps),
-            Picture::Shown,
-        )?;
-        Ok(())
-    }
-
-    #[cfg(feature = "dev")]
-    fn keep_held(&mut self) {
-        engine_core::hold_input(self.engine.app.world_mut());
-    }
-
-    #[cfg(feature = "dev")]
-    pub fn dev_render(&mut self, width: u32, height: u32) -> Result<()> {
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        self.deliver();
-        self.engine.frame_without_ticks();
-        self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
-        Ok(())
-    }
-
-    #[cfg(feature = "dev")]
-    pub fn dev_present(&mut self, alpha: f32, width: u32, height: u32) -> Result<()> {
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        self.deliver();
-        self.engine
-            .present(engine_core::Presented::Between { alpha })?;
-        self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
-        Ok(())
     }
 
     pub(crate) fn accept(&mut self, input: Devices) {
@@ -458,26 +418,32 @@ impl AppHost {
         } else {
             (0.0, 0.0, RenderStats::default())
         };
-        self.stats = FrameStats {
+        let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
+        let world = self.engine.app.world();
+        let summary = FrameStats {
             frame: time.frame,
             tick,
             simulation_ms,
             extraction_ms,
             render_ms: acquire_ms + draw_ms,
             fixed_steps,
-            preparation_ms: self.stats.preparation_ms,
+            preparation_ms: self.preparation_ms,
             dropped_seconds: time.dropped_seconds,
             cut_seconds: time.cut_seconds,
-            pipelines_listed: 0,
-            pipelines_unlisted: 0,
+            pipelines_listed,
+            pipelines_unlisted,
             readiness: self.engine.readiness().clone(),
             resolution: self.resolution_stats((width, height)),
-            jobs: engine_core::JobStats::default(),
-            refused_views: 0,
+            jobs: world
+                .get_resource::<JobExchange>()
+                .map(JobExchange::stats)
+                .unwrap_or_default(),
+            refused_views: world
+                .get_resource::<engine_core::Views>()
+                .map_or(0, |views| views.refused().len() as u32),
             render: rendered,
-            bricks: std::collections::BTreeMap::new(),
-            pipelines_per_pass: std::collections::BTreeMap::new(),
         };
+        *self.engine.app.world_mut().resource_mut::<FrameStats>() = summary;
         if acquired && picture == Picture::Shown && self.engine.readiness().settled() {
             self.renderer.settle_pipelines();
         }
@@ -580,7 +546,7 @@ impl AppHost {
     }
 
     pub fn frame_times(&self) -> &FrameStats {
-        &self.stats
+        self.engine.app.world().resource::<FrameStats>()
     }
 
     pub fn progress(&self) -> (engine_core::Readiness, engine_core::JobStats) {
@@ -598,33 +564,6 @@ impl AppHost {
             .map(JobExchange::stats)
             .unwrap_or_default();
         (readiness, jobs)
-    }
-
-    pub fn stats(&self) -> FrameStats {
-        let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
-        let world = self.engine.app.world();
-        let (readiness, jobs) = self.progress();
-        FrameStats {
-            pipelines_listed,
-            pipelines_unlisted,
-            readiness,
-            jobs,
-            refused_views: world
-                .get_resource::<engine_core::Views>()
-                .map_or(0, |views| views.refused().len() as u32),
-            bricks: world
-                .get_resource::<Registry>()
-                .map(|registry| registry.frame_stats(world))
-                .unwrap_or_default(),
-            pipelines_per_pass: (self.renderer.pipelines_per_pass().into_iter())
-                .map(|(pass, [render, compute])| (pass, PassPipelines { render, compute }))
-                .collect(),
-            ..self.stats.clone()
-        }
-    }
-
-    pub fn stats_json(&self) -> String {
-        serde_json::to_string(&self.stats()).expect("stats_serialize")
     }
 
     pub fn suspend(&mut self) {

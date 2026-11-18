@@ -24,6 +24,7 @@ const TARGETS: [&str; 3] = ["gfx1100", "gfx1150", "gfx1201"];
 static RGA_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 struct Checked {
+    source: String,
     name: String,
     module: naga::Module,
     info: ModuleInfo,
@@ -38,26 +39,107 @@ fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
     Ok((module, info))
 }
 
-type Stages = Vec<(&'static str, Vec<&'static str>, String)>;
+type Stages = Vec<(String, Vec<String>, String)>;
 
-fn modules() -> Result<(Vec<Checked>, Stages), String> {
+struct Installed {
+    source: String,
+    modules: Vec<String>,
+    texts: Vec<String>,
+    stages: Stages,
+}
+
+fn standard() -> Result<Installed, String> {
     let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let mut installed = engine_checks::install::noop(&mut engine)?;
-    let stages = std::mem::take(&mut installed.stages);
+    let installed = engine_checks::install::noop(&mut engine)?;
+    Ok(Installed {
+        source: "standard".to_owned(),
+        modules: installed.modules,
+        texts: installed.texts,
+        stages: (installed.stages.into_iter())
+            .map(|(entry, passes, text)| {
+                let passes = passes.into_iter().map(str::to_owned).collect();
+                (entry.to_owned(), passes, text)
+            })
+            .collect(),
+    })
+}
+
+fn games(root: &Path) -> Result<Vec<Installed>, String> {
+    let mut games = Vec::new();
+    for package in crate::rules::repository(root)?.projects() {
+        let Some(folder) = package.path.as_deref() else {
+            continue;
+        };
+        let project = crate::process::Project::read(root, folder)?;
+        let program = crate::pipeline::build_native(root, &project)?;
+        let output = Command::new(&program)
+            .arg("--shaders")
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("{program}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{program} --shaders: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let printed = String::from_utf8_lossy(&output.stdout);
+        let shaders: Value = printed
+            .lines()
+            .rev()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|value| value.get("stages").is_some())
+            .ok_or_else(|| format!("{program} --shaders printed no stages"))?;
+        let texts = |key: &str| -> Vec<String> {
+            (shaders[key].as_array().into_iter().flatten())
+                .filter_map(|text| text.as_str().map(str::to_owned))
+                .collect()
+        };
+        let stages = (shaders["stages"].as_array().into_iter().flatten())
+            .map(|stage| {
+                let text = |key: &str| stage[key].as_str().unwrap_or_default().to_owned();
+                let passes = (stage["passes"].as_array().into_iter().flatten())
+                    .filter_map(|pass| pass.as_str().map(str::to_owned))
+                    .collect();
+                (text("entry"), passes, text("text"))
+            })
+            .collect();
+        games.push(Installed {
+            source: folder.to_owned(),
+            modules: texts("modules"),
+            texts: texts("texts"),
+            stages,
+        });
+    }
+    Ok(games)
+}
+
+fn modules(root: &Path) -> Result<(Vec<Checked>, Vec<Installed>), String> {
+    let mut sources = vec![standard()?];
+    sources.extend(games(root)?);
     let mut checked = Vec::new();
     let mut failures = Vec::new();
-    for (path, text) in installed.modules.into_iter().zip(installed.texts) {
-        match validated(&text) {
-            Ok((module, info)) => checked.push(Checked {
-                name: path,
-                module,
-                info,
-            }),
-            Err(error) => failures.push(format!("{path}: {error}")),
+    let mut seen: HashSet<(String, String)> = HashSet::default();
+    for installed in &mut sources {
+        let modules = std::mem::take(&mut installed.modules);
+        let texts = std::mem::take(&mut installed.texts);
+        for (path, text) in modules.into_iter().zip(texts) {
+            if !seen.insert((path.clone(), text.clone())) {
+                continue;
+            }
+            match validated(&text) {
+                Ok((module, info)) => checked.push(Checked {
+                    source: installed.source.clone(),
+                    name: path,
+                    module,
+                    info,
+                }),
+                Err(error) => failures.push(format!("{}: {path}: {error}", installed.source)),
+            }
         }
     }
     if failures.is_empty() {
-        Ok((checked, stages))
+        Ok((checked, sources))
     } else {
         Err(failures.join("\n"))
     }
@@ -69,10 +151,14 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         [flag, folder, no] if flag == "--out" && no == "--no-rga" => (PathBuf::from(folder), false),
         _ => return Err("usage: cargo xtask shaders --out DIR [--no-rga]".into()),
     };
-    let (modules, stages) = modules()?;
+    let (modules, sources) = modules(root)?;
     let rga = if rga { rga_program(root)? } else { None };
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    write_linked(&folder, &stages)?;
+    let linked = folder.join("linked");
+    let _ = std::fs::remove_dir_all(&linked);
+    for installed in &sources {
+        write_linked(&linked.join(folder_name(&installed.source)), &installed.stages)?;
+    }
     let work: Vec<(&Checked, &naga::EntryPoint)> = modules
         .iter()
         .flat_map(|checked| {
@@ -121,6 +207,7 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         "amd_unavailable": rga.is_none().then_some(
             if RGA_ARCHIVE.is_none() { "Radeon GPU Analyzer runs on Windows and Linux" } else { "skipped with --no-rga" }
         ),
+        "sources": sources.iter().map(|installed| installed.source.as_str()).collect::<Vec<_>>(),
         "entries": entries,
     });
     let path = folder.join("report.json");
@@ -137,18 +224,20 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn write_linked(folder: &Path, stages: &Stages) -> Result<(), String> {
-    let linked = folder.join("linked");
-    let _ = std::fs::remove_dir_all(&linked);
-    std::fs::create_dir_all(&linked).map_err(|error| error.to_string())?;
-    let mut named: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+fn folder_name(source: &str) -> String {
+    source.replace(['/', '\\'], ".")
+}
+
+fn write_linked(linked: &Path, stages: &Stages) -> Result<(), String> {
+    std::fs::create_dir_all(linked).map_err(|error| error.to_string())?;
+    let mut named: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for (entry, _, _) in stages {
-        *named.entry((*entry).to_owned()).or_default() += 1;
+        *named.entry(entry.as_str()).or_default() += 1;
     }
     let mut taken = HashSet::default();
     for (entry, passes, text) in stages {
-        let mut name = if named[*entry] == 1 {
-            (*entry).to_owned()
+        let mut name = if named[entry.as_str()] == 1 {
+            entry.clone()
         } else {
             format!("{entry}.{}", passes.join("+"))
         };
@@ -198,6 +287,7 @@ fn entry_report(
         Ok(words) => words,
         Err(error) => {
             return Ok(json!({
+                "source": checked.source,
                 "module": checked.name,
                 "entry_point": entry.name,
                 "naga": counts.to_json(),
@@ -205,7 +295,12 @@ fn entry_report(
             }));
         }
     };
-    let stem = format!("{}.{}", checked.name.replace("::", "."), entry.name);
+    let stem = format!(
+        "{}.{}.{}",
+        folder_name(&checked.source),
+        checked.name.replace("::", "."),
+        entry.name
+    );
     let spirv = folder.join("spirv").join(format!("{stem}.spv"));
     std::fs::create_dir_all(spirv.parent().expect("file_has_folder"))
         .map_err(|error| error.to_string())?;
@@ -219,6 +314,7 @@ fn entry_report(
     };
     let amd = rga.map(|program| amd_report(program, &spirv, stage, folder, &stem));
     Ok(json!({
+        "source": checked.source,
         "module": checked.name,
         "entry_point": entry.name,
         "stage": stage,
@@ -556,6 +652,7 @@ fn print_summary(report: &Value) {
         let amd = &entry["amd"]["gfx1100"];
         let record = json!({
             "event": "costly_entry_point",
+            "source": entry["source"],
             "module": entry["module"],
             "entry_point": entry["entry_point"],
             "rdna3_vgprs": amd["resources"]["used_vgprs"],

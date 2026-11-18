@@ -1,17 +1,9 @@
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use engine::host::FramePhase;
-use engine::{
-    BrickList, Engine, Error, ErrorCode, Expected, Game, GameHost, GpuPreference, RenderTarget,
-};
-use serde_json::{Value, json};
+use engine::{BrickList, Engine, Game, GameHost, GpuPreference, RenderTarget};
 
-use crate::file_error;
-use crate::files::Image;
-use crate::jobs::{JobOptions, JobPool};
-
-const PREPARING_SAID_EVERY: Duration = Duration::from_secs(5);
+use crate::jobs::JobPool;
 
 pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
@@ -19,47 +11,8 @@ pub struct Offscreen<G: Game> {
     jobs: JobPool,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Frames {
-    Count(u32),
-    For(Duration),
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Record {
-    pub profile: Option<ProfileRecord>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ProfileRecord {
-    pub folder: PathBuf,
-    pub stem: String,
-    pub max_events: usize,
-    pub cpu_samples: bool,
-    pub context: Value,
-}
-
-#[derive(Debug)]
-pub struct Recorded {
-    pub frames: u32,
-    pub cpu_ms: Vec<f64>,
-    pub elapsed_ms: f64,
-    pub profile: Option<Value>,
-    pub failed: Option<engine::Error>,
-}
-
 impl<G: Game> Offscreen<G> {
     pub fn launch<E: Into<engine::Error>>(
-        size: (u32, u32),
-        gpu: GpuPreference,
-        jobs: &JobOptions,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
-    ) -> engine::Result<Self> {
-        Self::launch_with(size, gpu, jobs.pool(false), bricks, build)
-    }
-
-    pub fn launch_with<E: Into<engine::Error>>(
         size: (u32, u32),
         gpu: GpuPreference,
         mut jobs: JobPool,
@@ -76,121 +29,6 @@ impl<G: Game> Offscreen<G> {
         Ok(Self { host, size, jobs })
     }
 
-    pub fn size(&self) -> (u32, u32) {
-        self.size
-    }
-
-    pub fn record(
-        &mut self,
-        frames: Frames,
-        mut at: impl FnMut(u32) -> f64,
-        record: &Record,
-    ) -> engine::Result<Recorded> {
-        if !cfg!(feature = "profiling") && record.profile.is_some() {
-            return Err(
-                Error::new(ErrorCode::UnsupportedCommand, "$").expected(Expected::Supported)
-            );
-        }
-        #[cfg(feature = "profiling")]
-        let capture = match &record.profile {
-            Some(profile) => Some(self.start_profile(profile.max_events, profile.cpu_samples)?),
-            None => None,
-        };
-        let started = Instant::now();
-        let (mut drawn, mut cpu_ms, mut failed) = (0, Vec::new(), None);
-        loop {
-            #[cfg(feature = "dev")]
-            if let Some(Err(error)) = self.host.follow_source() {
-                let record = serde_json::json!({"event": "source_changed", "error": error});
-                eprintln!("{record}");
-            }
-            engine::profiling::mark_speed();
-            if let Frames::Count(count) = frames
-                && drawn == count / 2
-            {
-                drop(engine::profiling::take_rows());
-                _ = engine::profiling::take_speed();
-            }
-            let last = match frames {
-                Frames::Count(count) => drawn + 1 >= count,
-                Frames::For(time) => started.elapsed() >= time,
-            };
-            if let Err(error) = self.frame(at(drawn)) {
-                failed = Some(error);
-                break;
-            }
-            let stats = self.host.frame_times();
-            cpu_ms.push(stats.simulation_ms + stats.extraction_ms + stats.render_ms);
-            drawn += 1;
-            if last {
-                break;
-            }
-        }
-        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        #[cfg(feature = "profiling")]
-        let profile = match (capture, &record.profile) {
-            (Some(capture), Some(profile)) => {
-                let mut context = profile.context.clone();
-                context["frames"] = drawn.into();
-                context["frame_failed"] = serde_json::json!(failed);
-                let files =
-                    self.finish_profile(capture, &profile.folder, &profile.stem, context)?;
-                Some(serde_json::json!({
-                    "summary": files.summary.display().to_string(),
-                    "firefox": files.firefox.display().to_string(),
-                    "report": files.report.display().to_string(),
-                    "complete": files.complete && failed.is_none(),
-                }))
-            }
-            _ => None,
-        };
-        #[cfg(not(feature = "profiling"))]
-        let profile = None;
-        Ok(Recorded {
-            frames: drawn,
-            cpu_ms,
-            elapsed_ms,
-            profile,
-            failed,
-        })
-    }
-
-    #[cfg(feature = "profiling")]
-    fn start_profile(
-        &mut self,
-        max_events: usize,
-        cpu_samples: bool,
-    ) -> engine::Result<engine_profiler::DeepCapture> {
-        let main = engine_profiler::sampler::SampledThread::current("Main thread")
-            .filter(|_| cpu_samples);
-        let threads = main.map_or_else(Vec::new, |main| {
-            std::iter::once(main)
-                .chain(self.jobs.sampled_threads())
-                .chain(engine_profiler::sampler::announced_threads())
-                .collect()
-        });
-        engine_profiler::DeepCapture::start(&mut self.host, threads, max_events)
-    }
-
-    #[cfg(feature = "profiling")]
-    fn finish_profile(
-        &mut self,
-        capture: engine_profiler::DeepCapture,
-        folder: &Path,
-        stem: &str,
-        context: Value,
-    ) -> engine::Result<engine_profiler::ProfileFiles> {
-        capture.finish(&mut self.host, folder, stem, context)
-    }
-
-    pub fn exchange_jobs(&mut self) {
-        self.jobs.exchange(&mut self.host);
-    }
-
-    pub fn jobs_mut(&mut self) -> &mut JobPool {
-        &mut self.jobs
-    }
-
     pub fn host(&self) -> &GameHost<G> {
         &self.host
     }
@@ -199,69 +37,44 @@ impl<G: Game> Offscreen<G> {
         &mut self.host
     }
 
-    pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
-        let started = Instant::now();
-        let mut said = started;
-        self.host.set_preparation(true);
-        loop {
-            let at = timestamp + started.elapsed().as_secs_f64() * 1000.0;
-            let phase = self.starting(at)?;
-            if phase == FramePhase::Started {
-                return Ok(());
-            }
-            if said.elapsed() >= PREPARING_SAID_EVERY {
-                said = Instant::now();
-                let record = json!({
-                    "event": "preparing",
-                    "phase": format!("{phase:?}"),
-                    "seconds": started.elapsed().as_secs_f64(),
-                    "readiness": &self.host.frame_times().readiness,
-                });
-                eprintln!("{record}");
-            }
-        }
+    pub fn jobs_mut(&mut self) -> &mut JobPool {
+        &mut self.jobs
     }
 
-    pub fn starting(&mut self, timestamp: f64) -> engine::Result<FramePhase> {
+    pub fn turn(&mut self, timestamp: f64) -> engine::Result<FramePhase> {
         let (width, height) = self.size;
-        self.exchange_jobs();
+        self.jobs.exchange(&mut self.host);
         let phase = self.host.animation_frame(timestamp, width, height)?;
-        self.exchange_jobs();
+        self.jobs.exchange(&mut self.host);
         self.host.wait_for_gpu()?;
         Ok(phase)
     }
 
-    pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
-        let (width, height) = self.size;
-        self.exchange_jobs();
-        self.host.frame(timestamp, width, height)?;
-        self.exchange_jobs();
-        self.host.wait_for_gpu()
-    }
-
-    pub fn image(&self) -> engine::Result<Image> {
-        let (width, height, pixels) = self.host.read_offscreen()?.expect("offscreen_target");
-        Ok(Image {
-            width,
-            height,
-            pixels,
-        })
-    }
-
-    pub fn save_png(&self, path: &Path) -> engine::Result<()> {
-        let image = self.image()?;
-        let failed = |_| {
-            Error::new(ErrorCode::SourceIo, "$")
-                .expected(Expected::Writable)
-                .got(path.display().to_string())
-        };
-        let file = std::fs::File::create(path).map_err(|error| file_error("$", path, &error))?;
-        let mut encoder =
-            png::Encoder::new(std::io::BufWriter::new(file), image.width, image.height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().map_err(failed)?;
-        writer.write_image_data(&image.pixels).map_err(failed)?;
-        writer.finish().map_err(failed)
+    pub fn play(
+        &mut self,
+        frames: Option<u32>,
+        mut between: impl FnMut(&mut GameHost<G>, FramePhase) -> engine::Result<bool>,
+    ) -> engine::Result<u32> {
+        let started = Instant::now();
+        let (mut played, mut playing) = (0_u32, false);
+        loop {
+            let timestamp = match frames {
+                Some(_) if playing => f64::from(played) * self.host.refresh_interval(),
+                Some(_) | None => started.elapsed().as_secs_f64() * 1000.0,
+            };
+            let phase = self.turn(timestamp)?;
+            match phase {
+                FramePhase::Started => playing = true,
+                FramePhase::Playing => played += 1,
+                FramePhase::Compiling
+                | FramePhase::Preparing
+                | FramePhase::Collecting
+                | FramePhase::Idle
+                | FramePhase::Paused => {}
+            }
+            if !between(&mut self.host, phase)? || frames.is_some_and(|frames| played >= frames) {
+                return Ok(played);
+            }
+        }
     }
 }

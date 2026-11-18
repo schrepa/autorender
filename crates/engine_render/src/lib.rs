@@ -55,6 +55,8 @@ pub use kinds::{
     RoleFragments, Varyings,
 };
 pub use materials::gpu_format as texture_format;
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use profiling::INSTRUMENTS as GPU_INSTRUMENTS;
 #[doc(hidden)]
 pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
@@ -62,9 +64,13 @@ pub use platform::{AdapterInfo, RenderTarget};
 pub use platform::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use gpu_calls::{UnchangedWrites, unchanged_writes};
 pub use renderer::{
     Ahead, DeviceHealth, Installation, Renderer, StartingRenderer, device_limits, install_noop,
 };
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use renderer::gpu_names;
 pub use shaders::FULLSCREEN;
 pub use surface::{
     DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, ModelForm, OpenSlot,
@@ -80,13 +86,15 @@ engine_core::settings! {
     pub struct RenderSettings {
         pub readback_slots: u32 = 3 => at_least(1),
         pub readback_slot_bytes: Option<u64> = None => at_least(4),
+        pub timer_slots: u32 = 3 => at_least(1),
+        pub timer_spans: u32 = 128 => at_least(1),
+        pub timer_draws: u32 = 2048 => at_least(1),
     }
 }
 
 pub trait GpuPart: Sized + Send + Sync + 'static {
     type Reads: Read + 'static;
     const NAME: &'static str = "";
-    const MEMORY: &'static [&'static str] = &[];
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
     fn view(&mut self, _view: &engine_core::ViewFacts, _cx: &mut Prepare<'_, Self>) {}
@@ -762,18 +770,6 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.grow_buffer(buffer.0, bytes)
     }
 
-    pub fn count_upload(&mut self, bytes: u64) {
-        self.core.tallies.uploads.counted += bytes;
-    }
-
-    pub fn memory(&mut self, category: &'static str, bytes: u64) {
-        let memory = &mut self.core.tallies.uploads.memory;
-        match memory.iter_mut().find(|(known, _)| *known == category) {
-            Some((_, held)) => *held += bytes,
-            None => memory.push((category, bytes)),
-        }
-    }
-
     pub fn write_texture(
         &mut self,
         texture: Texture<P>,
@@ -1009,7 +1005,7 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) -> Recorded {
-        self.issue(pipeline, shape, None)
+        self.issue(pipeline, shape)
     }
 
     pub fn speedup(&mut self, pipeline: Pipeline<P, S>) -> Option<Pipeline<P, S>> {
@@ -1019,24 +1015,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         run.speedup_made(part, point, pipeline.0).then_some(pipeline)
     }
 
-    pub fn draw_timed<'l>(
-        &mut self,
-        pipeline: &Pipeline<P, S>,
-        shape: Shape<'_, P, S>,
-        label: impl FnOnce() -> String + 'l,
-    ) -> Recorded {
-        let timer = self.raw.timer();
-        let mut label = Some(label);
-        let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(pipeline, shape, Some((timer, &mut named)))
-    }
-
-    fn issue(
-        &mut self,
-        pipeline: &Pipeline<P, S>,
-        shape: Shape<'_, P, S>,
-        timed: encode::TimedDraw<'_>,
-    ) -> Recorded {
+    fn issue(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) -> Recorded {
         let shape = match shape {
             Shape::Pulled {
                 vertices,
@@ -1105,10 +1084,10 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 instances,
             },
         };
-        let part = self.raw.part();
+        let (part, timer) = (self.raw.part(), self.raw.timer());
         let run = self.raw.run();
         let point = run.point;
-        run.draw(part, point, pipeline.0, shape, timed)
+        run.draw(part, point, pipeline.0, shape, timer)
     }
 }
 

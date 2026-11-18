@@ -2,6 +2,7 @@ use engine_core::{JobStats, PauseReason, Readiness};
 use engine_render::Picture;
 
 use super::now_ms;
+use crate::app_host::Advance;
 use crate::{Game, GameHost};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,16 +14,18 @@ pub enum FramePhase {
     Playing = 3,
     Idle = 4,
     Collecting = 5,
+    Paused = 6,
 }
 
 impl FramePhase {
-    pub const ALL: [(Self, &'static str); 6] = [
+    pub const ALL: [(Self, &'static str); 7] = [
         (Self::Compiling, "compiling"),
         (Self::Preparing, "preparing"),
         (Self::Started, "started"),
         (Self::Playing, "playing"),
         (Self::Idle, "idle"),
         (Self::Collecting, "collecting"),
+        (Self::Paused, "paused"),
     ];
 }
 
@@ -126,6 +129,8 @@ impl FrameLoop {
         timestamp: f64,
         (width, height): (u32, u32),
     ) -> crate::Result<FramePhase> {
+        #[cfg(feature = "dev")]
+        host.dev_apply();
         if width == 0 || height == 0 {
             host.pause(HostPause::Hidden);
             self.view = View::Empty;
@@ -148,8 +153,8 @@ impl FrameLoop {
     ) -> crate::Result<(Stage, FramePhase)> {
         let (since, picture, before) = match &self.stage {
             Stage::Playing => {
-                host.frame(timestamp, width, height)?;
-                return Ok((Stage::Playing, FramePhase::Playing));
+                let phase = host.play(timestamp, (width, height))?;
+                return Ok((Stage::Playing, phase));
             }
             Stage::Unprepared => {
                 host.suspend();
@@ -163,7 +168,7 @@ impl FrameLoop {
             } => (*since, *picture, before.clone()),
         };
         host.set_preparation_ms(now_ms() - since);
-        let drawn = host.framed(timestamp, (width, height), picture)?;
+        let drawn = host.framed(Advance::Clock(timestamp), (width, height), picture)?;
         let (readiness, jobs) = host.progress();
         let render = &host.frame_times().render;
         let created = render.pipelines_created;
@@ -213,7 +218,7 @@ impl FrameLoop {
     }
 }
 
-fn in_flight<G: Game>(host: &GameHost<G>, readiness: &Readiness) -> bool {
+pub(crate) fn in_flight<G: Game>(host: &GameHost<G>, readiness: &Readiness) -> bool {
     let world = host.engine().app.world();
     let records = world
         .get_resource::<engine_core::Records>()

@@ -25,7 +25,6 @@ const FILES: [&str; 4] = [
 const SKIPPED: [&str; 2] = ["target", "node_modules"];
 const LOG: &str = "artifacts/dev/vite.log";
 const POLL: Duration = Duration::from_millis(250);
-const VITE_START: Duration = Duration::from_secs(60);
 const REPLY: Duration = Duration::from_secs(5);
 const LISTED: usize = 10;
 
@@ -35,7 +34,7 @@ pub fn dev(root: &Path, arguments: &[String]) -> Result<(), String> {
     let (game, port) = options(arguments)?;
     build_dev(root, game)?;
     install_web_dependencies(root)?;
-    let server = Server::vite(root, port, &root.join(LOG), VITE_START)?;
+    let server = Server::vite(root, port, &root.join(LOG), &[])?;
     let pages: Vec<_> = clients()
         .iter()
         .filter(|client| game.is_none_or(|game| client.game.as_deref() == Some(game)))

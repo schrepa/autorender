@@ -1,315 +1,397 @@
-use crate::{AllocationSnapshot, MAX_EVENTS, allocation_snapshot};
-use serde::Serialize;
-use std::cell::RefCell;
-use std::{marker::PhantomData, rc::Rc};
+use std::borrow::Cow;
+use std::cell::Cell;
+use std::marker::PhantomData;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
-#[derive(Debug, Serialize)]
+use serde::ser::{Serialize, SerializeMap, Serializer};
+
+use crate::Fact;
+
+#[cfg(not(feature = "profiling"))]
+const UNCOUNTED_HEAP: &str = "heap_counted_in_profiling_builds_only";
+
+#[derive(Clone, Debug)]
+pub enum Field {
+    Count(u64),
+    Number(f64),
+    Text(String),
+    Unavailable(&'static str),
+}
+
+impl From<Fact<'_>> for Field {
+    fn from(fact: Fact<'_>) -> Self {
+        match fact {
+            Fact::Count(count) => Self::Count(count),
+            Fact::Number(number) => Self::Number(number),
+            Fact::Text(text) => Self::Text(text.to_owned()),
+            Fact::Unavailable(reason) => Self::Unavailable(reason),
+        }
+    }
+}
+
+impl Serialize for Field {
+    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Count(count) => out.serialize_u64(*count),
+            Self::Number(number) => out.serialize_f64(*number),
+            Self::Text(text) => out.serialize_str(text),
+            Self::Unavailable(reason) => {
+                let mut map = out.serialize_map(Some(1))?;
+                map.serialize_entry("unavailable", reason)?;
+                map.end()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Facts {
+    Span {
+        category: &'static str,
+        ms: f64,
+        depth: u32,
+    },
+    Counter(f64),
+    Listed {
+        kind: &'static str,
+        facts: Vec<(&'static str, Field)>,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub struct Event {
-    pub kind: &'static str,
-    pub category: &'static str,
-    pub name: &'static str,
-    pub start_ms: f64,
-    pub duration_ms: f64,
-    pub value: Option<f64>,
-    pub depth: u32,
+    pub name: Cow<'static, str>,
     pub frame: u64,
-    pub complete: bool,
+    pub at_ms: f64,
+    pub facts: Facts,
 }
 
-#[derive(Debug, Default, Serialize)]
-pub struct AllocationDelta {
-    pub allocations: u64,
-    pub deallocations: u64,
-    pub reallocations: u64,
-    pub requested_bytes: u64,
-    pub freed_bytes: u64,
-    pub live_bytes_change: i128,
-    pub failures: u64,
+impl Event {
+    pub fn kind(&self) -> &'static str {
+        match &self.facts {
+            Facts::Span { .. } => "span",
+            Facts::Counter(_) => "counter",
+            Facts::Listed { kind, .. } => kind,
+        }
+    }
 }
 
-#[derive(Debug, Serialize)]
-pub struct Capture {
-    pub id: u64,
-    pub start_ms: f64,
-    pub end_ms: f64,
-    pub max_events: usize,
-    pub dropped_events: u64,
-    pub incomplete_spans: usize,
-    pub complete: bool,
-    pub events: Vec<Event>,
-    pub allocations_start: AllocationSnapshot,
-    pub allocations_end: AllocationSnapshot,
-    pub allocations_delta: AllocationDelta,
+impl Serialize for Event {
+    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        let mut map = out.serialize_map(None)?;
+        map.serialize_entry("kind", self.kind())?;
+        map.serialize_entry("name", &self.name)?;
+        map.serialize_entry("frame", &self.frame)?;
+        map.serialize_entry("at_ms", &self.at_ms)?;
+        match &self.facts {
+            Facts::Span {
+                category,
+                ms,
+                depth,
+            } => {
+                map.serialize_entry("category", category)?;
+                map.serialize_entry("ms", ms)?;
+                map.serialize_entry("depth", depth)?;
+            }
+            Facts::Counter(value) => map.serialize_entry("value", value)?,
+            Facts::Listed { facts, .. } => {
+                for (key, field) in facts {
+                    map.serialize_entry(key, field)?;
+                }
+            }
+        }
+        map.end()
+    }
 }
 
-struct Collector {
-    clock: Option<fn() -> f64>,
-    generation: u64,
-    active: bool,
-    start_ms: f64,
-    frame: u64,
-    depth: u32,
-    max_events: usize,
+struct Sink {
+    budget: usize,
     dropped: u64,
     events: Vec<Event>,
-    allocations: AllocationSnapshot,
+    #[cfg(feature = "profiling")]
+    kept: Option<Kept>,
 }
-impl Collector {
-    const fn new() -> Self {
-        Self {
-            clock: None,
-            generation: 0,
-            active: false,
-            start_ms: 0.0,
-            frame: 0,
-            depth: 0,
-            max_events: 0,
-            dropped: 0,
-            events: Vec::new(),
-            allocations: AllocationSnapshot {
-                available: false,
-                allocations: 0,
-                deallocations: 0,
-                reallocations: 0,
-                requested_bytes: 0,
-                freed_bytes: 0,
-                live_bytes: 0,
-                peak_live_bytes: 0,
-                failures: 0,
-            },
-        }
-    }
-    fn now(&self) -> f64 {
-        self.clock.map_or(0.0, |clock| clock())
-    }
-    fn push(&mut self, event: Event) -> Option<usize> {
-        if self.events.len() == self.max_events {
-            self.dropped = self.dropped.saturating_add(1);
-            return None;
-        }
-        let index = self.events.len();
-        self.events.push(event);
-        Some(index)
-    }
-}
-thread_local! { static COLLECTOR: RefCell<Collector> = const { RefCell::new(Collector::new()) }; }
 
-pub fn set_clock(clock: fn() -> f64) {
-    COLLECTOR.with_borrow_mut(|collector| {
-        if !collector.active {
-            collector.clock = Some(clock);
+#[cfg(feature = "profiling")]
+struct Kept {
+    limit: usize,
+    dropped: u64,
+    events: Vec<Event>,
+}
+
+static SINK: Mutex<Sink> = Mutex::new(Sink {
+    budget: 0,
+    dropped: 0,
+    events: Vec::new(),
+    #[cfg(feature = "profiling")]
+    kept: None,
+});
+static RECORDING: AtomicBool = AtomicBool::new(false);
+static FRAME: AtomicU64 = AtomicU64::new(0);
+static CLOCK: OnceLock<fn() -> f64> = OnceLock::new();
+
+thread_local! {
+    static DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+fn sink() -> MutexGuard<'static, Sink> {
+    SINK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(crate) fn now() -> Option<f64> {
+    CLOCK.get().map(|clock| clock())
+}
+
+fn push(event: Event) {
+    let mut sink = sink();
+    if !RECORDING.load(Relaxed) {
+        return;
+    }
+    if sink.events.len() >= sink.budget {
+        sink.dropped = sink.dropped.saturating_add(1);
+        return;
+    }
+    #[cfg(feature = "profiling")]
+    if let Some(kept) = &mut sink.kept {
+        if kept.events.len() < kept.limit {
+            kept.events.push(event.clone());
+        } else {
+            kept.dropped = kept.dropped.saturating_add(1);
         }
+    }
+    sink.events.push(event);
+}
+
+#[cfg(feature = "profiling")]
+pub fn keep(limit: usize) {
+    sink().kept = Some(Kept {
+        limit,
+        dropped: 0,
+        events: Vec::with_capacity(limit),
     });
 }
-pub fn active() -> bool {
-    COLLECTOR.with_borrow(|collector| collector.active)
+
+#[cfg(feature = "profiling")]
+pub fn take_kept() -> (Vec<Event>, u64) {
+    sink()
+        .kept
+        .take()
+        .map_or((Vec::new(), 0), |kept| (kept.events, kept.dropped))
 }
-pub fn capture_id() -> Option<u64> {
-    COLLECTOR.with_borrow(|collector| collector.active.then_some(collector.generation))
+
+fn enter() -> u32 {
+    DEPTH.with(|depth| depth.replace(depth.get().saturating_add(1)))
 }
-pub fn current_frame() -> u64 {
-    COLLECTOR.with_borrow(|collector| collector.frame)
+
+fn leave() {
+    DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
 }
+
+fn spanned(category: &'static str, name: &'static str, frame: u64, (start, end): (f64, f64)) {
+    push(Event {
+        name: Cow::Borrowed(name),
+        frame,
+        at_ms: start,
+        facts: Facts::Span {
+            category,
+            ms: (end - start).max(0.0),
+            depth: DEPTH.with(Cell::get),
+        },
+    });
+}
+
+pub fn install_clock(clock: fn() -> f64) {
+    CLOCK.get_or_init(|| clock);
+}
+
+pub fn recording() -> bool {
+    RECORDING.load(Relaxed)
+}
+
 pub fn set_frame(frame: u64) {
-    COLLECTOR.with_borrow_mut(|collector| collector.frame = frame);
+    FRAME.store(frame, Relaxed);
 }
 
-pub fn start(max_events: usize) -> Result<u64, &'static str> {
-    if !(1..=MAX_EVENTS).contains(&max_events) {
-        return Err("event budget must be at least 1 and at most MAX_EVENTS");
+fn current_frame() -> u64 {
+    FRAME.load(Relaxed)
+}
+
+pub fn begin(budget: usize) -> Result<(), &'static str> {
+    if budget == 0 {
+        return Err("event_budget_below_one");
     }
-    COLLECTOR.with_borrow_mut(|collector| {
-        if collector.active {
-            return Err("capture already active");
-        }
-        if collector.clock.is_none() {
-            return Err("profiling clock not installed");
-        }
-        collector.events = Vec::with_capacity(max_events);
-        collector.max_events = max_events;
-        collector.generation = collector
-            .generation
-            .checked_add(1)
-            .ok_or("capture IDs exhausted")?;
-        collector.depth = 0;
-        collector.dropped = 0;
-        collector.start_ms = collector.now();
-        collector.allocations = allocation_snapshot();
-        collector.active = true;
-        Ok(collector.generation)
-    })
+    if CLOCK.get().is_none() {
+        return Err("clock_not_installed");
+    }
+    let mut sink = sink();
+    if RECORDING.load(Relaxed) {
+        return Err("already_recording");
+    }
+    sink.budget = budget;
+    sink.dropped = 0;
+    sink.events = Vec::with_capacity(budget);
+    RECORDING.store(true, Relaxed);
+    Ok(())
 }
 
-pub fn finish() -> Capture {
-    COLLECTOR.with_borrow_mut(|collector| {
-        let was_active = collector.active;
-        collector.active = false;
-        let end_ms = collector.now();
-        let end = allocation_snapshot();
-        let begin = collector.allocations;
-        let events = std::mem::take(&mut collector.events);
-        let incomplete_spans = events.iter().filter(|event| !event.complete).count();
-        Capture {
-            id: collector.generation,
-            start_ms: collector.start_ms,
-            end_ms,
-            max_events: collector.max_events,
-            dropped_events: collector.dropped,
-            incomplete_spans,
-            complete: was_active && collector.dropped == 0 && incomplete_spans == 0,
-            events,
-            allocations_start: begin,
-            allocations_end: end,
-            allocations_delta: AllocationDelta {
-                allocations: end.allocations.saturating_sub(begin.allocations),
-                deallocations: end.deallocations.saturating_sub(begin.deallocations),
-                reallocations: end.reallocations.saturating_sub(begin.reallocations),
-                requested_bytes: end.requested_bytes.saturating_sub(begin.requested_bytes),
-                freed_bytes: end.freed_bytes.saturating_sub(begin.freed_bytes),
-                live_bytes_change: i128::from(end.live_bytes) - i128::from(begin.live_bytes),
-                failures: end.failures.saturating_sub(begin.failures),
-            },
-        }
-    })
+pub fn drain(into: &mut Vec<Event>) -> u64 {
+    into.clear();
+    let mut sink = sink();
+    std::mem::swap(&mut sink.events, into);
+    let budget = sink.budget;
+    sink.events.reserve(budget);
+    std::mem::take(&mut sink.dropped)
+}
+
+pub fn end() {
+    let mut sink = sink();
+    RECORDING.store(false, Relaxed);
+    sink.events = Vec::new();
+    sink.budget = 0;
+    sink.dropped = 0;
 }
 
 pub struct Span {
-    generation: u64,
-    index: Option<usize>,
+    started: Option<(&'static str, &'static str, u64, f64)>,
     thread_bound: PhantomData<Rc<()>>,
-}
-pub fn span(category: &'static str, name: &'static str) -> Span {
-    COLLECTOR.with_borrow_mut(|collector| {
-        if !collector.active {
-            return Span {
-                generation: 0,
-                index: None,
-                thread_bound: PhantomData,
-            };
-        }
-        let event = Event {
-            kind: "span",
-            category,
-            name,
-            start_ms: collector.now(),
-            duration_ms: 0.0,
-            value: None,
-            depth: collector.depth,
-            frame: collector.frame,
-            complete: false,
-        };
-        let index = collector.push(event);
-        collector.depth = collector.depth.saturating_add(1);
-        Span {
-            generation: collector.generation,
-            index,
-            thread_bound: PhantomData,
-        }
-    })
-}
-impl Drop for Span {
-    fn drop(&mut self) {
-        if self.generation == 0 {
-            return;
-        }
-        COLLECTOR.with_borrow_mut(|collector| {
-            if !collector.active || collector.generation != self.generation {
-                return;
-            }
-            collector.depth = collector.depth.saturating_sub(1);
-            if let Some(index) = self.index {
-                let end = collector.now();
-                let event = &mut collector.events[index];
-                event.duration_ms = (end - event.start_ms).max(0.0);
-                event.complete = true;
-            }
-        });
-    }
-}
-pub fn counter(name: &'static str, value: f64) {
-    if !value.is_finite() {
-        return;
-    }
-    COLLECTOR.with_borrow_mut(|collector| {
-        if !collector.active {
-            return;
-        }
-        let event = Event {
-            kind: "counter",
-            category: "counters",
-            name,
-            start_ms: collector.now(),
-            duration_ms: 0.0,
-            value: Some(value),
-            depth: collector.depth,
-            frame: collector.frame,
-            complete: true,
-        };
-        collector.push(event);
-    });
 }
 
-pub struct Aggregate {
-    generation: u64,
-    frame: u64,
-    depth: u32,
-    category: &'static str,
-    name: &'static str,
-    clock: Option<fn() -> f64>,
-    start: f64,
-    elapsed: f64,
-    count: u64,
-    thread_bound: PhantomData<Rc<()>>,
-}
-impl Aggregate {
-    pub fn new(category: &'static str, name: &'static str) -> Self {
-        COLLECTOR.with_borrow(|collector| {
-            let clock = collector.active.then_some(collector.clock).flatten();
-            Self {
-                generation: collector.generation,
-                frame: collector.frame,
-                depth: collector.depth,
-                category,
-                name,
-                clock,
-                start: clock.map_or(0.0, |clock| clock()),
-                elapsed: 0.0,
-                count: 0,
-                thread_bound: PhantomData,
-            }
-        })
+pub fn span(category: &'static str, name: &'static str) -> Span {
+    let started = recording()
+        .then(now)
+        .flatten()
+        .map(|start| (category, name, current_frame(), start));
+    if started.is_some() {
+        enter();
     }
-    pub fn measure<T>(&mut self, run: impl FnOnce() -> T) -> T {
-        let Some(clock) = self.clock else {
-            return run();
-        };
-        let start = clock();
-        let result = run();
-        self.elapsed += (clock() - start).max(0.0);
-        self.count += 1;
-        result
+    Span {
+        started,
+        thread_bound: PhantomData,
     }
 }
-impl Drop for Aggregate {
+
+impl Drop for Span {
     fn drop(&mut self) {
-        if self.clock.is_none() || self.count == 0 {
-            return;
-        }
-        COLLECTOR.with_borrow_mut(|collector| {
-            if !collector.active || collector.generation != self.generation {
-                return;
+        if let Some((category, name, frame, start)) = self.started {
+            leave();
+            if let Some(end) = now() {
+                spanned(category, name, frame, (start, end));
             }
-            collector.push(Event {
-                kind: "aggregate",
-                category: self.category,
-                name: self.name,
-                start_ms: self.start,
-                duration_ms: self.elapsed,
-                value: Some(self.count as f64),
-                depth: self.depth,
-                frame: self.frame,
-                complete: true,
-            });
+        }
+    }
+}
+
+pub fn counter(name: &'static str, value: f64) {
+    if !recording() || !value.is_finite() {
+        return;
+    }
+    if let Some(at_ms) = now() {
+        push(Event {
+            name: Cow::Borrowed(name),
+            frame: current_frame(),
+            at_ms,
+            facts: Facts::Counter(value),
         });
     }
+}
+
+pub fn event(kind: &'static str, name: &str, facts: &[(&'static str, Fact<'_>)]) {
+    if !recording() {
+        return;
+    }
+    if let Some(at_ms) = now() {
+        push(Event {
+            name: Cow::Owned(name.to_owned()),
+            frame: current_frame(),
+            at_ms,
+            facts: Facts::Listed {
+                kind,
+                facts: facts
+                    .iter()
+                    .map(|&(key, fact)| (key, Field::from(fact)))
+                    .collect(),
+            },
+        });
+    }
+}
+
+#[derive(Default)]
+pub struct Runs {
+    runs: AtomicU64,
+    nanos: AtomicU64,
+    #[cfg(feature = "profiling")]
+    allocations: AtomicU64,
+    #[cfg(feature = "profiling")]
+    bytes: AtomicU64,
+}
+
+impl Runs {
+    pub fn runs(&self) -> Result<u64, &'static str> {
+        Ok(self.runs.load(Relaxed))
+    }
+
+    pub fn ns(&self) -> Result<u64, &'static str> {
+        if CLOCK.get().is_none() {
+            return Err("clock_not_installed");
+        }
+        Ok(self.nanos.load(Relaxed))
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn allocations(&self) -> Result<u64, &'static str> {
+        Ok(self.allocations.load(Relaxed))
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn allocated_bytes(&self) -> Result<u64, &'static str> {
+        Ok(self.bytes.load(Relaxed))
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    pub fn allocations(&self) -> Result<u64, &'static str> {
+        Err(UNCOUNTED_HEAP)
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    pub fn allocated_bytes(&self) -> Result<u64, &'static str> {
+        Err(UNCOUNTED_HEAP)
+    }
+}
+
+pub fn run<T>(
+    runs: &Runs,
+    category: &'static str,
+    name: &'static str,
+    work: impl FnOnce() -> T,
+) -> T {
+    runs.runs.fetch_add(1, Relaxed);
+    let Some(&clock) = CLOCK.get() else {
+        return work();
+    };
+    let spanned_here = recording();
+    if spanned_here {
+        enter();
+    }
+    let frame = current_frame();
+    #[cfg(feature = "profiling")]
+    let heap = crate::allocator::thread_heap();
+    let start = clock();
+    let done = work();
+    let end = clock();
+    #[cfg(feature = "profiling")]
+    {
+        let (allocations, bytes) = crate::allocator::thread_heap();
+        runs.allocations
+            .fetch_add(allocations.wrapping_sub(heap.0), Relaxed);
+        runs.bytes.fetch_add(bytes.wrapping_sub(heap.1), Relaxed);
+    }
+    runs.nanos
+        .fetch_add(((end - start).max(0.0) * 1e6) as u64, Relaxed);
+    if spanned_here {
+        leave();
+        spanned(category, name, frame, (start, end));
+    }
+    done
 }

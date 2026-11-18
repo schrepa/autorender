@@ -11,11 +11,9 @@ use engine::{
 };
 use serde_json::json;
 
-use crate::{CacheOptions, Frames, JobOptions, Offscreen, Record, Window};
+use crate::{CacheOptions, JobOptions, Offscreen, Window};
 
 const MIB: u64 = 1024 * 1024;
-
-const DEV_PARAMETERS: [&str; 5] = ["size", "gpu", "workers", "jobcache", "scene"];
 
 pub fn options() -> Vec<CommandOption> {
     let defaults = HostOptions::default();
@@ -42,35 +40,22 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
         CommandOption::taking(&format!("--{OVERLAY}"), "KEY=JSON"),
         CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
-        CommandOption::taking("--offscreen", "N"),
+        CommandOption::taking("--offscreen", "[N]"),
         CommandOption::taking("--packs", "DIR"),
         CommandOption::taking("--cook", "FILE"),
         CommandOption::flag("--dev"),
+        CommandOption::taking("--run", "NAME"),
+        CommandOption::taking("--record", "JSON"),
         CommandOption::flag("--schemas"),
+        CommandOption::flag("--shaders"),
         CommandOption::taking("--pure", "NAME,...|all|list"),
-        CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
     ]
 }
 
-pub fn parameters() -> Vec<(String, String)> {
-    options()
-        .into_iter()
-        .filter_map(|option| {
-            let name = option.name.strip_prefix("--")?;
-            let known = DEV_PARAMETERS.contains(&name) || HostSettings::takes(name);
-            known.then(|| (name.to_owned(), option.value.clone().unwrap_or_default()))
-        })
-        .collect()
-}
-
 fn switch(on: bool) -> &'static str {
     if on { "on" } else { "off" }
-}
-
-fn default_artifacts() -> PathBuf {
-    std::env::temp_dir().join("engine-captures")
 }
 
 #[derive(Clone, Debug)]
@@ -118,12 +103,19 @@ impl Arguments {
         }
     }
 
-    pub fn count(&mut self, argument: &Argument) -> Result<u32, Error> {
-        let value = self.value(argument)?;
+    pub fn optional_count(&mut self, argument: &Argument) -> Result<Option<u32>, Error> {
+        let value = match (&argument.inline, self.rest.front()) {
+            (Some(value), _) => value.clone(),
+            (None, Some(next)) if !next.starts_with("--") => {
+                self.rest.pop_front().unwrap_or_default()
+            }
+            (None, Some(_) | None) => return Ok(None),
+        };
         value
             .parse()
             .ok()
             .filter(|&count: &u32| count > 0)
+            .map(Some)
             .ok_or_else(|| {
                 argument
                     .invalid(&value)
@@ -207,10 +199,13 @@ pub struct HostOptions {
     pub vsync: bool,
     pub settings: HostSettings,
     pub limit_ms: Option<u64>,
-    pub offscreen: Option<u32>,
+    pub headless: bool,
+    pub frames: Option<u32>,
     pub dev: bool,
-    pub dev_artifacts: Option<PathBuf>,
+    pub run: Option<String>,
+    pub record: Option<String>,
     pub schemas: bool,
+    pub shaders: bool,
     pub pure: Option<String>,
     pub cook: Option<PathBuf>,
     pub workers_given: bool,
@@ -227,10 +222,13 @@ impl Default for HostOptions {
             vsync: true,
             settings: HostSettings::default(),
             limit_ms: None,
-            offscreen: None,
+            headless: false,
+            frames: None,
             dev: false,
-            dev_artifacts: None,
+            run: None,
+            record: None,
             schemas: false,
+            shaders: false,
             pure: None,
             cook: None,
             workers_given: false,
@@ -332,15 +330,23 @@ impl HostOptions {
                         .ok_or_else(|| argument.invalid(&limit).expected(Expected::Integer))?,
                 );
             }
-            "--offscreen" => self.offscreen = Some(arguments.count(argument)?),
+            "--offscreen" => {
+                self.headless = true;
+                self.frames = arguments.optional_count(argument)?;
+            }
             "--dev" => {
                 arguments.flag(argument)?;
                 self.dev = true;
             }
-            "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
+            "--run" => self.run = Some(arguments.value(argument)?),
+            "--record" => self.record = Some(arguments.value(argument)?),
             "--schemas" => {
                 arguments.flag(argument)?;
                 self.schemas = true;
+            }
+            "--shaders" => {
+                arguments.flag(argument)?;
+                self.shaders = true;
             }
             "--pure" => self.pure = Some(arguments.value(argument)?),
             _ => return Ok(false),
@@ -352,27 +358,31 @@ impl HostOptions {
         let excludes = |option: &str| {
             Error::new(ErrorCode::InvalidArguments, option).expected(Expected::Absent)
         };
-        if self.dev && self.offscreen.is_some() {
-            return Err(excludes("--offscreen"));
-        }
-        if self.dev && !cfg!(feature = "dev") {
+        let dev_only = [
+            ("--dev", self.dev),
+            ("--run", self.run.is_some()),
+            ("--record", self.record.is_some()),
+            ("--schemas", self.schemas),
+            ("--shaders", self.shaders),
+            ("--pure", self.pure.is_some()),
+        ];
+        if let Some((option, _)) = dev_only.iter().find(|(_, given)| *given)
+            && !cfg!(feature = "dev")
+        {
             return Err(
-                Error::new(ErrorCode::InvalidArguments, "--dev").expected(Expected::Supported)
+                Error::new(ErrorCode::InvalidArguments, *option).expected(Expected::Supported)
             );
         }
-        if self.schemas && !cfg!(feature = "dev") {
+        if self.headless && self.frames.is_none() && !self.dev {
             return Err(
-                Error::new(ErrorCode::InvalidArguments, "--schemas").expected(Expected::Supported)
-            );
-        }
-        if self.pure.is_some() && !cfg!(feature = "dev") {
-            return Err(
-                Error::new(ErrorCode::InvalidArguments, "--pure").expected(Expected::Supported)
+                Error::new(ErrorCode::MissingField, "--offscreen").expected(Expected::Present)
             );
         }
         let others = [
-            ("--offscreen", self.offscreen.is_some()),
+            ("--offscreen", self.headless),
             ("--dev", self.dev),
+            ("--run", self.run.is_some()),
+            ("--record", self.record.is_some()),
         ];
         let other = others
             .iter()
@@ -391,10 +401,18 @@ impl HostOptions {
         {
             return Err(excludes(other));
         }
+        if self.shaders
+            && let Some(other) = other
+                .or(self.cook.is_some().then_some("--cook"))
+                .or(self.schemas.then_some("--schemas"))
+        {
+            return Err(excludes(other));
+        }
         if self.pure.is_some()
             && let Some(other) = other
                 .or(self.cook.is_some().then_some("--cook"))
                 .or(self.schemas.then_some("--schemas"))
+                .or(self.shaders.then_some("--shaders"))
         {
             return Err(excludes(other));
         }
@@ -411,35 +429,33 @@ impl HostOptions {
             });
         }
         #[cfg(feature = "dev")]
+        if options.shaders {
+            return engine::tooling::print_shaders(move |_| bricks).map_err(|problems| {
+                Error::new(ErrorCode::InvalidArguments, "--shaders").got(problems)
+            });
+        }
+        #[cfg(feature = "dev")]
         if let Some(names) = &options.pure {
             return crate::pure::run(names, move |_| bricks);
         }
         let scene = options.start_scene(&game);
         let build = game.build;
         crate::job_cache::keep_pipeline_cache();
-        if options.dev {
-            #[cfg(feature = "dev")]
-            return options.session(move |_| bricks, build, &scene)?.run();
-        }
         if let Some(pack) = &options.cook {
             return options.run_cook(pack, move |_| bricks, build, &scene);
         }
-        match options.offscreen {
-            Some(frames) => options.run_offscreen(frames, (move |_| bricks, build), &scene),
-            None => crate::run(
-                Window {
-                    size: options.size,
-                    gpu: options.gpu,
-                    jobs: options.jobs.clone(),
-                    vsync: options.vsync,
-                    settings: options.settings.clone(),
-                    scene,
-                    ..Window::new(game.title)
-                },
-                move |_| bricks,
-                build,
-            ),
+        if options.headless {
+            return options.run_offscreen((move |_| bricks, build), &scene);
         }
+        crate::run(
+            Window {
+                title: game.title.to_owned(),
+                options: options.clone(),
+                scene,
+            },
+            move |_| bricks,
+            build,
+        )
     }
 
     pub(crate) fn for_game<G>(&self, game: &GameEntry<G>) -> Self {
@@ -468,19 +484,86 @@ impl HostOptions {
         }
     }
 
+    fn size(&self) -> engine::Result<(u32, u32)> {
+        self.size
+            .ok_or_else(|| Error::new(ErrorCode::MissingField, "--size").expected(Expected::Present))
+    }
+
     #[cfg(feature = "dev")]
-    fn session<G: Game, E: Into<engine::Error>>(
+    pub(crate) fn session<G: Game>(
         &self,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        host: &mut GameHost<G>,
+        size: (u32, u32),
         scene: &StartScene,
-    ) -> engine::Result<crate::dev::DevSession<G>> {
-        let size = self.size.unwrap_or((1280, 720));
-        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
-        open_scene(game.host_mut(), scene)?;
-        self.settings.apply(game.host_mut())?;
-        let artifacts = self.dev_artifacts.clone().unwrap_or_else(default_artifacts);
-        Ok(crate::dev::DevSession::new(game, artifacts).parameters(parameters()))
+        (shell, packed): (&str, usize),
+    ) -> engine::Result<crate::dev::Session> {
+        let features: &[&str] = if cfg!(feature = "profiling") {
+            &["dev", "profiling"]
+        } else {
+            &["dev"]
+        };
+        let scene = match scene {
+            StartScene::Empty => json!({"unavailable": "no_scene_opened"}),
+            StartScene::File(path) => {
+                let workspace = std::env::current_dir().unwrap_or_default();
+                let path = path.strip_prefix(&workspace).unwrap_or(path);
+                let parts: Vec<_> = path.iter().map(|part| part.to_string_lossy()).collect();
+                json!(parts.join("/"))
+            }
+            StartScene::Declared { scene, .. } => json!(scene.name),
+        };
+        let pack = match (&self.jobs.packs, packed) {
+            (_, 0) => json!({"unavailable": "no_pack_loaded"}),
+            (None, _) => json!({"unavailable": "no_pack_folder"}),
+            (Some(folder), _) => {
+                let mut packs: Vec<(String, u64)> = std::fs::read_dir(folder)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|entry| {
+                        entry
+                            .path()
+                            .extension()
+                            .is_some_and(|extension| extension == "pack")
+                    })
+                    .filter_map(|entry| {
+                        let name = entry.path().file_stem()?.to_string_lossy().into_owned();
+                        Some((name, entry.metadata().ok()?.len()))
+                    })
+                    .collect();
+                packs.sort();
+                packs
+                    .into_iter()
+                    .map(|(name, bytes)| json!({"name": name, "bytes": bytes}))
+                    .collect()
+            }
+        };
+        let about = json!({
+            "machine": {
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "adapter": engine::host::AdapterStatus::of(host.adapter()),
+            },
+            "host": "native",
+            "shell": shell,
+            "build": {"version": env!("CARGO_PKG_VERSION"), "features": features},
+            "scene": scene,
+            "picture": [size.0, size.1],
+            "pack": pack,
+        });
+        let serde_json::Value::Object(about) = about else {
+            unreachable!("about_is_an_object");
+        };
+        crate::dev::Session::open(
+            host,
+            crate::dev::Start {
+                requests: self.dev,
+                size,
+                run: self.run.as_deref(),
+                record: self.record.as_deref(),
+                about,
+            },
+        )
     }
 
     fn run_cook<G: Game, E: Into<engine::Error>>(
@@ -493,27 +576,23 @@ impl HostOptions {
         let limit = self.limit_ms.ok_or_else(|| {
             Error::new(ErrorCode::InvalidArguments, "--limit-ms").expected(Expected::Present)
         })?;
-        let size = self.size.unwrap_or((320, 180));
+        let size = self.size()?;
         let started = Instant::now();
         let mut jobs = self.jobs.clone();
         if !self.workers_given {
             jobs.workers = std::thread::available_parallelism().map_or(1, usize::from);
         }
-        let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), bricks, build)?;
+        let mut game = Offscreen::launch(size, self.gpu, jobs.pool(true), bricks, build)?;
         open_scene(game.host_mut(), scene)?;
         self.settings.apply(game.host_mut())?;
         let read = game.jobs_mut().packed();
         let (mut frame, mut said) = (0_u32, Instant::now());
-        let (after, mut played) = (self.offscreen.unwrap_or(0), 0_u32);
+        let (after, mut played) = (self.frames.unwrap_or(0), 0_u32);
         game.host_mut().set_preparation(true);
         loop {
             game.host_mut().cook();
             let at = f64::from(frame) * 1000.0 / 60.0;
-            if game.host().preparing() {
-                game.starting(at)?;
-            } else {
-                game.frame(at)?;
-            }
+            game.turn(at)?;
             frame += 1;
             let readiness = game.host().frame_times().readiness.clone();
             if !readiness.failed.is_empty() {
@@ -550,8 +629,7 @@ impl HostOptions {
             .jobs_mut()
             .write_pack(path)
             .map_err(|error| error.within("--cook"))?;
-        let stats: serde_json::Value =
-            serde_json::from_str(&game.host().stats()).expect("stats_json");
+        let jobs = game.host().progress().1;
         println!(
             "{:#}",
             json!({
@@ -562,7 +640,7 @@ impl HostOptions {
                 "packed_before": read,
                 "frames": frame,
                 "seconds": started.elapsed().as_secs_f64(),
-                "jobs": stats["jobs"],
+                "jobs": jobs,
             })
         );
         Ok(())
@@ -570,43 +648,45 @@ impl HostOptions {
 
     fn run_offscreen<G: Game, E: Into<engine::Error>>(
         &self,
-        frames: u32,
         (bricks, build): (
             impl FnOnce(BrickList) -> BrickList,
             impl FnOnce(&mut Engine) -> Result<G, E>,
         ),
         scene: &StartScene,
     ) -> engine::Result<()> {
-        let size = self.size.unwrap_or((1280, 720));
-        let started = Instant::now();
-        let jobs = self.jobs.pool(false);
-        let mut game = Offscreen::launch_with(size, self.gpu, jobs, bricks, build)?;
+        let size = self.size()?;
+        let mut game = Offscreen::launch(size, self.gpu, self.jobs.pool(false), bricks, build)?;
         open_scene(game.host_mut(), scene)?;
         self.settings.apply(game.host_mut())?;
-        game.prepare(0.0)?;
-        let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let at = |frame: u32| f64::from(frame) * 1000.0 / 60.0;
-        let recorded = game.record(Frames::Count(frames), at, &Record::default())?;
-        if let Some(error) = recorded.failed {
-            return Err(error);
+        #[cfg(feature = "dev")]
+        let played = {
+            let packed = game.jobs_mut().packed();
+            let mut session = self.session(game.host_mut(), size, scene, ("offscreen", packed))?;
+            game.play(self.frames, |host, phase| {
+                crate::dev::follow_source(host);
+                session.after(host)?;
+                let wait = if phase == engine::host::FramePhase::Paused {
+                    Duration::try_from_secs_f64(host.refresh_interval() / 1000.0)
+                        .unwrap_or_default()
+                } else {
+                    Duration::ZERO
+                };
+                Ok(session.receive(host, wait))
+            })?
+        };
+        #[cfg(not(feature = "dev"))]
+        let played = game.play(self.frames, |_, _| Ok(true))?;
+        if self.frames.is_none() {
+            return Ok(());
         }
-        let stats: serde_json::Value =
-            serde_json::from_str(&game.host().stats()).expect("stats_json");
+        let mut stats = serde_json::to_value(game.host().frame_times()).expect("stats_serialize");
+        stats["jobs"] = json!(game.host().progress().1);
         let jobs = game.jobs_mut();
-        let (mismatched, sampled) = (named(jobs.mismatched()), named(jobs.sampled()));
         let report = json!({
             "size": [size.0, size.1],
-            "frames": recorded.frames,
-            "prepare_ms": prepared_ms,
-            "frame_ms": recorded.elapsed_ms / f64::from(recorded.frames.max(1)),
-            "cpu_ms": distribution(&recorded.cpu_ms),
-            "main_stack_peak_bytes": engine_profiler::stack::peak(),
-            "mismatched": mismatched,
-            "sampled": sampled,
-            "rows_frames": recorded.frames - recorded.frames / 2,
-            "rows": rows(engine::profiling::take_rows()),
-            "waits": rows(engine::profiling::take_waits()),
-            "speed": speed(),
+            "frames": played,
+            "mismatched": named(jobs.mismatched()),
+            "sampled": named(jobs.sampled()),
             "stats": stats,
         });
         println!("{report:#}");
@@ -634,29 +714,3 @@ fn named(records: &[(Option<JobRef>, String)]) -> Vec<serde_json::Value> {
         .map(|(kind, key)| json!({ "kind": kind.as_ref().map(JobRef::name), "key": key }))
         .collect()
 }
-
-fn distribution(values: &[f64]) -> serde_json::Value {
-    json!(engine::host::Distribution::of(values))
-}
-
-fn rows(rows: Vec<engine::profiling::Row>) -> serde_json::Value {
-    rows.iter()
-        .map(|row| {
-            json!({
-                "name": row.name,
-                "ms": row.ms,
-                "worst_ms": row.worst_ms,
-                "runs": row.runs,
-                "allocations": row.allocations,
-            })
-        })
-        .collect()
-}
-
-fn speed() -> serde_json::Value {
-    engine::profiling::take_speed().map_or(
-        serde_json::Value::Null,
-        |(fast, slow)| json!({ "fast_ms": fast, "slow_ms": slow }),
-    )
-}
-

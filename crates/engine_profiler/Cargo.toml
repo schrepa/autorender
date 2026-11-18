@@ -10,18 +10,26 @@ description = "Deep profiles of native engine games"
 default = []
 profiling = [
     "engine/profiling",
+    "dep:engine_profile",
+    "engine_profile/profiling",
+    "dep:engine_registry",
+    "engine_registry/profiling",
+    "dep:bevy_ecs",
+    "dep:serde",
     "dep:serde_json",
     "dep:backtrace",
-    "dep:iced-x86",
     "dep:fxprof-processed-profile",
     "dep:windows-sys",
 ]
 
 [dependencies]
 engine.workspace = true
+engine_profile = { workspace = true, optional = true }
+engine_registry = { workspace = true, optional = true }
+bevy_ecs = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 backtrace = { workspace = true, optional = true }
-iced-x86 = { workspace = true, optional = true }
 fxprof-processed-profile = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]

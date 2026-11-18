@@ -19,6 +19,29 @@ pub fn print_schemas(
     Ok(())
 }
 
+#[cfg(feature = "dev")]
+pub fn print_shaders(
+    bricks: impl FnOnce(crate::BrickList) -> crate::BrickList,
+) -> Result<(), String> {
+    let mut engine = crate::engine(bricks).map_err(|error| error.to_string())?;
+    let installed =
+        engine_render::install_noop(engine.app.world_mut()).map_err(|problems| {
+            problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")
+        })?;
+    let stages: Vec<Value> = (installed.stages.iter())
+        .map(|(entry, passes, text)| {
+            serde_json::json!({"entry": entry, "passes": passes, "text": text})
+        })
+        .collect();
+    let shaders = serde_json::json!({
+        "modules": installed.modules,
+        "texts": installed.texts,
+        "stages": stages,
+    });
+    println!("{shaders}");
+    Ok(())
+}
+
 pub fn declarations(schema: &Value, root: &str) -> String {
     let mut output = String::new();
     interface(&mut output, root, schema, false);

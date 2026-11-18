@@ -11,6 +11,7 @@ use bevy_ecs::world::World;
 use engine_registry::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, RecordParity, Shares,
 };
+use engine_profile::Fact;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -403,11 +404,14 @@ pub(crate) enum Work {
         batch: JobBatch,
         admitted: bool,
         message: JobMessage,
+        asked: f64,
     },
     Sent {
         kind: Option<JobRef>,
         asked: f64,
+        sent: f64,
         looking: bool,
+        looked: bool,
         then: Option<JobRequest>,
     },
 }
@@ -627,6 +631,22 @@ pub struct JobExchange {
     memo: JobMemo,
     stats: JobStats,
     last_failure: Option<String>,
+    now: f64,
+    kinds: Vec<KindCounts>,
+}
+
+#[derive(Default)]
+struct KindCounts {
+    name: String,
+    asked: u64,
+    landed: u64,
+    failed: u64,
+    cancelled: u64,
+    ns: u64,
+}
+
+fn kind_name(kind: Option<&JobRef>) -> &str {
+    kind.map_or("records", JobRef::name)
 }
 
 impl Default for JobExchange {
@@ -646,6 +666,8 @@ impl Default for JobExchange {
             memo: JobMemo::default(),
             stats: JobStats::default(),
             last_failure: None,
+            now: 0.0,
+            kinds: Vec::new(),
         }
     }
 }
@@ -866,13 +888,24 @@ impl JobExchange {
                     let key = RecordKey(key);
                     if let Some(ticket) = records.ticket(&key) {
                         let sent = match records.work(&key) {
-                            Some(Work::Sent { looking, .. }) => Some(*looking),
+                            Some(Work::Sent {
+                                kind,
+                                asked,
+                                sent,
+                                looking,
+                                ..
+                            }) => Some((
+                                kind_name(kind.as_ref()).to_owned(),
+                                (*asked, Some(*sent)),
+                                *looking,
+                            )),
                             Some(Work::Waiting { .. }) | None => None,
                         };
                         records.ready(&key, ticket, Arc::from(bytes.as_slice()));
                         self.queue.retain(|queued| *queued != key);
-                        if let Some(looking) = sent {
+                        if let Some((name, times, looking)) = sent {
                             self.cancel(JobId(ticket.number()), !looking);
+                            self.cancelled(&name, times);
                         }
                     }
                     self.keep_with(key, kind, bytes, parity);
@@ -896,12 +929,15 @@ impl JobExchange {
         let made = matches!(message, JobMessage::Run(_));
         match records.work_mut(&key) {
             None => {
+                let kind = message.asked().and_then(|(_, kind, _)| kind);
+                self.counted(kind_name(kind)).asked += 1;
                 records.set_work(
                     &key,
                     Work::Waiting {
                         batch,
                         admitted,
                         message,
+                        asked: self.now,
                     },
                 );
                 self.queue.push(key);
@@ -980,17 +1016,20 @@ impl JobExchange {
         let Some(work) = records.work_mut(&key) else {
             return;
         };
-        let (kind, looking) = match &*work {
-            Work::Waiting { message, .. } => (
+        let (kind, looking, asked) = match &*work {
+            Work::Waiting { message, asked, .. } => (
                 message.asked().and_then(|(_, kind, _)| kind.cloned()),
                 matches!(message, JobMessage::Fetch(_)),
+                *asked,
             ),
             Work::Sent { .. } => return,
         };
         let sent = Work::Sent {
             kind,
-            asked: crate::profile::now_ms(),
+            asked,
+            sent: self.now,
             looking,
+            looked: false,
             then: None,
         };
         let Work::Waiting { message, .. } = std::mem::replace(work, sent) else {
@@ -1032,18 +1071,18 @@ impl JobExchange {
         let Some(Work::Sent {
             kind,
             asked,
+            sent,
             looking,
+            looked,
             then,
         }) = records.work_mut(&key)
         else {
             return;
         };
-        let (name, asked, looking, then) = (
-            kind.as_ref()
-                .map_or("records", |kind| kind.name())
-                .to_owned(),
-            *asked,
-            *looking,
+        let (name, times, (looking, looked), then) = (
+            kind_name(kind.as_ref()).to_owned(),
+            (*asked, *sent),
+            (*looking, *looked),
             then.take(),
         );
         if !looking {
@@ -1051,14 +1090,28 @@ impl JobExchange {
         }
         let missing = matches!(&output, Err(message) if message == MISSING_RECORD);
         if let (true, Some(request)) = (missing, then) {
-            if let Some(Work::Sent { kind, looking, .. }) = records.work_mut(&key) {
+            if let Some(Work::Sent {
+                kind,
+                sent,
+                looking,
+                looked,
+                ..
+            }) = records.work_mut(&key)
+            {
                 *kind = Some(request.kind.clone());
+                *sent = self.now;
                 *looking = false;
+                *looked = true;
             }
             self.send(records, JobMessage::Run(request));
             return;
         }
-        crate::profile::waited(&name, asked);
+        let cache = match (looking, looked, &output) {
+            (true, _, Ok(_)) => "hit",
+            (true, _, Err(_)) | (false, true, _) => "miss",
+            (false, false, _) => "not_looked",
+        };
+        self.landed(&name, times, cache, (&output, missing));
         match output {
             Ok(bytes) => {
                 self.stats.completed += 1;
@@ -1080,11 +1133,88 @@ impl JobExchange {
         }
     }
 
+    fn counted(&mut self, name: &str) -> &mut KindCounts {
+        let at = match self.kinds.iter().position(|kind| kind.name == name) {
+            Some(at) => at,
+            None => {
+                self.kinds.push(KindCounts {
+                    name: name.to_owned(),
+                    ..KindCounts::default()
+                });
+                self.kinds.len() - 1
+            }
+        };
+        &mut self.kinds[at]
+    }
+
+    fn landed(
+        &mut self,
+        name: &str,
+        (asked, sent): (f64, f64),
+        cache: &str,
+        (output, missing): (&Result<Arc<[u8]>, String>, bool),
+    ) {
+        let landed = self.now;
+        let ran = (landed - sent).max(0.0);
+        let counted = self.counted(name);
+        counted.landed += 1;
+        counted.ns = counted.ns.saturating_add((ran * 1e9) as u64);
+        let (outcome, error) = match output {
+            Ok(_) => ("done", None),
+            Err(_) if missing => ("missed", None),
+            Err(message) => {
+                counted.failed += 1;
+                ("failed", Some(message.as_str()))
+            }
+        };
+        let facts = [
+            ("asked_s", Fact::Number(asked)),
+            ("sent_s", Fact::Number(sent)),
+            ("landed_s", Fact::Number(landed)),
+            ("ran_s", Fact::Number(ran)),
+            ("cache", Fact::Text(cache)),
+            ("outcome", Fact::Text(outcome)),
+            ("error", Fact::Text(error.unwrap_or_default())),
+        ];
+        let shown = if error.is_some() { 7 } else { 6 };
+        engine_profile::event("job", name, &facts[..shown]);
+    }
+
+    fn cancelled(&mut self, name: &str, (asked, sent): (f64, Option<f64>)) {
+        self.counted(name).cancelled += 1;
+        engine_profile::event(
+            "job",
+            name,
+            &[
+                ("asked_s", Fact::Number(asked)),
+                (
+                    "sent_s",
+                    sent.map_or(Fact::Unavailable("never_sent"), Fact::Number),
+                ),
+                ("outcome", Fact::Text("cancelled")),
+            ],
+        );
+    }
+
     fn abandon(&mut self, key: RecordKey, released: &Request<Arc<[u8]>>, work: Option<Work>) {
         match (work, released.asked()) {
-            (Some(Work::Waiting { .. }), _) => self.queue.retain(|queued| *queued != key),
-            (Some(Work::Sent { looking, .. }), Some(ticket)) => {
+            (Some(Work::Waiting { message, asked, .. }), _) => {
+                self.queue.retain(|queued| *queued != key);
+                let kind = message.asked().and_then(|(_, kind, _)| kind);
+                self.cancelled(kind_name(kind), (asked, None));
+            }
+            (
+                Some(Work::Sent {
+                    kind,
+                    asked,
+                    sent,
+                    looking,
+                    ..
+                }),
+                Some(ticket),
+            ) => {
                 self.cancel(JobId(ticket.number()), !looking);
+                self.cancelled(kind_name(kind.as_ref()), (asked, Some(sent)));
             }
             (Some(Work::Sent { .. }) | None, _) => {}
         }
@@ -1127,6 +1257,7 @@ pub(crate) fn exchange_orders(world: &mut World) {
         .get_resource::<crate::FrameTime>()
         .map_or(0.0, |time| time.real_elapsed);
     world.resource_scope(|world, mut exchange: Mut<JobExchange>| {
+        exchange.now = now;
         crate::modify(world, |records: &mut Records| {
             exchange.settle(orders, &mut records.requests, now);
         });
@@ -1134,7 +1265,11 @@ pub(crate) fn exchange_orders(world: &mut World) {
 }
 
 pub(crate) fn land_job(world: &mut World, id: JobId, output: Result<Arc<[u8]>, String>) {
+    let now = world
+        .get_resource::<crate::FrameTime>()
+        .map_or(0.0, |time| time.real_elapsed);
     world.resource_scope(|world, mut exchange: Mut<JobExchange>| {
+        exchange.now = now;
         crate::modify(world, |records: &mut Records| {
             exchange.land(&mut records.requests, id, output);
         });
@@ -1182,5 +1317,91 @@ impl JobBudget {
         self.slots = self.slots.saturating_sub(1);
         self.urgent = self.urgent.saturating_sub(1);
         true
+    }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) use read::*;
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+mod read {
+    use bevy_ecs::world::World;
+    use serde_json::{Value, json};
+
+    use super::{JobExchange, JobStats, KindCounts};
+
+    fn unavailable_jobs() -> Value {
+        json!({ "unavailable": "jobs_not_installed" })
+    }
+
+    fn per_kind(world: &World, read: fn(&KindCounts) -> u64) -> Value {
+        world.get_resource::<JobExchange>().map_or_else(unavailable_jobs, |exchange| {
+            Value::Object(
+                exchange
+                    .kinds
+                    .iter()
+                    .map(|kind| (kind.name.clone(), Value::from(read(kind))))
+                    .collect(),
+            )
+        })
+    }
+
+    pub(crate) fn jobs_asked(world: &World) -> Value {
+        per_kind(world, |kind| kind.asked)
+    }
+
+    pub(crate) fn jobs_landed(world: &World) -> Value {
+        per_kind(world, |kind| kind.landed)
+    }
+
+    pub(crate) fn jobs_failed(world: &World) -> Value {
+        per_kind(world, |kind| kind.failed)
+    }
+
+    pub(crate) fn jobs_cancelled(world: &World) -> Value {
+        per_kind(world, |kind| kind.cancelled)
+    }
+
+    pub(crate) fn jobs_time(world: &World) -> Value {
+        per_kind(world, |kind| kind.ns)
+    }
+
+    fn exchange_value(world: &World, read: fn(&JobExchange, JobStats) -> Value) -> Value {
+        world
+            .get_resource::<JobExchange>()
+            .map_or_else(unavailable_jobs, |exchange| read(exchange, exchange.stats()))
+    }
+
+    pub(crate) fn jobs_exchange(world: &World) -> Value {
+        exchange_value(world, |_, stats| {
+            json!({
+                "submitted": stats.submitted,
+                "completed": stats.completed,
+                "failed": stats.failed,
+                "cancelled": stats.cancelled,
+                "in_place": stats.in_place,
+                "cache_hits": stats.cache_hits,
+                "cache_misses": stats.cache_misses,
+                "cache_mismatches": stats.cache_mismatches,
+            })
+        })
+    }
+
+    pub(crate) fn jobs_bytes(world: &World) -> Value {
+        exchange_value(world, |_, stats| {
+            json!({ "shared": stats.shared_bytes, "cache": stats.cache_bytes })
+        })
+    }
+
+    pub(crate) fn jobs_state(world: &World) -> Value {
+        exchange_value(world, |exchange, stats| {
+            json!({
+                "workers": stats.workers,
+                "running": stats.running,
+                "held": stats.held,
+                "shares": stats.shares,
+                "last_failure": exchange.last_failure,
+            })
+        })
     }
 }

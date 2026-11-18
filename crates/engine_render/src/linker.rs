@@ -5,6 +5,12 @@ use std::sync::Arc;
 use engine_core::{Entry, Error, ErrorCode, Source, Var};
 use wesl::Mangler as _;
 
+#[cfg(any(feature = "dev", feature = "profiling"))]
+#[expect(
+    dead_code,
+    reason = "the counter's runtime (counted pipelines, group 3 binding, read-back) that calls it is the next wave"
+)]
+pub(crate) mod counting;
 mod driver;
 
 pub const CORE_PACKAGE: &str = "engine_render";

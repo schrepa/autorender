@@ -31,11 +31,8 @@ pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
 pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
-    SceneMaterialControl, SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,
+    SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,
 };
-pub use spawning::{
-    RemoveOperation, RemoveRequest, RemovedEntity, SpawnOperation, SpawnRequest, SpawnedEntity,
-    remove, spawn,
-};
+pub use spawning::{described, remove, spawn};
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};

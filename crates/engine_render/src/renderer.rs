@@ -26,6 +26,8 @@ mod startup;
 
 pub(crate) use display::Display;
 use display::DisplayFrame;
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use frame::names::gpu_names;
 pub use health::DeviceHealth;
 pub use install::{Ahead, Installation, device_limits, install_noop};
 pub use startup::StartingRenderer;
@@ -66,6 +68,7 @@ pub(crate) struct Core {
 pub struct Renderer {
     surface: Option<DisplayFrame>,
     hidden: frame::Hidden,
+    picture: frame::Picture,
     core: Core,
     run: Option<Run>,
     assets: Option<Assets>,

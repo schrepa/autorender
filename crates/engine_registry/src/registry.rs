@@ -9,11 +9,12 @@ use bevy_ecs::schedule::{
 };
 use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
-use engine_place::{Board, CORE_ROW, Callable, Error, ErrorCode};
-use engine_settings::Expected;
+use engine_place::{Board, CORE_ROW, Error, ErrorCode};
 use serde_json::Value;
 
-use crate::entries::{OperationEntry, SettingsEntry, StatsEntry};
+use crate::entries::{SettingsEntry, StatsEntry};
+#[cfg(feature = "profiling")]
+use crate::entries::names::NameEntry;
 use crate::jobs::JobQueue;
 use crate::record::BrickRecord;
 use crate::state::{BrickStates, Despawn, Switches};
@@ -30,39 +31,19 @@ impl BrickId {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct BrickSet(&'static str);
 
-fn unregistered(name: &str) -> Error {
-    Error::new(ErrorCode::UnknownVariant, "$.name")
-        .expected(Expected::Present)
-        .got(name)
-}
-
-pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Value, Error> {
-    let operation = world
-        .get_resource::<Registry>()
-        .and_then(|registry| registry.operation(name))
-        .copied()
-        .ok_or_else(|| unregistered(name))?;
-    Board::owned_by(operation.brick, || operation.run(world, request))
-        .map_err(|error| error.within("$.args"))
-}
-
-pub fn call<O: Callable>(world: &mut World, request: O::Request) -> Result<O::Reply, Error> {
-    let Some(brick) = world
-        .get_resource::<Registry>()
-        .and_then(|registry| registry.operation(O::NAME))
-        .filter(|entry| entry.declares::<O>())
-        .map(|entry| entry.brick)
-    else {
-        return Err(unregistered(O::NAME));
-    };
-    Board::owned_by(brick, || O::answer(world, request)).map_err(|error| error.within("$.args"))
+#[cfg(feature = "profiling")]
+pub fn register(world: &mut World, entry: NameEntry) {
+    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
+        registry.register(entry);
+    }
 }
 
 #[derive(Resource, Default)]
 pub struct Registry {
     bricks: Vec<BrickRecord>,
     core_sections: Vec<SettingsEntry>,
-    core_operations: Vec<OperationEntry>,
+    #[cfg(feature = "profiling")]
+    table: Vec<std::sync::Arc<NameEntry>>,
     pub(crate) despawn: Option<Despawn>,
     problems: Vec<Error>,
     notices: Vec<Error>,
@@ -78,6 +59,15 @@ impl RegistryBuilder {
         let registry = &mut self.registry;
         registry.problems.append(&mut record.take_problems());
         let package = record.package;
+        #[cfg(feature = "profiling")]
+        let entries = std::mem::take(&mut record.entries);
+        #[cfg(feature = "profiling")]
+        for entry in entries {
+            match entry.downcast::<NameEntry>() {
+                Ok(named) => registry.register(named.owned_by(package)),
+                Err(other) => record.entries.push(other),
+            }
+        }
         if registry.has(package) {
             let path = format!("$.bricks.{package}");
             registry
@@ -91,10 +81,6 @@ impl RegistryBuilder {
 
     pub fn core_settings(&mut self, entry: SettingsEntry) {
         self.registry.core_settings(entry);
-    }
-
-    pub fn core_operation(&mut self, entry: OperationEntry) {
-        self.registry.core_operation(entry);
     }
 
     pub fn despawn_rule(&mut self, despawn: Despawn) {
@@ -119,7 +105,11 @@ impl RegistryBuilder {
         if !world.contains_resource::<JobQueue>() {
             world.init_resource::<JobQueue>();
         }
-        registry.add_systems(world);
+        let mut systems = crate::attributed::Systems::new(schedules);
+        registry.add_systems(world, &mut systems);
+        world.insert_resource(systems);
+        #[cfg(feature = "profiling")]
+        registry.system_names();
         let mut refused = build(world, schedules);
         registry.problems.append(&mut refused);
         let switches = registry.bricks.iter().map(BrickRecord::switch_fn).collect();
@@ -147,18 +137,31 @@ impl Registry {
         self.core_sections.push(entry);
     }
 
-    pub fn core_operation(&mut self, mut entry: OperationEntry) {
-        entry.brick = CORE_ROW;
-        if let Some(owner) = self.operation(entry.name).map(|known| known.brick) {
-            let path = format!("$.operations.{}", entry.name);
+    #[cfg(feature = "profiling")]
+    pub fn register(&mut self, mut entry: NameEntry) {
+        if entry.owner.is_empty() {
+            entry.owner = CORE_ROW;
+        }
+        if let Some(owner) = self.entry(&entry.name).map(|known| known.owner) {
+            let path = format!("$.names.{}", entry.name);
             self.problems.push(
                 Error::new(ErrorCode::NameTwice, path)
                     .got(owner)
-                    .nearest(CORE_ROW),
+                    .nearest(entry.owner),
             );
             return;
         }
-        self.core_operations.push(entry);
+        self.table.push(std::sync::Arc::new(entry));
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn table(&self) -> impl Iterator<Item = &std::sync::Arc<NameEntry>> + '_ {
+        self.table.iter()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn entry(&self, name: &str) -> Option<&std::sync::Arc<NameEntry>> {
+        self.table.iter().find(|entry| entry.name == name)
     }
 
     pub fn report(&mut self, error: Error) {
@@ -238,16 +241,6 @@ impl Registry {
         self.stats().find(|entry| entry.key == key)
     }
 
-    pub fn operations(&self) -> impl Iterator<Item = &OperationEntry> + '_ {
-        self.core_operations
-            .iter()
-            .chain(self.bricks.iter().flat_map(|record| record.operations()))
-    }
-
-    pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
-        self.operations().find(|entry| entry.name == name)
-    }
-
     pub fn check_section(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
         self.section(key)
             .map_or(Ok(()), |entry| entry.check(value, path))
@@ -304,16 +297,6 @@ impl Registry {
                     .nearest(package),
             );
         }
-        for entry in record.operations() {
-            if let Some(owner) = self.operation(entry.name).map(|known| known.brick) {
-                let path = format!("$.operations.{}", entry.name);
-                self.problems.push(
-                    Error::new(ErrorCode::NameTwice, path)
-                        .got(owner)
-                        .nearest(package),
-                );
-            }
-        }
     }
 
     fn check_owned(&mut self) {
@@ -347,7 +330,32 @@ impl Registry {
         }
     }
 
-    fn add_systems(&mut self, world: &mut World) {
+    #[cfg(feature = "profiling")]
+    fn system_names(&mut self) {
+        use crate::attributed as runs;
+        use crate::entries::names::Kind;
+        let named = |name: &'static str, kind: Kind, read: fn(&World) -> Value| {
+            NameEntry::read(name, kind, move |reach, _| Ok(read(reach.world)))
+        };
+        for entry in [
+            named("systems.runs", Kind::Count, runs::systems_runs),
+            named("systems.time", Kind::Time, runs::systems_time).unit("ns"),
+            named("systems.allocations", Kind::Count, runs::systems_allocations),
+            named("systems.allocated_bytes", Kind::Bytes, runs::systems_allocated_bytes)
+                .unit("bytes"),
+            named("systems.brick", Kind::State, runs::systems_brick),
+            named("systems.outside", Kind::Count, runs::systems_outside),
+            named("bricks.runs", Kind::Count, runs::bricks_runs),
+            named("bricks.time", Kind::Time, runs::bricks_time).unit("ns"),
+            named("bricks.allocations", Kind::Count, runs::bricks_allocations),
+            named("bricks.allocated_bytes", Kind::Bytes, runs::bricks_allocated_bytes)
+                .unit("bytes"),
+        ] {
+            self.register(entry);
+        }
+    }
+
+    fn add_systems(&mut self, world: &mut World, systems: &mut crate::attributed::Systems) {
         let mut all = world.get_resource_or_init::<Schedules>();
         let mut last: Vec<(InternedScheduleLabel, BrickSet)> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
@@ -377,7 +385,7 @@ impl Registry {
                 };
                 let before = crate::attributed::keys(all.entry(schedule));
                 all.add_systems(schedule, chained.in_set(BrickSet(package)));
-                crate::attributed::wrap(all.entry(schedule), &before, package);
+                crate::attributed::wrap(all.entry(schedule), &before, package, systems);
                 let set =
                     BrickSet(package).run_if(move |states: Res<BrickStates>| states.on(brick));
                 match last.iter_mut().find(|(known, _)| *known == schedule) {

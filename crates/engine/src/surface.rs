@@ -5,7 +5,6 @@ macro_rules! __game_surface {
         $crate::$callback! {
             { $($context)* }
             always_mut {
-                fn frame(timestamp: f64, width: u32, height: u32) -> Result<(), $crate::__private::JsValue>;
                 fn key(code: &str, down: bool);
                 fn mouse_button(button: u32, down: bool);
                 fn motion(dx: f32, dy: f32);
@@ -42,10 +41,11 @@ macro_rules! __game_surface {
                 fn job_hash() -> Vec<u8>;
             }
             dev_mut {
-                fn dev_request(line: &str, context: &str) -> String as Json<Step>;
-                fn dev_resume(outcome: &str, context: &str) -> String as Json<Step>;
-                fn dev_reloaded(source: &str, context: &str, files: Option<SceneFileSet>) -> String as Json<Step>;
-                fn dev_refusal(error: &str) -> String as Json<Reply>;
+                fn dev_push(line: &str) -> u32;
+                fn dev_take() -> String as Json<DevTake>;
+                fn dev_pixels() -> Vec<u8>;
+                fn dev_reloaded(source: &str, files: Option<SceneFileSet>);
+                fn dev_reload_failed(error: &str);
             }
         }
     };
@@ -141,8 +141,8 @@ macro_rules! game_main {
 
         #[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]
         #[global_allocator]
-        static ALLOCATOR: $crate::profiling::TrackingAllocator<::std::alloc::System> =
-            $crate::profiling::TrackingAllocator::new(::std::alloc::System);
+        static ALLOCATOR: $crate::__private::TrackingAllocator<::std::alloc::System> =
+            $crate::__private::TrackingAllocator::new(::std::alloc::System);
 
         #[cfg(target_arch = "wasm32")]
         fn main() {}
@@ -338,8 +338,8 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
     use std::fmt::Write;
     let mut output = String::from(
         "import type { JobOrder } from \"../engine/jobs\";\n\
-         import type { Reply, Step } from \"./reply\";\n\
          import type { FrameStats } from \"./stats\";\n\n\
+         export interface DevTake {\n  replies: [number, string][];\n  pictures: { run: string | null; file: string; width: number; height: number }[];\n  reload: boolean;\n}\n\n\
          export type Json<T> = string & { readonly json?: T };\n\n\
          export function parseJson<T>(json: Json<T>): T {\n  \
          return JSON.parse(json) as T;\n\

@@ -8,6 +8,17 @@ type Painted = (
     Option<Option<MaterialHandle>>,
 );
 
+fn instances_of(shape: &RawShape) -> Option<u32> {
+    match shape {
+        RawShape::Pulled { instances, .. }
+        | RawShape::Buffers { instances, .. }
+        | RawShape::Mesh { instances, .. } => Some(instances.end.saturating_sub(instances.start)),
+        RawShape::Indirect { .. } | RawShape::IndirectAt { .. } | RawShape::MeshIndirect { .. } => {
+            None
+        }
+    }
+}
+
 fn mesh_draw<'a>(
     assets: &'a Assets,
     mesh: GeometryHandle,
@@ -185,11 +196,10 @@ impl Run {
         point: Option<&'static str>,
         handle: u32,
         shape: RawShape,
-        timed: TimedDraw<'_>,
+        timer: &GpuProfiler,
     ) -> crate::Recorded {
-        let _row = engine_profile::timed(engine_profile::row("render.draw"));
         let handles = handles_of(&shape);
-        let recorded = match self.issue_draw(part, point, handle, shape, timed) {
+        let recorded = match self.issue_draw(part, point, handle, shape, timer) {
             Ok(recorded) => {
                 self.tallies.kinds.reached();
                 recorded
@@ -257,7 +267,7 @@ impl Run {
         point: Option<&'static str>,
         handle: u32,
         shape: RawShape,
-        timed: TimedDraw<'_>,
+        timer: &GpuProfiler,
     ) -> Result<crate::Recorded, DropReason> {
         let (pipeline, filled) = self
             .pipeline_of(handle)
@@ -281,6 +291,8 @@ impl Run {
         if self.recording.collecting() {
             return Ok(crate::Recorded::Waiting);
         }
+        let at = (self.pass, part);
+        let counted = instances_of(&shape);
         let Self {
             machine,
             recording,
@@ -297,11 +309,13 @@ impl Run {
             frames,
             bound,
             arena,
+            tallies,
             ..
         } = self;
         let parity = frames.parity;
         let set = &sets.list[sets.at];
         let open = recording.open_mut().ok_or(DropReason::NoRenderPass)?;
+        let timed = (timer, &*machine, (at.0, pipeline));
         let built = &machine.pipelines[pipeline as usize];
         let chosen = &built.ready[ready];
         let recorded = if chosen.exact {
@@ -477,6 +491,7 @@ impl Run {
                 });
             }
         }
+        tallies.drawn.add(at, counted);
         Ok(recorded)
     }
 
@@ -648,14 +663,10 @@ impl Run {
 
 fn timed_draw(
     render: &mut wgpu::RenderPass<'static>,
-    timed: TimedDraw<'_>,
+    (timer, machine, (pass, pipeline)): (&GpuProfiler, &Machine, (u32, u32)),
     draw: impl FnOnce(&mut wgpu::RenderPass<'static>),
 ) {
-    let Some((timer, label)) = timed else {
-        draw(render);
-        return;
-    };
-    let began = timer.begin_draw(render, label);
+    let began = timer.begin_draw(render, || machine.draw_key(pass, pipeline));
     draw(render);
     timer.end_draw(render, began);
 }

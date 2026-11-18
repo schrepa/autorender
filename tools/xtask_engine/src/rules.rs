@@ -14,10 +14,9 @@ pub const RULES: Rules = Rules {
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",
             "crates/engine_profile/src/heap.rs",
-            "crates/engine_profiler/src/sampler/mod.rs",
             "crates/engine_profiler/src/sampler/windows.rs",
-            "crates/engine_profiler/src/stack.rs",
             "crates/engine_render/src/renderer/cache.rs",
+            "tools/xtask/src/agent/job.rs",
         ],
     },
     errors: Some(Errors {

@@ -10,17 +10,16 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::system::{Commands, Query, ReadOnlySystemParam, Res, ScheduleSystem, SystemParam};
 use bevy_ecs::world::World;
-use engine_place::Call;
 use engine_registry::{
-    BrickRecord, BrickStates, JobList, MembersOf, OperationEntry, Registry, SettingsEntry,
-    SpawnedBy, StatsEntry,
+    BrickRecord, BrickStates, JobList, MembersOf, Registry, SettingsEntry, SpawnedBy,
+    StatsEntry,
 };
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Callable, Error, JobKind, KindDecl, List, Mover, MoverId, Operation, Pace, Parent, RecordKey,
-    SceneContext, Section, Source, Switch,
+    Error, JobKind, KindDecl, List, Mover, MoverId, Pace, Parent, RecordKey, SceneContext, Section,
+    Source, Switch,
 };
 
 pub trait Brick: 'static {
@@ -118,19 +117,9 @@ impl Bricks<'_> {
         self
     }
 
-    #[track_caller]
-    pub fn operation<O: Callable>(&mut self) -> &mut Self {
-        self.record.operation(OperationEntry::of(Call::of::<O>()));
-        self
-    }
-
-    #[track_caller]
-    pub fn observation<O: Operation>(&mut self) -> &mut Self
-    where
-        O::Params: Read,
-    {
-        self.record
-            .operation(OperationEntry::of(Call::of::<O>().observed()));
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub fn name(&mut self, entry: engine_registry::NameEntry) -> &mut Self {
+        self.record.entries.push(Box::new(entry));
         self
     }
 

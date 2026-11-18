@@ -1,4 +1,4 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -650,29 +650,6 @@ impl DeviceLimits {
             max_texture_dimension_2d: 0,
             max_compute_workgroups_per_dimension: 0,
             indirect_first_instance: false,
-        }
-    }
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-#[component(immutable)]
-pub struct PartDraws {
-    draws: Vec<(TypeId, u32)>,
-}
-
-impl PartDraws {
-    pub fn of(&self, part: TypeId) -> u32 {
-        self.draws
-            .iter()
-            .find(|(of, _)| *of == part)
-            .map_or(0, |&(_, draws)| draws)
-    }
-
-    #[doc(hidden)]
-    pub fn add(&mut self, part: TypeId, draws: u32) {
-        match self.draws.iter_mut().find(|(of, _)| *of == part) {
-            Some((_, held)) => *held = held.saturating_add(draws),
-            None => self.draws.push((part, draws)),
         }
     }
 }

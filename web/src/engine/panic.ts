@@ -11,7 +11,3 @@ export function panicReport(error?: unknown): PanicReport | undefined {
 export function fatal(error: unknown): boolean {
   return error instanceof WebAssembly.RuntimeError || panicReport(error) !== undefined;
 }
-
-export function stoppedMessage(error: unknown): string {
-  return panicReport(error)?.message ?? String(error);
-}

@@ -40,10 +40,6 @@ mod ticks;
 mod transform_edits;
 mod views;
 
-pub mod profile {
-    pub use engine_profile::{Aggregate, Span, active, counter, now_ms, span, tally, waited};
-}
-
 pub use admission::admit;
 pub use assets::*;
 pub use authoring::{DrawnForm, ViewForm, core_components};
@@ -65,9 +61,7 @@ pub use engine_assets::{
     UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
-    AUTHORED_COMPONENTS, AuthoredId, Call, Callable, Each, Lands, Named, Operation,
-    OperationScene, RESERVED_REPLY_KEYS, Refusal, Rows, SCENE_SCHEMA, SceneEntity, SchemaIn,
-    authored_component, entity_removed, open_parts, open_schema, scene_references, schema_of,
+    AuthoredId, Named, OperationScene, SCENE_SCHEMA, SceneEntity, entity_removed, schema_of,
 };
 pub use engine_place::{
     Asked, Awaits, BlendedPass, Board, Census, Changed, Changes, Clock, ColorPass, Cursor,
@@ -82,8 +76,11 @@ pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
 pub use engine_place::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
-pub use engine_registry::call;
 pub use engine_registry::{FrameFacts, RecordParity};
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use engine_registry::{
+    Answer, Kind, Lands, NameEntry, Reach, ReachMut, register, unavailable,
+};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
@@ -106,7 +103,7 @@ pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
 pub use section::{Cut, Section, Switch};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Levels, PartDraws, Placed,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Levels, Placed,
     Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
     scene_component, scene_components,
 };
@@ -148,9 +145,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, SingleThreadedExecutor};
 use bevy_ecs::world::World;
 use clock::{Advanced, FixedClock, Interval};
-use engine_registry::{
-    JobList, JobListed, MembersOf, OperationEntry, Registry, RegistryBuilder, Switches,
-};
+use engine_registry::{JobList, JobListed, MembersOf, Registry, RegistryBuilder, Switches};
 use schedules::{FixedSimulation, FrameStart, Presentation, TransformPropagation};
 
 #[cfg(feature = "dev")]
@@ -161,6 +156,34 @@ pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
         Err(Error::new(ErrorCode::InvalidStep, "$.ticks")
             .at_least(1)
             .got(ticks))
+    }
+}
+
+#[cfg(feature = "dev")]
+#[derive(Resource, Default)]
+pub struct Held {
+    pub paused: bool,
+    camera: Option<(Transform, Camera)>,
+}
+
+#[cfg(feature = "dev")]
+impl Held {
+    pub fn camera(&self) -> Option<(Transform, Camera)> {
+        self.camera
+    }
+
+    pub fn hold_camera(&mut self, camera: Option<(Transform, Camera)>) {
+        self.camera = camera;
+    }
+}
+
+#[cfg(feature = "dev")]
+fn place_held(world: &mut World) {
+    let held = world.get_resource::<Held>().and_then(Held::camera);
+    if let Some((at, lens)) = held
+        && let Some(camera) = main_camera(world)
+    {
+        place_camera(world, camera, at, lens);
     }
 }
 
@@ -238,6 +261,25 @@ fn install_passes(world: &mut World) {
     }
 }
 
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn job_names(world: &mut World) {
+    let named = |name: &'static str, kind: Kind, read: fn(&World) -> serde_json::Value| {
+        NameEntry::read(name, kind, move |reach, _| Ok(read(reach.world)))
+    };
+    for entry in [
+        named("jobs.asked", Kind::Count, jobs::jobs_asked),
+        named("jobs.landed", Kind::Count, jobs::jobs_landed),
+        named("jobs.failed", Kind::Count, jobs::jobs_failed),
+        named("jobs.cancelled", Kind::Count, jobs::jobs_cancelled),
+        named("jobs.time", Kind::Time, jobs::jobs_time).unit("ns"),
+        named("jobs.exchange", Kind::Count, jobs::jobs_exchange),
+        named("jobs.bytes", Kind::Bytes, jobs::jobs_bytes).unit("bytes"),
+        named("jobs.state", Kind::State, jobs::jobs_state),
+    ] {
+        register(world, entry);
+    }
+}
+
 fn refused(problems: &[Error]) -> Result<(), Error> {
     match problems {
         [] => Ok(()),
@@ -298,7 +340,6 @@ impl Engine {
             .init_resource::<Files>()
             .init_resource::<RecordExchange>()
             .insert_resource(DeviceLimits::without_device(cores))
-            .init_resource::<PartDraws>()
             .init_resource::<MeshLevels>()
             .init_resource::<Devices>()
             .init_resource::<CursorMode>()
@@ -312,6 +353,8 @@ impl Engine {
             .insert_resource(assets);
         assets::install(app.world_mut());
         drawn::install(app.world_mut());
+        #[cfg(feature = "dev")]
+        app.init_resource::<Held>();
         Self {
             app,
             clock,
@@ -361,6 +404,8 @@ impl Engine {
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
         twice.extend(authoring::keys_taken(world));
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        job_names(world);
         let mut registry = world.resource_mut::<Registry>();
         for error in twice {
             registry.report(error);
@@ -382,15 +427,9 @@ impl Engine {
         self
     }
 
-    #[track_caller]
-    pub fn operation<O: Callable>(&mut self) -> &mut Self {
-        self.core_operation(OperationEntry::of(Call::of::<O>()))
-    }
-
-    pub fn core_operation(&mut self, entry: OperationEntry) -> &mut Self {
-        if let Some(mut registry) = self.app.world_mut().get_resource_mut::<Registry>() {
-            registry.core_operation(entry);
-        }
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub fn name(&mut self, entry: NameEntry) -> &mut Self {
+        register(self.app.world_mut(), entry);
         self
     }
 
@@ -474,6 +513,8 @@ impl Engine {
             if moves::start_frame(engine.app.world_mut()) {
                 engine.refresh_transforms();
             }
+            #[cfg(feature = "dev")]
+            place_held(engine.app.world_mut());
             presentation::present(engine.app.world_mut(), presented);
         });
         Ok(())
@@ -618,6 +659,8 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
         }
+        #[cfg(feature = "dev")]
+        place_held(self.app.world_mut());
         self.app.world_mut().clear_trackers();
     }
 

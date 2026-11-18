@@ -1,38 +1,46 @@
-use bevy_ecs::world::World;
-use engine_core::{AssetLibrary, Mesh, Texture, content_hash};
+use std::collections::BTreeMap;
+
+use engine_core::{AssetLibrary, Mesh, Mover, Pace, Reach, Texture, content_hash};
 use serde_json::{Map, Value, json};
 
-use crate::results::DigestResult;
-use crate::{Context, DevTools};
-
-impl DevTools {
-    pub fn digest(&self, world: &World, context: Context<'_>) -> DigestResult {
-        let mut components = Map::new();
-        for (name, mut views) in self.component_views(world, context) {
-            if views.is_empty() {
-                continue;
+pub fn digest(reach: &Reach<'_>) -> Value {
+    let world = reach.world;
+    let mut views: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let ticked = world.iter_entities().filter(|entity| {
+        entity
+            .get::<Mover>()
+            .is_none_or(|mover| mover.pace == Pace::Tick)
+    });
+    for entity in ticked {
+        for (name, value) in crate::entities::values(reach, entity.id(), &[]) {
+            if value.get("unavailable").is_none() {
+                views.entry(name).or_default().push(value.to_string());
             }
-            views.sort_unstable();
-            components.insert(
-                name,
-                json!({"count": views.len(), "hash": hash(views.join("\n").as_bytes())}),
-            );
-        }
-        let assets = world
-            .get_resource::<AssetLibrary>()
-            .map_or(Value::Null, assets);
-        let hash = hash(
-            json!({"components": components, "assets": assets})
-                .to_string()
-                .as_bytes(),
-        );
-        DigestResult {
-            entities: world.iter_entities().count(),
-            components: Value::Object(components),
-            assets,
-            hash,
         }
     }
+    let mut components = Map::new();
+    for (name, mut views) in views {
+        views.sort_unstable();
+        components.insert(
+            name,
+            json!({"count": views.len(), "hash": hash(views.join("
+").as_bytes())}),
+        );
+    }
+    let assets = world
+        .get_resource::<AssetLibrary>()
+        .map_or(Value::Null, assets);
+    let hash = hash(
+        json!({"components": components, "assets": assets})
+            .to_string()
+            .as_bytes(),
+    );
+    json!({
+        "entities": world.iter_entities().count(),
+        "components": components,
+        "assets": assets,
+        "hash": hash,
+    })
 }
 
 fn hash(bytes: &[u8]) -> String {
