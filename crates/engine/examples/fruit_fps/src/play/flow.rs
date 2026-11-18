@@ -41,6 +41,13 @@ impl Stage {
         }
     }
 
+    pub fn lobby(self) -> bool {
+        match self {
+            Stage::Title | Stage::Select => true,
+            Stage::Loading | Stage::Playing | Stage::Paused | Stage::MatchEnd => false,
+        }
+    }
+
     pub fn moving(self) -> bool {
         self == Stage::Playing
     }

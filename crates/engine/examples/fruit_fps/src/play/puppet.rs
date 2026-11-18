@@ -7,7 +7,7 @@ use glam::{Mat3, Quat, Vec3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::play::events::arms::Weapon;
+use crate::play::events::arms::{SwingEvent, Weapon};
 use crate::play::figures::{ChestFrame, Figure, Form, HandTarget, Offset};
 use crate::play::light::MapFilter;
 use crate::rules::AbilitySlot;
@@ -32,18 +32,59 @@ pub struct LookTable {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CastClip {
+    pub clip: String,
+    pub event_seconds: f32,
+    #[serde(default)]
+    pub still_from: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Casts {
-    pub caster: OneShot,
-    pub place: OneShot,
+    pub clips: BTreeMap<String, CastClip>,
+    pub suffix: BTreeMap<String, String>,
+    pub from: String,
+    pub feather: u32,
+    pub weight: f32,
+    pub fade_seconds: f32,
+}
+
+impl Casts {
+    pub fn named(&self, cast: &CastClip, weapon: &str) -> Option<String> {
+        Some(format!("{}{}", cast.clip, self.suffix.get(weapon)?))
+    }
+
+    pub fn clips(&self) -> Vec<String> {
+        self.clips
+            .values()
+            .flat_map(|cast| {
+                self.suffix
+                    .values()
+                    .map(move |suffix| format!("{}{suffix}", cast.clip))
+            })
+            .collect()
+    }
+}
+
+pub fn swing_clip<'a>(
+    (light, heavy): (&'a [String], &'a String),
+    swing: &SwingEvent,
+) -> Option<&'a String> {
+    if swing.heavy {
+        Some(heavy)
+    } else {
+        light.get(usize::from(swing.step) % light.len().max(1))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThrowClips {
-    pub ready: String,
+    pub ready: BTreeMap<String, String>,
     pub hold: String,
-    pub release: String,
-    pub roll: String,
+    pub release: BTreeMap<String, String>,
+    pub roll: BTreeMap<String, String>,
     pub rolled: Vec<String>,
     pub release_leave_seconds: f32,
     pub roll_leave_seconds: f32,
@@ -78,8 +119,56 @@ impl UpperTable {
         self.fire
             .values()
             .chain(self.reload.values())
-            .chain([&throw.ready, &throw.hold, &throw.release, &throw.roll])
+            .chain(throw.ready.values())
+            .chain(throw.release.values())
+            .chain(throw.roll.values())
+            .chain([&throw.hold])
             .map(String::as_str)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeleeClips {
+    pub light: Vec<String>,
+    pub heavy: String,
+    pub from: String,
+    pub feather: u32,
+    pub weight: f32,
+    pub speed: f32,
+    pub fade_seconds: f32,
+}
+
+impl MeleeClips {
+    pub fn clips(&self) -> impl Iterator<Item = &str> {
+        self.light.iter().chain([&self.heavy]).map(String::as_str)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrawClips {
+    pub clips: BTreeMap<String, String>,
+    pub from: String,
+    pub feather: u32,
+    pub weight: f32,
+    pub fade_seconds: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceClips {
+    pub kneel: BaseClip,
+    pub plant: BaseClip,
+    pub defuse: BaseClip,
+    pub stand: BaseClip,
+}
+
+impl DeviceClips {
+    pub fn clips(&self) -> impl Iterator<Item = &str> {
+        [&self.kneel, &self.plant, &self.defuse, &self.stand]
+            .into_iter()
+            .map(|base| base.clip.as_str())
     }
 }
 
@@ -138,6 +227,7 @@ pub struct Death {
     pub from_front: String,
     pub from_back: String,
     pub from_side: String,
+    pub headshot: String,
     pub speed: f32,
     pub fade_seconds: f32,
 }
@@ -161,13 +251,6 @@ impl CrouchTable {
     pub fn chosen(&self) -> Option<&CrouchClips> {
         self.use_clips.then_some(&self.clips)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Plant {
-    pub start: BaseClip,
-    pub hold: BaseClip,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -369,8 +452,15 @@ pub struct ViewPlace {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ViewMelee {
-    pub light: String,
+    pub light: Vec<String>,
     pub heavy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewInspect {
+    pub clip: String,
+    pub cancel_fade_seconds: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -472,6 +562,7 @@ pub struct ViewTable {
     #[serde(default)]
     pub equip: Option<String>,
     pub melee: ViewMelee,
+    pub inspect: ViewInspect,
     pub device: ViewDevice,
     pub weapons: BTreeMap<String, ViewPlace>,
 }
@@ -496,12 +587,11 @@ pub struct PuppetTable {
     pub hits: Hits,
     pub casts: Casts,
     pub upper: UpperTable,
-    pub melee: OneShot,
-    pub melee_heavy: OneShot,
+    pub melee: MeleeClips,
+    pub draw: DrawClips,
     pub victory: OneShot,
     pub death: Death,
-    pub plant: Plant,
-    pub defuse: BaseClip,
+    pub device: DeviceClips,
     pub land: OneShot,
     pub switch: Switch,
     pub aiming: Aiming,

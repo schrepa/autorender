@@ -1,6 +1,7 @@
 use engine::prelude::*;
 
 use super::start::{SeatNumbers, StartNumbers, seats, start_numbers};
+use crate::play::figures::FigureJoints;
 use super::{MatchSetup, RoundBook};
 use crate::play::actors::{Actor, Body, Health, Human, Wish};
 use crate::play::arms::{Arms, Held};
@@ -31,6 +32,7 @@ type ActorRow<'a> = (
     &'a Health,
     Has<Human>,
     Option<&'a Arms>,
+    Option<&'a FigureJoints>,
 );
 
 fn fresh_match(
@@ -127,6 +129,7 @@ fn prepare(
     book.applied = Some(setup.clone());
     book.numbers_revision = revision;
     book.recent.clear();
+    book.planted = None;
     book.unplaced = 0;
     Ok(start)
 }
@@ -150,6 +153,8 @@ fn facts_of(
     };
     PlayerFacts {
         position: feet.to_array(),
+        yaw: wish.yaw_radians,
+        set_down: feet.to_array(),
         site: arena.site(feet),
         in_buy_zone: buy_zone.is_some_and(|zone| arena.zone(zone, feet)),
         near_device: device.is_some_and(|at| at.distance(feet) <= reach),
@@ -157,6 +162,41 @@ fn facts_of(
         defuse: wish.interact_held,
         armor_left: Some(health.armour.ceil() as u32),
     }
+}
+
+fn set_down(
+    arena: &Arena,
+    start: &StartNumbers,
+    (body, wish, posed): (&Body, &Wish, Option<&FigureJoints>),
+    site: usize,
+) -> Vec3 {
+    let place = &start.device_set_down;
+    let fit = posed.map_or(1.0, |posed| posed.fit);
+    let fit = if fit > 0.0 { fit } else { 1.0 };
+    let ahead = crate::weapons::forward(wish.yaw_radians, 0.0);
+    let right = Vec3::new(-ahead.z, 0.0, ahead.x);
+    let reach = (ahead * place.ahead_m + right * place.right_m) * fit;
+    let feet = body.feet;
+    let lift = Vec3::Y * place.lift_m;
+    let flat = engine::math::cos(start.footing.slope_limit_deg.to_radians());
+    let length = reach.length();
+    let steps = engine::math::max((length / place.pull_step_m).ceil(), 1.0) as u32;
+    (0..steps)
+        .map(|pulled| reach * ((steps - pulled) as f32 / steps as f32))
+        .find_map(|offset| {
+            let spot = feet + offset;
+            let along = offset.length();
+            let clear = arena
+                .ray(feet + lift, offset.normalize_or_zero(), along + place.clear_m)
+                .is_none();
+            let ground = arena
+                .ground_under(spot + lift, place.lift_m + start.footing.step_height_m)
+                .filter(|hit| hit.normal.y >= flat)
+                .filter(|hit| (hit.point.y - feet.y).abs() <= start.footing.step_height_m)?;
+            let spot = Vec3::new(spot.x, ground.point.y, spot.z);
+            (clear && arena.site(spot) == Some(site)).then_some(spot)
+        })
+        .unwrap_or(feet)
 }
 
 fn spot_of(device: &Device, seats: &[Seat]) -> DeviceSpot {
@@ -171,20 +211,24 @@ fn spot_of(device: &Device, seats: &[Seat]) -> DeviceSpot {
         Device::Planted {
             site,
             at,
+            yaw,
             fuse_ticks_left,
             ..
         } => DeviceSpot::Planted {
             site,
             at: Vec3::from_array(at),
+            yaw,
             fuse_ticks_left,
         },
-        Device::Exploded { site, at } => DeviceSpot::Exploded {
+        Device::Exploded { site, at, yaw } => DeviceSpot::Exploded {
             site,
             at: Vec3::from_array(at),
+            yaw,
         },
-        Device::Defused { site, at } => DeviceSpot::Defused {
+        Device::Defused { site, at, yaw } => DeviceSpot::Defused {
             site,
             at: Vec3::from_array(at),
+            yaw,
         },
     }
 }
@@ -194,25 +238,40 @@ fn input_of(
     arena: &Arena,
     arms: &ArmsEvents,
     powers: Option<&PowerEvents>,
-    reach: f32,
+    start: &StartNumbers,
     actors: &Query<ActorRow<'_>>,
 ) -> TickInput {
     let Some(game) = round.game.as_ref() else {
         return TickInput::default();
     };
     let device = round.device.at();
+    let carrier = match round.device {
+        DeviceSpot::Carried { slot, .. } => Some(slot),
+        DeviceSpot::Nowhere
+        | DeviceSpot::Dropped { .. }
+        | DeviceSpot::Planted { .. }
+        | DeviceSpot::Exploded { .. }
+        | DeviceSpot::Defused { .. } => None,
+    };
     let mut input = TickInput::default();
     for (slot, seat) in round.seats.iter().enumerate() {
         let row = seat.entity.and_then(|entity| actors.get(entity).ok());
         let side = round.side_of_slot(slot);
-        input.players.push(facts_of(
+        let mut facts = facts_of(
             row.map(|r| (r.2, r.3, r.4, r.6)),
             side,
             arena,
             device,
-            reach,
-        ));
-        if let Some((_, _, _, wish, _, _, arms)) = row {
+            start.device_reach_m,
+        );
+        if let (Some(row), Some(site)) = (row, facts.site)
+            && carrier == Some(slot)
+            && facts.plant
+        {
+            facts.set_down = set_down(arena, start, (row.2, row.3, row.7), site).to_array();
+        }
+        input.players.push(facts);
+        if let Some((_, _, _, wish, _, _, arms, _)) = row {
             input.buys.extend(wish.buys.iter().map(|buy| (slot, *buy)));
             let device_held = arms.is_some_and(|arms| arms.hand.held == Held::Device && !arms.busy);
             if wish.drop && device_held {
@@ -316,7 +375,7 @@ pub(super) fn advance(
         &arena,
         &arms,
         powers.as_deref(),
-        start.device_reach_m,
+        &start,
         &actors,
     );
     let readied: Vec<usize> = (round.seats.iter().enumerate())
@@ -349,6 +408,17 @@ pub(super) fn advance(
         round.restart_ticks = ticks(start.next_match_seconds, tps);
     }
     remember(&mut book, &events);
+    for event in &events {
+        if let Event::PlantCompleted { player, at, .. } = event
+            && let Some(facts) = input.players.get(*player)
+        {
+            book.planted = Some(super::Planted {
+                from: facts.position,
+                yaw: facts.yaw,
+                at: *at,
+            });
+        }
+    }
     out.tick = rules_tick;
     out.events = events;
 }

@@ -292,30 +292,6 @@
       "uri": "assets/cooked/stickers.bc.ktx2"
     },
     {
-      "id": "select_banana",
-      "uri": "assets/cooked/select_banana.bc.ktx2"
-    },
-    {
-      "id": "select_strawberry",
-      "uri": "assets/cooked/select_strawberry.bc.ktx2"
-    },
-    {
-      "id": "select_orange",
-      "uri": "assets/cooked/select_orange.bc.ktx2"
-    },
-    {
-      "id": "select_watermelon",
-      "uri": "assets/cooked/select_watermelon.bc.ktx2"
-    },
-    {
-      "id": "select_eggplant",
-      "uri": "assets/cooked/select_eggplant.bc.ktx2"
-    },
-    {
-      "id": "title",
-      "uri": "assets/cooked/title.bc.ktx2"
-    },
-    {
       "id": "settings_paving",
       "uri": "assets/cooked/settings_paving.bc.ktx2"
     },
@@ -1939,6 +1915,55 @@
         "macro_color": 0.22,
         "macro_rough": 0.06,
         "macro_tile_m": 7.0
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_16",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_14_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_14_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_14_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "values": {
+        "lightmap_scale": 4.0
       },
       "lighting": "figure"
     },
@@ -4322,6 +4347,27 @@
       }
     },
     {
+      "id": "mercato_2_detail_0_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_0_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_0_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_0_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_0_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_0_5_s3.emb"
+      }
+    },
+    {
       "id": "mercato_2_detail_0_6_s1",
       "source": {
         "kind": "buffer",
@@ -4364,6 +4410,27 @@
       }
     },
     {
+      "id": "mercato_2_detail_1_2_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_2_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_2_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_2_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_2_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_2_s3.emb"
+      }
+    },
+    {
       "id": "mercato_2_detail_1_3_s1",
       "source": {
         "kind": "buffer",
@@ -4382,6 +4449,48 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_2_detail_1_3_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_5_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_6_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_6_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_6_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_6_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_1_6_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_1_6_s3.emb"
       }
     },
     {
@@ -4445,27 +4554,6 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_2_detail_2_3_s3.emb"
-      }
-    },
-    {
-      "id": "mercato_2_detail_2_5_s1",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_2_detail_2_5_s1.emb"
-      }
-    },
-    {
-      "id": "mercato_2_detail_2_5_s2",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_2_detail_2_5_s2.emb"
-      }
-    },
-    {
-      "id": "mercato_2_detail_2_5_s3",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/mercato_2_detail_2_5_s3.emb"
       }
     },
     {
@@ -4550,6 +4638,27 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_2_detail_3_3_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_3_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_3_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_3_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_3_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_2_detail_3_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2_detail_3_5_s3.emb"
       }
     },
     {
@@ -4931,6 +5040,27 @@
       }
     },
     {
+      "id": "mercato_3_detail_3_1_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_3_1_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_3_detail_3_1_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_3_1_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_3_detail_3_1_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_3_1_s3.emb"
+      }
+    },
+    {
       "id": "mercato_3_detail_3_5_s1",
       "source": {
         "kind": "buffer",
@@ -5036,6 +5166,27 @@
       }
     },
     {
+      "id": "mercato_3_detail_5_2_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_5_2_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_3_detail_5_2_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_5_2_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_3_detail_5_2_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3_detail_5_2_s3.emb"
+      }
+    },
+    {
       "id": "mercato_3_detail_5_6_s1",
       "source": {
         "kind": "buffer",
@@ -5075,6 +5226,27 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_4_detail_0_2_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_4_detail_0_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_4_detail_0_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_4_detail_0_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_4_detail_0_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_4_detail_0_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_4_detail_0_5_s3.emb"
       }
     },
     {
@@ -5582,24 +5754,24 @@
       }
     },
     {
-      "id": "mercato_4_detail_6_5_s1",
+      "id": "mercato_4_detail_6_6_s1",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_6_5_s1.emb"
+        "uri": "assets/cooked/mercato_4_detail_6_6_s1.emb"
       }
     },
     {
-      "id": "mercato_4_detail_6_5_s2",
+      "id": "mercato_4_detail_6_6_s2",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_6_5_s2.emb"
+        "uri": "assets/cooked/mercato_4_detail_6_6_s2.emb"
       }
     },
     {
-      "id": "mercato_4_detail_6_5_s3",
+      "id": "mercato_4_detail_6_6_s3",
       "source": {
         "kind": "buffer",
-        "uri": "assets/cooked/mercato_4_detail_6_5_s3.emb"
+        "uri": "assets/cooked/mercato_4_detail_6_6_s3.emb"
       }
     },
     {
@@ -5712,6 +5884,272 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/mercato_15_3_3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_0_1_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_0_1_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_0_1_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_0_1_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_0_1_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_0_1_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_0_1_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_0_1_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_2_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_2_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_2_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_2_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_2_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_2_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_2_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_2_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_3_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_3_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_3_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_3_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_3_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_3_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_5_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_5_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_1_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_1_5_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_2_1_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_2_1_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_2_1_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_2_1_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_2_6_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_2_6_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_2_6_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_2_6_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_2_6_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_2_6_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_2_6_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_2_6_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_0_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_0_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_0_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_0_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_0_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_0_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_0_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_0_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_5_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_5_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_5_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_5_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_5_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_5_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_5_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_5_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_6_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_6_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_3_6_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_3_6_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_2_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_2_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_2_s1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_2_s1.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_2_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_2_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_2_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_2_s3.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_3_s0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_3_s0.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_3_s2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_3_s2.emb"
+      }
+    },
+    {
+      "id": "mercato_16_detail_5_3_s3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_16_detail_5_3_s3.emb"
       }
     },
     {
@@ -5933,7 +6371,8 @@
               "clips": {
                 "fire": "assets/cooked/rifle_fire.clip",
                 "reload_parts": "assets/cooked/rifle_reload_parts.clip",
-                "equip": "assets/cooked/rifle_equip.clip"
+                "equip": "assets/cooked/rifle_equip.clip",
+                "inspect": "assets/cooked/rifle_inspect.clip"
               }
             },
             "markers": "assets/cooked/rifle.markers.json",
@@ -5948,7 +6387,8 @@
               "clips": {
                 "fire": "assets/cooked/smg_fire.clip",
                 "reload_parts": "assets/cooked/smg_reload_parts.clip",
-                "equip": "assets/cooked/smg_equip.clip"
+                "equip": "assets/cooked/smg_equip.clip",
+                "inspect": "assets/cooked/smg_inspect.clip"
               }
             },
             "markers": "assets/cooked/smg.markers.json",
@@ -5963,7 +6403,8 @@
               "clips": {
                 "fire": "assets/cooked/sniper_fire.clip",
                 "reload_parts": "assets/cooked/sniper_reload_parts.clip",
-                "equip": "assets/cooked/sniper_equip.clip"
+                "equip": "assets/cooked/sniper_equip.clip",
+                "inspect": "assets/cooked/sniper_inspect.clip"
               }
             },
             "markers": "assets/cooked/sniper.markers.json",
@@ -5978,7 +6419,8 @@
               "clips": {
                 "fire": "assets/cooked/sidearm_fire.clip",
                 "reload_parts": "assets/cooked/sidearm_reload_parts.clip",
-                "equip": "assets/cooked/sidearm_equip.clip"
+                "equip": "assets/cooked/sidearm_equip.clip",
+                "inspect": "assets/cooked/sidearm_inspect.clip"
               }
             },
             "markers": "assets/cooked/sidearm.markers.json",
@@ -5992,8 +6434,9 @@
               "skeleton": "assets/cooked/melee.skel",
               "clips": {
                 "equip": "assets/cooked/melee_equip.clip",
-                "slash_light": "assets/cooked/melee_slash_light.clip",
-                "slash_heavy": "assets/cooked/melee_slash_heavy.clip"
+                "knife_light_a": "assets/cooked/melee_knife_light_a.clip",
+                "knife_light_b": "assets/cooked/melee_knife_light_b.clip",
+                "knife_heavy": "assets/cooked/melee_knife_heavy.clip"
               }
             },
             "markers": "assets/cooked/melee.markers.json",
@@ -6118,12 +6561,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6135,6 +6609,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6151,16 +6628,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6208,12 +6693,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6225,6 +6741,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6241,16 +6760,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6296,12 +6823,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6313,6 +6871,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6329,16 +6890,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6384,12 +6953,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6401,6 +7001,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6417,16 +7020,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6472,12 +7083,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6489,6 +7131,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6505,16 +7150,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6560,12 +7213,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6577,6 +7261,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6593,16 +7280,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6648,12 +7343,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6665,6 +7391,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6681,16 +7410,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6736,12 +7473,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6753,6 +7521,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6769,16 +7540,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6824,12 +7603,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6841,6 +7651,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6857,16 +7670,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -6912,12 +7733,43 @@
       },
       "figure": {
         "clips": {
-          "cast": "assets/cooked/cast.clip",
+          "cast_place": "assets/cooked/cast_place.clip",
+          "cast_place_knife": "assets/cooked/cast_place_knife.clip",
+          "cast_place_sidearm": "assets/cooked/cast_place_sidearm.clip",
+          "cast_place_smg": "assets/cooked/cast_place_smg.clip",
+          "cast_place_sniper": "assets/cooked/cast_place_sniper.clip",
+          "cast_press": "assets/cooked/cast_press.clip",
+          "cast_press_knife": "assets/cooked/cast_press_knife.clip",
+          "cast_press_sidearm": "assets/cooked/cast_press_sidearm.clip",
+          "cast_press_smg": "assets/cooked/cast_press_smg.clip",
+          "cast_press_sniper": "assets/cooked/cast_press_sniper.clip",
+          "cast_self": "assets/cooked/cast_self.clip",
+          "cast_self_knife": "assets/cooked/cast_self_knife.clip",
+          "cast_self_sidearm": "assets/cooked/cast_self_sidearm.clip",
+          "cast_self_smg": "assets/cooked/cast_self_smg.clip",
+          "cast_self_sniper": "assets/cooked/cast_self_sniper.clip",
+          "cast_ultimate": "assets/cooked/cast_ultimate.clip",
+          "cast_ultimate_knife": "assets/cooked/cast_ultimate_knife.clip",
+          "cast_ultimate_sidearm": "assets/cooked/cast_ultimate_sidearm.clip",
+          "cast_ultimate_smg": "assets/cooked/cast_ultimate_smg.clip",
+          "cast_ultimate_sniper": "assets/cooked/cast_ultimate_sniper.clip",
+          "cast_wall": "assets/cooked/cast_wall.clip",
+          "cast_wall_knife": "assets/cooked/cast_wall_knife.clip",
+          "cast_wall_sidearm": "assets/cooked/cast_wall_sidearm.clip",
+          "cast_wall_smg": "assets/cooked/cast_wall_smg.clip",
+          "cast_wall_sniper": "assets/cooked/cast_wall_sniper.clip",
           "death_back": "assets/cooked/death_back.clip",
           "death_front": "assets/cooked/death_front.clip",
+          "death_headshot": "assets/cooked/death_headshot.clip",
           "death_side": "assets/cooked/death_side.clip",
-          "defuse_loop": "assets/cooked/defuse_loop.clip",
-          "dig": "assets/cooked/dig.clip",
+          "device_defuse_loop": "assets/cooked/device_defuse_loop.clip",
+          "device_kneel": "assets/cooked/device_kneel.clip",
+          "device_plant_loop": "assets/cooked/device_plant_loop.clip",
+          "device_stand": "assets/cooked/device_stand.clip",
+          "draw_rifle": "assets/cooked/draw_rifle.clip",
+          "draw_sidearm": "assets/cooked/draw_sidearm.clip",
+          "draw_smg": "assets/cooked/draw_smg.clip",
+          "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
           "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
@@ -6929,6 +7781,9 @@
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
           "jump": "assets/cooked/jump.clip",
+          "knife_heavy": "assets/cooked/knife_heavy.clip",
+          "knife_light_a": "assets/cooked/knife_light_a.clip",
+          "knife_light_b": "assets/cooked/knife_light_b.clip",
           "move_crouch_hold": "assets/cooked/move_crouch_hold.clip",
           "move_crouch_walk": "assets/cooked/move_crouch_walk.clip",
           "move_crouch_walk_back": "assets/cooked/move_crouch_walk_back.clip",
@@ -6945,16 +7800,24 @@
           "move_walk_back": "assets/cooked/move_walk_back.clip",
           "move_walk_left": "assets/cooked/move_walk_left.clip",
           "move_walk_right": "assets/cooked/move_walk_right.clip",
-          "plant_in": "assets/cooked/plant_in.clip",
-          "plant_loop": "assets/cooked/plant_loop.clip",
           "reload_long": "assets/cooked/reload_long.clip",
           "reload_pistol": "assets/cooked/reload_pistol.clip",
+          "reload_smg": "assets/cooked/reload_smg.clip",
+          "reload_sniper": "assets/cooked/reload_sniper.clip",
           "run": "assets/cooked/run.clip",
-          "slash": "assets/cooked/slash.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
+          "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
+          "throw_ready_smg": "assets/cooked/throw_ready_smg.clip",
+          "throw_ready_sniper": "assets/cooked/throw_ready_sniper.clip",
           "throw_release": "assets/cooked/throw_release.clip",
+          "throw_release_sidearm": "assets/cooked/throw_release_sidearm.clip",
+          "throw_release_smg": "assets/cooked/throw_release_smg.clip",
+          "throw_release_sniper": "assets/cooked/throw_release_sniper.clip",
           "throw_roll": "assets/cooked/throw_roll.clip",
+          "throw_roll_sidearm": "assets/cooked/throw_roll_sidearm.clip",
+          "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
+          "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
           "victory": "assets/cooked/victory.clip",
           "walk": "assets/cooked/walk.clip"
@@ -7078,7 +7941,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24816132
+        "largest_m": 0.23903465
       },
       "transform": {}
     },
@@ -7090,7 +7953,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.48836327
+        "largest_m": 0.47446442
       },
       "transform": {}
     },
@@ -7102,7 +7965,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.993309
+        "largest_m": 0.91000366
       },
       "transform": {}
     },
@@ -7126,7 +7989,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24816132
+        "largest_m": 0.24767733
       },
       "transform": {}
     },
@@ -7150,7 +8013,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.993309
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -7186,7 +8049,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49289703
+        "largest_m": 0.48000002
       },
       "transform": {}
     },
@@ -7294,7 +8157,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.94288635
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -7474,7 +8337,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.48778343
+        "largest_m": 0.4699993
       },
       "transform": {}
     },
@@ -7486,7 +8349,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9964447
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -7606,7 +8469,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24816132
+        "largest_m": 0.24767685
       },
       "transform": {}
     },
@@ -7618,7 +8481,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49908638
+        "largest_m": 0.49007797
       },
       "transform": {}
     },
@@ -7702,7 +8565,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24833298
+        "largest_m": 0.24998093
       },
       "transform": {}
     },
@@ -8014,7 +8877,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.99330854
+        "largest_m": 0.91000366
       },
       "transform": {}
     },
@@ -8278,7 +9141,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.24816132
+        "largest_m": 0.24917743
       },
       "transform": {}
     },
@@ -8290,7 +9153,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.48836327
+        "largest_m": 0.47000027
       },
       "transform": {}
     },
@@ -8770,7 +9633,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.49937522
+        "largest_m": 0.49858856
       },
       "transform": {}
     },
@@ -8782,7 +9645,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.9933071
+        "largest_m": 0.9599991
       },
       "transform": {}
     },
@@ -8830,7 +9693,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.99330807
+        "largest_m": 0.90999985
       },
       "transform": {}
     },
@@ -9058,7 +9921,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.48836398
+        "largest_m": 0.48000336
       },
       "transform": {}
     },
@@ -9190,7 +10053,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 0.2482338
+        "largest_m": 0.23235703
       },
       "transform": {}
     },
@@ -9226,7 +10089,7 @@
         "material": "mercato_1"
       },
       "level_piece": {
-        "largest_m": 2.1627712
+        "largest_m": 1.5
       },
       "transform": {}
     },
@@ -9303,6 +10166,42 @@
       "transform": {}
     },
     {
+      "id": "mercato_2_detail_0_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_0_5_s1",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.46899986
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_0_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_0_5_s2",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.8013
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_0_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_0_5_s3",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 2.261
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_2_detail_0_6_s1",
       "drawn": {
         "kind": "level_detail",
@@ -9322,7 +10221,7 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 0.8199997
+        "largest_m": 0.8013
       },
       "transform": {}
     },
@@ -9334,7 +10233,7 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 3.0
+        "largest_m": 2.261
       },
       "transform": {}
     },
@@ -9375,6 +10274,42 @@
       "transform": {}
     },
     {
+      "id": "mercato_2_detail_1_2_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_2_s1",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.48235
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_2_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_2_s2",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.8013
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_2_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_2_s3",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 2.261
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_2_detail_1_3_s1",
       "drawn": {
         "kind": "level_detail",
@@ -9394,7 +10329,7 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 0.8013
+        "largest_m": 0.75930023
       },
       "transform": {}
     },
@@ -9406,7 +10341,79 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 2.261
+        "largest_m": 2.1609998
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_5_s1",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.41899872
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_5_s2",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.8199997
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_5_s3",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 3.4000006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_6_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_6_s1",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.41899872
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_6_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_6_s2",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.8199997
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_1_6_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_1_6_s3",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 3.0
       },
       "transform": {}
     },
@@ -9514,43 +10521,7 @@
         "material": "mercato_2"
       },
       "level_piece": {
-        "largest_m": 2.261
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_2_detail_2_5_s1",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_2_detail_2_5_s1",
-        "material": "mercato_2"
-      },
-      "level_piece": {
-        "largest_m": 0.41899872
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_2_detail_2_5_s2",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_2_detail_2_5_s2",
-        "material": "mercato_2"
-      },
-      "level_piece": {
-        "largest_m": 0.8199997
-      },
-      "transform": {}
-    },
-    {
-      "id": "mercato_2_detail_2_5_s3",
-      "drawn": {
-        "kind": "level_detail",
-        "mesh": "mercato_2_detail_2_5_s3",
-        "material": "mercato_2"
-      },
-      "level_piece": {
-        "largest_m": 3.4000006
+        "largest_m": 2.2900002
       },
       "transform": {}
     },
@@ -9695,6 +10666,42 @@
       },
       "level_piece": {
         "largest_m": 2.46
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_3_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_3_5_s1",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.38000107
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_3_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_3_5_s2",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2_detail_3_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_2_detail_3_5_s3",
+        "material": "mercato_2"
+      },
+      "level_piece": {
+        "largest_m": 2.2900002
       },
       "transform": {}
     },
@@ -10042,7 +11049,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 0.63750005
+        "largest_m": 0.6546669
       },
       "transform": {}
     },
@@ -10198,7 +11205,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 2.1609998
+        "largest_m": 2.9900007
       },
       "transform": {}
     },
@@ -10347,6 +11354,42 @@
       "transform": {}
     },
     {
+      "id": "mercato_3_detail_3_1_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_3_1_s1",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 0.38000005
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_3_1_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_3_1_s2",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 0.63750005
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_3_1_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_3_1_s3",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 1.5
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_3_detail_3_5_s1",
       "drawn": {
         "kind": "level_detail",
@@ -10402,7 +11445,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 0.9000001
+        "largest_m": 0.8013
       },
       "transform": {}
     },
@@ -10414,7 +11457,7 @@
         "material": "mercato_3"
       },
       "level_piece": {
-        "largest_m": 3.5999985
+        "largest_m": 2.261
       },
       "transform": {}
     },
@@ -10527,6 +11570,42 @@
       "transform": {}
     },
     {
+      "id": "mercato_3_detail_5_2_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_5_2_s1",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 0.3800001
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_5_2_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_5_2_s2",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 0.9000001
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3_detail_5_2_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_3_detail_5_2_s3",
+        "material": "mercato_3"
+      },
+      "level_piece": {
+        "largest_m": 3.5999985
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_3_detail_5_6_s1",
       "drawn": {
         "kind": "level_detail",
@@ -10599,6 +11678,42 @@
       "transform": {}
     },
     {
+      "id": "mercato_4_detail_0_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_4_detail_0_5_s1",
+        "material": "mercato_4"
+      },
+      "level_piece": {
+        "largest_m": 0.46899986
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_4_detail_0_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_4_detail_0_5_s2",
+        "material": "mercato_4"
+      },
+      "level_piece": {
+        "largest_m": 0.8013
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_4_detail_0_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_4_detail_0_5_s3",
+        "material": "mercato_4"
+      },
+      "level_piece": {
+        "largest_m": 3.5
+      },
+      "transform": {}
+    },
+    {
       "id": "mercato_4_detail_1_1_s1",
       "drawn": {
         "kind": "level_detail",
@@ -10666,7 +11781,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 2.261
+        "largest_m": 3.1900005
       },
       "transform": {}
     },
@@ -10702,7 +11817,7 @@
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 3.2249985
+        "largest_m": 2.261
       },
       "transform": {}
     },
@@ -11463,38 +12578,38 @@
       "transform": {}
     },
     {
-      "id": "mercato_4_detail_6_5_s1",
+      "id": "mercato_4_detail_6_6_s1",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_4_detail_6_5_s1",
+        "mesh": "mercato_4_detail_6_6_s1",
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 0.46899986
+        "largest_m": 0.38000107
       },
       "transform": {}
     },
     {
-      "id": "mercato_4_detail_6_5_s2",
+      "id": "mercato_4_detail_6_6_s2",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_4_detail_6_5_s2",
+        "mesh": "mercato_4_detail_6_6_s2",
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 0.8013
+        "largest_m": 0.63750005
       },
       "transform": {}
     },
     {
-      "id": "mercato_4_detail_6_5_s3",
+      "id": "mercato_4_detail_6_6_s3",
       "drawn": {
         "kind": "level_detail",
-        "mesh": "mercato_4_detail_6_5_s3",
+        "mesh": "mercato_4_detail_6_6_s3",
         "material": "mercato_4"
       },
       "level_piece": {
-        "largest_m": 2.261
+        "largest_m": 1.5
       },
       "transform": {}
     },
@@ -11639,6 +12754,462 @@
         "kind": "level",
         "mesh": "mercato_15_3_3",
         "material": "mercato_15"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_1_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_1_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000038
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_1_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_1_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_1_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_1_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_0_1_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_0_1_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_2_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_2_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.14999986
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_2_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_2_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_2_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_2_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.88
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_2_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_2_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 6.0200005
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_3_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_3_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.14999986
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_3_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_3_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.88
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_3_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_3_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 6.420002
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_5_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_5_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.14999986
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_5_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_5_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.88
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_1_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_1_5_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 3.540001
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_2_1_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_2_1_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000229
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_2_1_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_2_1_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_2_6_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_2_6_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000229
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_2_6_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_2_6_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_2_6_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_2_6_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_2_6_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_2_6_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_0_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_0_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000229
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_0_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_0_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_0_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_0_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.5213337
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_0_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_0_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_5_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_5_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.100000024
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_5_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_5_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_5_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_5_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_5_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_5_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_6_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_6_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000229
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_3_6_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_3_6_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_2_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_2_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000038
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_2_s1",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_2_s1",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.3600006
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_2_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_2_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.58800125
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_2_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_2_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_3_s0",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_3_s0",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.10000038
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_3_s2",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_3_s2",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 0.6546669
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_16_detail_5_3_s3",
+      "drawn": {
+        "kind": "level_detail",
+        "mesh": "mercato_16_detail_5_3_s3",
+        "material": "mercato_16"
+      },
+      "level_piece": {
+        "largest_m": 2.4
       },
       "transform": {}
     },
@@ -11837,21 +13408,11 @@
         "pictures": {
           "minimap.png": "minimap",
           "portraits.png": "portraits",
-          "select_banana.png": "select_banana",
-          "select_strawberry.png": "select_strawberry",
-          "select_orange.png": "select_orange",
-          "select_watermelon.png": "select_watermelon",
-          "select_eggplant.png": "select_eggplant",
-          "title.png": "title",
           "stickers.png": "stickers",
           "settings_paving.png": "settings_paving",
           "settings_hall.png": "settings_hall"
         },
         "sized": {
-          "title.png": [
-            1920.0,
-            1080.0
-          ],
           "settings_paving.png": [
             272.0,
             320.0
@@ -12004,6 +13565,10 @@
               "key": "reload"
             },
             {
+              "action": "Inspect",
+              "key": "inspect"
+            },
+            {
               "action": "Plant / defuse",
               "key": "interact"
             },
@@ -12034,7 +13599,6 @@
             "color": "ink",
             "shade": "ink"
           },
-          "backdrop": "scrim",
           "loading": {
             "map": "Mercato",
             "mode": "5 v 5 defuse",
@@ -12051,6 +13615,121 @@
         "material": "mercato_field"
       },
       "id": "light_field",
+      "transform": {}
+    },
+    {
+      "drawn": {
+        "kind": "figure",
+        "material": "banana",
+        "mesh": "banana"
+      },
+      "figure": {
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "victory": "assets/cooked/victory.clip"
+        },
+        "skeleton": "assets/cooked/banana.skel"
+      },
+      "id": "lobby_banana",
+      "lobby_figure": {
+        "character": "banana"
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
+      "transform": {}
+    },
+    {
+      "drawn": {
+        "kind": "figure",
+        "material": "strawberry",
+        "mesh": "strawberry"
+      },
+      "figure": {
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "victory": "assets/cooked/victory.clip"
+        },
+        "skeleton": "assets/cooked/strawberry.skel"
+      },
+      "id": "lobby_strawberry",
+      "lobby_figure": {
+        "character": "strawberry"
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
+      "transform": {}
+    },
+    {
+      "drawn": {
+        "kind": "figure",
+        "material": "orange",
+        "mesh": "orange"
+      },
+      "figure": {
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "victory": "assets/cooked/victory.clip"
+        },
+        "skeleton": "assets/cooked/orange.skel"
+      },
+      "id": "lobby_orange",
+      "lobby_figure": {
+        "character": "orange"
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
+      "transform": {}
+    },
+    {
+      "drawn": {
+        "kind": "figure",
+        "material": "watermelon",
+        "mesh": "watermelon"
+      },
+      "figure": {
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "victory": "assets/cooked/victory.clip"
+        },
+        "skeleton": "assets/cooked/watermelon.skel"
+      },
+      "id": "lobby_watermelon",
+      "lobby_figure": {
+        "character": "watermelon"
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
+      "transform": {}
+    },
+    {
+      "drawn": {
+        "kind": "figure",
+        "material": "eggplant",
+        "mesh": "eggplant"
+      },
+      "figure": {
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "victory": "assets/cooked/victory.clip"
+        },
+        "skeleton": "assets/cooked/eggplant.skel"
+      },
+      "id": "lobby_eggplant",
+      "lobby_figure": {
+        "character": "eggplant"
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
       "transform": {}
     }
   ]

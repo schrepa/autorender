@@ -7,6 +7,7 @@ pub mod events;
 pub mod figures;
 pub mod flow;
 pub mod light;
+pub mod lobby;
 pub mod numbers;
 pub mod paths;
 pub mod powers;

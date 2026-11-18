@@ -49,6 +49,19 @@ pub struct ActorArms {
     pub held: String,
     pub action: Option<String>,
     pub pickable: Option<u32>,
+    pub inspecting: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct KnifeStats {
+    pub slot: u32,
+    pub heavy: bool,
+    pub step: u32,
+    pub swing_tick: u64,
+    pub strike_due: u64,
+    pub strike_tick: Option<u64>,
+    pub victim: Option<u32>,
+    pub killed: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -90,6 +103,7 @@ stats! {
         pub dropped: u64,
         pub last_pickup: Option<PickupStats>,
         pub unknown_surfaces: Vec<String>,
+        pub knife: Option<KnifeStats>,
     }
 }
 
@@ -111,6 +125,7 @@ struct Book {
     dropped: u64,
     last_pickup: Option<PickupEvent>,
     unknown_surfaces: Vec<crate::solids::Kind>,
+    knife: Option<KnifeStats>,
 }
 
 pub struct ArmsBrick;
@@ -226,6 +241,34 @@ fn slot_name(slot: Slot) -> &'static str {
     }
 }
 
+fn knife_watch(book: &mut Book, events: &ArmsEvents) {
+    if let Some(swing) = events.swings.last() {
+        book.knife = Some(KnifeStats {
+            slot: swing.slot,
+            heavy: swing.heavy,
+            step: u32::from(swing.step),
+            swing_tick: events.tick,
+            strike_due: swing.strike_tick,
+            ..KnifeStats::default()
+        });
+    }
+    let Some(knife) = book.knife.as_mut() else {
+        return;
+    };
+    let struck = (events.shots.iter())
+        .find(|shot| shot.shooter == knife.slot && shot.weapon == Weapon::Melee);
+    if let Some(shot) = struck {
+        knife.strike_tick = Some(events.tick);
+        knife.victim = match shot.target {
+            crate::play::events::arms::Target::Actor { slot, .. } => Some(slot),
+            crate::play::events::arms::Target::Nothing
+            | crate::play::events::arms::Target::World => None,
+        };
+    }
+    knife.killed |= (events.hits.iter())
+        .any(|hit| hit.shooter == knife.slot && hit.weapon == Weapon::Melee && hit.killed);
+}
+
 type Reported<'a> = (
     &'a Actor,
     &'a Arms,
@@ -249,6 +292,7 @@ fn report(
     if let Some(last) = events.pickups.last() {
         book.last_pickup = Some(*last);
     }
+    knife_watch(&mut book, &events);
     let mut next = ArmsStats {
         refusal: setup.refusal.clone(),
         shots_tick: events.shots.len() as u32,
@@ -286,6 +330,7 @@ fn report(
             weapon: Weapon::Gun(pickup.weapon).key().to_owned(),
             left: pickup.left.map(|gun| Weapon::Gun(gun).key().to_owned()),
         }),
+        knife: book.knife,
         ..ArmsStats::default()
     };
     let mut rows: Vec<_> = actors.iter().collect();
@@ -304,6 +349,7 @@ fn report(
             held: arms.hand.held.key().to_owned(),
             action: arms.hand.action.map(action_name),
             pickable: arms.pickable,
+            inspecting: (arms.loadout.inspecting()).map(|gun| Weapon::Gun(gun).key().to_owned()),
         });
         if !human {
             continue;

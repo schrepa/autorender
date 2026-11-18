@@ -206,14 +206,10 @@ fn card_of(
     (key, character): (&str, &crate::rules::CharacterNumbers),
     (numbers, spoken): (&GameNumbers, &KeyNames),
     texts: &std::collections::BTreeMap<String, String>,
-    images: &std::collections::BTreeMap<String, String>,
 ) {
     set(&mut card.key, key);
     set(&mut card.name, &character.name);
     set(&mut card.role, &character.role);
-    named(&mut card.image, "char_", key);
-    let image = images.get(&card.image).map_or("", String::as_str);
-    set(&mut card.image, image);
     let names = [
         &character.c.name,
         &character.q.name,
@@ -261,7 +257,6 @@ pub(super) fn fill_menu((flow, numbers, sources): MenuReads, mut facts: ResMut<H
                 (key, character),
                 (game, &source.key_names),
                 &loaded.layout.ability_texts,
-                &loaded.select_images,
             );
         }
     }

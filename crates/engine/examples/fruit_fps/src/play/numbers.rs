@@ -97,6 +97,7 @@ pub struct KeyMap {
     pub fire: Binding,
     pub scope: Binding,
     pub reload: Binding,
+    pub inspect: Binding,
     pub drop: Binding,
     pub next_item: Binding,
     pub previous_item: Binding,

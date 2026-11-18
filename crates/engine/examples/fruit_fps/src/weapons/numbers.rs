@@ -43,6 +43,7 @@ pub struct GunNumbers {
     pub reserve: u32,
     pub reload_seconds: f32,
     pub equip_seconds: f32,
+    pub inspect_seconds: f32,
     pub run_speed_factor: f32,
     pub damage: Vec<DamageBand>,
     pub spread_deg: SpreadDeg,
@@ -138,6 +139,27 @@ pub struct MeleeNumbers {
     pub heavy_swing_seconds: f32,
     pub combo_swings: u8,
     pub combo_reset_seconds: f32,
+    pub strike_seconds: StrikeSeconds,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrikeSeconds {
+    pub light: Vec<f32>,
+    pub heavy: f32,
+}
+
+impl StrikeSeconds {
+    pub fn of(&self, heavy: bool, step: u8) -> f32 {
+        if heavy {
+            return self.heavy;
+        }
+        let count = self.light.len().max(1);
+        self.light
+            .get(usize::from(step) % count)
+            .copied()
+            .unwrap_or(0.0)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

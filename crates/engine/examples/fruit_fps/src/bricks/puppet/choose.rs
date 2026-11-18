@@ -26,7 +26,7 @@ use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::powers::Powers;
 use crate::play::puppet::{
     BaseClip, DEVICE, InHand, OneShot, PuppetBook, PuppetFile, PuppetTable, Task, UpperTable,
-    ability_index, leave_tick, weapon_key,
+    ability_index, leave_tick, swing_clip, weapon_key,
 };
 use crate::play::view::{ViewOffsets, Watched};
 use crate::rules::{AbilitySlot, Event};
@@ -43,10 +43,16 @@ enum Base {
     Fall,
     CrouchIdle,
     CrouchWalk,
-    PlantIn,
-    PlantLoop,
-    Defuse,
+    Kneel(Task),
+    Busy(Task),
+    Stand,
     Dead(From),
+}
+
+impl Base {
+    fn on_device(self) -> bool {
+        matches!(self, Base::Kneel(_) | Base::Busy(_) | Base::Stand)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +60,7 @@ enum From {
     Front,
     Back,
     Side,
+    Head,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +77,7 @@ struct Upper {
     fit_seconds: Option<f32>,
     added: Option<Added>,
     next: Option<String>,
+    ease: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +112,7 @@ pub(super) struct Memory {
     switch_total: f32,
     planting: bool,
     defusing: bool,
+    strike: Option<f32>,
     feet_before: Option<[Vec3; 2]>,
     slide: f32,
     moving: Option<Moved>,
@@ -199,6 +208,7 @@ impl Default for Memory {
             switch_total: 0.0,
             planting: false,
             defusing: false,
+            strike: None,
             feet_before: None,
             slide: 0.0,
             moving: None,
@@ -211,7 +221,7 @@ impl Default for Memory {
     }
 }
 
-fn named_by(table: &PuppetTable) -> Vec<&str> {
+fn named_by(table: &PuppetTable) -> Vec<String> {
     let mut names: Vec<&str> = table
         .locomotion
         .gaits
@@ -221,7 +231,13 @@ fn named_by(table: &PuppetTable) -> Vec<&str> {
     names.push(&table.rise.clip);
     names.push(&table.crouch.clips.idle.clip);
     names.push(&table.land.clip);
+    names.push(&table.death.headshot);
     names.extend(table.upper.clips());
+    names.extend(table.melee.clips());
+    names.extend(table.draw.clips.values().map(String::as_str));
+    names.extend(table.device.clips());
+    let mut names: Vec<String> = names.into_iter().map(str::to_owned).collect();
+    names.extend(table.casts.clips());
     names.sort_unstable();
     names.dedup();
     names
@@ -234,8 +250,7 @@ fn known(memory: &mut Memory, table: &PuppetTable, figure: &Figure) {
     memory.clips = figure.clips.keys().cloned().collect();
     memory.missing = named_by(table)
         .into_iter()
-        .filter(|name| !memory.clips.contains(*name))
-        .map(str::to_owned)
+        .filter(|name| !memory.clips.contains(name))
         .collect();
 }
 
@@ -375,6 +390,7 @@ fn shot(one: &OneShot, lasting: bool) -> Upper {
         fit_seconds: None,
         added: None,
         next: None,
+        ease: None,
     }
 }
 
@@ -403,11 +419,76 @@ fn layer_shot(
             fade_seconds: table.fade_seconds,
         }),
         next: None,
+        ease: None,
     })
 }
 
 fn throws(upper: Option<&Upper>, table: &UpperTable) -> bool {
-    upper.is_some_and(|upper| upper.clip == table.throw.ready || upper.clip == table.throw.hold)
+    upper.is_some_and(|upper| {
+        upper.clip == table.throw.hold || table.throw.ready.values().any(|clip| *clip == upper.clip)
+    })
+}
+
+fn melee_upper(memory: &mut Memory, facts: &Facts<'_>, slot: u32) -> Option<Upper> {
+    let melee = &facts.book.table.melee;
+    let swing = facts.arms.swings.iter().rfind(|swing| swing.slot == slot)?;
+    let clip = swing_clip((&melee.light, &melee.heavy), swing)
+        .filter(|clip| memory.clips.contains(*clip))?;
+    memory.strike = Some(swing.strike_tick.saturating_sub(facts.arms.tick) as f32 * facts.delta);
+    Some(Upper {
+        clip: clip.clone(),
+        from: melee.from.clone(),
+        feather: melee.feather,
+        weight: melee.weight,
+        speed: melee.speed,
+        cue: 0,
+        lasting: false,
+        window: None,
+        looping: false,
+        fit_seconds: None,
+        added: None,
+        next: None,
+        ease: Some(melee.fade_seconds),
+    })
+}
+
+fn draw_upper(memory: &Memory, facts: &Facts<'_>, slot: u32) -> Option<Upper> {
+    let draw = &facts.book.table.draw;
+    let handled = facts
+        .arms
+        .handling
+        .iter()
+        .rfind(|handled| handled.slot == slot && handled.kind == Handling::Equip)?;
+    let Weapon::Gun(kind) = handled.weapon else {
+        return None;
+    };
+    let clip = draw
+        .clips
+        .get(handled.weapon.key())
+        .filter(|clip| memory.clips.contains(*clip))?;
+    Some(Upper {
+        clip: clip.clone(),
+        from: draw.from.clone(),
+        feather: draw.feather,
+        weight: draw.weight,
+        speed: 1.0,
+        cue: 0,
+        lasting: false,
+        window: None,
+        looping: false,
+        fit_seconds: facts
+            .numbers
+            .map(|numbers| numbers.weapons.gun(kind).equip_seconds),
+        added: None,
+        next: None,
+        ease: Some(draw.fade_seconds),
+    })
+}
+
+fn drawn(memory: &Memory, table: &PuppetTable, weapon: Option<&str>) -> bool {
+    weapon
+        .and_then(|weapon| table.draw.clips.get(weapon))
+        .is_some_and(|clip| memory.clips.contains(clip))
 }
 
 struct Facts<'a> {
@@ -477,7 +558,7 @@ fn thrown(spec: Option<&AbilitySpec>) -> bool {
 }
 
 fn cast_upper(
-    memory: &Memory,
+    (memory, still): (&Memory, bool),
     facts: &Facts<'_>,
     actor: &Actor,
     slot: AbilitySlot,
@@ -488,12 +569,54 @@ fn cast_upper(
         Some(Delivery::Throw(_)) => {
             let throw = &table.upper.throw;
             let rolled = spec.is_some_and(|spec| throw.rolled.contains(&spec.name));
-            let clip = if rolled { &throw.roll } else { &throw.release };
-            layer_shot(&table.upper, &memory.clips, Some(clip))
+            let clips = if rolled { &throw.roll } else { &throw.release };
+            let clip = memory.weapon.and_then(|weapon| clips.get(weapon));
+            layer_shot(&table.upper, &memory.clips, clip)
         }
-        Some(Delivery::Place(_)) => Some(shot(&table.casts.place, false)),
-        Some(Delivery::Caster) | None => Some(shot(&table.casts.caster, false)),
+        Some(Delivery::Place(_) | Delivery::Caster) => {
+            let casts = &table.casts;
+            let row = table.view.hands.abilities.get(&spec?.name)?;
+            let cast = casts.clips.get(&row.clip)?;
+            let clip = casts
+                .named(cast, memory.weapon?)
+                .filter(|clip| memory.clips.contains(clip))?;
+            let from = cast
+                .still_from
+                .as_ref()
+                .filter(|_| still)
+                .unwrap_or(&casts.from);
+            Some(Upper {
+                clip,
+                from: from.clone(),
+                feather: casts.feather,
+                weight: casts.weight,
+                speed: row.speed,
+                cue: 0,
+                lasting: false,
+                window: None,
+                looping: false,
+                fit_seconds: None,
+                added: None,
+                next: None,
+                ease: Some(casts.fade_seconds),
+            })
+        }
+        None => None,
     }
+}
+
+fn cast_event(table: &PuppetTable, clip: &str) -> Option<f32> {
+    let casts = &table.casts;
+    casts
+        .clips
+        .values()
+        .find(|cast| {
+            casts
+                .suffix
+                .values()
+                .any(|suffix| clip.strip_prefix(cast.clip.as_str()) == Some(suffix.as_str()))
+        })
+        .map(|cast| cast.event_seconds)
 }
 
 fn gun_upper(memory: &Memory, facts: &Facts<'_>, slot: u32) -> Option<Upper> {
@@ -545,7 +668,10 @@ fn throw_upper(memory: &mut Memory, facts: &Facts<'_>, actor: &Actor) -> Option<
     if !(holding && free) {
         return None;
     }
-    layer_shot(table, &memory.clips, Some(&table.throw.ready)).map(|upper| Upper {
+    let ready = memory
+        .weapon
+        .and_then(|weapon| table.throw.ready.get(weapon));
+    layer_shot(table, &memory.clips, ready).map(|upper| Upper {
         next: Some(table.throw.hold.clone()),
         ..upper
     })
@@ -570,19 +696,27 @@ fn hand_of(
     let Some(ability) = cast.map(|cast| cast.ability).or(held) else {
         return was.filter(|hand| hand.cast.is_some() && hand.holds(facts.tick));
     };
-    let spec = spec_of(facts, actor, ability).filter(|spec| thrown(Some(*spec)));
+    let spec = spec_of(facts, actor, ability);
+    let tossed = thrown(spec);
     let prop = spec.and_then(|spec| {
         let row = table.view.hands.abilities.get(&spec.name)?;
-        Some((spec, row.prop.as_ref()?))
+        Some((spec, row, row.prop.as_ref()?))
     });
-    let Some((spec, prop)) = prop else {
+    let Some((spec, row, prop)) = prop.filter(|_| tossed || cast.is_some()) else {
         return was.filter(|hand| hand.cast.is_some() && hand.holds(facts.tick));
     };
     let index = ability_index(ability);
     let kept = was.filter(|hand| hand.ability == index && hand.prop == prop.key);
     let (cast, release) = match (cast, kept.as_ref()) {
         (Some(_), _) => {
-            let leave = if throw.rolled.contains(&spec.name) {
+            let leave = if !tossed {
+                table
+                    .casts
+                    .clips
+                    .get(&row.clip)
+                    .map_or(prop.leave_seconds, |cast| cast.event_seconds)
+                    / max(row.speed, 1.0e-3)
+            } else if throw.rolled.contains(&spec.name) {
                 throw.roll_leave_seconds
             } else {
                 throw.release_leave_seconds
@@ -651,7 +785,10 @@ fn gun_state(
     (weapon, arms, slot): (Option<&'static str>, Option<&Arms>, u32),
 ) -> Gun {
     if weapon != memory.weapon {
-        if memory.weapon.is_some() && weapon.is_some() {
+        if drawn(memory, &facts.book.table, weapon) {
+            memory.switch_total = 0.0;
+            memory.switch_left = 0.0;
+        } else if memory.weapon.is_some() && weapon.is_some() {
             let seconds = facts.numbers.zip(arms).map_or(0.0, |(numbers, arms)| {
                 arms.loadout
                     .active_gun()
@@ -713,7 +850,7 @@ fn hit_clip(table: &PuppetTable, part: BodyPart, from: From) -> String {
     match (part, from) {
         (BodyPart::Head, _) => hits.head.clone(),
         (BodyPart::Leg, _) => hits.low.clone(),
-        (BodyPart::Body, From::Front) => hits.front.clone(),
+        (BodyPart::Body, From::Front | From::Head) => hits.front.clone(),
         (BodyPart::Body, From::Back) => hits.back.clone(),
         (BodyPart::Body, From::Side) => hits.side.clone(),
     }
@@ -782,7 +919,10 @@ fn note_hits(
                 (body.feet, wish.yaw_radians),
                 facts.feet.get(&hit.shooter).copied(),
             );
-            memory.fallen = from;
+            let headshot = hit.killed
+                && hit.part == BodyPart::Head
+                && memory.clips.contains(&facts.book.table.death.headshot);
+            memory.fallen = if headshot { From::Head } else { from };
             if !hit.killed {
                 reaction = Some((hit.part, from));
             }
@@ -817,10 +957,15 @@ fn upper_from_events(
     {
         memory.upper = None;
     }
-    let mut wanted = throw_upper(memory, facts, actor);
+    let mut wanted = draw_upper(memory, facts, actor.slot);
+    if let Some(throw) = throw_upper(memory, facts, actor) {
+        wanted = Some(throw);
+    }
+    let still = body.grounded
+        && Vec3::new(body.velocity.x, 0.0, body.velocity.z).length() < table.still_below_mps;
     for cast in facts.powers.iter().flat_map(|powers| &powers.casts) {
         if cast.slot == actor.slot {
-            wanted = cast_upper(memory, facts, actor, cast.ability).or(wanted);
+            wanted = cast_upper((memory, still), facts, actor, cast.ability).or(wanted);
         }
     }
     for event in &facts.round.events {
@@ -845,15 +990,8 @@ fn upper_from_events(
     if let Some(gun) = gun_upper(memory, facts, actor.slot) {
         wanted = Some(gun);
     }
-    for fired in &facts.arms.shots {
-        if fired.shooter == actor.slot && fired.weapon == Weapon::Melee {
-            let swing = if fired.heavy {
-                &table.melee_heavy
-            } else {
-                &table.melee
-            };
-            wanted = Some(shot(swing, false));
-        }
+    if let Some(swing) = melee_upper(memory, facts, actor.slot) {
+        wanted = Some(swing);
     }
     if let Some((part, from)) = reaction {
         let hits = &table.hits;
@@ -870,6 +1008,7 @@ fn upper_from_events(
             fit_seconds: None,
             added: None,
             next: None,
+            ease: None,
         });
     }
     start(memory, wanted);
@@ -883,14 +1022,15 @@ fn start(memory: &mut Memory, wanted: Option<Upper>) {
     }
 }
 
-fn planted(memory: &Memory, joints: Option<&FigureJoints>) -> Base {
-    let started =
-        joints.is_some_and(|joints| joints.base_cue == memory.base_cue && joints.base_done);
-    match memory.base {
-        Base::PlantIn if started => Base::PlantLoop,
-        Base::PlantLoop => Base::PlantLoop,
-        Base::PlantIn
-        | Base::Idle
+fn base_done(memory: &Memory, joints: Option<&FigureJoints>) -> bool {
+    joints.is_some_and(|joints| joints.base_cue == memory.base_cue && joints.base_done)
+}
+
+fn knelt(memory: &Memory, table: &PuppetTable, task: Task, joints: Option<&FigureJoints>) -> Base {
+    let kneeling = match memory.base {
+        Base::Busy(was) => was != task,
+        Base::Kneel(was) => was != task || !base_done(memory, joints),
+        Base::Idle
         | Base::Walk
         | Base::Run
         | Base::Turn
@@ -898,8 +1038,36 @@ fn planted(memory: &Memory, joints: Option<&FigureJoints>) -> Base {
         | Base::Fall
         | Base::CrouchIdle
         | Base::CrouchWalk
-        | Base::Defuse
-        | Base::Dead(_) => Base::PlantIn,
+        | Base::Stand
+        | Base::Dead(_) => true,
+    };
+    if kneeling && memory.clips.contains(&table.device.kneel.clip) {
+        Base::Kneel(task)
+    } else {
+        Base::Busy(task)
+    }
+}
+
+fn stood(
+    memory: &Memory,
+    table: &PuppetTable,
+    (body, joints): (&Body, Option<&FigureJoints>),
+) -> bool {
+    let still = body.grounded
+        && Vec3::new(body.velocity.x, 0.0, body.velocity.z).length() < table.still_below_mps;
+    let stands = memory.clips.contains(&table.device.stand.clip);
+    match memory.base {
+        Base::Kneel(_) | Base::Busy(_) => still && stands,
+        Base::Stand => still && !base_done(memory, joints),
+        Base::Idle
+        | Base::Walk
+        | Base::Run
+        | Base::Turn
+        | Base::Rise
+        | Base::Fall
+        | Base::CrouchIdle
+        | Base::CrouchWalk
+        | Base::Dead(_) => false,
     }
 }
 
@@ -908,11 +1076,11 @@ fn base_of(
     table: &PuppetTable,
     (body, joints): (&Body, Option<&FigureJoints>),
 ) -> Base {
-    if memory.defusing {
-        return Base::Defuse;
+    if let Some(task) = memory.task() {
+        return knelt(memory, table, task, joints);
     }
-    if memory.planting {
-        return planted(memory, joints);
+    if stood(memory, table, (body, joints)) {
+        return Base::Stand;
     }
     if !body.grounded {
         let rising = body.velocity.y > 0.0;
@@ -964,14 +1132,16 @@ fn base_clip(table: &PuppetTable, base: Base) -> (String, f32, bool) {
         Base::Rise => of(&table.rise, false),
         Base::Fall => of(&table.fall, true),
         Base::CrouchIdle | Base::Walk | Base::Run | Base::CrouchWalk => crouched(&table.idle),
-        Base::PlantIn => of(&table.plant.start, false),
-        Base::PlantLoop => of(&table.plant.hold, true),
-        Base::Defuse => of(&table.defuse, true),
+        Base::Kneel(_) => of(&table.device.kneel, false),
+        Base::Busy(Task::Planting) => of(&table.device.plant, true),
+        Base::Busy(Task::Defusing) => of(&table.device.defuse, true),
+        Base::Stand => of(&table.device.stand, false),
         Base::Dead(from) => (
             match from {
                 From::Front => death.from_front.clone(),
                 From::Back => death.from_back.clone(),
                 From::Side => death.from_side.clone(),
+                From::Head => death.headshot.clone(),
             },
             death.fade_seconds,
             false,
@@ -990,9 +1160,9 @@ fn rate_of(table: &PuppetTable, base: Base) -> f32 {
         | Base::Rise
         | Base::Fall
         | Base::CrouchIdle
-        | Base::PlantIn
-        | Base::PlantLoop
-        | Base::Defuse => 1.0,
+        | Base::Kneel(_)
+        | Base::Busy(_)
+        | Base::Stand => 1.0,
     }
 }
 
@@ -1025,6 +1195,7 @@ fn shaped(
         .flatten();
     let (clip, fade_seconds, looping) = match &moving {
         Some(moved) => (moved.clip.clone(), table.locomotion.fade_seconds, true),
+        None if base.on_device() && !has(&base_clip(table, base).0) => base_clip(table, Base::Idle),
         None => base_clip(table, base),
     };
     let rate = moving
@@ -1039,9 +1210,9 @@ fn shaped(
         | Base::Turn
         | Base::Rise
         | Base::Fall
-        | Base::PlantIn
-        | Base::PlantLoop
-        | Base::Defuse
+        | Base::Kneel(_)
+        | Base::Busy(_)
+        | Base::Stand
         | Base::Dead(_) => false,
     };
     let (crouch, aim) = match (alive, posed_crouched) {
@@ -1217,12 +1388,17 @@ fn stepped(
             | Base::Fall
             | Base::CrouchIdle
             | Base::CrouchWalk
-            | Base::PlantIn
-            | Base::PlantLoop
-            | Base::Defuse => Base::Dead(memory.fallen),
+            | Base::Kneel(_)
+            | Base::Busy(_)
+            | Base::Stand => Base::Dead(memory.fallen),
         }
     };
-    if base != memory.base && matches!(base, Base::Rise | Base::Dead(_) | Base::PlantIn) {
+    if base != memory.base
+        && matches!(
+            base,
+            Base::Rise | Base::Dead(_) | Base::Kneel(_) | Base::Stand
+        )
+    {
         memory.base_cue = memory.base_cue.wrapping_add(1);
     }
     memory.base = base;
@@ -1271,7 +1447,10 @@ fn upper_layer(memory: &Memory) -> Option<UpperLayer> {
             .added
             .as_ref()
             .and_then(|added| added.played_from.clone()),
-        fade_seconds: upper.added.as_ref().map_or(0.0, |added| added.fade_seconds),
+        fade_seconds: upper
+            .added
+            .as_ref()
+            .map_or(upper.ease.unwrap_or(0.0), |added| added.fade_seconds),
     })
 }
 
@@ -1318,7 +1497,7 @@ fn figure_play(
         || memory
             .upper
             .as_ref()
-            .is_some_and(|upper| pinned.contains(&upper.clip)))
+            .is_some_and(|upper| pinned.contains(&upper.clip) && upper.from == table.look.hips))
     .then_some(table.pin_feet.contact_m);
     let moving = shaped.moving.as_ref();
     FigurePlay {
@@ -1389,7 +1568,7 @@ type Writes<'w, 's> = (
 type Stated<'a> = (Option<&'static str>, bool, Option<f32>, f32);
 
 fn actor_stats(
-    memory: &Memory,
+    (memory, table): (&Memory, &PuppetTable),
     (actor, body, joints): (&Actor, &Body, Option<&FigureJoints>),
     (shape, holding, look_yaw): (&Shaped, bool, f32),
     (weapon, alive, reload, dip): Stated<'_>,
@@ -1408,6 +1587,13 @@ fn actor_stats(
         upper_seconds: playing.map_or(0.0, |joints| joints.upper_seconds),
         upper_rate: playing.map_or(0.0, |joints| joints.upper_rate),
         upper_active: playing.is_some_and(|joints| !joints.upper_done),
+        event_s: memory.upper.as_ref().and_then(|upper| {
+            let event = memory
+                .strike
+                .filter(|_| table.melee.clips().any(|clip| clip == upper.clip))
+                .or_else(|| cast_event(table, &upper.clip))?;
+            Some(event / max(upper.speed, 1.0e-3))
+        }),
         hold: if holding { memory.hold } else { 0.0 },
         crouch: shape.crouch,
         aim: shape.aim,
@@ -1436,9 +1622,15 @@ fn held_blend(memory: &mut Memory, table: &PuppetTable, delta: f32) {
         .upper
         .as_ref()
         .is_none_or(|upper| upper.added.is_some())
-        && memory.task().is_none();
+        && !memory.base.on_device();
     let goal = f32::from(u8::from(free));
-    let blend = delta / max(table.hold_blend_seconds, delta);
+    let seconds = memory
+        .upper
+        .as_ref()
+        .and_then(|upper| upper.ease)
+        .filter(|_| !free)
+        .unwrap_or(table.hold_blend_seconds);
+    let blend = delta / max(seconds, delta);
     memory.hold = toward(memory.hold, goal, blend);
 }
 
@@ -1536,7 +1728,7 @@ pub(super) fn animate(
         ));
         let wanted = figure_play(table, memory, &shape, (look_yaw, hold));
         memory.stats = actor_stats(
-            memory,
+            (memory, table),
             (actor, body, joints),
             (&shape, wanted.hold.is_some(), look_yaw),
             (weapon, alive, reload, dip),

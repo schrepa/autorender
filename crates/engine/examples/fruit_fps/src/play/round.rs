@@ -23,15 +23,18 @@ pub enum DeviceSpot {
     Planted {
         site: usize,
         at: Vec3,
+        yaw: f32,
         fuse_ticks_left: u32,
     },
     Exploded {
         site: usize,
         at: Vec3,
+        yaw: f32,
     },
     Defused {
         site: usize,
         at: Vec3,
+        yaw: f32,
     },
 }
 

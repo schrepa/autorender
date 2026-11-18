@@ -137,10 +137,16 @@ impl UpperFade {
 
 fn faded(old: Option<Upper>, new: Option<&Upper>) -> Option<UpperFade> {
     let additive = |upper: &&Upper| upper.layer.additive;
-    let seconds = new
-        .filter(additive)
-        .or(old.as_ref().filter(additive))
+    let eased = new
+        .filter(|upper| !upper.layer.additive)
         .map_or(0.0, |upper| upper.layer.fade_seconds);
+    let seconds = if eased > 0.0 {
+        eased
+    } else {
+        new.filter(additive)
+            .or(old.as_ref().filter(additive))
+            .map_or(0.0, |upper| upper.layer.fade_seconds)
+    };
     (seconds > 0.0).then(|| UpperFade {
         from: old.filter(|upper| upper.layer.additive),
         elapsed: 0.0,

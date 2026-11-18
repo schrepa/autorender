@@ -111,6 +111,28 @@ pub struct HandlingEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SwingEvent {
+    pub slot: u32,
+    pub heavy: bool,
+    pub step: u8,
+    pub strike_tick: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Inspect {
+    Started { seconds: f32 },
+    Cancelled,
+    Ended,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InspectEvent {
+    pub slot: u32,
+    pub weapon: GunKind,
+    pub change: Inspect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PickupEvent {
     pub slot: u32,
     pub weapon: GunKind,
@@ -130,6 +152,8 @@ pub struct ArmsEvents {
     pub hits: Vec<HitEvent>,
     pub deaths: Vec<DeathEvent>,
     pub handling: Vec<HandlingEvent>,
+    pub swings: Vec<SwingEvent>,
+    pub inspects: Vec<InspectEvent>,
     pub pickups: Vec<PickupEvent>,
     pub drops: Vec<DropEvent>,
 }

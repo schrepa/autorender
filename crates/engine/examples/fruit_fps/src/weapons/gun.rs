@@ -150,6 +150,13 @@ impl Gun {
         self.phase == Phase::Ready
     }
 
+    pub fn idle(&self) -> bool {
+        self.phase == Phase::Ready
+            && self.scope_level == 0
+            && self.rescope.is_none()
+            && self.cooldown_ticks <= 0.0
+    }
+
     pub fn recoil(&self) -> &Recoil {
         &self.recoil
     }

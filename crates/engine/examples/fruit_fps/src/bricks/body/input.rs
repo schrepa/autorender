@@ -69,6 +69,7 @@ pub(super) struct Latched {
     fire: bool,
     jump: bool,
     reload: bool,
+    inspect: bool,
     drop: bool,
     scope: bool,
     equip: Option<Equip>,
@@ -183,6 +184,7 @@ pub(super) fn latch(
         jump: latched.jump || pressed(&keys.jump),
         buy_menu: latched.buy_menu || pressed(&keys.buy_menu),
         reload: latched.reload || pressed(&keys.reload),
+        inspect: latched.inspect || pressed(&keys.inspect),
         ready: latched.ready || pressed(&keys.ready),
         drop: latched.drop || pressed(&keys.drop),
         cycle,
@@ -243,6 +245,7 @@ pub(super) fn wish(
         wish.fire_held = played(&keys.fire) && !swallow.0;
         wish.fire_pressed = playing && spent.fire;
         wish.reload = playing && spent.reload;
+        wish.inspect = playing && spent.inspect;
         wish.ready = playing && buying && spent.ready;
         wish.drop = playing && spent.drop;
         wish.cycle = if playing { spent.cycle } else { 0 };

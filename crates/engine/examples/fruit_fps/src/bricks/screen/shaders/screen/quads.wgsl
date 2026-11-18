@@ -207,8 +207,14 @@ fn glyph_of(slot: u32, uv: vec2<f32>, lod: f32) -> f32 {
     }
 }
 
+const PICTURE_SHARPEN: f32 = 0.5;
+
 fn lod_of(scale: f32) -> f32 {
     return max(0.0, -log2(max(scale, 1.0e-4)));
+}
+
+fn picture_lod(scale: f32) -> f32 {
+    return max(0.0, lod_of(scale) - PICTURE_SHARPEN);
 }
 
 @fragment
@@ -220,7 +226,7 @@ fn fs_screen(corner: Corner) -> @location(0) vec4<f32> {
     let tint = unpack4x8unorm(quad.fill);
     let lod = lod_of(quad.scale);
     if quad.mode == IMAGE {
-        let picture = picture_of(quad.edge, corner.uv, lod);
+        let picture = picture_of(quad.edge, corner.uv, picture_lod(quad.scale));
         let shown = encoded(picture.rgb);
         let grey = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
         let tinted = vec4<f32>(mix(shown, vec3<f32>(grey), quad.stroke_width), picture.a) * tint;
@@ -232,7 +238,7 @@ fn fs_screen(corner: Corner) -> @location(0) vec4<f32> {
     }
     if quad.mode == ICON {
         let texels = vec2<f32>(textureDimensions(screen_icons));
-        let alpha = textureSampleLevel(screen_icons, screen_sampler, corner.uv / texels, lod).a;
+        let alpha = textureSampleLevel(screen_icons, screen_sampler, corner.uv / texels, picture_lod(quad.scale)).a;
         return premultiplied(tint, alpha);
     }
     let distance = glyph_of(quad.edge, corner.uv, lod);

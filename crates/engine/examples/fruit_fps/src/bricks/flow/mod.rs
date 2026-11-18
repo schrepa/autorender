@@ -275,7 +275,7 @@ fn steer(
             book.next_match_seconds = 0.0;
         }
     }
-    let stopped = flow.stage != Stage::Playing || flow.settings_open;
+    let stopped = !flow.stage.lobby() && (flow.stage != Stage::Playing || flow.settings_open);
     if stopped != pause.holds(PAUSED_BY) {
         if stopped {
             pause.add(PAUSED_BY);

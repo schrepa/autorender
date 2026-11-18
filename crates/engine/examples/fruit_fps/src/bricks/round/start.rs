@@ -9,6 +9,7 @@ use crate::rules::{Control, Slot, Team};
 struct StartFile {
     #[serde(rename = "match")]
     start: StartNumbers,
+    player: Footing,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -16,6 +17,25 @@ pub(super) struct StartNumbers {
     pub roster: Vec<SeatNumbers>,
     pub next_match_seconds: f64,
     pub device_reach_m: f32,
+    pub device_set_down: SetDown,
+    #[serde(skip)]
+    pub footing: Footing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SetDown {
+    pub right_m: f32,
+    pub ahead_m: f32,
+    pub lift_m: f32,
+    pub clear_m: f32,
+    pub pull_step_m: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+pub(super) struct Footing {
+    pub step_height_m: f32,
+    pub slope_limit_deg: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -28,7 +48,10 @@ pub(super) struct SeatNumbers {
 
 pub(super) fn start_numbers(text: &str) -> Result<StartNumbers, String> {
     serde_json::from_str::<StartFile>(text)
-        .map(|file| file.start)
+        .map(|file| StartNumbers {
+            footing: file.player,
+            ..file.start
+        })
         .map_err(|error| format!("numbers.json match: {error}"))
 }
 

@@ -132,6 +132,7 @@ pub struct PlayNumbers {
     pub flash_mate_m: f32,
     pub flash_inside_m: f32,
     pub smoke_inside_m: f32,
+    pub smoke_open_step_m: f32,
     pub utility_aim_deg: f32,
     pub utility_seconds: f32,
     pub lose_odds: [u32; 2],

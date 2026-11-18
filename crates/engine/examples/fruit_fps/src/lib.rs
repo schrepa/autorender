@@ -23,6 +23,7 @@ pub mod bricks {
     pub mod flow;
     pub mod frame;
     pub mod level;
+    pub mod lobby;
     pub mod look;
     pub mod paths;
     pub mod powers;
@@ -41,6 +42,7 @@ use crate::bricks::figures::FiguresBrick;
 use crate::bricks::flow::FlowBrick;
 use crate::bricks::frame::FrameBrick;
 use crate::bricks::level::LevelBrick;
+use crate::bricks::lobby::LobbyBrick;
 use crate::bricks::look::LookBrick;
 use crate::bricks::paths::PathsBrick;
 use crate::bricks::powers::PowersBrick;
@@ -57,6 +59,7 @@ impl Game for FruitFps {}
 
 pub fn bricks<L: Listing>(list: L) -> L {
     list.with::<FlowBrick>()
+        .with::<LobbyBrick>()
         .with::<PathsBrick>()
         .with::<BotsBrick>()
         .with::<BodyBrick>()

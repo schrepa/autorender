@@ -35,6 +35,10 @@ impl World for BotWorld<'_> {
             .best_cover(self.arena, threat, near, max_distance)
     }
 
+    fn open(&self, at: Vec3) -> bool {
+        self.paths.nearest(at, 0.0).is_some()
+    }
+
     fn places(&self) -> &Places {
         self.places
     }

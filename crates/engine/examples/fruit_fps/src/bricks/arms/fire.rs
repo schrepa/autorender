@@ -6,7 +6,8 @@ use crate::names::{HEAD, HIP, SPINE};
 use crate::play::actors::{Actor, Alive, Body, Equip, Health, SpeedFactor, Wish};
 use crate::play::arms::{Arms, Drops, Hand, HandAction, Held};
 use crate::play::events::arms::{
-    ArmsEvents, DeathEvent, DropEvent, Handling, HandlingEvent, HitEvent, ShotEvent, Target, Weapon,
+    ArmsEvents, DeathEvent, DropEvent, Handling, HandlingEvent, HitEvent, Inspect, InspectEvent,
+    ShotEvent, SwingEvent, Target, Weapon,
 };
 use crate::play::figures::{FigureJoints, LEFT_LEG, RIGHT_LEG};
 use crate::play::powers::Powers;
@@ -17,7 +18,8 @@ use crate::rules::{Device, Team};
 use crate::solids::{Hit, Kind};
 use crate::weapons::{
     Aim, ArmsNumbers, Blocker, BodyPart, CharacterId, Fired, Footing, GunKind, HandMotion,
-    HitJoints, HitShapes, LoadoutInput, LoadoutTick, Pace, Slot, Struck, Vitals, forward,
+    HitJoints, HitShapes, Inspecting, LoadoutInput, LoadoutTick, Pace, Slot, Struck, Vitals,
+    forward,
     gun_damage, hit_shapes, joints_from_body, melee, melee_damage, stance_of, ticks, trace, wound,
 };
 
@@ -81,6 +83,8 @@ pub(super) fn act(
     events.hits.clear();
     events.deaths.clear();
     events.handling.clear();
+    events.swings.clear();
+    events.inspects.clear();
     events.pickups.clear();
     events.drops.clear();
     let Some(numbers) = setup.numbers.as_ref() else {
@@ -113,6 +117,13 @@ pub(super) fn act(
             continue;
         };
         if !alive {
+            if let Some(gun) = arms.loadout.stop_inspecting() {
+                events.inspects.push(InspectEvent {
+                    slot: actor.slot,
+                    weapon: gun,
+                    change: Inspect::Cancelled,
+                });
+            }
             continue;
         }
         let pace = pace_of(powers.as_deref(), actor.slot);
@@ -142,7 +153,7 @@ pub(super) fn act(
             arms.run_factor
         };
         speed.0 = applied * arms.tag_factor();
-        handled(&mut events, actor.slot, &arms, &ticked);
+        handled(&mut events, (actor.slot, tps), &arms, &ticked);
         let Some(fired) = ticked.fired else {
             continue;
         };
@@ -405,6 +416,8 @@ fn advance(
         fire_held: !holding && (wish.fire_held || wish.fire_pressed),
         reload_pressed: !blocked.device && wish.reload,
         scope_pressed: !holding && wish.scope,
+        inspect_pressed: !holding && wish.inspect,
+        lowered: holding,
         switch_to: blocked.equip.and_then(slot_of).filter(|_| !blocked.busy),
         pace,
     };
@@ -421,11 +434,33 @@ fn advance(
     ticked
 }
 
-fn handled(events: &mut ArmsEvents, slot: u32, arms: &Arms, ticked: &LoadoutTick) {
+fn handled(events: &mut ArmsEvents, (slot, tps): (u32, u32), arms: &Arms, ticked: &LoadoutTick) {
     let weapon = arms
         .loadout
         .active_gun()
         .map_or(Weapon::Melee, |gun| Weapon::Gun(gun.kind()));
+    if let Some(swung) = ticked.swung {
+        events.swings.push(SwingEvent {
+            slot,
+            heavy: swung.heavy,
+            step: swung.step,
+            strike_tick: events.tick + u64::from(swung.strike_ticks),
+        });
+    }
+    if let Some((gun, inspecting)) = ticked.inspecting {
+        let change = match inspecting {
+            Inspecting::Started { ticks } => Inspect::Started {
+                seconds: ticks as f32 / tps.max(1) as f32,
+            },
+            Inspecting::Cancelled => Inspect::Cancelled,
+            Inspecting::Ended => Inspect::Ended,
+        };
+        events.inspects.push(InspectEvent {
+            slot,
+            weapon: gun,
+            change,
+        });
+    }
     let flags = [
         (ticked.switched, Handling::Equip),
         (ticked.active.reload_started, Handling::ReloadStarted),

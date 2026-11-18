@@ -24,6 +24,15 @@ settings! {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PlantStats {
+    pub planter_at: [f32; 3],
+    pub device_at: [f32; 3],
+    pub yaw: f32,
+    pub right_m: f32,
+    pub ahead_m: f32,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct RefundStats {
     pub primary: Option<u32>,
@@ -46,6 +55,7 @@ stats! {
         pub alive: [u32; 2],
         pub device: String,
         pub device_at: Option<[f32; 3]>,
+        pub plant: Option<PlantStats>,
         pub last_events: Vec<String>,
         pub waiting: Option<String>,
         pub unplaced: u32,
@@ -71,6 +81,27 @@ struct RoundBook {
     waiting: Option<String>,
     unplaced: u32,
     flow_game: Option<u64>,
+    planted: Option<Planted>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Planted {
+    from: [f32; 3],
+    yaw: f32,
+    at: [f32; 3],
+}
+
+fn plant_stats(planted: Planted) -> PlantStats {
+    let ahead = crate::weapons::forward(planted.yaw, 0.0);
+    let right = glam::Vec3::new(-ahead.z, 0.0, ahead.x);
+    let offset = glam::Vec3::from_array(planted.at) - glam::Vec3::from_array(planted.from);
+    PlantStats {
+        planter_at: planted.from,
+        device_at: planted.at,
+        yaw: planted.yaw,
+        right_m: offset.dot(right),
+        ahead_m: offset.dot(ahead),
+    }
 }
 
 pub struct RoundBrick;
@@ -160,6 +191,7 @@ fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>
         phase: "waiting".to_owned(),
         device: device_name(&round.device).to_owned(),
         device_at: round.device.at().map(|at| at.to_array()),
+        plant: book.planted.map(plant_stats),
         last_events: book.recent.iter().map(|kind| (*kind).to_owned()).collect(),
         waiting: book.waiting.clone(),
         unplaced: book.unplaced,

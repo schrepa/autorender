@@ -389,31 +389,8 @@ fn posed(
     {
         mixed(rig, (played, at), &play.base.blend, scratch)?;
     }
-    if let Some(Upper { clock, layer }) = play.and(clocks.upper.as_ref())
-        && layer.weight > 0.0
-        && !layer.additive
-    {
-        let Some(over) = rig.clips.get(&clock.clip) else {
-            return Err(unknown("$.figure_play.upper.clip", &clock.clip, rig));
-        };
-        let at = clock.at(over.duration(), back);
-        over.bound
-            .sample(&over.clip, at, skeleton, &mut scratch.other)
-            .map_err(|error| rigged(&error))?;
-        let mask = files.mask(rig, &layer.from, layer.feather, "$.figure_play.upper.from")?;
-        for (weight, masked) in scratch.weights.iter_mut().zip(mask.iter()) {
-            *weight = masked * layer.weight;
-        }
-        engine_rig::blend(
-            skeleton,
-            &scratch.base,
-            &scratch.other,
-            &scratch.weights,
-            None,
-            &mut scratch.out,
-        )
-        .map_err(|error| rigged(&error))?;
-        std::mem::swap(&mut scratch.base, &mut scratch.out);
+    if play.is_some() {
+        replaced(rig, clocks, files, back, scratch)?;
     }
     if let Some(aim) = play.and_then(|play| play.aim.as_ref()) {
         looked(skeleton, aim, &mut scratch.base, &mut scratch.turns)?;
@@ -459,6 +436,50 @@ fn posed(
     if play.is_some() {
         layered(rig, clocks, files, back, scratch)?;
     }
+    Ok(())
+}
+
+fn replaced(
+    rig: &Rig,
+    clocks: &Clocks,
+    files: &mut FigureFiles,
+    back: f32,
+    scratch: &mut Scratch,
+) -> Result<(), Error> {
+    let Some(Upper { clock, layer }) = clocks
+        .upper
+        .as_ref()
+        .filter(|upper| upper.layer.weight > 0.0 && !upper.layer.additive)
+    else {
+        return Ok(());
+    };
+    let skeleton = &*rig.skeleton;
+    let Some(over) = rig.clips.get(&clock.clip) else {
+        return Err(unknown("$.figure_play.upper.clip", &clock.clip, rig));
+    };
+    let at = clock.at(over.duration(), back);
+    over.bound
+        .sample(&over.clip, at, skeleton, &mut scratch.other)
+        .map_err(|error| rigged(&error))?;
+    let eased = clocks
+        .upper_fade
+        .as_ref()
+        .filter(|_| layer.fade_seconds > 0.0)
+        .map_or(1.0, |fade| fade.weight(back));
+    let mask = files.mask(rig, &layer.from, layer.feather, "$.figure_play.upper.from")?;
+    for (weight, masked) in scratch.weights.iter_mut().zip(mask.iter()) {
+        *weight = masked * layer.weight * eased;
+    }
+    engine_rig::blend(
+        skeleton,
+        &scratch.base,
+        &scratch.other,
+        &scratch.weights,
+        None,
+        &mut scratch.out,
+    )
+    .map_err(|error| rigged(&error))?;
+    std::mem::swap(&mut scratch.base, &mut scratch.out);
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 use engine::prelude::*;
+use engine_core::math::sin_cos;
 use engine_core::{Error, ErrorCode, Refusals, SceneContext};
 use glam::{Quat, Vec3};
 
@@ -23,10 +24,24 @@ fn form_of(spot: DeviceSpot) -> Option<Form> {
     }
 }
 
+fn yaw_of(spot: DeviceSpot) -> f32 {
+    match spot {
+        DeviceSpot::Planted { yaw, .. }
+        | DeviceSpot::Defused { yaw, .. }
+        | DeviceSpot::Exploded { yaw, .. } => yaw,
+        DeviceSpot::Nowhere | DeviceSpot::Carried { .. } | DeviceSpot::Dropped { .. } => 0.0,
+    }
+}
+
+fn turned(yaw: f32) -> Quat {
+    let (sin, cos) = sin_cos((yaw + std::f32::consts::PI) * 0.5);
+    Quat::from_xyzw(0.0, sin, 0.0, cos)
+}
+
 fn shown_as(
     book: &PuppetBook,
     scene: Option<&SceneContext>,
-    form: Form,
+    (form, yaw): (Form, f32),
 ) -> Result<(Transform, Drawn), Error> {
     match form {
         Form::Dropped(at) => {
@@ -43,7 +58,7 @@ fn shown_as(
             let drawn = drawn_of(scene, (&planted.files.mesh, &planted.files.material))?;
             let placed = Transform {
                 translation: at,
-                rotation: Quat::IDENTITY,
+                rotation: turned(yaw),
                 scale: Vec3::ONE,
             };
             Ok((placed, drawn))
@@ -73,12 +88,13 @@ pub(super) fn place(
         return;
     };
     let form = round.as_deref().and_then(|round| form_of(round.device));
+    let yaw = round.as_deref().map_or(0.0, |round| yaw_of(round.device));
     let light = match form {
         Some(Form::Planted(at)) => book
             .planted
             .as_ref()
             .and_then(|planted| planted.markers.light)
-            .map(|light| at + light),
+            .map(|light| at + turned(yaw) * light),
         Some(Form::Dropped(at)) => book
             .weapons
             .get(DEVICE)
@@ -99,9 +115,11 @@ pub(super) fn place(
         }
     }
     let verdict = match form {
-        Some(form) if !kept => shown_as(book, scene.as_deref(), form).map(|(placed, drawn)| {
-            spawner.spawn((placed, ground_node(), drawn, DeviceShown { form }));
-        }),
+        Some(form) if !kept => {
+            shown_as(book, scene.as_deref(), (form, yaw)).map(|(placed, drawn)| {
+                spawner.spawn((placed, ground_node(), drawn, DeviceShown { form }));
+            })
+        }
         Some(_) | None => Ok(()),
     };
     refusals.judge(owner, DEVICE_PART, verdict);

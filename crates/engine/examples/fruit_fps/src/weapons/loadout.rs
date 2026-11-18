@@ -14,6 +14,8 @@ pub struct LoadoutInput {
     pub fire_held: bool,
     pub reload_pressed: bool,
     pub scope_pressed: bool,
+    pub inspect_pressed: bool,
+    pub lowered: bool,
     pub switch_to: Option<Slot>,
     pub pace: Pace,
 }
@@ -37,9 +39,31 @@ pub enum Fired {
     Swing { aim: Aim, heavy: bool },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Swung {
+    pub heavy: bool,
+    pub step: u8,
+    pub strike_ticks: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Inspecting {
+    Started { ticks: u32 },
+    Cancelled,
+    Ended,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Strike {
+    left: u32,
+    heavy: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct LoadoutTick {
     pub fired: Option<Fired>,
+    pub swung: Option<Swung>,
+    pub inspecting: Option<(GunKind, Inspecting)>,
     pub active: GunTick,
     pub switched: bool,
     pub kick: Kick,
@@ -68,6 +92,8 @@ pub struct Loadout {
     melee_armed: bool,
     melee_step: u8,
     melee_idle: u32,
+    strike: Option<Strike>,
+    inspect: Option<(GunKind, u32)>,
     rng: ShotRng,
     pace: Pace,
 }
@@ -89,6 +115,8 @@ impl Loadout {
             melee_armed: false,
             melee_step: 0,
             melee_idle: 0,
+            strike: None,
+            inspect: None,
             rng,
             pace: Pace::SAME,
         };
@@ -248,6 +276,14 @@ impl Loadout {
         self.pace
     }
 
+    pub fn inspecting(&self) -> Option<GunKind> {
+        self.inspect.map(|(gun, _)| gun)
+    }
+
+    pub fn stop_inspecting(&mut self) -> Option<GunKind> {
+        self.inspect.take().map(|(gun, _)| gun)
+    }
+
     pub fn tick(
         &mut self,
         numbers: &WeaponNumbers,
@@ -301,10 +337,61 @@ impl Loadout {
             }
         }
         if active == Slot::Melee {
-            out.fired = self.swing(numbers, ticks_per_second, input, aim);
+            out.swung = self.swing(numbers, ticks_per_second, input);
+            out.fired = self.strike(input, aim);
         }
+        out.inspecting = self.inspect(numbers, ticks_per_second, input, &out);
         out.kick = kick;
         out
+    }
+
+    fn inspect(
+        &mut self,
+        numbers: &WeaponNumbers,
+        ticks_per_second: u32,
+        input: LoadoutInput,
+        out: &LoadoutTick,
+    ) -> Option<(GunKind, Inspecting)> {
+        let idle = self.active_gun().filter(|gun| gun.idle()).map(Gun::kind);
+        let still = idle.is_some()
+            && !input.fire_held
+            && !input.lowered
+            && !out.switched
+            && !out.active.dry_fire;
+        match self.inspect {
+            Some((gun, _)) if !still || idle != Some(gun) => {
+                self.inspect = None;
+                Some((gun, Inspecting::Cancelled))
+            }
+            Some((gun, left)) if left <= 1 => {
+                self.inspect = None;
+                Some((gun, Inspecting::Ended))
+            }
+            Some((gun, left)) => {
+                self.inspect = Some((gun, left - 1));
+                None
+            }
+            None => {
+                let gun = idle.filter(|_| still && input.inspect_pressed)?;
+                let total = ticks(numbers.gun(gun).inspect_seconds, ticks_per_second).max(1);
+                self.inspect = Some((gun, total));
+                Some((gun, Inspecting::Started { ticks: total }))
+            }
+        }
+    }
+
+    fn strike(&mut self, input: LoadoutInput, aim: Aim) -> Option<Fired> {
+        if input.lowered {
+            self.strike = None;
+        }
+        let strike = self.strike.as_mut()?;
+        if strike.left > 0 {
+            strike.left -= 1;
+            return None;
+        }
+        let heavy = strike.heavy;
+        self.strike = None;
+        Some(Fired::Swing { aim, heavy })
     }
 
     fn swing(
@@ -312,8 +399,7 @@ impl Loadout {
         numbers: &WeaponNumbers,
         ticks_per_second: u32,
         input: LoadoutInput,
-        aim: Aim,
-    ) -> Option<Fired> {
+    ) -> Option<Swung> {
         if !input.fire_held {
             self.melee_armed = true;
         }
@@ -342,7 +428,19 @@ impl Loadout {
         self.melee_wait = ticks(seconds, ticks_per_second);
         self.melee_total = self.melee_wait;
         self.melee_swing = Some(heavy);
-        Some(Fired::Swing { aim, heavy })
+        let strike_ticks = ticks(
+            melee.strike_seconds.of(heavy, self.melee_step),
+            ticks_per_second,
+        );
+        self.strike = Some(Strike {
+            left: strike_ticks,
+            heavy,
+        });
+        Some(Swung {
+            heavy,
+            step: self.melee_step,
+            strike_ticks,
+        })
     }
 
     pub fn drop_primary(&mut self, numbers: &WeaponNumbers, ticks_per_second: u32) -> Option<Gun> {
@@ -404,6 +502,7 @@ impl Loadout {
         }
         self.active = slot;
         self.melee_armed = false;
+        self.strike = None;
         match slot {
             Slot::Primary => {
                 if let Some(gun) = self.primary.as_mut() {

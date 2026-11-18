@@ -160,10 +160,12 @@ pub(super) enum Kind {
         off: Paint,
         full: Option<Paint>,
         align: Align,
+        track: Option<(Paint, f32)>,
     },
     Flow {
         align: Align,
         padding: f32,
+        inset: f32,
         gap: f32,
         min_w: f32,
         items: Vec<FlowItem>,
@@ -181,8 +183,6 @@ pub(super) struct Knob {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Picture {
     pub image: Template,
-    pub cover: bool,
-    pub opaque: bool,
     pub cell: Option<(String, Template)>,
 }
 
@@ -264,6 +264,13 @@ pub(super) struct Layout {
     pub stickers: Option<String>,
     pub stacks: Vec<Stack>,
     pub rows: usize,
+    pub fit: Fitting,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Fitting {
+    pub floor: f32,
+    pub mark: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -291,7 +298,6 @@ pub(super) struct DamageEdge {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct CrosshairPiece {
     pub outline: Rgba,
-    pub outline_px: f32,
 }
 
 impl Layout {
@@ -750,15 +756,6 @@ fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
         "arc" => Kind::Arc(arc_of(read, palette)?),
         "image" => Kind::Image(Picture {
             image: template(read.text("image")?, &read.within("image"))?,
-            opaque: read.flag("opaque")?,
-            cover: match read.get("fit") {
-                None => false,
-                Some(_) => match read.text("fit")? {
-                    "cover" => true,
-                    "contain" => false,
-                    other => return Err(format!("{}: unknown fit `{other}`", read.within("fit"))),
-                },
-            },
             cell: match read.get("atlas") {
                 None => None,
                 Some(_) => Some((
@@ -803,10 +800,23 @@ fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
                 Some(_) => Some(paint_at("full")?),
             },
             align: aligned(Align::Center)?,
+            track: match read.get("track") {
+                None => None,
+                Some(given) => {
+                    let track = Reader::of(given, read.within("track"))?;
+                    let fill = paint(
+                        track.get("fill").unwrap_or(&Value::Null),
+                        palette,
+                        &track.within("fill"),
+                    )?;
+                    Some((fill, track.number("pad")?))
+                }
+            },
         },
         "flow" => Kind::Flow {
             align: aligned(Align::Left)?,
             padding: read.number("padding")?,
+            inset: read.number_or("inset", read.number("padding")?)?,
             gap: read.number("gap")?,
             min_w: read.number_or("min_w", 0.0)?,
             items: flow_items(read, cx)?,
@@ -1118,30 +1128,22 @@ fn key_cap_of(cap: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<KeyC
         cap.get("border").unwrap_or(&Value::Null),
         cap.within("border"),
     )?;
-    let drop = Reader::of(cap.get("drop").unwrap_or(&Value::Null), cap.within("drop"))?;
-    let width = border.number("width")?;
-    let ring = |part: &Reader<'_>, offset: [f32; 2]| -> Result<Shadow, String> {
-        Ok(Shadow {
-            offset,
-            grow: width,
-            soft: 0.0,
-            color: paint(
-                part.get("color").unwrap_or(&Value::Null),
-                palette,
-                &part.within("color"),
-            )?,
-        })
-    };
     Ok(KeyCap {
         fill: paint(
             cap.get("fill").unwrap_or(&Value::Null),
             palette,
             &cap.within("fill"),
         )?,
-        shadows: vec![
-            ring(&drop, drop.pair("offset")?)?,
-            ring(&border, [0.0, 0.0])?,
-        ],
+        shadows: vec![Shadow {
+            offset: [0.0, 0.0],
+            grow: border.number("width")?,
+            soft: 0.0,
+            color: paint(
+                border.get("color").unwrap_or(&Value::Null),
+                palette,
+                &border.within("color"),
+            )?,
+        }],
         radius: cap.number("radius")?,
         padding_x: cap.number("padding_x")?,
         height: cap.number("height")?,
@@ -1170,7 +1172,6 @@ fn pieces_of(
             let cross = Reader::of(given, pieces.within("crosshair"))?;
             Some(CrosshairPiece {
                 outline: swatch(&cross, "outline", palette)?,
-                outline_px: cross.number("outline_px")?,
             })
         }
     };
@@ -1352,7 +1353,27 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         stickers: atlases.get(STICKERS).cloned(),
         stacks,
         rows: rows.len(),
+        fit: fit_of(&read)?,
     })
+}
+
+fn fit_of(read: &Reader<'_>) -> Result<Fitting, String> {
+    let rules = Reader::of(
+        read.get("rules").unwrap_or(&Value::Null),
+        read.within("rules"),
+    )?;
+    let fitting = Reader::of(
+        rules.get("fit").unwrap_or(&Value::Null),
+        rules.within("fit"),
+    )?;
+    let fit = Fitting {
+        floor: fitting.number("floor")?,
+        mark: fitting.text("mark")?.to_owned(),
+    };
+    if !(fit.floor > 0.0 && fit.floor <= 1.0) {
+        return Err("$.rules.fit.floor: expected a share above 0, at most 1".to_owned());
+    }
+    Ok(fit)
 }
 
 fn paint_paths(paint: &Paint, found: &mut Vec<Path>) {
@@ -1499,11 +1520,16 @@ fn kind_paths(kind: &Kind, found: &mut Vec<Path>) {
             on,
             off,
             full,
+            track,
             ..
         } => {
             number_paths(count, found);
             number_paths(value, found);
-            for given in [Some(on), Some(off), full.as_ref()].into_iter().flatten() {
+            let track = track.as_ref().map(|(fill, _)| fill);
+            for given in [Some(on), Some(off), full.as_ref(), track]
+                .into_iter()
+                .flatten()
+            {
                 paint_paths(given, found);
             }
         }

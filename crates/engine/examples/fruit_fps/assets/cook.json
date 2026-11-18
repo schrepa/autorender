@@ -23,7 +23,6 @@
         "hit_to_body_01": "hit_to_body",
         "cast_a_spell": "cast",
         "dig": "dig",
-        "slash": "slash",
         "hit_to_side": "hit_to_side",
         "hit_to_stomach": "hit_to_stomach",
         "victory_celebration": "victory"
@@ -641,9 +640,9 @@
         }
       ],
       "budgets": {
-        "triangles": 350000,
-        "vertices": 560000,
-        "materials": 16,
+        "triangles": 370000,
+        "vertices": 575000,
+        "materials": 17,
         "object_vertices": 131072
       },
       "textures": [
@@ -666,6 +665,10 @@
               "normal": 512
             },
             "m_wood_raw": {
+              "base_color": 512,
+              "normal": 512
+            },
+            "m_wood_crate": {
               "base_color": 512,
               "normal": 512
             },
@@ -821,10 +824,7 @@
       "clips": {
         "death_back": "death_back",
         "death_front": "death_front",
-        "death_side": "death_side",
-        "plant_in": "plant_in",
-        "plant_loop": "plant_loop",
-        "defuse_loop": "defuse_loop"
+        "death_side": "death_side"
       },
       "budgets": {
         "joints": 96
@@ -914,6 +914,112 @@
       "keys_per_second": 60,
       "budgets": {
         "joints": 96
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "banana_casts",
+      "source": "../../../../../artifacts/game/art/anim/anim_banana_casts.glb",
+      "root_motion": "Hip",
+      "rig_from": "banana",
+      "clips": {
+        "cast_wall": "cast_wall",
+        "cast_wall_smg": "cast_wall_smg",
+        "cast_wall_sniper": "cast_wall_sniper",
+        "cast_wall_sidearm": "cast_wall_sidearm",
+        "cast_wall_knife": "cast_wall_knife",
+        "cast_self": "cast_self",
+        "cast_self_smg": "cast_self_smg",
+        "cast_self_sniper": "cast_self_sniper",
+        "cast_self_sidearm": "cast_self_sidearm",
+        "cast_self_knife": "cast_self_knife",
+        "cast_press": "cast_press",
+        "cast_press_smg": "cast_press_smg",
+        "cast_press_sniper": "cast_press_sniper",
+        "cast_press_sidearm": "cast_press_sidearm",
+        "cast_press_knife": "cast_press_knife",
+        "cast_place": "cast_place",
+        "cast_place_smg": "cast_place_smg",
+        "cast_place_sniper": "cast_place_sniper",
+        "cast_place_sidearm": "cast_place_sidearm",
+        "cast_place_knife": "cast_place_knife",
+        "cast_ultimate": "cast_ultimate",
+        "cast_ultimate_smg": "cast_ultimate_smg",
+        "cast_ultimate_sniper": "cast_ultimate_sniper",
+        "cast_ultimate_sidearm": "cast_ultimate_sidearm",
+        "cast_ultimate_knife": "cast_ultimate_knife",
+        "death_headshot": "death_headshot"
+      },
+      "keys_per_second": 60,
+      "budgets": {
+        "joints": 96
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "fp_rifle_inspect",
+      "source": "../../../../../artifacts/game/art/anim/anim_fp_rifle.glb",
+      "rig_from": "rifle",
+      "clips": {
+        "inspect": "rifle_inspect"
+      },
+      "keys_per_second": 60,
+      "budgets": {
+        "joints": 16
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "fp_smg_inspect",
+      "source": "../../../../../artifacts/game/art/anim/anim_fp_smg.glb",
+      "rig_from": "smg",
+      "clips": {
+        "inspect": "smg_inspect"
+      },
+      "keys_per_second": 60,
+      "budgets": {
+        "joints": 16
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "fp_sniper_inspect",
+      "source": "../../../../../artifacts/game/art/anim/anim_fp_sniper.glb",
+      "rig_from": "sniper",
+      "clips": {
+        "inspect": "sniper_inspect"
+      },
+      "keys_per_second": 60,
+      "budgets": {
+        "joints": 16
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "fp_sidearm_inspect",
+      "source": "../../../../../artifacts/game/art/anim/anim_fp_sidearm.glb",
+      "rig_from": "sidearm",
+      "clips": {
+        "inspect": "sidearm_inspect"
+      },
+      "keys_per_second": 60,
+      "budgets": {
+        "joints": 16
+      }
+    },
+    {
+      "kind": "clip",
+      "name": "fp_melee_swings",
+      "source": "../../../../../artifacts/game/art/anim/anim_fp_melee.glb",
+      "rig_from": "melee",
+      "clips": {
+        "knife_light_a": "melee_knife_light_a",
+        "knife_light_b": "melee_knife_light_b",
+        "knife_heavy": "melee_knife_heavy"
+      },
+      "keys_per_second": 60,
+      "budgets": {
+        "joints": 16
       }
     },
     {
@@ -1140,7 +1246,7 @@
       "name": "prop_peel",
       "source": "source/prop_peel.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1174,7 +1280,7 @@
       "name": "prop_ripe_flash",
       "source": "source/prop_ripe_flash.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1208,7 +1314,7 @@
       "name": "prop_jam_pool",
       "source": "source/prop_jam_pool.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1242,7 +1348,7 @@
       "name": "prop_seed_sensor",
       "source": "source/prop_seed_sensor.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1276,7 +1382,7 @@
       "name": "prop_sweet_spot",
       "source": "source/prop_sweet_spot.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1310,7 +1416,7 @@
       "name": "prop_zest_bomb",
       "source": "source/prop_zest_bomb.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1344,7 +1450,7 @@
       "name": "prop_pulp_cloud",
       "source": "source/prop_pulp_cloud.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1378,7 +1484,7 @@
       "name": "prop_seed_grenade",
       "source": "source/prop_seed_grenade.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1412,7 +1518,7 @@
       "name": "prop_rind_wall",
       "source": "source/prop_rind_wall.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1446,7 +1552,7 @@
       "name": "prop_melon_drop",
       "source": "source/prop_melon_drop.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1480,7 +1586,7 @@
       "name": "prop_nightshade",
       "source": "source/prop_nightshade.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1514,7 +1620,7 @@
       "name": "prop_vine_wire",
       "source": "source/prop_vine_wire.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1548,7 +1654,7 @@
       "name": "prop_citrus_curtain",
       "source": "source/prop_citrus_curtain.glb",
       "scale": 1.0,
-      "texture_size": 256,
+      "texture_size": 1024,
       "material": {
         "slot": "figure",
         "module": "figure",
@@ -1651,90 +1757,6 @@
       "kind": "picture",
       "name": "minimap",
       "source": "ui/minimap.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
-    },
-    {
-      "kind": "picture",
-      "name": "select_banana",
-      "source": "ui/select_banana.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
-    },
-    {
-      "kind": "picture",
-      "name": "select_strawberry",
-      "source": "ui/select_strawberry.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
-    },
-    {
-      "kind": "picture",
-      "name": "select_orange",
-      "source": "ui/select_orange.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
-    },
-    {
-      "kind": "picture",
-      "name": "select_eggplant",
-      "source": "ui/select_eggplant.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
-    },
-    {
-      "kind": "picture",
-      "name": "select_watermelon",
-      "source": "ui/select_watermelon.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
-    },
-    {
-      "kind": "picture",
-      "name": "title",
-      "source": "ui/title.png",
       "encodings": {
         "bc": "bc7_srgb",
         "rgba8": "rgba8_srgb"

@@ -175,6 +175,8 @@ pub enum CreditReason {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PlayerFacts {
     pub position: [f32; 3],
+    pub yaw: f32,
+    pub set_down: [f32; 3],
     pub site: Option<SiteId>,
     pub in_buy_zone: bool,
     pub near_device: bool,
@@ -286,16 +288,19 @@ pub enum Device {
     Planted {
         site: SiteId,
         at: [f32; 3],
+        yaw: f32,
         fuse_ticks_left: u32,
         defusing: Defusing,
     },
     Exploded {
         site: SiteId,
         at: [f32; 3],
+        yaw: f32,
     },
     Defused {
         site: SiteId,
         at: [f32; 3],
+        yaw: f32,
     },
 }
 
@@ -389,6 +394,7 @@ pub enum Event {
     DeviceExploded {
         site: SiteId,
         at: [f32; 3],
+        yaw: f32,
     },
     KillFeed {
         killer: Option<PlayerId>,

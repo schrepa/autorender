@@ -27,6 +27,7 @@ pub struct ActorStats {
     pub upper_seconds: f32,
     pub upper_rate: f32,
     pub upper_active: bool,
+    pub event_s: Option<f32>,
     pub hold: f32,
     pub crouch: f32,
     pub aim: f32,

@@ -506,7 +506,7 @@ impl SelectCard {
             return within(&self.abilities, rest, AbilityCard::value);
         }
         leaf(path, |name| match name {
-            "image" => Val::Text(&self.image),
+            "key" => Val::Text(&self.key),
             "name" => Val::Text(&self.name),
             "role" => Val::Text(&self.role),
             "selected" => Val::Bool(self.selected),

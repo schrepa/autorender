@@ -639,6 +639,7 @@ fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, buys: Vec<BuyRequ
         fire_held: intent.fire,
         fire_pressed: intent.fire && !fired_before,
         reload: intent.reload,
+        inspect: false,
         drop: intent.drop_device,
         cycle: 0,
         ready: false,

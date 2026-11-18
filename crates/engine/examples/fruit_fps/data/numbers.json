@@ -84,7 +84,14 @@
       }
     ],
     "next_match_seconds": 10,
-    "device_reach_m": 1.5
+    "device_reach_m": 1.5,
+    "device_set_down": {
+      "right_m": 0.09,
+      "ahead_m": 0.287,
+      "lift_m": 0.3,
+      "clear_m": 0.12,
+      "pull_step_m": 0.05
+    }
   },
   "economy": {
     "start": 800,
@@ -163,6 +170,7 @@
       "reserve": 36,
       "reload_seconds": 1.75,
       "equip_seconds": 0.75,
+      "inspect_seconds": 2.2,
       "run_speed_factor": 1.061,
       "damage": [
         {
@@ -211,6 +219,7 @@
       "reserve": 90,
       "reload_seconds": 2.25,
       "equip_seconds": 0.75,
+      "inspect_seconds": 2.4,
       "run_speed_factor": 1.061,
       "damage": [
         {
@@ -284,6 +293,7 @@
       "reserve": 50,
       "reload_seconds": 2.5,
       "equip_seconds": 1.0,
+      "inspect_seconds": 2.6,
       "run_speed_factor": 1.0,
       "damage": [
         {
@@ -345,6 +355,7 @@
       "reserve": 10,
       "reload_seconds": 3.7,
       "equip_seconds": 1.5,
+      "inspect_seconds": 3.0,
       "run_speed_factor": 0.95,
       "damage": [
         {
@@ -410,7 +421,14 @@
       "heavy_back": 150.0,
       "heavy_swing_seconds": 1.0,
       "combo_swings": 3,
-      "combo_reset_seconds": 0.5
+      "combo_reset_seconds": 0.5,
+      "strike_seconds": {
+        "light": [
+          0.13,
+          0.14
+        ],
+        "heavy": 0.38
+      }
     }
   },
   "ability_slots": {
@@ -988,6 +1006,7 @@
       "heal_below": 60,
       "flash_inside_m": 5,
       "smoke_inside_m": 5,
+      "smoke_open_step_m": 0.25,
       "utility_aim_deg": 8,
       "utility_seconds": 0.5,
       "lose_odds": [
@@ -1208,6 +1227,9 @@
     ],
     "reload": [
       "KeyR"
+    ],
+    "inspect": [
+      "KeyY"
     ],
     "drop": [
       "KeyG"
@@ -2008,5 +2030,208 @@
       "never_m": 1.0
     },
     "visible_sets": true
+  },
+  "lobby": {
+    "place": {
+      "name": "Piazza (A)",
+      "at": [
+        -25.0,
+        0.0,
+        -14.0
+      ]
+    },
+    "clips": {
+      "banana": {
+        "idle": "idle",
+        "pick": {
+          "clip": "victory",
+          "window": [
+            0.6,
+            1.7
+          ],
+          "weight": 0.55
+        }
+      },
+      "strawberry": {
+        "idle": "idle",
+        "pick": {
+          "clip": "victory",
+          "window": [
+            0.6,
+            1.7
+          ],
+          "weight": 0.55
+        }
+      },
+      "orange": {
+        "idle": "idle",
+        "pick": {
+          "clip": "victory",
+          "window": [
+            0.6,
+            1.7
+          ],
+          "weight": 0.55
+        }
+      },
+      "watermelon": {
+        "idle": "idle",
+        "pick": {
+          "clip": "victory",
+          "window": [
+            0.6,
+            1.7
+          ],
+          "weight": 0.55
+        }
+      },
+      "eggplant": {
+        "idle": "idle",
+        "pick": {
+          "clip": "victory",
+          "window": [
+            0.6,
+            1.7
+          ],
+          "weight": 0.55
+        }
+      }
+    },
+    "pick": {
+      "from": "Hip",
+      "fade_seconds": 0.3
+    },
+    "timings": {
+      "idle_fade_seconds": 0.3,
+      "warm_seconds": 0.15
+    },
+    "checks": {
+      "floor_probe_m": 1.5,
+      "sight_height_m": 1.0,
+      "frame_aspect": 1.7778
+    },
+    "title": {
+      "camera": {
+        "position": [
+          1.8,
+          0.98,
+          4.7
+        ],
+        "target": [
+          -0.7,
+          1.15,
+          0.37
+        ],
+        "fov_degrees": 33.0,
+        "drift": {
+          "arc_degrees": 4.0,
+          "rise_m": 0.04,
+          "period_seconds": 32.0
+        }
+      },
+      "group": [
+        {
+          "character": "banana",
+          "at": [
+            0.27,
+            0.0,
+            -0.88
+          ],
+          "turn_degrees": -12.0,
+          "speed": 1.0,
+          "lead_seconds": 0.0
+        },
+        {
+          "character": "strawberry",
+          "at": [
+            -1.05,
+            0.0,
+            -1.04
+          ],
+          "turn_degrees": 25.0,
+          "speed": 0.94,
+          "lead_seconds": 0.8
+        },
+        {
+          "character": "orange",
+          "at": [
+            0.67,
+            0.0,
+            -2.15
+          ],
+          "turn_degrees": -30.0,
+          "speed": 1.06,
+          "lead_seconds": 1.6
+        },
+        {
+          "character": "eggplant",
+          "at": [
+            -2.47,
+            0.0,
+            -1.73
+          ],
+          "turn_degrees": 38.0,
+          "speed": 0.9,
+          "lead_seconds": 2.3
+        },
+        {
+          "character": "watermelon",
+          "at": [
+            -1.07,
+            0.0,
+            -2.88
+          ],
+          "turn_degrees": 8.0,
+          "speed": 1.1,
+          "lead_seconds": 0.4
+        }
+      ]
+    },
+    "select": {
+      "camera": {
+        "position": [
+          3.09,
+          0.82,
+          3.11
+        ],
+        "target": [
+          0.59,
+          0.99,
+          -1.21
+        ],
+        "fov_degrees": 32.0,
+        "drift": {
+          "arc_degrees": 1.5,
+          "rise_m": 0.02,
+          "period_seconds": 28.0
+        }
+      },
+      "front": {
+        "at": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "turn_degrees": 30.0
+      },
+      "back": [
+        {
+          "at": [
+            -2.84,
+            0.0,
+            -1.55
+          ],
+          "turn_degrees": 22.0
+        },
+        {
+          "at": [
+            -2.44,
+            0.0,
+            -4.09
+          ],
+          "turn_degrees": 12.0
+        }
+      ]
+    }
   }
 }

@@ -1254,6 +1254,18 @@
       ],
       "type": "object"
     },
+    "LobbyFigure": {
+      "additionalProperties": false,
+      "properties": {
+        "character": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "character"
+      ],
+      "type": "object"
+    },
     "Look": {
       "additionalProperties": false,
       "type": "object"
@@ -1484,9 +1496,6 @@
     "MenuSource": {
       "additionalProperties": false,
       "properties": {
-        "backdrop": {
-          "type": "string"
-        },
         "crosshairs": {
           "items": {
             "type": "string"
@@ -1525,7 +1534,6 @@
         "key_rows",
         "crosshairs",
         "scope",
-        "backdrop",
         "loading"
       ],
       "type": "object"
@@ -2623,6 +2631,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/Light"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lobby_figure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LobbyFigure"
             },
             {
               "type": "null"

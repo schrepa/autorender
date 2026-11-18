@@ -7,6 +7,7 @@ use engine::prelude::*;
 use crate::names::{FAR, NEAR, PITCH_LIMIT_DEGREES};
 use crate::play::actors::{Actor, Body, Human, Wish};
 use crate::play::camera::TestCamera;
+use crate::play::lobby::LobbyView;
 use crate::play::numbers::{Numbers, SpectateNumbers};
 use crate::play::view::{Controls, CorpseView, ViewOffsets, Watch, Watched};
 
@@ -63,6 +64,7 @@ stats! {
         pub fov: f32,
         pub free: bool,
         pub follow: Option<u32>,
+        pub lobby: bool,
         pub test_refusal: Option<String>,
     }
 }
@@ -228,6 +230,12 @@ fn test_shot(view: &Viewing<'_, '_>) -> Option<Result<(Shot, f32), String>> {
     )
 }
 
+fn lobby_shot(view: &Viewing<'_, '_>) -> Option<(Shot, f32)> {
+    let (position, target, fov) = view.lobby.as_deref()?.shot(view.frame.real_elapsed)?;
+    let shot = aimed_shot(position, target, "$.lobby").ok()?;
+    Some((shot, fov))
+}
+
 type Seen<'a> = (&'a Body, &'a Wish, &'a ViewOffsets);
 
 #[derive(SystemParam)]
@@ -237,6 +245,7 @@ struct Viewing<'w, 's> {
     numbers: Res<'w, Numbers>,
     controls: Res<'w, Controls>,
     watched: Option<Res<'w, Watched>>,
+    lobby: Option<Res<'w, LobbyView>>,
     test: Option<Res<'w, LookTest>>,
     actors: Query<'w, 's, Seen<'static>>,
     slots: Query<'w, 's, (&'static Actor, Seen<'static>)>,
@@ -282,7 +291,9 @@ fn place(
     let tested = tested.and_then(Result::ok);
     let free = tested.is_some();
     let hud_hidden = view.test.as_deref().is_some_and(|test| test.hide_hud);
-    let (shot, fov_degrees) = match tested {
+    let lobby = lobby_shot(&view).filter(|_| tested.is_none());
+    let in_lobby = lobby.is_some();
+    let (shot, fov_degrees) = match tested.or(lobby) {
         Some((shot, fov)) => (Some(shot), fov),
         None => (shot_of(&view), view.controls.fov_degrees),
     };
@@ -323,6 +334,7 @@ fn place(
             .and_then(|test| test.follow)
             .filter(|_| free)
             .map(|follow| follow.slot),
+        lobby: in_lobby,
         test_refusal,
     });
 }

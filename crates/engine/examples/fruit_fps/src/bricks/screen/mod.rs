@@ -153,7 +153,6 @@ pub(super) struct Loaded {
     map: MapFrame,
     pictures: Vec<Picture>,
     picture_textures: Vec<String>,
-    select_images: BTreeMap<String, String>,
     keys: Keys,
     menu_keys: menu::MenuInputs,
     demo: HudFacts,
@@ -220,7 +219,6 @@ struct PortraitsFile {
     image: String,
     size: [f32; 2],
     portraits: BTreeMap<String, [f32; 4]>,
-    select: BTreeMap<String, SelectFile>,
 }
 
 #[derive(Deserialize)]
@@ -231,13 +229,7 @@ struct AtlasFile {
     cells: BTreeMap<String, [f32; 4]>,
 }
 
-#[derive(Deserialize)]
-struct SelectFile {
-    image: String,
-    size: [f32; 2],
-}
-
-type Pictures = (Vec<Picture>, Vec<String>, BTreeMap<String, String>);
+type Pictures = (Vec<Picture>, Vec<String>);
 
 #[derive(Deserialize)]
 struct MapFile {
@@ -486,11 +478,6 @@ impl ScreenSource {
                 cells: portraits.portraits,
             },
         ];
-        let mut select_images = BTreeMap::new();
-        for (key, select) in portraits.select {
-            select_images.insert(key, select.image.clone());
-            found.push(plain(select.image, select.size));
-        }
         for (uri, atlas) in atlases {
             found.push(Picture {
                 name: atlas.image,
@@ -522,7 +509,7 @@ impl ScreenSource {
             textures.push(texture.clone());
             pictures.push(picture);
         }
-        (pictures, textures, select_images)
+        (pictures, textures)
     }
 
     fn read(
@@ -545,7 +532,7 @@ impl ScreenSource {
             .zip(atlases)
             .map(|(uri, bytes)| Ok((uri.clone(), json_of::<AtlasFile>(bytes, uri)?)))
             .collect::<Result<Vec<_>, String>>()?;
-        let (pictures, picture_textures, select_images) =
+        let (pictures, picture_textures) =
             self.pictures((&map, portraits, atlases), &mut layout.skipped);
         layout.retain(|element| self.element_problem(element, &pictures, &demo));
         layout.number();
@@ -566,7 +553,6 @@ impl ScreenSource {
             },
             pictures,
             picture_textures,
-            select_images,
             keys: Keys {
                 take: inputs(&keys.take)?,
                 give_back: inputs(&keys.give_back)?,
@@ -821,7 +807,6 @@ type Shared<'w, 's> = (
     Res<'w, Views>,
     Res<'w, HudFacts>,
     Res<'w, ScreenState>,
-    Option<Res<'w, Flow>>,
     Res<'w, FrameTime>,
     Option<Res<'w, TestCamera>>,
 );
@@ -833,7 +818,7 @@ fn cover(book: Res<ScreenBook>, mut covered: ResMut<Covered>) {
 }
 
 fn draw_screen(
-    (sources, scene, views, facts, state, flow, time, camera): Shared,
+    (sources, scene, views, facts, state, time, camera): Shared,
     mut draw: ResMut<ScreenDraw>,
     mut book: ResMut<ScreenBook>,
     mut stats: ResMut<ScreenStats>,
@@ -872,14 +857,6 @@ fn draw_screen(
             now: time.real_elapsed,
             zoom: 1.0,
         };
-        let behind_menu = matches!(state.shown, Shown::Title | Shown::Select)
-            || (state.shown == Shown::Settings
-                && flow
-                    .as_deref()
-                    .is_some_and(|flow| !flow.stage.holds_match()));
-        if behind_menu {
-            painter.backdrop(&source.menu.backdrop);
-        }
         if matches!(
             state.shown,
             Shown::Hud | Shown::RoundEnd | Shown::Scoreboard

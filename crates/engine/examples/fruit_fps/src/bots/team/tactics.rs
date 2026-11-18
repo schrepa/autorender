@@ -155,6 +155,18 @@ pub fn crosses(
     false
 }
 
+fn open_between(world: &dyn World, from: Vec3, to: Vec3, step: f32) -> Vec3 {
+    let length = flat_distance(from, to);
+    let share = step / max(length, step);
+    let rings = (0.5 / share).ceil() as u32;
+    (0..=rings)
+        .flat_map(|ring| [0.5 - ring as f32 * share, 0.5 + ring as f32 * share])
+        .filter(|share| (0.0..=1.0).contains(share))
+        .map(|share| from.lerp(to, share))
+        .find(|point| world.open(*point))
+        .unwrap_or_else(|| from.lerp(to, 0.5))
+}
+
 fn cover_or(world: &dyn World, threat: Vec3, near: Vec3, search: f32) -> Vec3 {
     world.cover_from(threat, near, search).unwrap_or(near)
 }
@@ -287,7 +299,7 @@ fn build_way(
         hold: Hold { at: hold, face },
         cross: Hold { at: cross, face },
         post: Hold { at: post, face },
-        smoke_at: hold.lerp(inside, 0.5),
+        smoke_at: open_between(world, hold, inside, play.smoke_open_step_m),
         flash_at: inside + inward * play.flash_inside_m + up,
     }
 }

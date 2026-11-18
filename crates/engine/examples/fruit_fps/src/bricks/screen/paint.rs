@@ -5,7 +5,7 @@ use glam::Vec2;
 
 use crate::play::screen::{
     Align, Anchor, Area, Case, Cover, Fit, HudFacts, Plate, Reticle, Rgba, ScreenDraw, Shown,
-    Stroke, TextStyle,
+    Stroke, TextStyle, Weight,
 };
 
 const KNOB_RING_PX: f32 = 6.0;
@@ -17,8 +17,8 @@ const ARMOR_POP: f32 = 0.3;
 const ARMOR_POP_SHARE: f32 = 0.3;
 
 use super::layout::{
-    Arc, Cond, Dir, Element, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint, Picture,
-    Piece, Screen, Set, Shadow, Stack, StrokeRef, Template,
+    Arc, Cond, Dir, Element, FlowItem, FlowKind, Format, Kind, Knob, Layout, Markers, Number,
+    Paint, Picture, Piece, Screen, Set, Shadow, Stack, StrokeRef, Template, TextKind,
 };
 use super::menu::ScopeNumbers;
 use super::paths::Val;
@@ -72,6 +72,15 @@ fn place_rows(rows: &mut [RowState], stack: &Stack, (gap, ceiling, floor): (f32,
         }
         rows[row].lift = (y >= ceiling).then_some(y - top);
     }
+}
+
+struct Measured {
+    lead: f32,
+    share: f32,
+    over: f32,
+    content: f32,
+    longest: Option<(usize, f32)>,
+    tallest: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -367,9 +376,8 @@ impl Painter<'_> {
             let grow = shadow.grow * s;
             match &element.kind {
                 Kind::Text(text) => {
-                    let px = self.px(text.size, element.unscaled);
                     let mut out = std::mem::take(self.scratch);
-                    self.render(&text.text, &mut out);
+                    let px = self.fitted(text, area.w, element.unscaled, &mut out);
                     let placed = Area {
                         x: area.x + shadow.offset[0] * s,
                         y: area.y + shadow.offset[1] * s,
@@ -634,9 +642,8 @@ impl Painter<'_> {
                 let Some(color) = self.color(look.color) else {
                     return;
                 };
-                let px = self.px(text.size, element.unscaled);
                 let mut out = std::mem::take(self.scratch);
-                self.render(&text.text, &mut out);
+                let px = self.fitted(text, area.w, element.unscaled, &mut out);
                 self.draw.text(
                     &out,
                     area,
@@ -688,15 +695,10 @@ impl Painter<'_> {
             self.shadow_plates(look.shadows, area, (radius, s));
         }
         let frame = (radius, case);
-        let at = self.draw.quads.len();
         let mut out = std::mem::take(self.scratch);
         let mut name = std::mem::take(self.spare);
         self.render(&picture.image, &mut name);
-        let fit = if picture.cover {
-            Cover::Fill
-        } else {
-            Cover::Fit
-        };
+        let fit = Cover::Fit;
         match &picture.cell {
             Some((_, key)) => {
                 self.render(key, &mut out);
@@ -713,9 +715,6 @@ impl Painter<'_> {
         }
         *self.scratch = out;
         *self.spare = name;
-        if picture.opaque && picture.cover && radius == 0.0 && color.0[3] >= 1.0 {
-            self.draw.floor_at(at);
-        }
     }
 
     fn bar(
@@ -794,19 +793,42 @@ impl Painter<'_> {
             off,
             full,
             align,
+            track,
         } = &element.kind
         else {
             return;
         };
         let count = number_of(self.facts, count).unwrap_or(0.0).max_whole();
         let value = number_of(self.facts, value).unwrap_or(0.0).max_whole();
-        let (pw, ph, g) = (size[0] * s, size[1] * s, gap * s);
-        let total = count as f32 * pw + count.saturating_sub(1) as f32 * g;
+        if count == 0 {
+            return;
+        }
+        let pad = track.as_ref().map_or(0.0, |(_, pad)| *pad);
+        let span = |k: f32| {
+            (count as f32 * size[0] + count.saturating_sub(1) as f32 * gap + 2.0 * pad) * k
+        };
+        let k = if span(s) > area.w && area.w > 0.0 {
+            s * area.w / span(s)
+        } else {
+            s
+        };
+        let (pw, ph, g, pad) = (size[0] * k, size[1] * k, gap * k, pad * k);
+        let total = span(k);
         let x = match align {
             Align::Left => area.x,
             Align::Center | Align::Right => area.x + (area.w - total) * 0.5,
         };
-        let y = area.y + (area.h - ph) * 0.5;
+        let tall = ph + 2.0 * pad;
+        let y = area.y + (area.h - tall) * 0.5;
+        if let Some(fill) = track.as_ref().and_then(|(fill, _)| self.color(Some(fill))) {
+            let strip = Area {
+                x,
+                y,
+                w: total,
+                h: tall,
+            };
+            self.plate(strip, Some(fill), tall * 0.5, None);
+        }
         let full = full.as_ref().filter(|_| value >= count);
         let (on, off, full) = (
             self.color(Some(on)),
@@ -820,8 +842,8 @@ impl Painter<'_> {
                 None => off,
             };
             let pip = Area {
-                x: x + index as f32 * (pw + g),
-                y,
+                x: x + pad + index as f32 * (pw + g),
+                y: y + pad,
                 w: pw,
                 h: ph,
             };
@@ -829,10 +851,123 @@ impl Painter<'_> {
         }
     }
 
+    fn cap_px(&self, px: f32, weight: Weight) -> f32 {
+        self.draw
+            .font
+            .as_ref()
+            .and_then(|font| font.face(weight))
+            .map_or(0.0, |face| face.cap * px / face.em_px)
+    }
+
+    fn shrunk(&self, size: f32, share: f32) -> f32 {
+        let px = self.px(size, false);
+        math::max(px * share, math::min(px, self.draw.min_text_px))
+    }
+
+    fn cut(&self, out: &mut String, (px, weight): (f32, Weight), room: f32) {
+        let mark = self.layout.fit.mark.as_str();
+        let keep = room - self.draw.measure(mark, px, weight);
+        while !out.is_empty() && self.draw.measure(out, px, weight) > keep {
+            out.pop();
+        }
+        out.truncate(out.trim_end().len());
+        out.push_str(mark);
+    }
+
+    fn fitted(&mut self, text: &TextKind, room: f32, unscaled: bool, out: &mut String) -> f32 {
+        self.render(&text.text, out);
+        let px = self.px(text.size, unscaled);
+        let wide = self.draw.measure(out, px, text.weight);
+        if room <= 0.0 || wide <= room {
+            return px;
+        }
+        let least = math::max(
+            px * self.layout.fit.floor,
+            math::min(px, self.draw.min_text_px),
+        );
+        let fitted = math::max(least, px * room / wide);
+        self.draw.fitted += 1;
+        if self.draw.measure(out, fitted, text.weight) > room {
+            self.cut(out, (fitted, text.weight), room);
+        }
+        fitted
+    }
+
+    fn measured(
+        &self,
+        items: &[FlowItem],
+        (padding, inset, gap): (f32, f32, f32),
+        (room, s): (f32, f32),
+        out: &mut String,
+    ) -> Measured {
+        let (mut fixed, mut texts, mut count) = (0.0, 0.0, 0_u32);
+        let (mut first, mut last) = (None, false);
+        for item in items {
+            if !self.holds(&item.when) {
+                continue;
+            }
+            let round = !matches!(item.kind, FlowKind::Text { cap: false, .. });
+            first.get_or_insert(round);
+            last = round;
+            count += 1;
+            match &item.kind {
+                FlowKind::Text { text, cap, .. } => {
+                    self.render(&text.text, out);
+                    let wide = self
+                        .draw
+                        .measure(out, self.px(text.size, false), text.weight);
+                    if *cap {
+                        fixed += self.capped(wide, true, s);
+                    } else {
+                        texts += wide;
+                    }
+                }
+                FlowKind::Icon { w, .. } => fixed += w * s,
+            }
+        }
+        let end = |round: bool| if round { inset * s } else { padding * s };
+        let lead = end(first.unwrap_or(false));
+        let frame = lead + end(last) + gap * s * count.saturating_sub(1) as f32 + fixed;
+        let share = if texts > 0.0 && frame + texts > room {
+            math::clamp((room - frame) / texts, self.layout.fit.floor, 1.0)
+        } else {
+            1.0
+        };
+        let mut measured = Measured {
+            lead,
+            share,
+            over: frame - room,
+            content: frame,
+            longest: None,
+            tallest: 0.0,
+        };
+        for (index, item) in items.iter().enumerate() {
+            if !self.holds(&item.when) {
+                continue;
+            }
+            if let FlowKind::Text { text, cap, .. } = &item.kind {
+                let px = self.shrunk(text.size, if *cap { 1.0 } else { share });
+                measured.tallest = math::max(measured.tallest, self.cap_px(px, text.weight));
+                if !*cap {
+                    self.render(&text.text, out);
+                    let wide = self.draw.measure(out, px, text.weight);
+                    measured.over += wide;
+                    measured.content += wide;
+                    if measured.longest.is_none_or(|(_, most)| wide > most) {
+                        measured.longest = Some((index, wide));
+                    }
+                }
+            }
+        }
+        measured.content = math::min(measured.content, room);
+        measured
+    }
+
     fn flow(&mut self, element: &Element, look: &Look<'_>, area: Area, s: f32) {
         let Kind::Flow {
             align,
             padding,
+            inset,
             gap,
             min_w,
             items,
@@ -841,26 +976,8 @@ impl Painter<'_> {
             return;
         };
         let mut out = std::mem::take(self.scratch);
-        let (mut widths, mut shown) = (0.0, 0_u32);
-        for item in items {
-            if !self.holds(&item.when) {
-                continue;
-            }
-            widths += match &item.kind {
-                FlowKind::Text { text, cap, .. } => {
-                    self.render(&text.text, &mut out);
-                    let wide = self
-                        .draw
-                        .measure(&out, self.px(text.size, false), text.weight);
-                    self.capped(wide, *cap, s)
-                }
-                FlowKind::Icon { w, .. } => w * s,
-            };
-            shown += 1;
-        }
-        let (pad, gap) = (padding * s, gap * s);
-        let content = 2.0 * pad + widths + gap * shown.saturating_sub(1) as f32;
-        let width = math::max(content, min_w * s);
+        let fit = self.measured(items, (*padding, *inset, *gap), (area.w, s), &mut out);
+        let width = math::min(area.w, math::max(fit.content, min_w * s));
         let x = match align {
             Align::Left => area.x,
             Align::Center => area.x + (area.w - width) * 0.5,
@@ -874,16 +991,20 @@ impl Painter<'_> {
             ..area
         };
         self.cased(look.shadows, pill, (fill, element.radius * s, stroke), s);
-        let mut at = x + pad + (width - content) * 0.5;
-        for item in items {
+        let mut at = x + fit.lead + (width - fit.content) * 0.5;
+        for (index, item) in items.iter().enumerate() {
             if !self.holds(&item.when) {
                 continue;
             }
             match &item.kind {
                 FlowKind::Text { text, color, cap } => {
                     self.render(&text.text, &mut out);
-                    let px = self.px(text.size, false);
-                    let wide = self.draw.measure(&out, px, text.weight);
+                    let px = self.shrunk(text.size, if *cap { 1.0 } else { fit.share });
+                    let mut wide = self.draw.measure(&out, px, text.weight);
+                    if fit.over > 0.0 && fit.longest.is_some_and(|(most, _)| most == index) {
+                        self.cut(&mut out, (px, text.weight), wide - fit.over);
+                        wide = self.draw.measure(&out, px, text.weight);
+                    }
                     let room = self.capped(wide, *cap, s);
                     let place = Area {
                         x: at,
@@ -902,9 +1023,13 @@ impl Painter<'_> {
                             grow: 0.0,
                             soft: 0.0,
                         };
-                        self.draw.text(&out, place, style);
+                        let line = Area {
+                            y: area.y + (fit.tallest - self.cap_px(px, text.weight)) * 0.5,
+                            ..place
+                        };
+                        self.draw.text(&out, line, style);
                     }
-                    at += room + gap;
+                    at += room + gap * s;
                 }
                 FlowKind::Icon {
                     icon,
@@ -921,23 +1046,32 @@ impl Painter<'_> {
                         w: iw,
                         h: ih,
                     };
-                    let tint = self.color(color.as_ref());
-                    match (atlas, tint) {
-                        _ if out.is_empty() => {}
-                        (Some(atlas), tint) => {
-                            self.draw
-                                .sticker((atlas, &out), place, (tint.unwrap_or(WHITE), 0.0));
-                        }
-                        (None, Some(tint)) => {
-                            self.draw.icon(&out, place, (tint, Fit::Cell));
-                        }
-                        (None, None) => {}
-                    }
-                    at += iw + gap;
+                    self.flow_icon((&out, atlas.as_deref()), place, color.as_ref());
+                    at += iw + gap * s;
                 }
             }
         }
         *self.scratch = out;
+    }
+
+    fn flow_icon(
+        &mut self,
+        (name, atlas): (&str, Option<&str>),
+        place: Area,
+        color: Option<&Paint>,
+    ) {
+        let tint = self.color(color);
+        match (atlas, tint) {
+            _ if name.is_empty() => {}
+            (Some(atlas), tint) => {
+                self.draw
+                    .sticker((atlas, name), place, (tint.unwrap_or(WHITE), 0.0));
+            }
+            (None, Some(tint)) => {
+                self.draw.icon(name, place, (tint, Fit::Cell));
+            }
+            (None, None) => {}
+        }
     }
 
     fn capped(&self, wide: f32, cap: bool, s: f32) -> f32 {
@@ -1107,20 +1241,6 @@ impl Painter<'_> {
         };
         self.plate(across, Some(color.faded(ease)), 0.0, None);
         self.plate(down, Some(color.faded(ease)), 0.0, None);
-    }
-
-    pub(super) fn backdrop(&mut self, color: &str) {
-        let Some(color) = self.layout.palette.get(color).copied() else {
-            return;
-        };
-        let size = self.draw.size;
-        let whole = Area {
-            x: 0.0,
-            y: 0.0,
-            w: size.x,
-            h: size.y,
-        };
-        self.plate(whole, Some(color), 0.0, None);
     }
 
     fn palette(&self, key: &str) -> Option<Rgba> {

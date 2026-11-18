@@ -392,6 +392,7 @@ fn device_for(round: &Round, view: &View<'_>, places: &Places, side: Side) -> De
             site,
             at,
             fuse_ticks_left,
+            ..
         } => {
             let defuser = match *view.device {
                 Device::Planted { defusing, .. } => defusing.player.map(|player| player as u32),

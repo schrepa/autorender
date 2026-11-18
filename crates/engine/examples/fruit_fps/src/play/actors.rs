@@ -92,6 +92,7 @@ pub struct Wish {
     pub fire_held: bool,
     pub fire_pressed: bool,
     pub reload: bool,
+    pub inspect: bool,
     pub drop: bool,
     pub cycle: i32,
     pub ready: bool,

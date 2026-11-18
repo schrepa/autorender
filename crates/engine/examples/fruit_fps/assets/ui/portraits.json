@@ -38,42 +38,5 @@
    256,
    256
   ]
- },
- "select": {
-  "char_banana": {
-   "image": "select_banana.png",
-   "size": [
-    512,
-    768
-   ]
-  },
-  "char_strawberry": {
-   "image": "select_strawberry.png",
-   "size": [
-    512,
-    768
-   ]
-  },
-  "char_orange": {
-   "image": "select_orange.png",
-   "size": [
-    512,
-    768
-   ]
-  },
-  "char_watermelon": {
-   "image": "select_watermelon.png",
-   "size": [
-    512,
-    768
-   ]
-  },
-  "char_eggplant": {
-   "image": "select_eggplant.png",
-   "size": [
-    512,
-    768
-   ]
-  }
  }
 }

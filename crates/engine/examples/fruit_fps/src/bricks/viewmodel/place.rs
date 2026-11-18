@@ -8,14 +8,14 @@ use crate::names::CAMERA;
 use crate::play::actors::{Actor, Alive, Body, Motion, Wish};
 use crate::play::arms::Arms;
 use crate::play::camera::TestCamera;
-use crate::play::events::arms::{ArmsEvents, Weapon};
+use crate::play::events::arms::{ArmsEvents, Inspect, Weapon};
 use crate::play::figures::{BaseLayer, FIELD_AT_CAMERA, FIGURE, Figure, FigurePlay, HandTarget};
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::puppet::{
     ActorMuzzle, DEVICE, Muzzles, PuppetBook, PuppetFile, PuppetTable, Task, Tasks, ViewModel,
-    ViewPlace, ViewTable, WeaponLook, weapon_key,
+    ViewPlace, ViewTable, WeaponLook, swing_clip, weapon_key,
 };
 use crate::play::view::{ViewOffsets, Watched};
 use crate::weapons::{Loadout, Stance};
@@ -37,7 +37,9 @@ pub(super) struct Held {
     cue: u32,
     fired: bool,
     reloading: bool,
-    swing: Option<bool>,
+    swing: Option<String>,
+    inspecting: bool,
+    fade: f32,
     look: Option<(f32, f32)>,
     hidden: Option<&'static str>,
     ability: bool,
@@ -225,6 +227,7 @@ fn equipped(
         held.fired = false;
         held.reloading = false;
         held.swing = None;
+        held.inspecting = false;
         held.cue = held.cue.wrapping_add(1);
     }
     held.equip_left = max(held.equip_left - delta, 0.0);
@@ -279,18 +282,63 @@ fn bobbing(held: &mut Held, table: &PuppetTable, body: &Body, delta: f32) -> Vec
     held.bob
 }
 
+fn bare((tick, slot): (u64, u32), weapon: Option<&'static str>, scale: f32) -> ViewModel {
+    ViewModel {
+        tick,
+        slot: Some(slot),
+        weapon,
+        clip: String::new(),
+        muzzle: None,
+        direction: Vec3::ZERO,
+        sight: Vec3::ZERO,
+        hands: [None, None],
+        scale,
+    }
+}
+
+fn moved(
+    held: &mut Held,
+    table: &PuppetTable,
+    (body, events, slot): (&Body, &ArmsEvents, u32),
+    (look, delta): ((f32, f32), f32),
+) -> Vec3 {
+    swayed(held, table, look, delta);
+    let bobbed = bobbing(held, table, body, delta);
+    kicked(held, table, (events, slot), delta);
+    bobbed
+}
+
 fn kicked(held: &mut Held, table: &PuppetTable, (events, slot): (&ArmsEvents, u32), delta: f32) {
     let kick = &table.view.kick;
+    let melee = &table.view.melee;
     let decay = max(1.0 - kick.return_per_second * delta, 0.0);
     held.kick_back *= decay;
     held.kick_angle *= decay;
-    for fired in events.shots.iter().filter(|fired| fired.shooter == slot) {
-        if fired.weapon == Weapon::Melee {
-            held.swing = Some(fired.heavy);
-        } else {
-            held.kick_back += kick.back_m;
-            held.kick_angle += kick.up_radians;
+    held.fade = 0.0;
+    for swing in events.swings.iter().filter(|swing| swing.slot == slot) {
+        held.swing = swing_clip((&melee.light, &melee.heavy), swing).cloned();
+        held.fired = true;
+        held.cue = held.cue.wrapping_add(1);
+    }
+    for inspect in events
+        .inspects
+        .iter()
+        .filter(|inspect| inspect.slot == slot)
+    {
+        held.inspecting = matches!(inspect.change, Inspect::Started { .. });
+        if inspect.change == Inspect::Cancelled {
+            held.fade = table.view.inspect.cancel_fade_seconds;
         }
+        held.fired = false;
+        held.cue = held.cue.wrapping_add(1);
+    }
+    let guns = events
+        .shots
+        .iter()
+        .filter(|fired| fired.shooter == slot && fired.weapon != Weapon::Melee);
+    for _ in guns {
+        held.kick_back += kick.back_m;
+        held.kick_angle += kick.up_radians;
         held.fired = true;
         held.reloading = false;
         held.cue = held.cue.wrapping_add(1);
@@ -321,7 +369,6 @@ fn reloads(held: &mut Held, reloading: bool) {
 struct Timing {
     equip: f32,
     reload: Option<f32>,
-    swing: (f32, f32),
     melee: bool,
     task: Option<(Task, f32)>,
 }
@@ -335,10 +382,6 @@ fn chosen(
         .and_then(|tasks| tasks.of(slot))
         .filter(|_| loadout.is_some());
     let game = numbers.get();
-    let swing = game.map_or((0.0, 0.0), |game| {
-        let melee = &game.weapons.melee;
-        (melee.swing_seconds, melee.heavy_swing_seconds)
-    });
     if let Some(task) = task {
         let seconds = game.map_or(0.0, |game| match task {
             Task::Planting => game.rules.round.plant_seconds,
@@ -347,7 +390,6 @@ fn chosen(
         let timing = Timing {
             equip: 0.0,
             reload: None,
-            swing,
             melee: false,
             task: Some((task, seconds as f32)),
         };
@@ -358,7 +400,6 @@ fn chosen(
     let timing = Timing {
         equip,
         reload,
-        swing,
         melee: weapon == Some(Weapon::Melee.key()),
         task: None,
     };
@@ -379,14 +420,13 @@ fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay
         }
     } else if held.reloading {
         (view.reload.clone(), 1.0, false, timing.reload)
+    } else if held.inspecting {
+        (view.inspect.clip.clone(), 1.0, false, None)
     } else if timing.melee {
-        match held.swing {
-            Some(true) => (view.melee.heavy.clone(), 1.0, false, Some(timing.swing.1)),
-            Some(false) => (view.melee.light.clone(), 1.0, false, Some(timing.swing.0)),
-            None => match &view.equip {
-                Some(equip) => (equip.clone(), 1.0, false, Some(held.equip_total)),
-                None => (view.melee.light.clone(), 0.0, false, None),
-            },
+        match (&held.swing, &view.equip) {
+            (Some(swing), _) => (swing.clone(), 1.0, false, None),
+            (None, Some(equip)) => (equip.clone(), 1.0, false, Some(held.equip_total)),
+            (None, None) => (view.melee.heavy.clone(), 0.0, false, None),
         }
     } else {
         let speed = f32::from(u8::from(held.fired));
@@ -396,7 +436,7 @@ fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay
         clip: clip.clone(),
         speed,
         looping,
-        fade_seconds: 0.0,
+        fade_seconds: held.fade,
         cue: held.cue,
         fit_seconds,
         blend: Vec::new(),
@@ -780,26 +820,18 @@ pub(super) fn place(
     );
     let yaw = wish.yaw_radians + offsets.map_or(0.0, ViewOffsets::yaw_radians);
     let pitch = wish.pitch_radians + offsets.map_or(0.0, ViewOffsets::pitch_radians);
-    swayed(&mut held, table, (yaw, pitch), delta);
-    let bobbed = bobbing(&mut held, table, body, delta);
-    kicked(&mut held, table, (&arms_events, actor.slot), delta);
+    let bobbed = moved(
+        &mut held,
+        table,
+        (body, &arms_events, actor.slot),
+        ((yaw, pitch), delta),
+    );
     reloads(&mut held, reloading(loadout, &numbers));
     let (clip, wanted) = played(&held, &table.view, &timing);
     let scale = table.view.scale;
     let (Some((weapon, look)), Some(place)) = (look, place) else {
         refused(&mut stats, (&held, &parts), &mut spawner, None);
-        let fresh = ViewModel {
-            tick: fixed.tick,
-            slot: Some(actor.slot),
-            weapon,
-            clip: String::new(),
-            muzzle: None,
-            direction: Vec3::ZERO,
-            sight: Vec3::ZERO,
-            hands: [None, None],
-            scale,
-        };
-        view.set_if_neq(fresh);
+        view.set_if_neq(bare((fixed.tick, actor.slot), weapon, scale));
         return;
     };
     let assets = scene.as_deref().map(|scene| &*scene.assets);

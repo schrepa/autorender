@@ -114,11 +114,12 @@ impl Match {
         input: &TickInput,
         events: &mut Vec<Event>,
     ) {
-        let at = facts(input, player).map_or([0.0; 3], |f| f.position);
+        let (at, yaw) = facts(input, player).map_or(([0.0; 3], 0.0), |f| (f.set_down, f.yaw));
         let timings = self.catalog.timings;
         self.device = Device::Planted {
             site,
             at,
+            yaw,
             fuse_ticks_left: timings.fuse,
             defusing: Defusing {
                 player: None,
@@ -152,6 +153,7 @@ impl Match {
         let Device::Planted {
             site,
             at,
+            yaw,
             fuse_ticks_left,
             mut defusing,
         } = self.device
@@ -191,7 +193,7 @@ impl Match {
                 events.push(Event::DefuseHalf { player });
             }
             if defusing.progress >= defusing.needed {
-                self.device = Device::Defused { site, at };
+                self.device = Device::Defused { site, at, yaw };
                 events.push(Event::DefuseCompleted { player });
                 self.ultimate_point(player, events);
                 return true;
@@ -200,6 +202,7 @@ impl Match {
         self.device = Device::Planted {
             site,
             at,
+            yaw,
             fuse_ticks_left,
             defusing,
         };
@@ -210,6 +213,7 @@ impl Match {
         let Device::Planted {
             site,
             at,
+            yaw,
             fuse_ticks_left,
             defusing,
         } = self.device
@@ -222,13 +226,14 @@ impl Match {
             self.device = Device::Planted {
                 site,
                 at,
+                yaw,
                 fuse_ticks_left: left,
                 defusing,
             };
             return false;
         }
-        self.device = Device::Exploded { site, at };
-        events.push(Event::DeviceExploded { site, at });
+        self.device = Device::Exploded { site, at, yaw };
+        events.push(Event::DeviceExploded { site, at, yaw });
         true
     }
 }

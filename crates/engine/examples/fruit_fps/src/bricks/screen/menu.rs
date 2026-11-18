@@ -86,7 +86,6 @@ pub struct MenuSource {
     pub key_rows: Vec<KeyName>,
     pub crosshairs: Vec<String>,
     pub scope: ScopeNumbers,
-    pub backdrop: String,
     pub loading: LoadingNumbers,
 }
 
@@ -653,7 +652,7 @@ fn input_code(input: &Input) -> &str {
     }
 }
 
-pub(super) fn bindings(keys: &KeyMap) -> [(&'static str, &Binding); 27] {
+pub(super) fn bindings(keys: &KeyMap) -> [(&'static str, &Binding); 28] {
     [
         ("forward", &keys.forward),
         ("back", &keys.back),
@@ -665,6 +664,7 @@ pub(super) fn bindings(keys: &KeyMap) -> [(&'static str, &Binding); 27] {
         ("fire", &keys.fire),
         ("scope", &keys.scope),
         ("reload", &keys.reload),
+        ("inspect", &keys.inspect),
         ("drop", &keys.drop),
         ("next_item", &keys.next_item),
         ("previous_item", &keys.previous_item),
