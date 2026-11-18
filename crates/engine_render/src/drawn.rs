@@ -13,6 +13,7 @@ use crate::shaders::core_module;
 use crate::uploads::{UploadRange, listed_ranges};
 use crate::{
     Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
+    Recorded,
     Prepare,
 };
 
@@ -574,9 +575,6 @@ impl GpuPart for DrawnGpu {
         (table, poses, hierarchy): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if self.owed && cx.ran(self.pass) {
-            self.owed = false;
-        }
         self.owed |= self.upload_slots(&table, cx);
         let moved = self.upload_order(&table, cx);
         for member in &mut cx.core.installs.draw_entries {
@@ -618,6 +616,7 @@ impl GpuPart for DrawnGpu {
         if pass != self.pass {
             return;
         }
+        cx.recorded();
         for (level, &(start, end)) in self.nodes.level_ranges.iter().enumerate() {
             if end > start
                 && let Some(pipeline) = self.compose.get(level)
@@ -632,5 +631,6 @@ impl GpuPart for DrawnGpu {
             &self.pose,
             Count::Groups([self.slots.div_ceil(POSE_GROUP), 1, 1]),
         );
+        self.owed = cx.recorded() != Recorded::Exact;
     }
 }

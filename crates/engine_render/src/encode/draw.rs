@@ -543,25 +543,36 @@ impl Run {
         count: CountRaw,
         offsets: &[u32],
     ) {
+        let recorded = self.issue_dispatch(part, handle, count, offsets);
+        self.tallies.worst = self.tallies.worst.max(recorded);
+    }
+
+    fn issue_dispatch(
+        &mut self,
+        part: u32,
+        handle: u32,
+        count: CountRaw,
+        offsets: &[u32],
+    ) -> crate::Recorded {
         self.end_open();
         let Some(built) = self.machine.pipelines.get(handle as usize) else {
-            return;
+            return crate::Recorded::Waiting;
         };
         if built.decl.part != part || built.decl.scope != Scoped::Pass(self.pass) {
             let error = fault(self.path("dispatch.pipeline"), ErrorCode::PassMismatch);
             self.fault(error);
-            return;
+            return crate::Recorded::Refused;
         }
         if built.compute_ready.is_none() {
             let Some(made) = self.compute_pipeline(handle, true) else {
-                return;
+                return crate::Recorded::Waiting;
             };
             self.machine.pipelines[handle as usize].compute_ready = Some(made);
         }
         if let CountRaw::Indirect(input, _) = count
             && input_of(&self.machine, (&self.tables, self.set()), part, input).is_none()
         {
-            return;
+            return crate::Recorded::Waiting;
         }
         let current = self.pass;
         if self.recording.computing(current).is_none() {
@@ -569,7 +580,7 @@ impl Run {
             self.group(current);
             let label = self.label_of(current).unwrap_or("engine/part-dispatch");
             let Some(encoder) = self.recording.encoder() else {
-                return;
+                return crate::Recorded::Waiting;
             };
             let begun = encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -601,11 +612,11 @@ impl Run {
         let parity = frames.parity;
         let set = &sets.list[sets.at];
         let Some(pass) = recording.computing(current) else {
-            return;
+            return crate::Recorded::Waiting;
         };
         let built = &machine.pipelines[handle as usize];
         let Some(compute) = built.compute_ready.as_ref() else {
-            return;
+            return crate::Recorded::Waiting;
         };
         bound.dispatch_pipeline(pass, compute);
         if let Some(group) = frame_groups
@@ -638,6 +649,7 @@ impl Run {
             }
             CountRaw::Groups([x, y, z]) => pass.dispatch_workgroups(x, y, z),
         }
+        crate::Recorded::Exact
     }
 }
 
