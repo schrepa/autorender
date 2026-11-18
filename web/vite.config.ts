@@ -3,6 +3,8 @@ import { resolve, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { json } from "node:stream/consumers";
+import { createReadStream } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { brotliCompress, constants, gzip } from "node:zlib";
 import clients from "./src/generated/clients.json";
@@ -70,6 +72,47 @@ export default defineConfig(({ command, mode }) => ({
           response.setHeader("Cache-Control", "no-store");
           response.end(text);
         } catch { response.statusCode = 404; response.end("Scene source not found"); }
+      });
+      server.middlewares.use("/_engine/runs", async (request, response) => {
+        const plain = /^[A-Za-z0-9_.-]+$/;
+        const safe = (name: string) => plain.test(name) && !name.startsWith(".");
+        const runsFolder = resolve(workspace, "artifacts", "runs");
+        const missing = () => { response.statusCode = 404; response.end("Run file not found"); };
+        if (request.method !== "GET") { response.statusCode = 405; response.end(); return; }
+        const [path = "", query = ""] = (request.url ?? "").split("?");
+        response.setHeader("Cache-Control", "no-store");
+        try {
+          if (path === "/" || path === "") {
+            const folders = existsSync(runsFolder) ? await readdir(runsFolder, { withFileTypes: true }) : [];
+            const runs = await Promise.all(folders.filter(folder => folder.isDirectory() && safe(folder.name)).map(async folder => {
+              const inside = await readdir(resolve(runsFolder, folder.name), { withFileTypes: true }).catch(() => null);
+              if (!inside) return null;
+              const files = await Promise.all(inside.filter(file => file.isFile() && safe(file.name)).map(file =>
+                stat(resolve(runsFolder, folder.name, file.name)).then(facts => ({ name: file.name, bytes: facts.size, modified_ms: facts.mtimeMs }), () => null)));
+              const kept = files.flatMap(file => file ? [file] : []);
+              return { name: folder.name, open: kept.some(file => file.name === "session.json"), files: kept };
+            }));
+            response.setHeader("Content-Type", "application/json; charset=utf-8");
+            response.end(JSON.stringify(runs.flatMap(run => run ? [run] : [])));
+            return;
+          }
+          const parts = path.split("/");
+          if (parts.length !== 3 || parts[0] !== "" || !safe(parts[1]) || !safe(parts[2])) { missing(); return; }
+          const from = new URLSearchParams(query).get("from") ?? "0";
+          if (!/^[0-9]+$/.test(from)) { missing(); return; }
+          const file = resolve(runsFolder, parts[1], parts[2]);
+          const facts = await stat(file);
+          if (!facts.isFile()) { missing(); return; }
+          const start = Number(from);
+          const types: Record<string, string> = { png: "image/png", json: "application/json; charset=utf-8", jsonl: "application/jsonl; charset=utf-8", log: "text/plain; charset=utf-8" };
+          response.setHeader("Content-Type", types[parts[2].split(".").pop() ?? ""] ?? "application/octet-stream");
+          response.setHeader("X-Size", String(facts.size));
+          if (start >= facts.size) { response.end(); return; }
+          response.setHeader("Content-Length", String(facts.size - start));
+          const stream = createReadStream(file, { start, end: facts.size - 1 });
+          stream.on("error", () => response.destroy());
+          stream.pipe(response);
+        } catch { missing(); }
       });
     },
   }],
