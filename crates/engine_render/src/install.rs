@@ -215,7 +215,6 @@ pub(crate) struct PartInfo {
     pub(crate) ty: TypeId,
     pub(crate) package: &'static str,
     pub(crate) name: &'static str,
-    pub(crate) memory: &'static [&'static str],
 }
 
 #[derive(Clone, Default)]

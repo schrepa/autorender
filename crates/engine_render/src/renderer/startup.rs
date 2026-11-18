@@ -207,6 +207,7 @@ impl Renderer {
         let renderer = Self {
             surface: None,
             hidden: super::frame::Hidden::default(),
+            picture: super::frame::Picture::default(),
             core,
             run: None,
             assets: Some(assets),

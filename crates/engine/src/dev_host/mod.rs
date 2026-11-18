@@ -1,224 +1,229 @@
-pub(crate) mod bridge;
-mod controls;
+mod input;
+mod orders;
 
-use crate::app_host::AppHost;
-use engine_core::{Error, ErrorCode};
-use engine_dev::{
-    BrowserControl, CaptureRequest, Context, DevTools, Envelope, ProfileRequest, RendererFacts,
-    ToolCall, Verb,
-};
-use engine_scene::SceneInstance;
-use engine_settings::Expected;
+use std::any::Any;
+use std::collections::VecDeque;
+
+use bevy_ecs::world::World;
+use engine_core::{Error, ErrorCode, Expected};
+use engine_dev::{Applied, Request};
+use engine_registry::{Kind, NameEntry, ReachMut, register};
+use engine_render::Renderer;
+use engine_scene::SceneFiles;
 use serde_json::{Value, json};
 
-struct Facts<'a>(&'a engine_render::Renderer);
+use crate::frame_stats::FrameStats;
+use crate::host::DeviceGatherer;
+use crate::{Game, GameHost};
+use orders::{Order, Running};
 
-impl RendererFacts for Facts<'_> {
-    fn texture_resident(&self, texture: engine_core::TextureHandle) -> bool {
-        self.0.is_texture_resident(texture)
-    }
-}
-
+#[derive(Default)]
 pub(crate) struct DevHost {
-    pub(crate) tools: DevTools,
-    agent: crate::host::DeviceGatherer,
+    agent: DeviceGatherer,
+    tickets: u32,
+    lines: VecDeque<(u32, String)>,
+    running: Option<Running>,
+    stepping: bool,
+    held: bool,
+    out: DevTake,
 }
 
-impl Default for DevHost {
-    fn default() -> Self {
-        Self {
-            tools: DevTools::new(crate::stats::frame_stats_schema()),
-            agent: crate::host::DeviceGatherer::default(),
-        }
-    }
+#[derive(Default)]
+pub struct DevTake {
+    pub replies: Vec<(u32, String)>,
+    pub pictures: Vec<Shot>,
+    pub reload: bool,
 }
 
-pub(crate) enum Call<'a> {
-    Tool(ToolCall<'a>),
-    Control(&'a str, Value),
-}
-
-pub(crate) enum Handled {
-    Reply(Value),
-    Loop(Looped),
-}
-
-pub(crate) enum Looped {
-    Control(BrowserControl),
-    Capture(CaptureRequest),
-    Profile(ProfileRequest),
-}
-
-enum Done {
-    Result(Value),
-    Loop(Looped),
+pub struct Shot {
+    pub run: Option<String>,
+    pub file: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 impl DevHost {
-    pub fn drop_edges(&mut self) {
+    pub(crate) fn stepping(&self) -> bool {
+        self.stepping
+    }
+
+    pub(crate) fn drop_edges(&mut self) {
         self.agent.drop_edges();
     }
 
-    pub fn command(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        source: &str,
-        size: (u32, u32),
-        paused: bool,
-    ) -> Handled {
-        let envelope = match Envelope::parse(source) {
-            Ok(envelope) => envelope,
-            Err(error) => return Handled::Reply(self.refusal(app, scene, &error)),
-        };
-        let answered = match envelope.verb {
-            Verb::Describe | Verb::Inspect | Verb::Query => {
-                return Handled::Reply(match ToolCall::of(&envelope) {
-                    Ok(call) => self.tool(app, scene, call),
-                    Err(error) => self.refusal(app, scene, &error),
-                });
-            }
-            Verb::Control => self
-                .tools
-                .parse_control(app.engine.app.world(), &envelope, paused)
-                .and_then(|control| controls::run(self, app, scene, control, (size, paused))),
-            Verb::Capture | Verb::Profile => looped(&envelope, paused).map(Done::Loop),
-        };
-        self.answered(app, scene, answered)
+    pub(crate) fn take_input(&mut self) -> engine_core::Devices {
+        self.agent.take()
+    }
+}
+
+pub(crate) fn install(world: &mut World) {
+    engine_dev::install(world);
+    engine_render::gpu_names(world);
+    register(
+        world,
+        NameEntry::read("frame", Kind::State, |reach, _| {
+            Ok(serde_json::to_value(reach.world.resource::<FrameStats>())
+                .expect("frame_stats_serialize"))
+        }),
+    );
+    register(world, input::entry());
+    orders::install(world);
+}
+
+const UNCHANGED_WRITES: &str = "unchanged_writes";
+const UNCHANGED_WRITES_CHANGES: &str =
+    "hashes every byte written to the GPU on the CPU, so CPU render time grows with bytes written";
+
+pub fn instruments() -> &'static [&'static str] {
+    static NAMES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+        std::iter::once(UNCHANGED_WRITES)
+            .chain(engine_render::GPU_INSTRUMENTS)
+            .collect()
+    });
+    &NAMES
+}
+
+pub fn instrument(
+    reach: &mut ReachMut<'_>,
+    name: &str,
+    on: bool,
+) -> Result<&'static str, &'static str> {
+    if name == UNCHANGED_WRITES {
+        return engine_render::unchanged_writes(reach.world, on)
+            .map(|()| UNCHANGED_WRITES_CHANGES)
+            .map_err(|_| "unchanged_writes_refused");
+    }
+    match reach.part::<Renderer>() {
+        Some(renderer) => renderer.gpu_instrument(name, on),
+        None => Err("no_renderer"),
+    }
+}
+
+impl<G: Game> GameHost<G> {
+    pub fn dev_push(&mut self, line: &str) -> u32 {
+        let development = &mut self.development;
+        development.tickets = development.tickets.wrapping_add(1);
+        development
+            .lines
+            .push_back((development.tickets, line.to_owned()));
+        development.tickets
     }
 
-    pub fn call(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        call: Call<'_>,
-        size: (u32, u32),
-        paused: bool,
-    ) -> Value {
-        match call {
-            Call::Tool(call) => self.tool(app, scene, call),
-            Call::Control(name, args) => {
-                let answered = self
-                    .tools
-                    .control(app.engine.app.world(), (name, args), paused)
-                    .and_then(|control| controls::run(self, app, scene, control, (size, paused)));
-                match self.answered(app, scene, answered) {
-                    Handled::Reply(reply) => reply,
-                    Handled::Loop(_) => self.refusal(
-                        app,
-                        scene,
-                        &Error::new(ErrorCode::UnsupportedCommand, "$.name").got(name),
-                    ),
+    pub fn dev_take(&mut self) -> DevTake {
+        std::mem::take(&mut self.development.out)
+    }
+
+    pub fn dev_reloaded(&mut self, source: &str, files: &SceneFiles) {
+        let Some(running) = self.development.running.take() else {
+            return;
+        };
+        let Order::Reload(reload) = &running.order else {
+            self.development.running = Some(running);
+            return;
+        };
+        let outcome = crate::game_host::reload_checked(
+            self.scene.instance(),
+            self.app.engine(),
+            source,
+            (&reload.expected_revision, &reload.revision),
+        )
+        .and_then(|document| self.arrive(&document, files, crate::game::Arrival::Reload))
+        .map(|()| {
+            let skipped = self.scene.instance().map(|scene| scene.skipped().to_vec());
+            match skipped.filter(|skipped| !skipped.is_empty()) {
+                Some(skipped) => json!({"reloaded": true, "skipped": skipped}),
+                None => json!({"reloaded": true}),
+            }
+        });
+        self.answer(&running, outcome);
+    }
+
+    pub fn dev_reload_failed(&mut self, error: Error) {
+        match self.development.running.take() {
+            Some(running) if matches!(running.order, Order::Reload(_)) => {
+                self.answer(&running, Err(error));
+            }
+            other => self.development.running = other,
+        }
+    }
+
+    pub(crate) fn dev_apply(&mut self) {
+        while self.development.running.is_none() {
+            let Some((ticket, line)) = self.development.lines.pop_front() else {
+                return;
+            };
+            let request = match Request::parse(&line) {
+                Ok(request) => request,
+                Err(refused) => {
+                    self.reply(ticket, refused.id.as_ref(), Err(refused.error));
+                    continue;
                 }
+            };
+            let applied = self.reach(|reach| engine_dev::apply(reach, &request));
+            match applied {
+                Ok(Applied::Value(value)) => self.reply(ticket, request.id.as_ref(), Ok(value)),
+                Err(error) => self.reply(ticket, request.id.as_ref(), Err(error)),
+                Ok(Applied::Loop(order)) => match Order::of(order) {
+                    Some(order) => {
+                        self.development.running = Some(Running {
+                            ticket,
+                            id: request.id,
+                            order,
+                        });
+                    }
+                    None => {
+                        let refused = Error::new(ErrorCode::UnsupportedCommand, "$.name")
+                            .expected(Expected::Supported)
+                            .got(&request.name);
+                        self.reply(ticket, request.id.as_ref(), Err(refused));
+                    }
+                },
             }
         }
     }
 
-    fn answered(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        answered: Result<Done, Error>,
-    ) -> Handled {
-        match answered {
-            Ok(Done::Result(result)) => Handled::Reply(self.result(app, scene, result)),
-            Ok(Done::Loop(looped)) => Handled::Loop(looped),
-            Err(error) => Handled::Reply(self.refusal(app, scene, &error)),
+    pub(crate) fn dev_frame_end(&mut self) {
+        let time = self.app.engine().frame_time();
+        let tick = self.frame_times().tick;
+        let seconds = crate::host::now_ms() * 0.001;
+        self.reach(|reach| engine_dev::record::frame_end(reach, time.frame, tick, seconds));
+    }
+
+    fn reach<R>(&mut self, run: impl FnOnce(&mut ReachMut<'_>) -> R) -> R {
+        let mut parts: Vec<&mut dyn Any> = vec![
+            &mut self.development.agent,
+            &mut *self.app.renderer,
+        ];
+        if let Some(scene) = self.scene.instance_mut() {
+            parts.push(scene);
         }
+        run(&mut ReachMut {
+            world: self.app.engine.app.world_mut(),
+            parts: &mut parts,
+        })
     }
 
-    fn tool(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        call: ToolCall<'_>,
-    ) -> Value {
-        let status = matches!(call, ToolCall::Query("status", _));
-        let mut reply = self.reply(app, scene, call);
-        if status && reply["ok"] == true {
-            reply["result"]["build"] = build_identity();
-            reply["result"]["adapter"] =
-                json!(crate::host::AdapterStatus::of(app.renderer.adapter()));
-        }
-        reply
+    fn reply(&mut self, ticket: u32, id: Option<&Value>, outcome: Result<Value, Error>) {
+        let line = engine_dev::reply(id, self.app.engine().app.world(), outcome);
+        self.development.out.replies.push((ticket, line));
     }
 
-    fn reply(&self, app: &mut AppHost, scene: Option<&SceneInstance>, call: ToolCall<'_>) -> Value {
-        let facts = Facts(&app.renderer);
-        let context = Context {
-            scene,
-            renderer: Some(&facts),
-        };
-        self.tools.call(&mut app.engine, context, call)
+    fn answer(&mut self, running: &Running, outcome: Result<Value, Error>) {
+        self.reply(running.ticket, running.id.as_ref(), outcome);
     }
 
-    pub fn result(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        result: Value,
-    ) -> Value {
-        let mut envelope = self.reply(app, scene, ToolCall::status());
-        envelope["ok"] = json!(true);
-        envelope["result"] = result;
-        envelope
+    fn held(&self) -> bool {
+        self.app.engine().app.world().resource::<engine_core::Held>().paused
     }
 
-    pub fn refusal(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        error: &Error,
-    ) -> Value {
-        let mut envelope = self.reply(app, scene, ToolCall::status());
-        envelope["ok"] = json!(false);
-        envelope
-            .as_object_mut()
-            .expect("envelope_object")
-            .remove("result");
-        envelope["error"] = json!(error);
-        envelope
+    fn hold(&mut self) {
+        self.app
+            .engine_mut()
+            .app
+            .world_mut()
+            .resource_mut::<engine_core::Held>()
+            .paused = true;
+        self.development.held = true;
     }
-}
-
-fn looped(envelope: &Envelope, paused: bool) -> Result<Looped, Error> {
-    let looped = match envelope.verb {
-        Verb::Capture => {
-            let request: CaptureRequest = envelope.body()?;
-            request.validate()?;
-            Looped::Capture(request)
-        }
-        Verb::Profile => {
-            let request: ProfileRequest = envelope.body()?;
-            request.validate()?;
-            if request.deep.is_some() {
-                return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.deep")
-                    .expected(Expected::Absent));
-            }
-            Looped::Profile(request)
-        }
-        verb @ (Verb::Describe | Verb::Inspect | Verb::Query | Verb::Control) => {
-            return Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(verb.name()));
-        }
-    };
-    if !paused {
-        return Err(Error::new(ErrorCode::PauseRequired, "$")
-            .expected(Expected::Paused)
-            .got(envelope.verb.name()));
-    }
-    Ok(looped)
-}
-
-fn build_identity() -> Value {
-    let features: Vec<&str> = [
-        cfg!(feature = "dev").then_some("dev"),
-        cfg!(feature = "profiling").then_some("profiling"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "features": features,
-    })
 }

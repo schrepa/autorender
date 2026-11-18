@@ -1,4 +1,4 @@
-use crate::app_host::{AppHost, Focus};
+use crate::app_host::{Advance, AppHost, Focus};
 use crate::game::{Arrival, Game, LoadedScene};
 use crate::host::{
     DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource, JobId, JobOrder, JobScheduler,
@@ -10,16 +10,14 @@ use engine_render::{Picture, RenderTarget};
 use engine_scene::SceneFiles;
 
 pub struct GameHost<G: Game> {
-    app: AppHost,
+    pub(crate) app: AppHost,
     game: std::marker::PhantomData<fn() -> G>,
-    scene: LoadedScene,
+    pub(crate) scene: LoadedScene,
     input: DeviceGatherer,
     frames: FrameLoop,
     jobs: JobScheduler,
     #[cfg(feature = "dev")]
-    development: crate::dev_host::DevHost,
-    #[cfg(feature = "dev")]
-    pub(crate) dev_pending: Option<crate::dev_host::bridge::Pending>,
+    pub(crate) development: crate::dev_host::DevHost,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     source: Option<std::path::PathBuf>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -35,12 +33,15 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let app = AppHost::launch(target, bricks, |engine| {
+        #[cfg_attr(not(feature = "dev"), expect(unused_mut, reason = "dev installs names"))]
+        let mut app = AppHost::launch(target, bricks, |engine| {
             let game = build(engine).map_err(Into::into)?;
             engine.app.world_mut().insert_resource(game);
             Ok(())
         })
         .await?;
+        #[cfg(feature = "dev")]
+        crate::dev_host::install(app.engine.app.world_mut());
         Ok(Self {
             app,
             game: std::marker::PhantomData,
@@ -50,8 +51,6 @@ impl<G: Game> GameHost<G> {
             jobs: JobScheduler::default(),
             #[cfg(feature = "dev")]
             development: crate::dev_host::DevHost::default(),
-            #[cfg(feature = "dev")]
-            dev_pending: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
             source: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -85,23 +84,9 @@ impl<G: Game> GameHost<G> {
         &self.scene
     }
 
-    pub fn replace_engine(&mut self, mut engine: Engine) {
-        if let Some(game) = self.app.engine_mut().app.world_mut().remove_resource::<G>() {
-            engine.app.world_mut().insert_resource(game);
-        }
-        self.scene = LoadedScene::default();
-        self.app.replace_engine(engine);
-        self.suspend();
-    }
-
-    pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
-        self.framed(timestamp, (width, height), Picture::Shown)
-            .map(drop)
-    }
-
     pub(crate) fn framed(
         &mut self,
-        timestamp: f64,
+        advance: Advance,
         size: (u32, u32),
         picture: Picture,
     ) -> crate::Result<bool> {
@@ -110,13 +95,26 @@ impl<G: Game> GameHost<G> {
         self.app.follow_focus(source);
         let input = self.frame_input(source);
         self.app.accept(input);
-        self.app.frame(timestamp, size, picture)
+        let drawn = self.app.frame(advance, size, picture)?;
+        #[cfg(feature = "dev")]
+        self.dev_frame_end();
+        Ok(drawn)
+    }
+
+    pub(crate) fn play(&mut self, timestamp: f64, size: (u32, u32)) -> crate::Result<FramePhase> {
+        #[cfg(feature = "dev")]
+        return self.dev_play(timestamp, size);
+        #[cfg(not(feature = "dev"))]
+        {
+            self.framed(Advance::Clock(timestamp), size, Picture::Shown)?;
+            Ok(FramePhase::Playing)
+        }
     }
 
     pub fn input_source(&self) -> InputSource {
         #[cfg(feature = "dev")]
-        if let Some(pending) = &self.dev_pending {
-            return pending.input_source();
+        if self.development.stepping() {
+            return InputSource::Agent;
         }
         InputSource::Player
     }
@@ -345,14 +343,10 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn suspend(&mut self) {
-        self.suspend_live();
-        #[cfg(feature = "dev")]
-        self.development.drop_edges();
-    }
-
-    pub(crate) fn suspend_live(&mut self) {
         self.app.suspend();
         self.input.drop_edges();
+        #[cfg(feature = "dev")]
+        self.development.drop_edges();
     }
 
     pub fn reset_camera(&mut self) {
@@ -385,7 +379,7 @@ impl<G: Game> GameHost<G> {
         self.arrive(&document, files, Arrival::Reload)
     }
 
-    fn arrive(
+    pub(crate) fn arrive(
         &mut self,
         document: &engine_scene::SceneDocument,
         files: &SceneFiles,
@@ -429,18 +423,8 @@ impl<G: Game> GameHost<G> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn gpu_allocations(&self) -> serde_json::Value {
-        self.app.renderer.gpu_allocations()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_gpu(&self) -> crate::Result<()> {
         self.app.renderer.wait_for_gpu()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn read_offscreen(&self) -> crate::Result<Option<(u32, u32, Vec<u8>)>> {
-        self.app.renderer.read_offscreen()
     }
 
     pub fn progress(&self) -> (engine_core::Readiness, engine_core::JobStats) {
@@ -449,10 +433,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn frame_times(&self) -> &crate::frame_stats::FrameStats {
         self.app.frame_times()
-    }
-
-    pub fn stats(&self) -> String {
-        self.app.stats_json()
     }
 }
 
@@ -551,85 +531,7 @@ fn read_scene(
 }
 
 #[cfg(feature = "dev")]
-impl<G: Game> GameHost<G> {
-    pub(crate) fn collect_pipelines(&mut self) {
-        self.app.collect_pipelines();
-    }
-
-    pub(crate) fn dev_handle(
-        &mut self,
-        request: &str,
-        size: (u32, u32),
-        paused: bool,
-    ) -> crate::dev_host::Handled {
-        self.development
-            .command(&mut self.app, self.scene.instance(), request, size, paused)
-    }
-
-    pub(crate) fn dev_run(
-        &mut self,
-        call: crate::dev_host::Call<'_>,
-        size: (u32, u32),
-        paused: bool,
-    ) -> serde_json::Value {
-        self.development
-            .call(&mut self.app, self.scene.instance(), call, size, paused)
-    }
-
-    pub(crate) fn dev_reload(
-        &mut self,
-        source: &str,
-        expected_revision: &str,
-        revision: &str,
-        files: Option<&SceneFiles>,
-    ) -> serde_json::Value {
-        let none = SceneFiles::default();
-        let files = files.unwrap_or(&none);
-        let result = reload_checked(
-            self.scene.instance(),
-            self.app.engine(),
-            source,
-            (expected_revision, revision),
-        )
-        .and_then(|document| self.arrive(&document, files, Arrival::Reload));
-        match result {
-            Ok(()) => {
-                let skipped = self.scene.instance().map(|scene| scene.skipped().to_vec());
-                let mut reloaded = serde_json::json!({"reloaded": true});
-                if let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) {
-                    reloaded["skipped"] = serde_json::json!(skipped);
-                }
-                self.development
-                    .result(&mut self.app, self.scene.instance(), reloaded)
-            }
-            Err(error) => self
-                .development
-                .refusal(&mut self.app, self.scene.instance(), &error),
-        }
-    }
-}
-
-#[cfg(feature = "profiling")]
-impl<G: Game> GameHost<G> {
-    pub fn profiling_start(&mut self, max_events: usize) -> crate::Result<()> {
-        self.app.profiling_start(max_events)
-    }
-
-    pub fn profiling_stop(&mut self) -> crate::Result<serde_json::Value> {
-        self.app.profiling_stop()
-    }
-
-    pub fn profiling_poll(&mut self) {
-        self.app.profiling_poll();
-    }
-
-    pub fn profiling_report(&mut self) -> serde_json::Value {
-        self.app.profiling_report()
-    }
-}
-
-#[cfg(feature = "dev")]
-fn reload_checked(
+pub(crate) fn reload_checked(
     scene: Option<&engine_scene::SceneInstance>,
     engine: &Engine,
     source: &str,

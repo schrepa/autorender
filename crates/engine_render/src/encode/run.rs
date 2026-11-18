@@ -313,10 +313,7 @@ pub(crate) struct Planning {
 
 #[derive(Default)]
 pub(crate) struct Tallies {
-    pub(crate) drawn: u32,
-    pub(crate) part_draws: Vec<u32>,
-    pub(crate) rebuilt: Rebuilt,
-    pub(crate) uploads: Uploads,
+    pub(crate) drawn: crate::gpu_calls::Drawn,
     pub(crate) kinds: KindTallies,
     pub(crate) worst: crate::Recorded,
 }
@@ -373,6 +370,7 @@ pub(crate) struct KindTallies {
     pub(crate) reported: Vec<(engine_core::DrawKind, &'static str)>,
     pub(crate) problems: Vec<Error>,
     pub(crate) report: Option<engine_core::DrawReports>,
+    pub(crate) passes: Vec<engine_core::KindPass>,
 }
 
 impl KindTallies {
@@ -561,6 +559,7 @@ impl Run {
             .map(|pass| Arc::new(pass.clone()))
             .collect();
         let pass_sets = pass_sets_of(&machine);
+        let drawn = crate::gpu_calls::Drawn::new(machine.declared.passes.len(), count);
         Self {
             device,
             queue,
@@ -610,7 +609,7 @@ impl Run {
                 idle: Vec::new(),
             },
             tallies: Tallies {
-                part_draws: vec![0; count],
+                drawn,
                 ..Tallies::default()
             },
             reading: Reading {

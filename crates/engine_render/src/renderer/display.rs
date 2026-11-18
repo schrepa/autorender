@@ -79,6 +79,13 @@ impl Display {
             configuration.usage |= surface.get_capabilities(adapter).usages
                 & (wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST);
         }
+        #[cfg(all(
+            target_arch = "wasm32",
+            any(feature = "dev", feature = "profiling")
+        ))]
+        {
+            configuration.usage |= wgpu::TextureUsages::COPY_SRC;
+        }
         configuration.present_mode = target.present_mode();
         configuration.format = configuration.format.remove_srgb_suffix();
         configuration.desired_maximum_frame_latency = 2;

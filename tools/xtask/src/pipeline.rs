@@ -29,7 +29,7 @@ pub fn build(root: &Path, profiling: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn build_profiling_wasm(root: &Path) -> Result<(), String> {
+pub fn build_profiling_wasm(root: &Path) -> Result<(), String> {
     let games: Vec<_> = clients()
         .iter()
         .filter(|client| client.game.is_some())

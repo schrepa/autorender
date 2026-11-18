@@ -4,7 +4,6 @@
 )]
 
 pub use bevy_ecs;
-pub use engine_profile as profiling;
 pub use engine_scene as scene;
 pub use engine_settings as settings;
 pub use glam;
@@ -34,7 +33,7 @@ mod games {
         EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
         GlobalTransforms, InstanceValues, KindDecl, KindSkip, Layers, LightingModel, Listing,
         MakeTextures, Material, MaterialHandle, Mesh, MeshVertex, Mobility, MouseButton, Mover,
-        MoverId, Moves, Node, NodeWord, Operation, Pace, PadButton, Parent, Pause, PauseReason,
+        MoverId, Moves, Node, NodeWord, Pace, PadButton, Parent, Pause, PauseReason,
         Poses, Projection, ProvidedAssets, Rect, RenderState, Sampler, SceneComponents, Schedule,
         Section, Source, Span, Spawner, SurfaceSlot, Target, Teleport, Texture, TextureHandle,
         TextureRef, TextureSet, TextureSource, TextureUsage, TimeScale, TouchPhase, Transform,
@@ -57,7 +56,7 @@ pub mod bricks {
 pub mod stats {
     #[cfg(feature = "schema")]
     pub use crate::frame_stats::frame_stats_schema;
-    pub use crate::frame_stats::{FrameStats, PassPipelines};
+    pub use crate::frame_stats::{FrameStats, GpuTime};
     pub use engine_core::{Cut, JobStats, RenderStats};
 }
 
@@ -73,8 +72,6 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-#[cfg(feature = "profiling")]
-pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
@@ -91,6 +88,12 @@ pub use engine_worker as __worker;
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser;
+
+#[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub mod __private {
+    pub use engine_profile::TrackingAllocator;
+}
 
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]

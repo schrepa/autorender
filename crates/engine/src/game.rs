@@ -4,10 +4,7 @@ use engine_core::{
     BrickList, Bricks, Camera, DeviceLimits, Engine, Error, Transform, main_camera, place_camera,
 };
 use engine_render::{RenderSettings, wgpu};
-use engine_scene::{
-    RemoveOperation, SceneDocument, SceneFiles, SceneInstance, SceneMaterialControl,
-    SpawnOperation,
-};
+use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
 
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
     listed(bricks(BrickList::default()))
@@ -15,11 +12,7 @@ pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engi
 
 pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     let mut engine = Engine::listed(list)?;
-    engine
-        .settings::<RenderSettings>()
-        .operation::<SceneMaterialControl>()
-        .operation::<SpawnOperation>()
-        .operation::<RemoveOperation>();
+    engine.settings::<RenderSettings>();
     let unwired = wgpu::Limits {
         max_texture_array_layers: 0,
         ..wgpu::Limits::default()
@@ -73,6 +66,11 @@ pub struct LoadedScene {
 impl LoadedScene {
     pub fn instance(&self) -> Option<&SceneInstance> {
         self.instance.as_ref()
+    }
+
+    #[cfg(feature = "dev")]
+    pub(crate) fn instance_mut(&mut self) -> Option<&mut SceneInstance> {
+        self.instance.as_mut()
     }
 
     pub fn start(&self) -> Option<(Transform, Camera)> {

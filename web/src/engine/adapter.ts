@@ -1,21 +1,7 @@
-interface AdapterInfo { vendor: string; architecture: string; device: string; description: string }
-interface GpuAdapter { info?: AdapterInfo }
-interface Gpu { requestAdapter(options?: { powerPreference?: string }): Promise<GpuAdapter | null> }
+interface Gpu { requestAdapter(options?: { powerPreference?: string }): Promise<unknown> }
 
-let adapter: Promise<GpuAdapter | null> | undefined;
-function requested(): Promise<GpuAdapter | null> {
-  adapter ??= (async () => {
-    const gpu = (navigator as Navigator & { gpu?: Gpu }).gpu;
-    return await gpu?.requestAdapter({ powerPreference: "high-performance" }).catch(() => null) ?? null;
-  })();
-  return adapter;
-}
+let adapter: Promise<unknown> | undefined;
 
 export function warmAdapter(): void {
-  void requested();
-}
-
-export async function adapterInfo(): Promise<AdapterInfo | null> {
-  const info = (await requested())?.info;
-  return info ? { vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description } : null;
+  adapter ??= (navigator as Navigator & { gpu?: Gpu }).gpu?.requestAdapter({ powerPreference: "high-performance" }).catch(() => null);
 }

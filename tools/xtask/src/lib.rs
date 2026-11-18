@@ -1,7 +1,10 @@
+pub mod agent;
+pub mod compare;
 pub mod cook;
 pub mod dev;
 pub mod pipeline;
 pub mod process;
+pub mod runs;
 pub mod serve;
 
 pub struct Failure {

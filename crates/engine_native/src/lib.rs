@@ -5,7 +5,7 @@
 
 mod cook;
 #[cfg(feature = "dev")]
-pub mod dev;
+mod dev;
 pub mod files;
 mod input;
 mod job_cache;
@@ -22,8 +22,8 @@ pub use engine::GpuPreference;
 pub use engine_profiler as profiler;
 pub use job_cache::JobStore;
 pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
-pub use offscreen::{Frames, Offscreen, ProfileRecord, Record, Recorded};
-pub use options::{Argument, Arguments, HostOptions, StartScene, open_scene, options, parameters};
+pub use offscreen::Offscreen;
+pub use options::{Argument, Arguments, HostOptions, StartScene, open_scene, options};
 pub use window::{Window, run};
 
 pub fn main<G: engine::Game>(

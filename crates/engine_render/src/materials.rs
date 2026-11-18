@@ -372,6 +372,10 @@ impl MaterialStore {
         self.textures.contains_key(&handle)
     }
 
+    #[cfg_attr(
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "read by the gpu.assets names")
+    )]
     pub(crate) fn texture_totals(&self) -> (u32, u64, u64) {
         self.textures
             .values()

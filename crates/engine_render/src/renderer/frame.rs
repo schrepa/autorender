@@ -1,5 +1,5 @@
 use bevy_ecs::world::World;
-use engine_core::{AssetResidency, FrameTime, Readback, RenderFrame, RenderStats};
+use engine_core::{FrameTime, Readback, RenderFrame, RenderStats};
 
 use super::*;
 use crate::CameraUniform;
@@ -34,6 +34,101 @@ impl Hidden {
     fn behind(&self) -> bool {
         self.finished.load(std::sync::atomic::Ordering::Relaxed) < self.submitted
     }
+}
+
+type Pixels = (u32, u32, Vec<u8>);
+
+#[derive(Default)]
+pub(super) struct Picture {
+    asked: bool,
+    reading: Option<Result<Reading, Error>>,
+}
+
+pub(super) struct Reading {
+    buffer: wgpu::Buffer,
+    size: (u32, u32),
+    row: u32,
+    bgra: bool,
+    mapped: std::sync::Arc<std::sync::OnceLock<Result<(), wgpu::BufferAsyncError>>>,
+}
+
+impl Reading {
+    fn map(self) -> Self {
+        let mapped = std::sync::Arc::clone(&self.mapped);
+        self.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |outcome| {
+                let _ = mapped.set(outcome);
+            });
+        self
+    }
+
+    fn pixels(&self) -> Result<Vec<u8>, Error> {
+        let view = self
+            .buffer
+            .slice(..)
+            .get_mapped_range()
+            .map_err(|error| failed_with("$.picture", error))?;
+        let (width, height) = self.size;
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for rows in view.chunks_exact(self.row as usize) {
+            for texel in rows[..(width * 4) as usize].as_chunks::<4>().0 {
+                let [first, green, third, alpha] = *texel;
+                let (red, blue) = if self.bgra {
+                    (third, first)
+                } else {
+                    (first, third)
+                };
+                pixels.extend_from_slice(&[red, green, blue, alpha]);
+            }
+        }
+        drop(view);
+        self.buffer.unmap();
+        Ok(pixels)
+    }
+}
+
+fn copy_picture(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    texture: Option<&wgpu::Texture>,
+) -> Result<Reading, Error> {
+    let texture = texture.ok_or_else(|| failed("$.picture").expected(Expected::Present))?;
+    let format = texture.format().remove_srgb_suffix();
+    let bgra = format == wgpu::TextureFormat::Bgra8Unorm;
+    if !bgra && format != wgpu::TextureFormat::Rgba8Unorm {
+        return Err(failed("$.picture").expected(Expected::Supported));
+    }
+    if !texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+        return Err(failed("$.picture").expected(Expected::Readable));
+    }
+    let (width, height) = (texture.width(), texture.height());
+    let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("engine/picture-readback"),
+        size: u64::from(row) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(height),
+            },
+        },
+        texture.size(),
+    );
+    Ok(Reading {
+        buffer,
+        size: (width, height),
+        row,
+        bgra,
+        mapped: std::sync::Arc::default(),
+    })
 }
 
 struct Viewed {
@@ -131,19 +226,6 @@ impl Renderer {
                 registry.report(error);
             }
         }
-        let mut draws = engine_core::PartDraws::default();
-        for (part, drawn) in run
-            .machine
-            .declared
-            .parts
-            .iter()
-            .zip(&run.tallies.part_draws)
-        {
-            draws.add(part.ty, *drawn);
-        }
-        if world.get_resource::<engine_core::PartDraws>() != Some(&draws) {
-            world.insert_resource(draws);
-        }
         let faults = std::mem::take(&mut run.installs.faults);
         if let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>() {
             for error in faults {
@@ -151,6 +233,28 @@ impl Renderer {
             }
         }
         self.follow_states(world);
+    }
+
+    pub fn read_picture(&mut self) {
+        self.picture.asked = true;
+        self.picture.reading = None;
+    }
+
+    pub fn take_picture(&mut self) -> Option<Result<Pixels, Error>> {
+        crate::platform::poll(&self.core.device);
+        let reading = match self.picture.reading.take()? {
+            Ok(reading) => reading,
+            Err(error) => return Some(Err(error)),
+        };
+        let Some(outcome) = reading.mapped.get() else {
+            self.picture.reading = Some(Ok(reading));
+            return None;
+        };
+        let (width, height) = reading.size;
+        Some(match outcome {
+            Ok(()) => reading.pixels().map(|pixels| (width, height, pixels)),
+            Err(error) => Err(failed_with("$.picture", error)),
+        })
     }
 
     pub fn take_draw_reports(&mut self) -> Option<engine_core::DrawReports> {
@@ -220,7 +324,34 @@ impl Renderer {
     }
 
     pub fn acquire_frame(&mut self, picture: crate::Picture) -> Result<bool, Error> {
-        let _row = engine_profile::timed(engine_profile::row("render.acquire"));
+        let acquired = self.acquire(picture);
+        if !matches!(acquired, Ok(true)) {
+            self.picture.asked = false;
+        }
+        acquired
+    }
+
+    fn answer_picture(&mut self, surface: Option<DisplayFrame>) -> RenderStats {
+        if std::mem::take(&mut self.picture.asked) {
+            let device = &self.core.device;
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/picture-readback"),
+            });
+            let texture = surface.as_ref().map(DisplayFrame::texture);
+            #[cfg(not(target_arch = "wasm32"))]
+            let texture = texture.or(self.core.display.offscreen());
+            let picture = copy_picture(device, &mut encoder, texture);
+            self.core.queue.hand(Handover::from(encoder));
+            self.core.queue.settle();
+            self.picture.reading = Some(picture.map(Reading::map));
+            if let Some(surface) = surface {
+                surface.present(&self.core.queue);
+            }
+        }
+        RenderStats::default()
+    }
+
+    fn acquire(&mut self, picture: crate::Picture) -> Result<bool, Error> {
         self.check_health()?;
         drop(self.surface.take());
         self.hidden.asked = false;
@@ -246,31 +377,38 @@ impl Renderer {
     )]
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         let _profile = engine_profile::span("render", "render_snapshot");
-        let _row = engine_profile::timed(engine_profile::row("render.total"));
         let surface = self.surface.take();
         let hidden = std::mem::take(&mut self.hidden.asked);
         if surface.is_none() && !hidden {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         }
         let world = frame.world();
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        self.core
+            .queue
+            .mark_unchanged(world.contains_resource::<crate::gpu_calls::UnchangedWrites>());
         let views = world.get_resource::<engine_core::Views>();
         let listed: Vec<engine_core::ViewFacts> = views
             .map(|views| views.listed().to_vec())
             .unwrap_or_default();
         if listed.is_empty() {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         }
         let display = views.map_or(glam::UVec2::ONE, |views| views.frame().display_size);
         let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         };
         let device = self.core.device.clone();
+        run.frames.current += 1;
+        run.frames.parity = (run.frames.current % 2) as usize;
+        run.frames.asked = world
+            .get_resource::<FrameTime>()
+            .map_or(run.frames.current, |time| time.frame);
         let profile_upload = engine_profile::span("render", "asset_uploads");
-        let row_upload = engine_profile::timed(engine_profile::row("render.uploads"));
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
         let (mut compiler, assets) = run.split();
-        let (mut texture_bytes, mut mip_levels) =
+        let (mut texture_bytes, _) =
             assets
                 .materials
                 .sync(&device, &self.core.queue, world, (&mut mips, &mut compiler));
@@ -278,21 +416,12 @@ impl Renderer {
             self.core.queue.hand(Handover::from(encoder));
         }
         drop(profile_upload);
-        drop(row_upload);
-        run.frames.current += 1;
-        run.frames.parity = (run.frames.current % 2) as usize;
-        run.tallies.drawn = 0;
-        run.tallies.uploads.counted = 0;
-        run.tallies.uploads.memory.clear();
+        let drawn_before = run.tallies.drawn.total;
         run.queued = Queued {
             before: run.queued.before.take(),
             ..Queued::default()
         };
-        run.tallies.part_draws.fill(0);
         run.tallies.kinds.start_frame();
-        run.frames.asked = world
-            .get_resource::<FrameTime>()
-            .map_or(run.frames.current, |time| time.frame);
         let settings = world
             .get_resource::<crate::RenderSettings>()
             .cloned()
@@ -328,7 +457,6 @@ impl Renderer {
         run.canvas.format = run.canvas.surface;
         run.uniforms.camera_slot = 0;
         let profile_writes = engine_profile::span("render", "queue_writes");
-        let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
         run.uniforms.cameras = cameras;
         run.start_runs();
         for index in 0..run.parts.len() {
@@ -357,7 +485,7 @@ impl Renderer {
                 if let Some(source) = library.texture(texture) {
                     let revision = library.revision_of(texture).unwrap_or_default();
                     let (mut compiler, assets) = run.split();
-                    let (bytes, levels) = assets.materials.upload_texture(
+                    let (bytes, _) = assets.materials.upload_texture(
                         &device,
                         &self.core.queue,
                         (texture, revision),
@@ -365,7 +493,6 @@ impl Renderer {
                         (&mut mips, &mut compiler),
                     );
                     texture_bytes += bytes;
-                    mip_levels += levels;
                 }
             }
         }
@@ -381,16 +508,14 @@ impl Renderer {
         if let Some(error) = run.queued.refused.take() {
             return Err(error);
         }
-        let camera_bytes = run.write_cameras();
+        run.write_cameras();
         run.refresh_groups();
         drop(profile_writes);
-        drop(row_writes);
-        self.core.profiler.begin_frame(&device);
-        let capturing = self.core.profiler.capturing();
+        self.core.profiler.begin_frame(&device, &settings);
         let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         };
-        run.planning.merge = !capturing;
+        run.planning.merge = !self.core.profiler.splits();
         let mut asked = Bits::of(run.machine.graph.resources());
         if let Some(canvas) = run.machine.ids.target(Target::Canvas) {
             asked.insert(canvas.index());
@@ -406,13 +531,12 @@ impl Renderer {
             .iter()
             .rposition(|&index| listed[index].target.surface());
         let profile_encoding = engine_profile::span("render", "command_encoding");
-        let row_encoding = engine_profile::timed(engine_profile::row("render.encoding"));
         let mut encoder = self.frame_encoder(&device, 0);
         if !hidden {
             self.core.display.time_begin(&mut encoder);
         }
         let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         };
         run.recording = Recording::Encoding(encoder);
         let mut batch = 0;
@@ -562,7 +686,6 @@ impl Renderer {
                 }
                 let pass = &run.machine.declared.passes[index];
                 let (part, work) = (pass.part, pass.work);
-                let elsewhere = pass.scene.is_some_and(|scene| !scene.core);
                 if !run.drawable(part) {
                     continue;
                 }
@@ -611,6 +734,9 @@ impl Renderer {
                     run.group(index as u32);
                 }
                 let Some(run) = self.run.as_mut() else { break };
+                self.core
+                    .profiler
+                    .ran(timed, run.machine.declared.passes[index].name);
                 run.flush_clears();
                 if collected {
                     run.collect();
@@ -626,7 +752,7 @@ impl Renderer {
                         let Some(mut held) = run.parts[part as usize].take() else {
                             continue;
                         };
-                        let drawn = held.encode(index as u32, run, &self.core.profiler);
+                        held.encode(index as u32, run, &self.core.profiler);
                         let next = plan.passes.get(at + 1).map(|next| next.pass.index() as u32);
                         if collected
                             || !next.is_some_and(|next| {
@@ -637,12 +763,6 @@ impl Renderer {
                         }
                         if !collected {
                             run.ran_now(index);
-                            if let Some(sum) = run.tallies.part_draws.get_mut(part as usize) {
-                                *sum += drawn;
-                            }
-                            if !elsewhere {
-                                run.tallies.drawn += drawn;
-                            }
                         }
                         run.parts[part as usize] = Some(held);
                     }
@@ -669,7 +789,7 @@ impl Renderer {
             first = false;
         }
         let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         };
         run.close_encode_span(&self.core.profiler);
         run.flush_clears();
@@ -690,7 +810,7 @@ impl Renderer {
         }
         self.mark(Some(&mut encoder), timed, None);
         let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         };
         run.recording = Recording::Encoding(encoder);
         run.copy_at_end();
@@ -709,17 +829,24 @@ impl Renderer {
         }
         self.close_batch(&mut encoder, batch);
         let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
+            return Ok(self.answer_picture(surface));
         };
         self.core
             .profiler
             .end_frame((&device, &mut encoder), &mut run.reading.list, written);
+        let picture = std::mem::take(&mut self.picture.asked).then(|| {
+            let texture = surface.as_ref().map(DisplayFrame::texture);
+            #[cfg(not(target_arch = "wasm32"))]
+            let texture = texture.or(self.core.display.offscreen());
+            copy_picture(&device, &mut encoder, texture)
+        });
         drop(profile_encoding);
-        drop(row_encoding);
         let profile_submit = engine_profile::span("render", "submit_and_present");
-        let row_submit = engine_profile::timed(engine_profile::row("render.submit"));
         self.core.queue.hand(Handover::from(encoder));
         self.core.queue.settle();
+        if let Some(picture) = picture {
+            self.picture.reading = Some(picture.map(Reading::map));
+        }
         self.hidden.submitted(&self.core.queue);
         if let Some(surface) = surface {
             surface.present(&self.core.queue);
@@ -732,28 +859,15 @@ impl Renderer {
         run.reading.list.map();
         crate::platform::poll(&device);
         drop(profile_submit);
-        drop(row_submit);
-        let (resident_textures, resident_texture_bytes, mip_bytes) =
-            run.assets.materials.texture_totals();
-        let resident_mesh_bytes = world
-            .get_resource::<AssetResidency>()
-            .map_or(0, |residency| {
-                residency
-                    .meshes()
-                    .filter(|(handle, _)| run.assets.meshes.contains(*handle))
-                    .map(|(_, mesh)| mesh.byte_len())
-                    .sum()
-            });
-        let kind_passes = super::kind_passes::kind_passes(run, world);
-        let stats = RenderStats {
-            draw_calls: run.tallies.drawn,
-            upload_bytes: camera_bytes + run.tallies.uploads.counted + mesh_bytes + texture_bytes,
-            resident_meshes: run.assets.meshes.len() as u32,
+        run.tallies.kinds.passes = super::kind_passes::kind_passes(run, world);
+        let drawn = run.tallies.drawn.total.since(drawn_before);
+        Ok(RenderStats {
+            draw_calls: drawn.draws,
+            instances: drawn.instances,
+            indirect_draws: drawn.indirect,
+            upload_bytes: self.core.queue.take_written(),
             mesh_upload_bytes: mesh_bytes,
-            resident_mesh_bytes,
-            resident_textures,
             texture_upload_bytes: texture_bytes,
-            resident_texture_bytes,
             pipelines: self
                 .core
                 .ledger
@@ -762,44 +876,7 @@ impl Renderer {
             pipelines_created,
             render_passes,
             readback_overflows: run.reading.list.overflows(),
-            kind_passes,
-            kind_problems: run.tallies.kinds.problems.clone(),
-            dropped_draws: super::kind_passes::dropped_draws(run),
-            ..RenderStats::default()
-        };
-        let immediate = self.core.queue.take_immediate();
-        rebuilt_counters(&mut run.tallies.rebuilt);
-        if engine_profile::active() {
-            stat_counters(&stats);
-            engine_profile::counter("render.immediate_submissions", f64::from(immediate));
-            engine_profile::counter(
-                "render.pipelines_warming",
-                f64::from(run.pipelines.warming.left()),
-            );
-            engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
-            engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
-            let held = [
-                (
-                    "memory.geometry_staging_capacity_bytes",
-                    run.assets.meshes.staging_bytes(),
-                ),
-                ("memory.gpu_mesh_payload_bytes", stats.resident_mesh_bytes),
-                (
-                    "memory.gpu_mesh_arena_bytes",
-                    run.assets.meshes.capacity_bytes(),
-                ),
-                (
-                    "memory.gpu_texture_payload_bytes",
-                    stats.resident_texture_bytes,
-                ),
-                ("memory.gpu_texture_mip_bytes", mip_bytes),
-            ];
-            for (name, bytes) in held {
-                engine_profile::counter(name, bytes as f64);
-            }
-            part_memory_counters(run);
-        }
-        Ok(stats)
+        })
     }
 
     fn ran_passes(&self, ran: &[&'static str]) -> engine_core::Names {
@@ -814,95 +891,6 @@ impl Renderer {
         engine_core::Names { bits, names }
     }
 }
-
-fn part_memory_counters(run: &crate::encode::Run) {
-    let reported = &run.tallies.uploads.memory;
-    let mut rows: Vec<&'static str> = Vec::new();
-    let declared = run
-        .machine
-        .declared
-        .parts
-        .iter()
-        .flat_map(|part| part.memory.iter().copied());
-    for name in declared.chain(reported.iter().map(|&(name, _)| name)) {
-        if !rows.contains(&name) {
-            rows.push(name);
-        }
-    }
-    for name in rows {
-        let bytes: u64 = reported
-            .iter()
-            .filter(|(known, _)| *known == name)
-            .map(|(_, bytes)| *bytes)
-            .sum();
-        engine_profile::counter(name, bytes as f64);
-    }
-}
-
-fn rebuilt_counters(rebuilt: &mut crate::encode::Rebuilt) {
-    engine_profile::counter("render.group_rebuilds", f64::from(rebuilt.groups));
-    engine_profile::counter("render.buffer_recreations", f64::from(rebuilt.buffers));
-    engine_profile::counter("render.texture_recreations", f64::from(rebuilt.textures));
-    engine_profile::counter("render.draw_compiles", f64::from(rebuilt.compiles));
-    engine_profile::tally("render.group_rebuilds", u64::from(rebuilt.groups));
-    engine_profile::tally("render.buffer_recreations", u64::from(rebuilt.buffers));
-    engine_profile::tally("render.texture_recreations", u64::from(rebuilt.textures));
-    engine_profile::tally("render.draw_compiles", u64::from(rebuilt.compiles));
-    rebuilt.reasons.sort_unstable();
-    let mut reasons = std::mem::take(&mut rebuilt.reasons);
-    for reason in reasons.chunk_by(|a, b| a == b) {
-        engine_profile::counter(rebuilt.reason_name(reason[0]), reason.len() as f64);
-        engine_profile::tally(rebuilt.reason_name(reason[0]), reason.len() as u64);
-    }
-    reasons.clear();
-    rebuilt.reasons = reasons;
-    rebuilt.groups = 0;
-    rebuilt.buffers = 0;
-    rebuilt.textures = 0;
-    rebuilt.compiles = 0;
-}
-
-#[cfg(feature = "profiling")]
-#[expect(clippy::expect_used, reason = "render stats always serialize")]
-fn stat_counters(stats: &RenderStats) {
-    use engine_core::collections::HashMap;
-    thread_local! {
-        static NAMES: std::cell::RefCell<HashMap<String, &'static str>> =
-            std::cell::RefCell::new(HashMap::default());
-    }
-    fn visit(path: &mut String, value: &serde_json::Value) {
-        let number = match value {
-            serde_json::Value::Object(fields) => {
-                for (key, value) in fields {
-                    let length = path.len();
-                    path.push('.');
-                    path.push_str(key);
-                    visit(path, value);
-                    path.truncate(length);
-                }
-                return;
-            }
-            serde_json::Value::Number(number) => number.as_f64(),
-            serde_json::Value::Bool(flag) => Some(f64::from(u8::from(*flag))),
-            serde_json::Value::Null
-            | serde_json::Value::String(_)
-            | serde_json::Value::Array(_) => None,
-        };
-        if let Some(number) = number {
-            let name = NAMES.with_borrow_mut(|names| {
-                *names
-                    .entry(path.clone())
-                    .or_insert_with(|| Box::leak(path.clone().into_boxed_str()))
-            });
-            engine_profile::counter(name, number);
-        }
-    }
-    let value = serde_json::to_value(stats).expect("render_stats_serialize");
-    visit(&mut "render".to_owned(), &value);
-}
-
-#[cfg(not(feature = "profiling"))]
-fn stat_counters(_: &RenderStats) {}
 
 fn warm_on_flip(
     run: &mut Run,
@@ -1006,3 +994,226 @@ fn union(first: &Bits, second: &Bits) -> Bits {
     joined
 }
 
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(super) mod names {
+    use bevy_ecs::world::World;
+    use engine_core::AssetResidency;
+    use engine_registry::{Kind, NameEntry, register, unavailable};
+    use serde_json::{Map, Value, json};
+
+    use super::super::Renderer;
+    use crate::encode::Run;
+    use crate::gpu_calls::{Count, Written};
+
+    type Reader = fn(&Renderer, &Run, &World) -> Value;
+
+    pub fn gpu_names(world: &mut World) {
+        let names: [(&'static str, Kind, Option<&'static str>, Reader); 15] = [
+            ("gpu.resources", Kind::State, None, resources),
+            ("gpu.resources.written", Kind::Bytes, Some("bytes"), |renderer, run, _| {
+                written(renderer, run, |written| written.bytes)
+            }),
+            ("gpu.resources.unchanged", Kind::Bytes, Some("bytes"), unchanged),
+            ("gpu.submitted_at_once", Kind::Count, None, |renderer, _, _| {
+                json!(renderer.core.queue.submitted_at_once())
+            }),
+            ("gpu.assets.resident", Kind::Count, None, resident),
+            ("gpu.assets.bytes", Kind::Bytes, Some("bytes"), asset_bytes),
+            ("gpu.kinds", Kind::State, None, kinds),
+            ("gpu.passes", Kind::State, None, passes),
+            ("gpu.passes.draws", Kind::Count, None, |_, run, _| {
+                pass_counts(run, |count| count.draws)
+            }),
+            ("gpu.passes.instances", Kind::Count, None, |_, run, _| {
+                pass_counts(run, |count| count.instances)
+            }),
+            ("gpu.passes.indirect_draws", Kind::Count, None, |_, run, _| {
+                pass_counts(run, |count| count.indirect)
+            }),
+            ("gpu.draws", Kind::State, None, draws),
+            ("gpu.draws.draws", Kind::Count, None, |_, run, _| {
+                part_counts(run, |count| count.draws)
+            }),
+            ("gpu.draws.instances", Kind::Count, None, |_, run, _| {
+                part_counts(run, |count| count.instances)
+            }),
+            ("gpu.draws.indirect_draws", Kind::Count, None, |_, run, _| {
+                part_counts(run, |count| count.indirect)
+            }),
+        ];
+        for (name, kind, unit, read) in names {
+            let entry = NameEntry::read(name, kind, move |reach, _| {
+                Ok(reach.part::<Renderer>().map_or_else(
+                    || unavailable("no_renderer"),
+                    |renderer| {
+                        renderer.run.as_ref().map_or_else(
+                            || unavailable("renderer_not_installed"),
+                            |run| read(renderer, run, reach.world),
+                        )
+                    },
+                ))
+            });
+            register(
+                world,
+                match unit {
+                    Some(unit) => entry.unit(unit),
+                    None => entry,
+                },
+            );
+        }
+        Renderer::timer_names(world);
+    }
+
+    fn keyed(map: &mut Map<String, Value>, name: &str, value: Value) {
+        let mut key = name.to_owned();
+        let mut repeat = 1;
+        while map.contains_key(&key) {
+            repeat += 1;
+            key = format!("{name}#{repeat}");
+        }
+        map.insert(key, value);
+    }
+
+    fn part_of(run: &Run, part: u32) -> (&'static str, &'static str) {
+        run.machine
+            .declared
+            .parts
+            .get(part as usize)
+            .map_or(("", engine_registry::CORE_ROW), |info| {
+                (info.name, info.package)
+            })
+    }
+
+    enum Declared {
+        Buffer(usize),
+        Texture(usize),
+    }
+
+    fn declared(run: &Run, mut row: impl FnMut(Declared) -> Value) -> Map<String, Value> {
+        let declared = &run.machine.declared;
+        let mut map = Map::new();
+        for (at, buffer) in declared.buffers.iter().enumerate() {
+            keyed(&mut map, buffer.label, row(Declared::Buffer(at)));
+        }
+        for (at, texture) in declared.textures.iter().enumerate() {
+            keyed(&mut map, texture.label, row(Declared::Texture(at)));
+        }
+        map
+    }
+
+    fn resources(_: &Renderer, run: &Run, _: &World) -> Value {
+        let declared_of = &run.machine.declared;
+        Value::Object(declared(run, |resource| {
+            let (kind, part, size) = match resource {
+                Declared::Buffer(at) => (
+                    "buffer",
+                    declared_of.buffers[at].part,
+                    run.buffer_held(at as u32)
+                        .map_or_else(|| unavailable("not_allocated"), |(_, bytes)| json!(bytes)),
+                ),
+                Declared::Texture(at) => (
+                    "texture",
+                    declared_of.textures[at].part,
+                    run.texture_tables(at as u32)
+                        .sizes
+                        .get(at)
+                        .copied()
+                        .flatten()
+                        .map_or_else(
+                            || unavailable("not_allocated"),
+                            |(size, mips)| {
+                                json!([size.width, size.height, size.depth_or_array_layers, mips])
+                            },
+                        ),
+                ),
+            };
+            let (part, brick) = part_of(run, part);
+            json!({"kind": kind, "part": part, "brick": brick, "size": size})
+        }))
+    }
+
+    fn written(renderer: &Renderer, run: &Run, pick: fn(Written) -> u64) -> Value {
+        let writes = renderer.core.queue.writes();
+        let of = |slots: &[Written], at: usize| json!(slots.get(at).copied().map_or(0, pick));
+        let mut map = declared(run, |resource| match resource {
+            Declared::Buffer(at) => of(&writes.buffers, at),
+            Declared::Texture(at) => of(&writes.textures, at),
+        });
+        keyed(&mut map, "engine", json!(pick(writes.engine)));
+        keyed(&mut map, "total", json!(pick(writes.total)));
+        Value::Object(map)
+    }
+
+    fn unchanged(renderer: &Renderer, run: &Run, _: &World) -> Value {
+        if renderer.core.queue.writes().marking() {
+            written(renderer, run, |written| written.unchanged)
+        } else {
+            unavailable("unchanged_writes_off")
+        }
+    }
+
+    fn resident(_: &Renderer, run: &Run, _: &World) -> Value {
+        let (textures, _, _) = run.assets.materials.texture_totals();
+        json!({"meshes": run.assets.meshes.len(), "textures": textures})
+    }
+
+    fn asset_bytes(_: &Renderer, run: &Run, world: &World) -> Value {
+        let (_, textures, mips) = run.assets.materials.texture_totals();
+        let meshes = world.get_resource::<AssetResidency>().map_or_else(
+            || unavailable("no_asset_residency"),
+            |residency| {
+                let bytes: u64 = residency
+                    .meshes()
+                    .filter(|(handle, _)| run.assets.meshes.contains(*handle))
+                    .map(|(_, mesh)| mesh.byte_len())
+                    .sum();
+                json!(bytes)
+            },
+        );
+        json!({"meshes": meshes, "textures": textures, "texture_mips": mips})
+    }
+
+    fn kinds(_: &Renderer, run: &Run, _: &World) -> Value {
+        json!({
+            "passes": run.tallies.kinds.passes,
+            "problems": run.tallies.kinds.problems,
+            "dropped": super::super::kind_passes::dropped_draws(run),
+        })
+    }
+
+    fn passes(_: &Renderer, run: &Run, _: &World) -> Value {
+        let mut map = Map::new();
+        for pass in &run.machine.declared.passes {
+            let (part, brick) = part_of(run, pass.part);
+            keyed(&mut map, pass.name, json!({"part": part, "brick": brick}));
+        }
+        Value::Object(map)
+    }
+
+    fn pass_counts(run: &Run, pick: fn(Count) -> u64) -> Value {
+        let mut map = Map::new();
+        let counted = run.tallies.drawn.passes.iter();
+        for (pass, count) in run.machine.declared.passes.iter().zip(counted) {
+            keyed(&mut map, pass.name, json!(pick(*count)));
+        }
+        Value::Object(map)
+    }
+
+    fn draws(_: &Renderer, run: &Run, _: &World) -> Value {
+        let mut map = Map::new();
+        for part in &run.machine.declared.parts {
+            keyed(&mut map, part.name, json!({"brick": part.package}));
+        }
+        Value::Object(map)
+    }
+
+    fn part_counts(run: &Run, pick: fn(Count) -> u64) -> Value {
+        let mut map = Map::new();
+        let counted = run.tallies.drawn.parts.iter();
+        for (part, count) in run.machine.declared.parts.iter().zip(counted) {
+            keyed(&mut map, part.name, json!(pick(*count)));
+        }
+        keyed(&mut map, "total", json!(pick(run.tallies.drawn.total)));
+        Value::Object(map)
+    }
+}

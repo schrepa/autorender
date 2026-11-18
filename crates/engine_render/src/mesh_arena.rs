@@ -211,16 +211,6 @@ impl MeshArena {
         }
     }
 
-    fn capacity_bytes(&self) -> u64 {
-        self.indices.size()
-            + self
-                .classes
-                .iter()
-                .flat_map(|class| &class.buffers)
-                .map(wgpu::Buffer::size)
-                .sum::<u64>()
-    }
-
     fn fit(
         &mut self,
         device: &wgpu::Device,
@@ -372,6 +362,10 @@ impl GpuMeshes {
         self.meshes.get(&handle)
     }
 
+    #[cfg_attr(
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "read by the gpu.assets names")
+    )]
     pub fn contains(&self, handle: GeometryHandle) -> bool {
         self.meshes.contains_key(&handle)
     }
@@ -380,16 +374,12 @@ impl GpuMeshes {
         self.meshes.get(&handle)?.draw(&self.arena)
     }
 
+    #[cfg_attr(
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "read by the gpu.assets names")
+    )]
     pub fn len(&self) -> usize {
         self.meshes.len()
-    }
-
-    pub fn capacity_bytes(&self) -> u64 {
-        self.arena.capacity_bytes()
-    }
-
-    pub(crate) fn staging_bytes(&self) -> u64 {
-        self.staging.iter().map(Vec::capacity).sum::<usize>() as u64
     }
 
     pub fn sync(&mut self, device: &wgpu::Device, queue: &Queue, world: &World) -> u64 {

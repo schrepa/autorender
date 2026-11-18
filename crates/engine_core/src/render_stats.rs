@@ -117,29 +117,18 @@ impl DrawReports {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RenderStats {
-    pub draw_calls: u32,
+    pub draw_calls: u64,
+    pub instances: u64,
+    pub indirect_draws: u64,
     pub upload_bytes: u64,
-    pub instances: u32,
-    #[serde(skip)]
-    #[cfg_attr(feature = "schema", schemars(skip))]
-    pub gpu_visible: Option<u32>,
-    pub triangles: Option<u32>,
-    pub read_back_age: Option<u32>,
-    pub resident_meshes: u32,
     pub mesh_upload_bytes: u64,
-    pub resident_mesh_bytes: u64,
-    pub resident_textures: u32,
     pub texture_upload_bytes: u64,
-    pub resident_texture_bytes: u64,
     pub pipelines: u32,
     pub pipelines_created: u32,
     pub render_passes: Names,
     #[serde(skip_serializing_if = "none_overflowed")]
     #[cfg_attr(feature = "schema", schemars(skip))]
     pub readback_overflows: u64,
-    pub kind_passes: Vec<KindPass>,
-    pub kind_problems: Vec<Error>,
-    pub dropped_draws: Vec<DroppedDraws>,
 }
 
 fn none_overflowed(overflows: &u64) -> bool {

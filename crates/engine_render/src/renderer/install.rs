@@ -356,7 +356,6 @@ fn install_with(
                     record: PartRecord {
                         part: part.part,
                         name: part.name,
-                        memory: part.memory,
                         install: part.install,
                     },
                     package: record.package,
@@ -375,7 +374,6 @@ fn install_with(
             ty: entry.record.part,
             package: entry.package,
             name: entry.record.name,
-            memory: entry.record.memory,
         });
     }
     for draw in &draws {

@@ -1,8 +1,7 @@
-use std::collections::BTreeMap;
-
+use bevy_ecs::resource::Resource;
 use serde::Serialize;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FrameStats {
     pub frame: u64,
@@ -22,15 +21,6 @@ pub struct FrameStats {
     pub refused_views: u32,
     #[serde(flatten)]
     pub render: engine_core::RenderStats,
-    pub bricks: BTreeMap<&'static str, serde_json::Value>,
-    pub pipelines_per_pass: BTreeMap<&'static str, PassPipelines>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct PassPipelines {
-    pub render: u32,
-    pub compute: u32,
 }
 
 #[cfg(feature = "schema")]
@@ -44,5 +34,21 @@ pub struct ResolutionStats {
     pub display_width: u32,
     pub display_height: u32,
     pub dropped_pixels: u64,
-    pub gpu_ms: Option<f32>,
+    pub gpu_ms: GpuTime,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum GpuTime {
+    Ms(f32),
+    Unavailable { unavailable: &'static str },
+}
+
+impl Default for GpuTime {
+    fn default() -> Self {
+        Self::Unavailable {
+            unavailable: "not_yet_read",
+        }
+    }
 }

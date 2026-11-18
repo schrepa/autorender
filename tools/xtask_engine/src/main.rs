@@ -73,12 +73,12 @@ fn execute() -> Result<(), Failure> {
 
 fn commands() -> Vec<Command> {
     let mut commands = authoring_commands();
+    commands.extend(xtask::agent::commands());
     commands.extend(checking_commands());
     commands
 }
 
 fn authoring_commands() -> Vec<Command> {
-    let verbs = engine_dev::Verb::names().collect::<Vec<_>>().join("|");
     let corpora = process::repository_root()
         .map(|root| pure::names(&root))
         .unwrap_or_default()
@@ -90,17 +90,6 @@ fn authoring_commands() -> Vec<Command> {
             [
                 CommandOption::taking("--game", process::game_names()),
                 CommandOption::taking("--port", "N").defaults_to(xtask::dev::PORT),
-            ],
-        ),
-        Command::new(
-            "agent",
-            [
-                CommandOption::taking("VERB", verbs).required(),
-                CommandOption::taking("--session", "S"),
-                CommandOption::taking("--json", "JSON"),
-                CommandOption::taking("--file", "PATH"),
-                CommandOption::taking("--timeout-ms", "MS").in_unit("ms"),
-                CommandOption::flag("--brief"),
             ],
         ),
         Command::new(
@@ -172,12 +161,7 @@ fn checking_commands() -> Vec<Command> {
 fn help(options: &[String]) -> Result<(), String> {
     let json = options.iter().any(|option| option == "--json");
     if json {
-        let mut help = command_line::commands_json(&commands());
-        help["agent"] = serde_json::json!({
-            "verbs": development::verbs()?,
-            "calls": development::calls()?,
-        });
-        println!("{help}");
+        println!("{}", command_line::commands_json(&commands()));
     } else {
         println!("{}", command_line::commands_text(&commands()));
     }

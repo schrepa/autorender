@@ -768,7 +768,7 @@ impl GpuPart for DrawnGpu {
         let slots = (count as u64).next_power_of_two().max(FIRST_SLOTS);
         self.upload(&table, slots, cx);
         let streams = poses.streams(&hierarchy);
-        let uploaded = self.upload_nodes(&poses, &streams, cx);
+        self.upload_nodes(&poses, &streams, cx);
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.poses, slots * POSE_BYTES);
         cull_views((&views, passes.as_deref()), &plan, &mut self.entries);
@@ -817,17 +817,6 @@ impl GpuPart for DrawnGpu {
         self.groups = [words.div_ceil(CULL_GROUP), listed as u32, 1];
         if self.slots != 0 {
             cx.run(self.cull);
-        }
-        if engine_core::profile::active() {
-            use engine_core::profile::counter;
-            let (full, bytes, writes) = uploaded.unwrap_or((false, 0, 0));
-            counter("render.gpu_node_upload_bytes", bytes as f64);
-            counter("render.gpu_node_upload_writes", f64::from(writes));
-            counter("render.gpu_full_node_upload", f64::from(u8::from(full)));
-            counter(
-                "render.gpu_parent_levels",
-                self.nodes.level_ranges.len() as f64,
-            );
         }
     }
 

@@ -1,4 +1,3 @@
-mod calls;
 mod manifests;
 pub mod rust;
 mod sources;
@@ -25,7 +24,6 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
         })
         .collect();
     let mut problems = Problems::default();
-    let mut calls = calls::Calls::default();
     let package_jsons: Vec<String> = files
         .iter()
         .filter(|path| path.ends_with("package.json") && !path.contains("node_modules/"))
@@ -56,14 +54,12 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
         };
         sources::check_text(path, &text, &mut problems);
         if path.ends_with(".rs") {
-            calls.read(path, &rust::split(&text));
             sources::check(path, &text, &lints, &libraries, rules, &mut problems);
             if let Some(errors) = &rules.errors {
                 sources::error_types(path, &text, errors, &mut problems);
             }
         }
     }
-    calls.check(&mut problems);
     for path in rules.exceptions.unsafe_files {
         if !files.iter().any(|file| file == path) {
             problems.push(Error::new(ErrorCode::ExceptionUnused, *path).got("unsafe_files"));

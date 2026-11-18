@@ -2,10 +2,9 @@ use std::any::{Any, TypeId};
 use std::panic::Location;
 
 use bevy_ecs::component::Mutable;
-use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_place::{Call, Callable, Error, ErrorCode, Lands, List};
+use engine_place::{Error, ErrorCode, List};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -225,50 +224,6 @@ impl StatsEntry {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct OperationEntry {
-    pub name: &'static str,
-    pub brick: &'static str,
-    pub control: bool,
-    pub lands: Lands,
-    pub at: &'static Location<'static>,
-    call: Call,
-}
-
-impl OperationEntry {
-    #[track_caller]
-    pub fn of(call: Call) -> Self {
-        Self {
-            name: call.name,
-            brick: "",
-            control: call.control,
-            lands: call.lands,
-            at: Location::caller(),
-            call,
-        }
-    }
-
-    pub fn declares<O: Callable>(&self) -> bool {
-        self.call.declares::<O>()
-    }
-
-    pub fn run(&self, world: &mut World, request: Value) -> Result<Value, Error> {
-        self.call.run(world, request)
-    }
-
-    pub fn access(&self, world: &mut World) -> FilteredAccessSet {
-        self.call.access(world)
-    }
-
-    pub fn request_schema(&self, world: &World) -> Value {
-        self.call.request_schema(world)
-    }
-
-    pub fn reply_schema(&self, world: &World) -> Value {
-        self.call.reply_schema(world)
-    }
-}
-
 fn no_scene_check(_: &Value, _: &str, _: &dyn Any) -> Result<(), Error> {
     Ok(())
 }
@@ -331,4 +286,196 @@ fn present_of<T: Resource>(world: &World) -> bool {
 
 fn to_json(value: &impl Serialize) -> Value {
     serde_json::to_value(value).expect("registered_values_serialize")
+}
+
+#[cfg(feature = "profiling")]
+pub mod names {
+    use std::any::Any;
+    use std::borrow::Cow;
+
+    use bevy_ecs::world::World;
+    use engine_place::Error;
+    use serde::Serialize;
+    use serde_json::Value;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Kind {
+        Setting,
+        State,
+        Count,
+        Bytes,
+        Time,
+        Reason,
+        Link,
+        Call,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Lands {
+        ThisFrame,
+        NextFrame,
+    }
+
+    pub struct Reach<'a> {
+        pub world: &'a World,
+        pub parts: &'a [&'a dyn Any],
+    }
+
+    impl Reach<'_> {
+        pub fn part<T: Any>(&self) -> Option<&T> {
+            self.parts.iter().find_map(|part| part.downcast_ref::<T>())
+        }
+    }
+
+    pub struct ReachMut<'a> {
+        pub world: &'a mut World,
+        pub parts: &'a mut [&'a mut dyn Any],
+    }
+
+    impl ReachMut<'_> {
+        pub fn part<T: Any>(&mut self) -> Option<&mut T> {
+            self.parts
+                .iter_mut()
+                .find_map(|part| part.downcast_mut::<T>())
+        }
+
+        pub fn read<R>(&self, run: impl FnOnce(&Reach<'_>) -> R) -> R {
+            let parts: Vec<&dyn Any> = self.parts.iter().map(|part| &**part).collect();
+            run(&Reach {
+                world: self.world,
+                parts: &parts,
+            })
+        }
+    }
+
+    pub enum Answer {
+        Value(Value),
+        Loop(Box<dyn Any + Send>),
+    }
+
+    type ReadFn = Box<dyn Fn(&Reach<'_>, &Value) -> Result<Value, Error> + Send + Sync>;
+    type SetFn = Box<dyn Fn(&mut ReachMut<'_>, &Value) -> Result<Value, Error> + Send + Sync>;
+    type CallFn = Box<dyn Fn(&mut ReachMut<'_>, &Value) -> Result<Answer, Error> + Send + Sync>;
+
+    pub struct NameEntry {
+        pub name: Cow<'static, str>,
+        pub kind: Kind,
+        pub unit: Option<&'static str>,
+        pub owner: &'static str,
+        pub args: Value,
+        pub example: Value,
+        pub lands: Option<Lands>,
+        pub missing: Option<String>,
+        read: Option<ReadFn>,
+        set: Option<SetFn>,
+        call: Option<CallFn>,
+    }
+
+    impl NameEntry {
+        fn named(name: Cow<'static, str>, kind: Kind) -> Self {
+            Self {
+                name,
+                kind,
+                unit: None,
+                owner: "",
+                args: Value::Object(serde_json::Map::new()),
+                example: Value::Object(serde_json::Map::new()),
+                lands: None,
+                missing: None,
+                read: None,
+                set: None,
+                call: None,
+            }
+        }
+
+        pub fn read(
+            name: impl Into<Cow<'static, str>>,
+            kind: Kind,
+            read: impl Fn(&Reach<'_>, &Value) -> Result<Value, Error> + Send + Sync + 'static,
+        ) -> Self {
+            Self {
+                read: Some(Box::new(read)),
+                ..Self::named(name.into(), kind)
+            }
+        }
+
+        pub fn call(
+            name: impl Into<Cow<'static, str>>,
+            call: impl Fn(&mut ReachMut<'_>, &Value) -> Result<Answer, Error> + Send + Sync + 'static,
+        ) -> Self {
+            Self {
+                call: Some(Box::new(call)),
+                ..Self::named(name.into(), Kind::Call)
+            }
+        }
+
+        #[must_use]
+        pub fn unit(mut self, unit: &'static str) -> Self {
+            self.unit = Some(unit);
+            self
+        }
+
+        #[must_use]
+        pub fn args(mut self, shape: Value, example: Value) -> Self {
+            self.args = shape;
+            self.example = example;
+            self
+        }
+
+        #[must_use]
+        pub fn set(
+            mut self,
+            lands: Lands,
+            set: impl Fn(&mut ReachMut<'_>, &Value) -> Result<Value, Error> + Send + Sync + 'static,
+        ) -> Self {
+            self.lands = Some(lands);
+            self.set = Some(Box::new(set));
+            self
+        }
+
+        #[must_use]
+        pub fn unavailable(mut self, reason: impl Into<String>) -> Self {
+            self.missing = Some(reason.into());
+            self
+        }
+
+        #[must_use]
+        pub fn owned_by(mut self, owner: &'static str) -> Self {
+            self.owner = owner;
+            self
+        }
+
+        pub fn readable(&self) -> bool {
+            self.read.is_some()
+        }
+
+        pub fn settable(&self) -> bool {
+            self.set.is_some()
+        }
+
+        pub fn callable(&self) -> bool {
+            self.call.is_some()
+        }
+
+        pub fn read_value(&self, reach: &Reach<'_>, args: &Value) -> Option<Result<Value, Error>> {
+            if let Some(reason) = &self.missing {
+                return self.read.as_ref().map(|_| Ok(unavailable(reason)));
+            }
+            self.read.as_ref().map(|read| read(reach, args))
+        }
+
+        pub fn set_value(&self, reach: &mut ReachMut<'_>, args: &Value) -> Option<Result<Value, Error>> {
+            self.set.as_ref().map(|set| set(reach, args))
+        }
+
+        pub fn call_with(&self, reach: &mut ReachMut<'_>, args: &Value) -> Option<Result<Answer, Error>> {
+            self.call.as_ref().map(|call| call(reach, args))
+        }
+    }
+
+    pub fn unavailable(reason: impl std::fmt::Display) -> Value {
+        serde_json::json!({ "unavailable": reason.to_string() })
+    }
 }

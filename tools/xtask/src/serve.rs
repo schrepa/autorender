@@ -1,9 +1,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+const START: Duration = Duration::from_secs(60);
+const TAKEN: std::ops::RangeInclusive<u16> = 5173..=5175;
+
+pub fn free_listener() -> Result<TcpListener, String> {
+    loop {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| format!("cannot take a free local port: {error}"))?;
+        let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+        if !TAKEN.contains(&port) {
+            return Ok(listener);
+        }
+    }
+}
+
+pub fn free_port() -> Result<u16, String> {
+    Ok(free_listener()?
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port())
+}
 
 pub struct Server {
     child: Child,
@@ -23,7 +44,7 @@ impl Drop for Server {
 }
 
 impl Server {
-    pub fn vite(root: &Path, port: u16, log: &Path, limit: Duration) -> Result<Self, String> {
+    pub fn vite(root: &Path, port: u16, log: &Path, mode: &[&str]) -> Result<Self, String> {
         if let Some(folder) = log.parent() {
             fs::create_dir_all(folder).map_err(|error| error.to_string())?;
         }
@@ -39,6 +60,7 @@ impl Server {
                 &port.to_string(),
                 "--strictPort",
             ])
+            .args(mode)
             .current_dir(root.join("web"))
             .stdin(Stdio::null())
             .stdout(file)
@@ -56,10 +78,10 @@ impl Server {
             if let Some(status) = server.child.try_wait().map_err(|error| error.to_string())? {
                 return Err(format!("Vite stopped ({status}); see {}", log.display()));
             }
-            if started.elapsed() > limit {
+            if started.elapsed() > START {
                 return Err(format!(
                     "Vite did not start within {} s; see {}",
-                    limit.as_secs(),
+                    START.as_secs(),
                     log.display()
                 ));
             }

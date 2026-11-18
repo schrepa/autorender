@@ -1,5 +1,3 @@
-#![cfg_attr(target_arch = "x86_64", expect(unsafe_code, reason = "reads sampled code"))]
-
 use std::cell::RefCell;
 use std::fmt::Arguments;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,7 +30,6 @@ mod os {
 }
 
 const MAX_FRAMES: usize = 256;
-const MAX_SAMPLES: usize = 600_000;
 
 pub fn method() -> Option<&'static str> {
     os::METHOD
@@ -90,7 +87,7 @@ impl Drop for Leaving {
 }
 
 pub fn listen_for_threads() {
-    engine::profiling::listen_to_threads(Some(announced));
+    engine_profile::listen_to_threads(Some(announced));
 }
 
 fn announced(name: Arguments<'_>) {
@@ -145,13 +142,14 @@ impl Sampler {
         threads: Vec<SampledThread>,
         interval: Duration,
         clock: fn() -> f64,
+        limit: usize,
     ) -> Option<Self> {
         let method = os::METHOD?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
             .name("engine-sampler".into())
-            .spawn(move || run(&threads, interval, clock, &stopping, method))
+            .spawn(move || run(&threads, (interval, limit), clock, &stopping, method))
             .ok()?;
         Some(Self { stop, thread })
     }
@@ -164,7 +162,7 @@ impl Sampler {
 
 fn run(
     threads: &[SampledThread],
-    interval: Duration,
+    (interval, limit): (Duration, usize),
     clock: fn() -> f64,
     stop: &AtomicBool,
     method: &'static str,
@@ -184,7 +182,7 @@ fn run(
         .iter()
         .map(|thread| ThreadSamples {
             name: thread.name.clone(),
-            samples: Vec::with_capacity(4096),
+            samples: Vec::with_capacity(limit),
             missed: 0,
         })
         .collect();
@@ -202,7 +200,7 @@ fn run(
             };
             let time_ms = clock();
             let depth = os::sample(open, thread.bounds, &mut frames);
-            if depth == 0 || out.samples.len() >= MAX_SAMPLES {
+            if depth == 0 || out.samples.len() >= limit {
                 out.missed += 1;
                 continue;
             }
@@ -226,15 +224,4 @@ fn run(
         interval_ms: interval.as_secs_f64() * 1000.0,
         method,
     }
-}
-
-#[cfg(target_arch = "x86_64")]
-pub(crate) fn code(start: u64, length: usize) -> Vec<u8> {
-    if start == 0 {
-        return Vec::new();
-    }
-    // SAFETY: `start` is a sampled function's start in a loaded module, and
-    // callers stop within a few bytes past its last sampled instruction,
-    // inside the module's mapped code.
-    unsafe { std::slice::from_raw_parts(start as *const u8, length) }.to_vec()
 }

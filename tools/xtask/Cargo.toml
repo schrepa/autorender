@@ -6,14 +6,36 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64.workspace = true
+engine_command_line.workspace = true
+engine_panic.workspace = true
 engine_scene.workspace = true
 engine_worker.workspace = true
+png.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 toml_edit.workspace = true
 
-[lints]
-workspace = true
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_System_JobObjects"] }
+
+[lints.rust]
+unsafe_code = "deny"
+ambiguous_glob_reexports = "deny"
+hidden_glob_reexports = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+return_self_not_must_use = "deny"
+unwrap_used = "deny"
+unimplemented = "deny"
+unused_result_ok = "deny"
+undocumented_unsafe_blocks = "deny"
+too_many_lines = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+missing_assert_message = "deny"
 
 [package.metadata.engine]
 kind = "tool"

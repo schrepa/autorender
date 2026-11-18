@@ -5,7 +5,7 @@ impl Run {
         self.uniforms.camera_slot * CAMERA_STRIDE as u32
     }
 
-    pub(crate) fn write_cameras(&mut self) -> u64 {
+    pub(crate) fn write_cameras(&mut self) {
         let bytes = self.uniforms.cameras.len() as u64 * CAMERA_STRIDE;
         if self.uniforms.camera.size() < bytes {
             self.uniforms.camera = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -14,7 +14,11 @@ impl Run {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.tallies.rebuilt.buffers += 1;
+            engine_profile::event(
+                "rebuilt",
+                "engine/cameras",
+                &[("why", engine_profile::Fact::Text("views"))],
+            );
             self.touch(Held::Cameras);
         }
         let mut staged = std::mem::take(&mut self.spare.cameras);
@@ -27,7 +31,6 @@ impl Run {
         }
         self.queue.write_buffer(&self.uniforms.camera, 0, &staged);
         self.spare.cameras = staged;
-        size_of::<CameraUniform>() as u64
     }
 
     pub(crate) fn write_post(&mut self) {
@@ -248,7 +251,6 @@ impl Run {
         let saved_parity = self.frames.parity;
         let mut stale = std::mem::take(&mut self.bindings.stale);
         stale.append(&mut self.set_mut().stale);
-        self.tallies.rebuilt.groups += stale.len() as u32;
         for holder in stale {
             match holder {
                 Holder::Frame(variant) => self.rebuild_frame(variant as usize),
@@ -416,7 +418,11 @@ impl Run {
         }
         let set = self.set_mut();
         set.targets = targets;
-        self.tallies.rebuilt.textures += 1;
+        engine_profile::event(
+            "rebuilt",
+            "engine/view-targets",
+            &[("why", engine_profile::Fact::Text("size"))],
+        );
         self.touch(Held::Targets);
     }
 

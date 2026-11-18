@@ -29,8 +29,8 @@ pub(crate) enum Reader {
     },
     FrameTimer,
     #[cfg_attr(
-        not(feature = "profiling"),
-        expect(dead_code, reason = "only profiling builds read GPU spans")
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "only dev and profiling builds read GPU spans")
     )]
     Profiler(u32),
 }

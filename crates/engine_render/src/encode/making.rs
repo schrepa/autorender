@@ -41,6 +41,7 @@ pub(crate) struct Making {
     pending: Vec<(u64, u64)>,
     later: Vec<(u64, u64)>,
     refused: Vec<(u64, u64)>,
+    pub(crate) book: crate::pipelines::Book,
 }
 
 impl Making {

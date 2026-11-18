@@ -17,7 +17,6 @@ pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn I
 pub(crate) struct PartRecord {
     pub(crate) part: TypeId,
     pub(crate) name: &'static str,
-    pub(crate) memory: &'static [&'static str],
     pub(crate) install: InstallFn,
 }
 
@@ -30,7 +29,6 @@ impl PartRecord {
             } else {
                 P::NAME
             },
-            memory: P::MEMORY,
             install: install::<P>,
         }
     }

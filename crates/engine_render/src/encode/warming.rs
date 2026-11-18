@@ -8,6 +8,16 @@ pub(super) enum Asked {
     Warmed,
 }
 
+impl Asked {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Drawn => "needed",
+            Self::Waited => "waited",
+            Self::Warmed => "later",
+        }
+    }
+}
+
 pub(super) struct WarmShape {
     pub(super) formats: Vec<Option<wgpu::TextureFormat>>,
     pub(super) depth: Option<(wgpu::TextureFormat, bool)>,

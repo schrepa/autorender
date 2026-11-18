@@ -391,12 +391,6 @@ pub(crate) struct Queued {
 }
 
 #[derive(Default)]
-pub(crate) struct Uploads {
-    pub(crate) counted: u64,
-    pub(crate) memory: Vec<(&'static str, u64)>,
-}
-
-#[derive(Default)]
 pub(crate) struct Timed {
     pub(crate) asked: Option<&'static str>,
     pub(crate) open: Option<&'static str>,
@@ -451,27 +445,6 @@ pub(crate) enum RawShape {
         material: Option<MaterialHandle>,
         instances: Range<u32>,
     },
-}
-
-#[derive(Default)]
-pub(crate) struct Rebuilt {
-    pub(crate) groups: u32,
-    pub(crate) buffers: u32,
-    pub(crate) textures: u32,
-    pub(crate) compiles: u32,
-    pub(crate) reasons: Vec<&'static str>,
-    names: Vec<(&'static str, &'static str)>,
-}
-
-impl Rebuilt {
-    pub(crate) fn reason_name(&mut self, reason: &'static str) -> &'static str {
-        if let Some((_, name)) = self.names.iter().find(|(known, _)| *known == reason) {
-            return name;
-        }
-        let name: &'static str = Box::leak(format!("render.rebuilt_by.{reason}").into_boxed_str());
-        self.names.push((reason, name));
-        name
-    }
 }
 
 #[derive(Default)]
@@ -700,17 +673,17 @@ impl Run {
             if !fresh {
                 continue;
             }
-            if cfg!(feature = "profiling") {
-                let reason = match held {
-                    Held::Texture(texture) => {
-                        self.machine.declared.textures[texture as usize].label
-                    }
-                    Held::Buffer(buffer) => self.machine.declared.buffers[buffer as usize].label,
-                    Held::Targets => "targets",
-                    Held::Cameras => "cameras",
-                };
-                self.tallies.rebuilt.reasons.push(reason);
-            }
+            let changed = match held {
+                Held::Texture(texture) => self.machine.declared.textures[texture as usize].label,
+                Held::Buffer(buffer) => self.machine.declared.buffers[buffer as usize].label,
+                Held::Targets => "targets",
+                Held::Cameras => "cameras",
+            };
+            engine_profile::event(
+                "rebuilt",
+                "bind_group",
+                &[("why", engine_profile::Fact::Text(changed))],
+            );
         }
     }
 
@@ -866,6 +839,11 @@ impl Run {
         if tables.sizes[at] == Some((size, mips)) && same {
             return Allocation::Kept;
         }
+        let why = match tables.sizes[at] {
+            None => "first",
+            Some(_) if !same => "format",
+            Some(_) => "size",
+        };
         let dimension = self
             .bindings
             .dimensions
@@ -891,7 +869,11 @@ impl Run {
         let tables = self.texture_tables_mut(texture);
         tables.textures[at] = Some(fresh);
         tables.sizes[at] = Some((size, mips));
-        self.tallies.rebuilt.textures += 1;
+        engine_profile::event(
+            "rebuilt",
+            made.label,
+            &[("why", engine_profile::Fact::Text(why))],
+        );
         self.touch(Held::Texture(texture));
         Allocation::Fresh
     }
@@ -1119,14 +1101,20 @@ impl Run {
             return Allocation::Kept;
         }
         let usage = decl.usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+        let label = decl.label;
+        let why = if self.buffer_held(buffer).is_some() {
+            "size"
+        } else {
+            "first"
+        };
         let made = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(decl.label),
+            label: Some(label),
             size: bytes,
             usage,
             mapped_at_creation: false,
         });
         self.buffer_tables_mut(buffer).buffers[at] = Some((made, bytes));
-        self.tallies.rebuilt.buffers += 1;
+        engine_profile::event("rebuilt", label, &[("why", engine_profile::Fact::Text(why))]);
         self.touch(Held::Buffer(buffer));
         Allocation::Fresh
     }
@@ -1142,7 +1130,8 @@ impl Run {
             self.fault(error);
             return;
         }
-        self.queue.write_buffer(made, offset, bytes);
+        self.queue
+            .write_declared_buffer(buffer, made, offset, bytes);
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
@@ -1171,7 +1160,8 @@ impl Run {
             self.fault(error);
             return;
         }
-        self.queue.write_texture(
+        self.queue.write_declared_texture(
+            texture,
             wgpu::TexelCopyTextureInfo {
                 texture: &made.texture,
                 mip_level: level,
@@ -1184,8 +1174,6 @@ impl Run {
         );
     }
 }
-
-pub(crate) type TimedDraw<'t> = Option<(&'t GpuProfiler, &'t mut dyn FnMut() -> String)>;
 
 pub(crate) enum Resolved {
     Buffer(wgpu::Buffer),

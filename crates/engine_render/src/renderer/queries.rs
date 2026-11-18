@@ -33,20 +33,59 @@ impl Renderer {
         self.core.display.take_frame_time()
     }
 
-    #[cfg(feature = "profiling")]
-    pub fn profile_begin(&mut self, capture_id: u64) {
-        self.core.profiler.begin(&self.core.device, capture_id);
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub fn gpu_instrument(&mut self, name: &str, on: bool) -> Result<&'static str, &'static str> {
+        self.core.profiler.switch(name, on)
     }
 
-    #[cfg(feature = "profiling")]
-    pub fn profile_poll(&mut self) {
-        self.collect();
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub fn timer_names(world: &mut bevy_ecs::world::World) {
+        use engine_registry::{Kind, NameEntry, register, unavailable};
+        let names = [
+            ("gpu.passes.time", Kind::Time, Some("ns")),
+            ("gpu.passes.timed", Kind::Count, Some("frames")),
+            ("gpu.passes.frames", Kind::Count, Some("frames")),
+            ("gpu.passes.groups", Kind::State, None),
+            ("gpu.draws.vertex_runs", Kind::Count, None),
+            ("gpu.draws.fragment_runs", Kind::Count, None),
+            ("gpu.draws.clipped", Kind::Count, Some("primitives")),
+            ("gpu.draws.measured", Kind::Count, Some("draws")),
+            ("gpu.draws.unmeasured", Kind::Count, Some("draws")),
+            ("gpu.draws.measuring", Kind::State, None),
+            ("gpu.pipelines", Kind::State, None),
+            ("gpu.pipelines.counts", Kind::Count, Some("pipelines")),
+        ];
+        for (name, kind, unit) in names {
+            let entry = NameEntry::read(name, kind, move |reach, _| {
+                Ok(reach
+                    .part::<Self>()
+                    .map_or_else(|| unavailable("no_renderer"), |renderer| renderer.timer_read(name)))
+            });
+            register(
+                world,
+                match unit {
+                    Some(unit) => entry.unit(unit),
+                    None => entry,
+                },
+            );
+        }
+        crate::linker::counting::names(world);
     }
 
-    #[cfg(feature = "profiling")]
-    pub fn profile_report(&mut self) -> serde_json::Value {
-        self.collect();
-        self.core.profiler.report()
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    fn timer_read(&self, name: &str) -> serde_json::Value {
+        let Some(run) = self.run.as_ref() else {
+            return engine_registry::unavailable("not_installed");
+        };
+        let pipelines = &run.pipelines;
+        match name {
+            "gpu.pipelines" => pipelines.making.book.state(),
+            "gpu.pipelines.counts" => pipelines
+                .making
+                .book
+                .counts((pipelines.up_front, pipelines.unlisted)),
+            _ => self.core.profiler.read(name),
+        }
     }
 
     pub fn is_texture_resident(&self, handle: engine_core::TextureHandle) -> bool {

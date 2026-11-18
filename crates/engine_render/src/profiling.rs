@@ -4,41 +4,48 @@ pub struct Span<'a> {
     begin: u32,
 }
 
-impl<'a> Span<'a> {
-    pub fn compute_part(self, begin: bool, end: bool) -> wgpu::ComputePassTimestampWrites<'a> {
-        wgpu::ComputePassTimestampWrites {
-            query_set: self.query_set,
-            beginning_of_pass_write_index: begin.then_some(self.begin),
-            end_of_pass_write_index: end.then_some(self.begin + 1),
-        }
-    }
-
+impl Span<'_> {
     pub fn mark(self, encoder: &mut wgpu::CommandEncoder, end: bool) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/profile-timestamp"),
-            timestamp_writes: Some(self.compute_part(!end, end)),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: self.query_set,
+                beginning_of_pass_write_index: (!end).then_some(self.begin),
+                end_of_pass_write_index: end.then_some(self.begin + 1),
+            }),
         });
     }
 }
 
-#[cfg_attr(
-    not(feature = "profiling"),
-    expect(dead_code, reason = "only profiling builds time draws")
-)]
-pub struct Draw(u32);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct DrawKey {
+    pub pass: &'static str,
+    pub part: &'static str,
+    pub pipeline: &'static str,
+}
 
 #[cfg(feature = "profiling")]
-pub const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY
-    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
-    .union(wgpu::Features::PIPELINE_STATISTICS_QUERY);
+pub const FEATURES: wgpu::Features = wgpu::Features::PIPELINE_STATISTICS_QUERY;
 
-#[cfg(feature = "profiling")]
-pub use capture::GpuProfiler;
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub const INSTRUMENTS: [&str; 3] = ["gpu.passes", "gpu.passes.split", "gpu.draws.shaders"];
 
-#[cfg(not(feature = "profiling"))]
+#[cfg(any(feature = "dev", feature = "profiling"))]
+const MARKS: &str = "adds an empty compute pass with two time stamps at each group and batch boundary";
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+const SPLIT: &str = concat!(
+    "pass merging off, so every group of passes is its own render pass; ",
+    "adds an empty compute pass with two time stamps at each group and batch boundary"
+);
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use timer::GpuProfiler;
+
+#[cfg(not(any(feature = "dev", feature = "profiling")))]
 pub struct GpuProfiler;
 
-#[cfg(not(feature = "profiling"))]
+#[cfg(not(any(feature = "dev", feature = "profiling")))]
 impl GpuProfiler {
     pub fn new(_features: wgpu::Features, _period_ns: f64) -> Self {
         Self
@@ -47,22 +54,25 @@ impl GpuProfiler {
     #[inline(always)]
     pub fn begin_draw(
         &self,
-        _pass: &mut wgpu::RenderPass<'_>,
-        _label: impl FnOnce() -> String,
-    ) -> Option<Draw> {
-        None
-    }
-
-    #[inline(always)]
-    pub fn end_draw(&self, _pass: &mut wgpu::RenderPass<'_>, _draw: Option<Draw>) {}
-
-    #[inline(always)]
-    pub fn begin_frame(&mut self, _device: &wgpu::Device) {}
-
-    #[inline(always)]
-    pub fn capturing(&self) -> bool {
+        _render: &mut wgpu::RenderPass<'_>,
+        _key: impl FnOnce() -> DrawKey,
+    ) -> bool {
         false
     }
+
+    #[inline(always)]
+    pub fn end_draw(&self, _render: &mut wgpu::RenderPass<'_>, _began: bool) {}
+
+    #[inline(always)]
+    pub fn begin_frame(&mut self, _device: &wgpu::Device, _settings: &crate::RenderSettings) {}
+
+    #[inline(always)]
+    pub fn splits(&self) -> bool {
+        false
+    }
+
+    #[inline(always)]
+    pub fn ran(&self, _span: Option<&'static str>, _pass: &'static str) {}
 
     #[inline(always)]
     pub fn span(&self, _name: &'static str) -> Option<Span<'_>> {
@@ -92,280 +102,212 @@ impl GpuProfiler {
     pub(crate) fn arrived(&mut self, _slot: u32, _arrival: crate::readback::Arrival<'_>) {}
 }
 
-#[cfg(feature = "profiling")]
-mod capture {
+#[cfg(any(feature = "dev", feature = "profiling"))]
+mod timer {
     use std::cell::{Cell, RefCell};
 
     use engine_core::FrameId;
     use serde_json::{Value, json};
 
-    use super::{Draw, Span};
+    use super::{DrawKey, Span};
     use crate::readback::{Arrival, Keep, Readbacks, Reader};
 
-    const SLOTS: usize = 3;
-    const SAMPLE_LIMIT: usize = 4_096;
-    const SPANS: usize = 128;
-    const QUERIES: u32 = 2 * SPANS as u32;
-    const QUERY_BYTES: u64 = QUERIES as u64 * 8;
-    const DRAWS: usize = 2_048;
+    const BUSY: &str = "busy";
     const STATISTICS: wgpu::PipelineStatisticsTypes =
         wgpu::PipelineStatisticsTypes::VERTEX_SHADER_INVOCATIONS
             .union(wgpu::PipelineStatisticsTypes::CLIPPER_PRIMITIVES_OUT)
             .union(wgpu::PipelineStatisticsTypes::FRAGMENT_SHADER_INVOCATIONS);
-    const DRAW_STAMPS_AT: u64 = QUERY_BYTES;
-    const DRAW_STATISTICS_AT: u64 = DRAW_STAMPS_AT + 2 * DRAWS as u64 * 8;
-    const SLOT_BYTES: u64 = DRAW_STATISTICS_AT + DRAWS as u64 * 24;
-    const OPAQUE: &str = "opaque_scene";
-    const BUSY: &str = "busy";
+    const RUNS: usize = 3;
 
-    #[derive(Clone, Copy)]
-    struct Origin {
-        capture: u64,
-        frame: u64,
-        submission: u64,
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct Sizes {
+        slots: usize,
+        spans: u32,
+        draws: u32,
+    }
+
+    impl Sizes {
+        fn of(settings: &crate::RenderSettings) -> Self {
+            Self {
+                slots: settings.timer_slots.max(1) as usize,
+                spans: settings.timer_spans.max(1),
+                draws: settings.timer_draws.max(1),
+            }
+        }
+
+        fn draws_at(self) -> u64 {
+            (2 * u64::from(self.spans) * 8).next_multiple_of(wgpu::QUERY_RESOLVE_BUFFER_ALIGNMENT)
+        }
+
+        fn bytes(self) -> u64 {
+            self.draws_at() + u64::from(self.draws) * RUNS as u64 * 8
+        }
     }
 
     struct Slot {
         queries: wgpu::QuerySet,
+        statistics: Option<wgpu::QuerySet>,
         resolve: wgpu::Buffer,
-        origin: Option<Origin>,
+        written: Option<FrameId>,
         spans: RefCell<Vec<(&'static str, Option<&'static str>)>>,
-        draw_stamps: Option<wgpu::QuerySet>,
-        draw_statistics: Option<wgpu::QuerySet>,
-        draws: RefCell<Vec<String>>,
+        ran: RefCell<Vec<(usize, &'static str)>>,
+        draws: RefCell<Vec<DrawKey>>,
     }
 
     impl Slot {
-        fn new(device: &wgpu::Device, draws: Support) -> Self {
-            let draw_stamps = draws.timestamps.then(|| {
-                device.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("engine/profile-draw-timestamps"),
-                    ty: wgpu::QueryType::Timestamp,
-                    count: 2 * DRAWS as u32,
-                })
-            });
-            let draw_statistics = draws.statistics.then(|| {
-                device.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("engine/profile-draw-statistics"),
-                    ty: wgpu::QueryType::PipelineStatistics(STATISTICS),
-                    count: DRAWS as u32,
-                })
-            });
+        fn new(device: &wgpu::Device, sizes: Sizes, statistics: bool) -> Self {
             Self {
                 queries: device.create_query_set(&wgpu::QuerySetDescriptor {
                     label: Some("engine/profile-timestamps"),
                     ty: wgpu::QueryType::Timestamp,
-                    count: QUERIES,
+                    count: 2 * sizes.spans,
+                }),
+                statistics: statistics.then(|| {
+                    device.create_query_set(&wgpu::QuerySetDescriptor {
+                        label: Some("engine/profile-draw-statistics"),
+                        ty: wgpu::QueryType::PipelineStatistics(STATISTICS),
+                        count: sizes.draws,
+                    })
                 }),
                 resolve: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("engine/profile-resolve"),
-                    size: SLOT_BYTES,
+                    size: sizes.bytes(),
                     usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 }),
-                origin: None,
-                spans: RefCell::new(Vec::with_capacity(SPANS)),
-                draw_stamps,
-                draw_statistics,
+                written: None,
+                spans: RefCell::new(Vec::new()),
+                ran: RefCell::new(Vec::new()),
                 draws: RefCell::new(Vec::new()),
             }
         }
     }
 
-    fn read(bytes: &[u8], spans: usize, draws: usize) -> Readback {
-        let word = |at: usize| {
-            bytes
-                .get(at..at + 8)
-                .and_then(|word| word.try_into().ok())
-                .map_or(0, u64::from_le_bytes)
-        };
-        let stamp = |query: usize| word(query * 8);
-        let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
-        let statistic = |draw: usize, counter: usize| {
-            word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8)
-        };
-        (
-            (0..spans)
-                .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
-                .collect(),
-            (0..draws)
-                .map(|draw| (draw_stamp(2 * draw), draw_stamp(2 * draw + 1)))
-                .collect(),
-            (0..draws)
-                .map(|draw| [0, 1, 2].map(|counter| statistic(draw, counter)))
-                .collect(),
-        )
+    struct Timed {
+        name: &'static str,
+        of: Option<&'static str>,
+        passes: Vec<&'static str>,
+        frames: u64,
+        ns: u64,
     }
 
-    fn idle(
-        recorded: &[(&'static str, Option<&'static str>)],
-        stamps: &[(u64, u64)],
-        (first, last): (u64, u64),
-    ) -> Option<u64> {
-        let mut busy: Vec<(u64, u64)> = recorded
-            .iter()
-            .zip(stamps)
-            .filter(|((_, group), _)| *group == Some(BUSY))
-            .map(|(_, &stamps)| stamps)
-            .filter(|&(begin, end)| begin != 0 && end >= begin)
-            .collect();
-        busy.sort_unstable();
-        let (mut reach, mut covered) = (first, 0);
-        for &(begin, end) in &busy {
-            covered += end.saturating_sub(begin.max(reach));
-            reach = reach.max(end);
-        }
-        (!busy.is_empty()).then(|| last.saturating_sub(first).saturating_sub(covered))
+    struct Counted {
+        key: DrawKey,
+        draws: u64,
+        runs: [u64; RUNS],
     }
 
-    #[derive(Clone, Copy)]
-    struct Support {
-        timestamps: bool,
-        statistics: bool,
-    }
-
-    struct DrawSample {
-        label: String,
-        start_ms: Option<f64>,
-        duration_ms: Option<f64>,
-        statistics: Option<[u64; 3]>,
-    }
-
-    type Readback = (Vec<(u64, u64)>, Vec<(u64, u64)>, Vec<[u64; 3]>);
-
-    struct Sample {
-        origin: Origin,
-        spans: Vec<(&'static str, f64)>,
-        starts: Vec<(&'static str, f64)>,
-        draws: Vec<DrawSample>,
+    #[derive(Default)]
+    struct Switches {
+        passes: bool,
+        split: bool,
+        shaders: bool,
+        timed_once: bool,
+        counted_once: bool,
     }
 
     pub struct GpuProfiler {
-        supported: bool,
-        draw_support: Support,
+        timestamps: bool,
+        statistics: bool,
         period_ns: f64,
+        on: Switches,
+        sizes: Sizes,
         slots: Vec<Slot>,
         current: Option<usize>,
-        drawing: bool,
-        capture: Option<u64>,
-        submission: u64,
-        attempted: u64,
-        submitted: u64,
-        dropped: u64,
+        through: Option<u64>,
+        frames: u64,
+        no_slot: u64,
+        failed: u64,
         spans_dropped: Cell<u64>,
         draws_dropped: Cell<u64>,
-        errors: u64,
-        sample_limit_reached: bool,
-        samples: Vec<Sample>,
-        last_span: Option<(u64, u64, u64)>,
+        timed: Vec<Timed>,
+        counted: Vec<Counted>,
     }
 
     impl GpuProfiler {
         pub fn new(features: wgpu::Features, period_ns: f64) -> Self {
-            let supported = features.contains(wgpu::Features::TIMESTAMP_QUERY);
             Self {
-                supported,
-                draw_support: Support {
-                    timestamps: supported
-                        && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
-                    statistics: features.contains(wgpu::Features::PIPELINE_STATISTICS_QUERY),
-                },
+                timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
+                statistics: features.contains(wgpu::Features::PIPELINE_STATISTICS_QUERY),
                 period_ns,
+                on: Switches::default(),
+                sizes: Sizes {
+                    slots: 0,
+                    spans: 0,
+                    draws: 0,
+                },
                 slots: Vec::new(),
                 current: None,
-                drawing: false,
-                capture: None,
-                submission: 0,
-                attempted: 0,
-                submitted: 0,
-                dropped: 0,
+                through: None,
+                frames: 0,
+                no_slot: 0,
+                failed: 0,
                 spans_dropped: Cell::new(0),
                 draws_dropped: Cell::new(0),
-                errors: 0,
-                sample_limit_reached: false,
-                samples: Vec::new(),
-                last_span: None,
+                timed: Vec::new(),
+                counted: Vec::new(),
             }
         }
 
-        pub fn begin(&mut self, device: &wgpu::Device, capture: u64) {
-            self.capture = Some(capture);
-            self.attempted = 0;
-            self.submitted = 0;
-            self.dropped = 0;
-            self.spans_dropped.set(0);
-            self.draws_dropped.set(0);
-            self.errors = 0;
-            self.sample_limit_reached = false;
-            self.samples.clear();
-            if self.supported {
-                self.make_slots(device);
-                self.samples.reserve_exact(SAMPLE_LIMIT);
+        pub fn switch(&mut self, name: &str, on: bool) -> Result<&'static str, &'static str> {
+            match name {
+                "gpu.passes" | "gpu.passes.split" => {
+                    if on && !self.timestamps {
+                        return Err("timestamp_query_unavailable");
+                    }
+                    self.on.timed_once |= on;
+                    if name == "gpu.passes" {
+                        self.on.passes = on;
+                        Ok(super::MARKS)
+                    } else {
+                        self.on.split = on;
+                        Ok(super::SPLIT)
+                    }
+                }
+                "gpu.draws.shaders" => {
+                    if on && !cfg!(feature = "profiling") {
+                        return Err("profiling_build_only");
+                    }
+                    if on && !self.statistics {
+                        return Err("pipeline_statistics_query_unavailable");
+                    }
+                    self.on.shaders = on;
+                    self.on.counted_once |= on;
+                    Ok("every draw is wrapped in a pipeline statistics query")
+                }
+                _ => Err("unknown_instrument"),
             }
         }
 
-        fn make_slots(&mut self, device: &wgpu::Device) {
-            if !self.slots.is_empty() {
-                return;
-            }
-            let timed = self.draw_support;
-            let untimed = Support {
-                timestamps: false,
-                statistics: false,
-            };
-            self.slots = (0..2 * SLOTS)
-                .map(|index| Slot::new(device, if index < SLOTS { timed } else { untimed }))
-                .collect();
+        fn timing(&self) -> bool {
+            self.on.passes || self.on.split
         }
 
-        pub fn begin_frame(&mut self, device: &wgpu::Device) {
+        pub fn splits(&self) -> bool {
+            self.on.split
+        }
+
+        pub fn begin_frame(&mut self, device: &wgpu::Device, settings: &crate::RenderSettings) {
             self.current = None;
-            self.drawing = false;
-            self.submission = self.submission.saturating_add(1);
-            let capture = engine_profile::capture_id();
-            if let Some(capture) = capture {
-                if self.capture != Some(capture) {
-                    self.begin(device, capture);
-                }
-                self.attempted = self.attempted.saturating_add(1);
-            }
-            if !self.supported {
+            if !self.timing() && !self.on.shaders {
                 return;
             }
-            self.make_slots(device);
-            if capture.is_some() && self.submitted as usize >= SAMPLE_LIMIT {
-                self.sample_limit_reached = true;
-                self.dropped = self.dropped.saturating_add(1);
-                return;
+            let sizes = Sizes::of(settings);
+            if sizes != self.sizes && self.slots.iter().all(|slot| slot.written.is_none()) {
+                self.sizes = sizes;
+                self.slots = (0..sizes.slots)
+                    .map(|_| Slot::new(device, sizes, self.statistics))
+                    .collect();
             }
-            let mut pool = if capture.is_some() {
-                0..SLOTS
-            } else {
-                SLOTS..2 * SLOTS
-            };
-            let Some(index) = pool.find(|&index| self.slots[index].origin.is_none()) else {
-                if capture.is_some() {
-                    self.dropped = self.dropped.saturating_add(1);
-                }
+            let Some(index) = self.slots.iter().position(|slot| slot.written.is_none()) else {
+                self.no_slot += 1;
                 return;
             };
             let slot = &mut self.slots[index];
-            slot.origin = Some(Origin {
-                capture: capture.unwrap_or(0),
-                frame: engine_profile::current_frame(),
-                submission: self.submission,
-            });
             slot.spans.get_mut().clear();
+            slot.ran.get_mut().clear();
             slot.draws.get_mut().clear();
-            if capture.is_some() {
-                self.submitted += 1;
-                self.drawing = true;
-            }
             self.current = Some(index);
-        }
-
-        pub fn capturing(&self) -> bool {
-            self.current.is_some()
         }
 
         pub fn span(&self, name: &'static str) -> Option<Span<'_>> {
@@ -381,11 +323,14 @@ mod capture {
         }
 
         fn recorded(&self, group: Option<&'static str>, name: &'static str) -> Option<Span<'_>> {
+            if !self.timing() {
+                return None;
+            }
             let slot = &self.slots[self.current?];
             let mut spans = slot.spans.borrow_mut();
             let index = match spans.iter().position(|&(span, _)| span == name) {
                 Some(index) => index,
-                None if spans.len() < SPANS => {
+                None if spans.len() < self.sizes.spans as usize => {
                     spans.push((name, group));
                     spans.len() - 1
                 }
@@ -400,41 +345,47 @@ mod capture {
             })
         }
 
-        pub fn begin_draw(
-            &self,
-            pass: &mut wgpu::RenderPass<'_>,
-            label: impl FnOnce() -> String,
-        ) -> Option<Draw> {
-            let slot = &self.slots[self.current?];
-            if !self.drawing || (slot.draw_stamps.is_none() && slot.draw_statistics.is_none()) {
-                return None;
-            }
-            let mut draws = slot.draws.borrow_mut();
-            if draws.len() >= DRAWS {
-                self.draws_dropped.set(self.draws_dropped.get() + 1);
-                return None;
-            }
-            let index = draws.len() as u32;
-            draws.push(label());
-            if let Some(stamps) = &slot.draw_stamps {
-                pass.write_timestamp(stamps, 2 * index);
-            }
-            if let Some(statistics) = &slot.draw_statistics {
-                pass.begin_pipeline_statistics_query(statistics, index);
-            }
-            Some(Draw(index))
-        }
-
-        pub fn end_draw(&self, pass: &mut wgpu::RenderPass<'_>, draw: Option<Draw>) {
-            let (Some(Draw(index)), Some(current)) = (draw, self.current) else {
+        pub fn ran(&self, span: Option<&'static str>, pass: &'static str) {
+            let (Some(current), Some(span)) = (self.current, span) else {
                 return;
             };
             let slot = &self.slots[current];
-            if slot.draw_statistics.is_some() {
-                pass.end_pipeline_statistics_query();
+            let Some(at) = slot.spans.borrow().iter().position(|&(name, _)| name == span) else {
+                return;
+            };
+            let mut ran = slot.ran.borrow_mut();
+            if !ran.contains(&(at, pass)) {
+                ran.push((at, pass));
             }
-            if let Some(stamps) = &slot.draw_stamps {
-                pass.write_timestamp(stamps, 2 * index + 1);
+        }
+
+        pub fn begin_draw(
+            &self,
+            render: &mut wgpu::RenderPass<'_>,
+            key: impl FnOnce() -> DrawKey,
+        ) -> bool {
+            if !self.on.shaders {
+                return false;
+            }
+            let Some(slot) = self.current.map(|current| &self.slots[current]) else {
+                return false;
+            };
+            let Some(statistics) = &slot.statistics else {
+                return false;
+            };
+            let mut draws = slot.draws.borrow_mut();
+            if draws.len() >= self.sizes.draws as usize {
+                self.draws_dropped.set(self.draws_dropped.get() + 1);
+                return false;
+            }
+            render.begin_pipeline_statistics_query(statistics, draws.len() as u32);
+            draws.push(key());
+            true
+        }
+
+        pub fn end_draw(&self, render: &mut wgpu::RenderPass<'_>, began: bool) {
+            if began {
+                render.end_pipeline_statistics_query();
             }
         }
 
@@ -447,270 +398,191 @@ mod capture {
             let Some(index) = self.current.take() else {
                 return;
             };
+            let sizes = self.sizes;
             let slot = &mut self.slots[index];
-            let queries = 2 * slot.spans.borrow().len() as u32;
-            if queries != 0 {
-                encoder.resolve_query_set(&slot.queries, 0..queries, &slot.resolve, 0);
+            let stamps = 2 * slot.spans.get_mut().len() as u32;
+            let draws = slot.draws.get_mut().len() as u32;
+            if stamps == 0 && draws == 0 {
+                return;
             }
-            let draws = slot.draws.borrow().len() as u32;
-            if draws != 0 {
-                if let Some(stamps) = &slot.draw_stamps {
-                    encoder.resolve_query_set(stamps, 0..2 * draws, &slot.resolve, DRAW_STAMPS_AT);
-                }
-                if let Some(statistics) = &slot.draw_statistics {
-                    encoder.resolve_query_set(
-                        statistics,
-                        0..draws,
-                        &slot.resolve,
-                        DRAW_STATISTICS_AT,
-                    );
-                }
+            if stamps != 0 {
+                encoder.resolve_query_set(&slot.queries, 0..stamps, &slot.resolve, 0);
+            }
+            if let Some(statistics) = slot.statistics.as_ref().filter(|_| draws != 0) {
+                encoder.resolve_query_set(statistics, 0..draws, &slot.resolve, sizes.draws_at());
             }
             let recorded = readbacks.record(
                 (device, encoder),
-                (&slot.resolve, 0..SLOT_BYTES),
+                (&slot.resolve, 0..sizes.bytes()),
                 (Reader::Profiler(index as u32), written, None),
                 Keep::Ring(1),
             );
-            if !recorded {
-                slot.origin = None;
-                self.dropped = self.dropped.saturating_add(1);
+            if recorded {
+                slot.written = Some(written);
+            } else {
+                self.failed += 1;
             }
         }
 
-        #[expect(
-            clippy::too_many_lines,
-            reason = "longer than the line ceiling; it may only shrink"
-        )]
         pub(crate) fn arrived(&mut self, index: u32, arrival: Arrival<'_>) {
-            let Some(slot) = self.slots.get_mut(index as usize) else {
+            let Self {
+                slots,
+                timed,
+                counted,
+                sizes,
+                period_ns,
+                frames,
+                failed,
+                through,
+                ..
+            } = self;
+            let Some(slot) = slots.get_mut(index as usize) else {
                 return;
             };
-            let Some(origin) = slot.origin.take() else {
+            let Some(written) = slot.written.take() else {
                 return;
             };
             let Arrival::Read(bytes) = arrival else {
-                if Some(origin.capture) == self.capture {
-                    self.errors = self.errors.saturating_add(1);
+                *failed += 1;
+                return;
+            };
+            let word = |at: usize| {
+                bytes
+                    .get(at..at + 8)
+                    .and_then(|word| word.try_into().ok())
+                    .map_or(0, u64::from_le_bytes)
+            };
+            let spans = slot.spans.get_mut();
+            let ran = slot.ran.get_mut();
+            for (at, &(name, of)) in spans.iter().enumerate() {
+                let (begin, end) = (word(16 * at), word(16 * at + 8));
+                if begin == 0 || end < begin {
+                    continue;
                 }
-                return;
-            };
-            let recorded = slot.spans.get_mut().clone();
-            let labels = std::mem::take(slot.draws.get_mut());
-            let (timed, counted) = (slot.draw_stamps.is_some(), slot.draw_statistics.is_some());
-            let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
-            let mut groups: Vec<&'static str> = Vec::new();
-            for group in recorded.iter().filter_map(|&(_, group)| group) {
-                if group != BUSY && !groups.contains(&group) {
-                    groups.push(group);
+                let ns = ((end - begin) as f64 * *period_ns).round() as u64;
+                let found = match timed.iter().position(|known| known.name == name) {
+                    Some(found) => found,
+                    None => {
+                        timed.push(Timed {
+                            name,
+                            of,
+                            passes: Vec::new(),
+                            frames: 0,
+                            ns: 0,
+                        });
+                        timed.len() - 1
+                    }
+                };
+                let entry = &mut timed[found];
+                entry.frames += 1;
+                entry.ns += ns;
+                for &(_, pass) in ran.iter().filter(|(span, _)| *span == at) {
+                    if !entry.passes.contains(&pass) {
+                        entry.passes.push(pass);
+                    }
                 }
             }
-            let (stamps, draw_stamps, draw_statistics) = read(bytes, names.len(), labels.len());
-            let period_ns = self.period_ns;
-            let to_ms = |ticks: u64| ticks as f64 * period_ns / 1_000_000.0;
-            let duration = |(begin, end): (u64, u64)| {
-                end.checked_sub(begin)
-                    .map(to_ms)
-                    .filter(|value| value.is_finite())
-            };
-            let across = |group: &str| {
-                let spans: Vec<(u64, u64)> = recorded
-                    .iter()
-                    .zip(&stamps)
-                    .filter(|((_, of), _)| *of == Some(group))
-                    .map(|(_, &stamps)| stamps)
-                    .collect();
-                let begin = spans.iter().map(|&(begin, _)| begin).min()?;
-                let end = spans.iter().map(|&(_, end)| end).max()?;
-                duration((begin, end))
-            };
-            let span = stamps
-                .iter()
-                .flat_map(|&(begin, end)| [begin, end])
-                .min()
-                .zip(stamps.iter().flat_map(|&(begin, end)| [begin, end]).max());
-            let frame_ms = span.and_then(|(first, last)| duration((first, last)));
-            let previous = self.last_span.filter(|&(frame, _, _)| frame < origin.frame);
-            let gap_ms = span
-                .zip(previous)
-                .and_then(|((first, _), (frame, _, end))| {
-                    (frame + 1 == origin.frame)
-                        .then(|| first.checked_sub(end))
-                        .flatten()
-                        .map(to_ms)
-                });
-            let interval_ms = span
-                .zip(previous)
-                .and_then(|((first, _), (frame, start, _))| {
-                    first
-                        .checked_sub(start)
-                        .map(|ticks| to_ms(ticks) / (origin.frame - frame) as f64)
-                });
-            if let Some((first, last)) = span {
-                self.last_span = Some((origin.frame, first, last));
+            let draws_at = sizes.draws_at() as usize;
+            for (at, &key) in slot.draws.get_mut().iter().enumerate() {
+                let runs: [u64; RUNS] =
+                    std::array::from_fn(|run| word(draws_at + (at * RUNS + run) * 8));
+                let found = match counted.iter().position(|known| known.key == key) {
+                    Some(found) => found,
+                    None => {
+                        counted.push(Counted {
+                            key,
+                            draws: 0,
+                            runs: [0; RUNS],
+                        });
+                        counted.len() - 1
+                    }
+                };
+                let entry = &mut counted[found];
+                entry.draws += 1;
+                for (held, run) in entry.runs.iter_mut().zip(runs) {
+                    *held += run;
+                }
             }
-            let idle_ms = span.and_then(|span| idle(&recorded, &stamps, span).map(to_ms));
-            if Some(origin.capture) != self.capture {
-                return;
+            if !spans.is_empty() {
+                *frames += 1;
             }
-            let opaque = names
-                .iter()
-                .position(|name| *name == OPAQUE)
-                .and_then(|index| duration(stamps[index]));
-            let Some(opaque) = opaque else {
-                self.errors = self.errors.saturating_add(1);
-                return;
-            };
-            let mut spans = vec![(OPAQUE, opaque)];
-            spans.extend(
-                names
-                    .iter()
-                    .zip(&stamps)
-                    .filter(|(name, _)| **name != OPAQUE)
-                    .filter_map(|(name, &stamps)| Some((*name, duration(stamps)?))),
-            );
-            spans.extend(
-                groups
-                    .iter()
-                    .filter_map(|&group| across(group).map(|whole| (group, whole))),
-            );
-            let mut stages: Vec<(&str, u64, u64)> = names
-                .iter()
-                .zip(&stamps)
-                .filter(|(name, _)| name.starts_with("stage_"))
-                .map(|(name, &(begin, end))| (*name, begin, end))
-                .filter(|&(_, begin, end)| begin != 0 && end >= begin)
-                .collect();
-            stages.sort_by_key(|&(_, begin, _)| begin);
-            if let (Some((first, last)), Some(&(_, begin, _)), Some(&(_, _, end))) =
-                (span, stages.first(), stages.last())
-            {
-                spans.extend(duration((first, begin)).map(|lead| ("stage_lead", lead)));
-                spans.extend(duration((end, last)).map(|tail| ("stage_tail", tail)));
-                let gaps = stages
-                    .windows(2)
-                    .filter_map(|pair| duration((pair[0].2, pair[1].1)))
-                    .sum::<f64>();
-                spans.push(("stage_gaps", gaps));
-            }
-            spans.extend(frame_ms.map(|frame| ("frame_gpu", frame)));
-            spans.extend(idle_ms.map(|idle| ("gpu_idle", idle)));
-            spans.extend(
-                gap_ms
-                    .filter(|value| value.is_finite())
-                    .map(|gap| ("frame_gpu_gap", gap)),
-            );
-            spans.extend(
-                interval_ms
-                    .filter(|value| value.is_finite())
-                    .map(|interval| ("frame_gpu_interval", interval)),
-            );
-            let start_of = |begin: u64| {
-                span.filter(|_| begin != 0)
-                    .and_then(|(first, _)| begin.checked_sub(first))
-                    .map(to_ms)
-            };
-            let starts = names
-                .iter()
-                .zip(&stamps)
-                .filter_map(|(name, &(begin, _))| Some((*name, start_of(begin)?)))
-                .collect();
-            let draws = labels
-                .into_iter()
-                .zip(draw_stamps.into_iter().zip(draw_statistics))
-                .map(|(label, (stamps, statistics))| DrawSample {
-                    label,
-                    start_ms: timed.then(|| start_of(stamps.0)).flatten(),
-                    duration_ms: timed.then(|| duration(stamps)).flatten(),
-                    statistics: counted.then_some(statistics),
-                })
-                .collect();
-            self.samples.push(Sample {
-                origin,
-                spans,
-                starts,
-                draws,
-            });
+            *through = Some(through.map_or(written.0, |through| through.max(written.0)));
         }
 
-        pub fn status(&self) -> Value {
-            let active = self.capture.is_some() && engine_profile::capture_id() == self.capture;
-            let pending = self
-                .slots
-                .iter()
-                .filter(|slot| {
-                    slot.origin
-                        .is_some_and(|origin| Some(origin.capture) == self.capture)
-                })
-                .count();
-            json!({
-                "supported": self.supported,
-                "reason": if self.supported { Value::Null } else { json!("timestamp_query_unavailable") },
-                "capture_id": self.capture.map(|id| id.to_string()),
-                "active": active,
-                "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
-                "ring_slots": SLOTS,
-                "sample_limit": SAMPLE_LIMIT,
-                "span_limit": SPANS,
-                "attempted": self.attempted,
-                "submitted": self.submitted,
-                "completed": self.samples.len(),
-                "pending": pending,
-                "dropped": self.dropped,
-                "spans_dropped": self.spans_dropped.get(),
-                "draws": {
-                    "timestamps": self.draw_support.timestamps,
-                    "statistics": self.draw_support.statistics,
-                    "limit": DRAWS,
-                    "dropped": self.draws_dropped.get(),
-                },
-                "errors": self.errors,
-                "sample_limit_reached": self.sample_limit_reached,
-                "complete": self.capture.is_some() && !active && self.supported && pending == 0 && self.dropped == 0 && self.spans_dropped.get() == 0 && self.errors == 0,
-                "readback_buffer_bytes": self.slots.len() as u64 * SLOT_BYTES * 2,
-                "cpu_sample_capacity_bytes": self.samples.capacity() * size_of::<Sample>(),
-            })
+
+        fn unavailable(&self, timing: bool) -> Option<&'static str> {
+            if timing {
+                return (!self.timestamps)
+                    .then_some("timestamp_query_unavailable")
+                    .or((!self.on.timed_once).then_some("never_switched_on"));
+            }
+            if !cfg!(feature = "profiling") {
+                return Some("profiling_build_only");
+            }
+            (!self.statistics)
+                .then_some("pipeline_statistics_query_unavailable")
+                .or((!self.on.counted_once).then_some("never_switched_on"))
         }
 
-        pub fn report(&self) -> Value {
-            let mut report = self.status();
-            report["samples"] = Value::Array(
-                self.samples
-                    .iter()
-                    .flat_map(|sample| {
-                        sample.spans.iter().map(|&(name, duration_ms)| {
-                            let start = sample.starts.iter().find(|&&(of, _)| of == name);
-                            json!({
-                                "capture_id": sample.origin.capture.to_string(),
-                                "frame": sample.origin.frame.to_string(),
-                                "submission": sample.origin.submission.to_string(),
-                                "name": name,
-                                "start_ms": start.map(|&(_, start)| start),
-                                "duration_ms": duration_ms,
-                            })
-                        })
-                    })
-                    .collect(),
+        pub fn read(&self, name: &str) -> Value {
+            let timing = name.starts_with("gpu.passes.");
+            if let Some(reason) = self.unavailable(timing) {
+                return json!({ "unavailable": reason });
+            }
+            let through = self.through.map_or_else(
+                || json!({ "unavailable": "nothing_arrived" }),
+                |through| json!(through),
             );
-            report["draw_samples"] = Value::Array(
-                self.samples
-                    .iter()
-                    .flat_map(|sample| {
-                        sample.draws.iter().map(|draw| {
-                            json!({
-                                "frame": sample.origin.frame.to_string(),
-                                "label": draw.label,
-                                "start_ms": draw.start_ms,
-                                "duration_ms": draw.duration_ms,
-                                "vertex_invocations": draw.statistics.map(|counts| counts[0]),
-                                "primitives": draw.statistics.map(|counts| counts[1]),
-                                "fragment_invocations": draw.statistics.map(|counts| counts[2]),
-                            })
+            let timed = |value: fn(&Timed) -> Value| -> Value {
+                Value::Object(
+                    self.timed
+                        .iter()
+                        .map(|timed| (timed.name.to_owned(), value(timed)))
+                        .collect(),
+                )
+            };
+            let counted = |value: fn(&Counted) -> u64| -> Value {
+                Value::Object(
+                    self.counted
+                        .iter()
+                        .map(|counted| {
+                            let DrawKey {
+                                pass,
+                                part,
+                                pipeline,
+                            } = counted.key;
+                            (format!("{pass}/{part}/{pipeline}"), json!(value(counted)))
                         })
-                    })
-                    .collect(),
-            );
-            report
+                        .collect(),
+                )
+            };
+            match name {
+                "gpu.passes.time" => timed(|timed| json!(timed.ns)),
+                "gpu.passes.timed" => timed(|timed| json!(timed.frames)),
+                "gpu.passes.groups" => json!({
+                    "on": self.timing(),
+                    "split": self.on.split,
+                    "period_ns": self.period_ns,
+                    "through_frame": through,
+                    "spans": timed(|timed| json!({"in": timed.of, "passes": timed.passes})),
+                }),
+                "gpu.passes.frames" => json!({
+                    "timed": self.frames,
+                    "without_slot": self.no_slot,
+                    "failed": self.failed,
+                    "spans_dropped": self.spans_dropped.get(),
+                }),
+                "gpu.draws.vertex_runs" => counted(|counted| counted.runs[0]),
+                "gpu.draws.clipped" => counted(|counted| counted.runs[1]),
+                "gpu.draws.fragment_runs" => counted(|counted| counted.runs[2]),
+                "gpu.draws.measured" => counted(|counted| counted.draws),
+                "gpu.draws.unmeasured" => json!(self.draws_dropped.get()),
+                "gpu.draws.measuring" => json!({
+                    "on": self.on.shaders,
+                    "through_frame": through,
+                }),
+                _ => json!({ "unavailable": "unknown_name" }),
+            }
         }
     }
 }

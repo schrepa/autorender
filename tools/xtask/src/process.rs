@@ -36,7 +36,7 @@ pub fn clients() -> &'static [Client] {
     })
 }
 
-pub fn read_clients() -> Result<Vec<Client>, String> {
+fn engine_packages() -> Result<Vec<(serde_json::Value, String)>, String> {
     let root = repository_root()?;
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
@@ -48,8 +48,34 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
     }
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("cargo metadata is not JSON: {error}"))?;
-    let mut clients = Vec::new();
+    let mut packages = Vec::new();
     for package in metadata["packages"].as_array().into_iter().flatten() {
+        if !package["metadata"]["engine"].is_object() {
+            continue;
+        }
+        let name = package["name"].as_str().unwrap_or_default();
+        let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
+        let folder = manifest
+            .parent()
+            .and_then(|folder| folder.strip_prefix(&root).ok())
+            .map(slashed)
+            .ok_or_else(|| format!("{name}'s manifest lies outside the workspace"))?;
+        packages.push((package.clone(), folder));
+    }
+    Ok(packages)
+}
+
+pub fn native_folders() -> Result<Vec<String>, String> {
+    Ok(engine_packages()?
+        .into_iter()
+        .filter(|(package, _)| package["metadata"]["engine"]["native"].is_string())
+        .map(|(_, folder)| folder)
+        .collect())
+}
+
+pub fn read_clients() -> Result<Vec<Client>, String> {
+    let mut clients = Vec::new();
+    for (package, folder) in engine_packages()? {
         let engine = &package["metadata"]["engine"];
         if engine["game"].is_null() && engine["page"].is_null() && engine["worker"] != true {
             continue;
@@ -75,12 +101,6 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
                 "{name}'s [package.metadata.engine] declares a game's `page` and `game`, or `worker = true`"
             ));
         }
-        let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
-        let folder = manifest
-            .parent()
-            .and_then(|folder| folder.strip_prefix(&root).ok())
-            .map(slashed)
-            .ok_or_else(|| format!("{name}'s manifest lies outside the workspace"))?;
         clients.push(Client {
             package: name.to_owned(),
             folder,

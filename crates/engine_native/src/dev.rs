@@ -1,504 +1,348 @@
-use std::collections::BTreeMap;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
-use std::time::{Duration, Instant};
+#[cfg(feature = "profiling")]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, OnceLock};
+#[cfg(feature = "profiling")]
+use std::sync::{Mutex, PoisonError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, channel, sync_channel};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
-use engine::dev::{Artifact, Effect, HostContext, Outcome, Step};
+use engine::bevy_ecs::world::World;
+use engine::dev::record::{RecordHost, RunSink};
+use engine::host::{AdapterStatus, Shot};
 use engine::scene::{SceneFiles, SceneKinds};
 use engine::{Error, ErrorCode, Expected, Game, GameHost};
+use engine_registry::ReachMut;
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
-use crate::Offscreen;
-#[cfg(feature = "profiling")]
-use crate::{Frames, ProfileRecord, Record};
 use crate::{file_error, files};
 
-const PROFILE_CAPTURE: &str = "ProfileCapture";
+const RUNS: &str = "artifacts/runs";
 
-pub struct GameControl<G: Game> {
-    pub values: String,
-    #[expect(clippy::type_complexity, reason = "a stored control callback")]
-    pub run: Box<dyn FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String>>,
+const DEEP: &str = "deep";
+
+static ABOUT: OnceLock<Map<String, Value>> = OnceLock::new();
+#[cfg(feature = "profiling")]
+static OPENED: Mutex<Option<PathBuf>> = Mutex::new(None);
+#[cfg(feature = "profiling")]
+static DEEP_WANTED: AtomicBool = AtomicBool::new(false);
+static INSTRUMENTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    engine::host::instruments()
+        .iter()
+        .copied()
+        .chain([DEEP])
+        .collect()
+});
+
+pub struct Session {
+    lines: Option<Receiver<String>>,
+    run: Option<PathBuf>,
+    record: Option<u32>,
+    #[cfg(feature = "profiling")]
+    deep: Option<(engine_profiler::DeepCapture, PathBuf, String)>,
 }
 
-pub struct DevSession<G: Game> {
-    game: Offscreen<G>,
-    controls: BTreeMap<String, GameControl<G>>,
-    parameters: BTreeMap<String, String>,
-    artifacts: PathBuf,
-    captures: u32,
-    paused: bool,
-    started: Instant,
-    instance: String,
+pub struct Start<'a> {
+    pub requests: bool,
+    pub size: (u32, u32),
+    pub run: Option<&'a str>,
+    pub record: Option<&'a str>,
+    pub about: Map<String, Value>,
 }
 
-impl<G: Game> DevSession<G> {
-    pub fn new(mut game: Offscreen<G>, artifacts: PathBuf) -> Self {
-        game.host_mut().set_preparation(false);
-        let mut hash = Sha256::new();
-        hash.update(format!(
-            "{:?} {}",
-            std::time::SystemTime::now(),
-            std::process::id()
-        ));
-        let instance = hash.finalize()[..16]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        Self {
-            game,
-            controls: BTreeMap::new(),
-            parameters: BTreeMap::new(),
-            artifacts,
-            captures: 0,
-            paused: true,
-            started: Instant::now(),
-            instance,
+impl Session {
+    pub fn open<G: Game>(host: &mut GameHost<G>, start: Start<'_>) -> engine::Result<Self> {
+        let _ = ABOUT.set(start.about);
+        #[cfg(feature = "profiling")]
+        engine_profiler::deep_setting(host.engine_mut().app.world_mut());
+        host.engine_mut().app.world_mut().insert_resource(RecordHost {
+            about,
+            open,
+            instruments: &INSTRUMENTS,
+            instrument,
+        });
+        let run = match start.run {
+            Some(name) => {
+                let folder = run_folder("--run", name)?;
+                std::fs::create_dir_all(&folder)
+                    .map_err(|error| file_error("--run", &folder, &error))?;
+                Some(folder)
+            }
+            None => None,
+        };
+        let record = match start.record {
+            Some(args) => {
+                let args: Value = serde_json::from_str(args)
+                    .map_err(|_| Error::new(ErrorCode::InvalidJson, "--record").got(args))?;
+                let line = json!({"verb": "call", "name": "record", "args": args});
+                Some(host.dev_push(&line.to_string()))
+            }
+            None => None,
+        };
+        let lines = start.requests.then(|| {
+            let ready = json!({
+                "ready": true,
+                "size": [start.size.0, start.size.1],
+                "adapter": AdapterStatus::of(host.adapter()),
+                "run": start.run,
+            });
+            say(&ready.to_string());
+            read_lines()
+        });
+        Ok(Self {
+            lines,
+            run,
+            record,
+            #[cfg(feature = "profiling")]
+            deep: None,
+        })
+    }
+
+    pub fn receive<G: Game>(&mut self, host: &mut GameHost<G>, wait: Duration) -> bool {
+        let Some(lines) = &self.lines else {
+            return true;
+        };
+        let first = match lines.recv_timeout(wait) {
+            Ok(line) => line,
+            Err(RecvTimeoutError::Timeout) => return true,
+            Err(RecvTimeoutError::Disconnected) => return false,
+        };
+        host.dev_push(&first);
+        loop {
+            match lines.try_recv() {
+                Ok(line) => {
+                    host.dev_push(&line);
+                }
+                Err(TryRecvError::Empty) => return true,
+                Err(TryRecvError::Disconnected) => return false,
+            }
         }
     }
 
-    #[must_use]
-    pub fn control(
-        mut self,
-        name: &str,
-        values: &str,
-        run: impl FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String> + 'static,
-    ) -> Self {
-        self.controls.insert(
-            name.to_owned(),
-            GameControl {
-                values: values.to_owned(),
-                run: Box::new(run),
-            },
-        );
-        self
-    }
-
-    #[must_use]
-    pub fn parameters(
-        mut self,
-        parameters: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
-    ) -> Self {
-        self.parameters.extend(
-            parameters
-                .into_iter()
-                .map(|(name, values)| (name.into(), values.into())),
-        );
-        self
-    }
-
-    pub fn run(mut self) -> engine::Result<()> {
-        let lines = read_lines();
-        let size = self.game.size();
-        self.reply(&json!({
-            "ready": true,
-            "version": engine::dev::PROTOCOL_VERSION,
-            "instance": self.instance,
-            "size": [size.0, size.1],
-            "adapter": adapter(self.game.host()),
-            "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.values))).collect::<Map<_, _>>(),
-            "parameters": self.parameters,
-        }));
-        loop {
-            let line = if self.paused {
-                match lines.recv_timeout(Duration::from_millis(50)) {
-                    Ok(line) => Some(line),
-                    Err(RecvTimeoutError::Timeout) => None,
-                    Err(RecvTimeoutError::Disconnected) => return Ok(()),
+    pub fn after<G: Game>(&mut self, host: &mut GameHost<G>) -> engine::Result<()> {
+        let take = host.dev_take();
+        for (ticket, line) in take.replies {
+            if self.record == Some(ticket) {
+                self.record = None;
+                let reply: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+                if reply["ok"] != true {
+                    return Err(Error::new(ErrorCode::InvalidArguments, "--record")
+                        .got(reply["error"].clone()));
                 }
             } else {
-                match lines.try_recv() {
-                    Ok(line) => Some(line),
-                    Err(TryRecvError::Empty) => None,
-                    Err(TryRecvError::Disconnected) => return Ok(()),
-                }
-            };
-            match line {
-                Some(line) => {
-                    let (id, line) = request_id(&line);
-                    let mut reply = self.request(&line);
-                    if let Some(id) = id {
-                        reply["id"] = id;
-                    }
-                    self.reply(&reply);
-                }
-                None if !self.paused => {
-                    let timestamp = self.now();
-                    if let Err(error) = self.game.frame(timestamp) {
-                        eprintln!("{}", json!({"event": "frame_failed", "error": error}));
-                    }
-                }
-                None => {}
+                say(&line);
             }
-            self.game.exchange_jobs();
-            self.follow_source();
         }
+        for shot in take.pictures {
+            if let Err(error) = self.picture(&shot) {
+                let record = json!({"event": "picture_not_written", "file": shot.file, "error": error});
+                eprintln!("{record}");
+            }
+        }
+        if take.reload {
+            match read_source(host) {
+                Ok((source, files)) => host.dev_reloaded(&source, &files),
+                Err(error) => host.dev_reload_failed(error),
+            }
+        }
+        #[cfg(feature = "profiling")]
+        if let Err(error) = self.follow_deep(host) {
+            let record = json!({"event": "deep_capture_failed", "error": error});
+            eprintln!("{record}");
+        }
+        Ok(())
     }
 
-    fn follow_source(&mut self) {
-        let Some(followed) = self.game.host_mut().follow_source() else {
-            return;
-        };
-        let mut reply = match followed {
-            Ok(()) => self.request(r#"{"verb":"query","name":"status"}"#),
-            Err(error) => self.error(&error),
-        };
-        reply["event"] = json!("source_changed");
-        self.reply(&reply);
-    }
-
-    fn now(&self) -> f64 {
-        self.started.elapsed().as_secs_f64() * 1000.0
-    }
-
-    fn reply(&self, reply: &Value) {
-        let mut out = std::io::stdout().lock();
-        let _ = writeln!(out, "{reply}");
-        let _ = out.flush();
-    }
-
-    fn request(&mut self, line: &str) -> Value {
-        if let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line) {
-            if command.get("verb") == Some(&json!("profile"))
-                && let Some(deep) = command.get("deep")
-            {
-                return match deep {
-                    Value::Object(deep) => self.profile(deep),
-                    Value::Null
-                    | Value::Bool(_)
-                    | Value::Number(_)
-                    | Value::String(_)
-                    | Value::Array(_) => self.error(
-                        &Error::new(ErrorCode::InvalidType, "$.deep").expected(Expected::Object),
-                    ),
+    #[cfg(feature = "profiling")]
+    fn follow_deep<G: Game>(&mut self, host: &GameHost<G>) -> engine::Result<()> {
+        let folder = OPENED.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        match (self.deep.take(), DEEP_WANTED.load(Ordering::Relaxed), folder) {
+            (None, true, Some(folder)) => {
+                let sizes = match engine_profiler::deep_sizes(host.engine().app.world()) {
+                    Ok(sizes) => sizes,
+                    Err(reason) => {
+                        DEEP_WANTED.store(false, Ordering::Relaxed);
+                        return Err(
+                            Error::new(ErrorCode::ProfilingUnavailable, "$.deep").got(reason)
+                        );
+                    }
                 };
+                let threads = engine_profiler::sampler::SampledThread::current("Main thread")
+                    .into_iter()
+                    .chain(engine_profiler::sampler::announced_threads())
+                    .collect();
+                let stem = format!("deep-{}", host.frame_times().frame);
+                let (viewer, digest) = (format!("{stem}.firefox.json"), format!("{stem}.digest.json"));
+                engine_profile::event(
+                    "instrument",
+                    DEEP,
+                    &[
+                        ("viewer", engine_profile::Fact::Text(&viewer)),
+                        ("digest", engine_profile::Fact::Text(&digest)),
+                    ],
+                );
+                let capture = engine_profiler::DeepCapture::start(threads, sizes);
+                self.deep = Some((capture, folder, stem));
             }
-            if command.get("verb") == Some(&json!("describe"))
-                && command.get("name") == Some(&json!(PROFILE_CAPTURE))
-            {
-                return self.describe_profile(&command);
+            (Some(running), true, Some(_)) => self.deep = Some(running),
+            (Some((capture, folder, stem)), false, _)
+            | (Some((capture, folder, stem)), true, None) => {
+                capture.finish(&folder, &stem)?;
             }
+            (None, _, _) => {}
         }
-        let context = self.context();
-        let mut step = self.game.host_mut().dev_request(line, &context);
-        loop {
-            if let Err(error) = self.game.host().wait_for_gpu() {
-                return self.error(&Error::new(ErrorCode::RenderFailed, "$").got(error));
-            }
-            match step {
-                Step::Reply(reply) => return reply,
-                Step::Effect(effect) => step = self.carry(effect),
-            }
-        }
+        Ok(())
     }
 
-    fn carry(&mut self, effect: Effect) -> Step {
-        let failed = |error: Error| Outcome {
-            failed: Some(error.to_string()),
-            ..Outcome::default()
+    fn picture(&self, shot: &Shot) -> engine::Result<()> {
+        let folder = match &shot.run {
+            Some(run) => run_folder("$.run", run)?,
+            None => self.run.clone().ok_or_else(|| {
+                Error::new(ErrorCode::MissingField, "--run").expected(Expected::Present)
+            })?,
         };
-        let outcome = match effect {
-            Effect::Pause { paused } => {
-                self.paused = paused;
-                Outcome::default()
+        let path = folder.join(&shot.file);
+        let failed = |_| {
+            Error::new(ErrorCode::SourceIo, "$")
+                .expected(Expected::Writable)
+                .got(path.display().to_string())
+        };
+        let file = std::fs::File::create(&path).map_err(|error| file_error("$", &path, &error))?;
+        let mut encoder = png::Encoder::new(BufWriter::new(file), shot.width, shot.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(failed)?;
+        writer.write_image_data(&shot.rgba).map_err(failed)?;
+        writer.finish().map_err(failed)
+    }
+}
+
+pub fn follow_source<G: Game>(host: &mut GameHost<G>) {
+    if let Some(Err(error)) = host.follow_source() {
+        let record = json!({"event": "source_changed", "error": error});
+        eprintln!("{record}");
+    }
+}
+
+fn read_source<G: Game>(host: &mut GameHost<G>) -> engine::Result<(String, SceneFiles)> {
+    let Some(path) = host.source().map(Path::to_owned) else {
+        return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
+    };
+    host.watch_source(&path);
+    let source =
+        std::fs::read_to_string(&path).map_err(|error| file_error("$.source", &path, &error))?;
+    let kinds = SceneKinds::of(host.engine().app.world());
+    let files = files::scene_files(&path, &source, &kinds)?;
+    Ok((source, files))
+}
+
+fn run_folder(path: &str, name: &str) -> engine::Result<PathBuf> {
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if !plain {
+        return Err(Error::new(ErrorCode::InvalidName, path).got(name));
+    }
+    Ok(Path::new(RUNS).join(name))
+}
+
+fn about(_: &World) -> Map<String, Value> {
+    ABOUT.get().cloned().unwrap_or_default()
+}
+
+fn instrument(reach: &mut ReachMut<'_>, name: &str, on: bool) -> Result<&'static str, &'static str> {
+    if name == DEEP {
+        return deep(reach, on);
+    }
+    engine::host::instrument(reach, name, on)
+}
+
+#[cfg(feature = "profiling")]
+fn deep(reach: &mut ReachMut<'_>, on: bool) -> Result<&'static str, &'static str> {
+    if on {
+        engine_profiler::deep_sizes(reach.world)?;
+    }
+    DEEP_WANTED.store(on, Ordering::Relaxed);
+    Ok("samples every thread's stack and the heap's allocation stacks, which slows the frame")
+}
+
+#[cfg(not(feature = "profiling"))]
+fn deep(_: &mut ReachMut<'_>, _: bool) -> Result<&'static str, &'static str> {
+    Err("deep_capture_needs_native_profiling_build")
+}
+
+fn open(name: &str, queue: usize) -> Result<Box<dyn RunSink>, Error> {
+    let folder = run_folder("$.name", name)?;
+    std::fs::create_dir_all(&folder).map_err(|error| file_error("$.name", &folder, &error))?;
+    let path = folder.join("record.jsonl");
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::new(ErrorCode::SourceIo, "$.name")
+                    .expected(Expected::Absent)
+                    .got(path.display().to_string())
+            } else {
+                file_error("$.name", &path, &error)
             }
-            Effect::Frame { timestamp } => match self.game.frame(timestamp) {
-                Ok(()) => Outcome::default(),
-                Err(error) => failed(error),
-            },
-            Effect::Show => match self.keep_frame() {
-                Ok(artifact) => Outcome {
-                    artifact: Some(artifact),
-                    ..Outcome::default()
-                },
-                Err(error) => failed(error),
-            },
-            Effect::Game { name, args } => match self.controls.get_mut(&name) {
-                Some(control) => match (control.run)(self.game.host_mut(), &args) {
-                    Ok(result) => Outcome {
-                        result: Some(result),
-                        ..Outcome::default()
-                    },
-                    Err(error) => Outcome {
-                        failed: Some(error),
-                        ..Outcome::default()
-                    },
-                },
-                None => Outcome {
-                    missing: Some(self.controls.keys().cloned().collect()),
-                    ..Outcome::default()
-                },
-            },
-            Effect::Source => match self.read_source() {
-                Ok(Some((source, files))) => {
-                    let context = self.context();
-                    return self
-                        .game
-                        .host_mut()
-                        .dev_reloaded(&source, Some(&files), &context);
+        })?;
+    let (lines, written) = sync_channel::<String>(queue);
+    let writer = std::thread::Builder::new()
+        .name("engine-run-writer".into())
+        .spawn(move || {
+            let mut file = BufWriter::new(file);
+            for line in written {
+                if writeln!(file, "{line}").and_then(|()| file.flush()).is_err() {
+                    break;
                 }
-                Ok(None) => Outcome {
-                    missing: Some(Vec::new()),
-                    ..Outcome::default()
-                },
-                Err(error) => failed(error),
-            },
-            Effect::Save { name, contents } => match self.keep_file(&name, &contents) {
-                Ok(artifact) => Outcome {
-                    artifact: Some(artifact),
-                    ..Outcome::default()
-                },
-                Err(error) => failed(error),
-            },
-        };
-        let context = self.context();
-        self.game.host_mut().dev_resume(outcome, &context)
-    }
-
-    fn context(&self) -> HostContext {
-        let (width, height) = self.game.size();
-        HostContext {
-            width,
-            height,
-            paused: self.paused,
-            source: self
-                .game
-                .host()
-                .source()
-                .map(|path| path.display().to_string()),
-        }
-    }
-
-    fn kinds(&self) -> SceneKinds {
-        SceneKinds::of(self.game.host().engine().app.world())
-    }
-
-    fn read_source(&mut self) -> Result<Option<(String, SceneFiles)>, Error> {
-        let Some(path) = self.game.host().source().map(Path::to_owned) else {
-            return Ok(None);
-        };
-        self.game.host_mut().watch_source(&path);
-        let source = std::fs::read_to_string(&path)
-            .map_err(|error| file_error("$.source", &path, &error))?;
-        let files = files::scene_files(&path, &source, &self.kinds())?;
-        Ok(Some((source, files)))
-    }
-
-    fn keep_frame(&mut self) -> Result<Artifact, Error> {
-        self.captures += 1;
-        let path = self
-            .artifacts
-            .join(format!("capture-{}.png", self.captures));
-        std::fs::create_dir_all(&self.artifacts)
-            .map_err(|error| file_error("$.artifacts", &self.artifacts, &error))?;
-        self.game.save_png(&path)?;
-        let bytes =
-            std::fs::read(&path).map_err(|error| file_error("$.artifact", &path, &error))?;
-        Ok(Artifact {
-            path: path.display().to_string(),
-            mime_type: "image/png".to_owned(),
-            bytes: bytes.len() as u64,
-            sha256: Sha256::digest(&bytes)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        })
-    }
-
-    fn keep_file(&mut self, name: &str, contents: &Value) -> Result<Artifact, Error> {
-        self.captures += 1;
-        let path = self
-            .artifacts
-            .join(format!("{name}-{}.json", self.captures));
-        std::fs::create_dir_all(&self.artifacts)
-            .map_err(|error| file_error("$.artifacts", &self.artifacts, &error))?;
-        let bytes = serde_json::to_vec(contents)
-            .map_err(|_| Error::new(ErrorCode::InvalidJson, "$.contents"))?;
-        std::fs::write(&path, &bytes).map_err(|error| file_error("$.artifact", &path, &error))?;
-        Ok(Artifact {
-            path: path.display().to_string(),
-            mime_type: "application/json".to_owned(),
-            bytes: bytes.len() as u64,
-            sha256: Sha256::digest(&bytes)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        })
-    }
-
-    fn error(&mut self, error: &Error) -> Value {
-        self.game.host_mut().dev_refusal(error)
-    }
-
-    #[cfg(feature = "profiling")]
-    fn status(&mut self) -> Value {
-        let context = self.context();
-        match self
-            .game
-            .host_mut()
-            .dev_request(r#"{"verb":"query","name":"status"}"#, &context)
-        {
-            Step::Reply(reply) => reply,
-            Step::Effect(effect) => unreachable!("status_has_no_effect {effect:?}"),
-        }
-    }
-
-    #[cfg(feature = "profiling")]
-    fn profile(&mut self, command: &Map<String, Value>) -> Value {
-        let options = ["duration_ms", "max_events", "cpu_samples"];
-        if let Some(unknown) = command.keys().find(|key| !options.contains(&key.as_str())) {
-            return self.error(
-                &Error::new(ErrorCode::UnknownField, format!("$.deep.{unknown}"))
-                    .got(unknown)
-                    .variants(options),
-            );
-        }
-        let bounded =
-            |name: &str, (minimum, maximum): (u64, u64), default: u64| match command.get(name) {
-                None => Some(default),
-                Some(value) => value
-                    .as_u64()
-                    .filter(|value| (minimum..=maximum).contains(value)),
-            };
-        let durations = (
-            *engine::PROFILE_DURATION_MS.start(),
-            *engine::PROFILE_DURATION_MS.end(),
-        );
-        let events = (
-            *engine::PROFILE_EVENTS.start() as u64,
-            *engine::PROFILE_EVENTS.end() as u64,
-        );
-        let out_of_range = |name: &str, (minimum, maximum): (u64, u64)| {
-            Error::new(ErrorCode::OutOfRange, format!("$.deep.{name}"))
-                .range(minimum as f64, maximum as f64)
-                .got(command.get(name))
-        };
-        let (duration, max_events) = match (
-            bounded("duration_ms", durations, durations.1),
-            bounded("max_events", events, events.1),
-        ) {
-            (Some(duration), Some(max_events)) => (duration, max_events),
-            (None, _) => return self.error(&out_of_range("duration_ms", durations)),
-            (Some(_), None) => return self.error(&out_of_range("max_events", events)),
-        };
-        if !self.paused {
-            return self
-                .error(&Error::new(ErrorCode::PauseRequired, "$").expected(Expected::Paused));
-        }
-        let before = self.status();
-        self.captures += 1;
-        let stem = format!("profile-{}", self.captures);
-        let record = Record {
-            profile: Some(ProfileRecord {
-                folder: self.artifacts.clone(),
-                stem,
-                max_events: max_events as usize,
-                cpu_samples: command.get("cpu_samples") != Some(&json!(false)),
-                context: json!({
-                    "program": "engine_native",
-                    "adapter": adapter(self.game.host()),
-                    "size": [self.game.size().0, self.game.size().1],
-                    "duration_ms": duration,
-                    "observation_start": before["observation"],
-                }),
-            }),
-        };
-        let started = self.started;
-        let at = |_| started.elapsed().as_secs_f64() * 1000.0;
-        let recorded = match self
-            .game
-            .record(Frames::For(Duration::from_millis(duration)), at, &record)
-        {
-            Ok(recorded) => recorded,
-            Err(error) => {
-                return self.error(&Error::new(ErrorCode::CaptureFailed, "$").got(error));
             }
-        };
-        let after = self.status();
-        let files = recorded.profile.unwrap_or_default();
-        json!({"ok": true, "observation": after["observation"], "result": {
-            "temporary": true, "paused": true,
-            "complete": files["complete"] == true && recorded.failed.is_none(),
-            "frame_failed": recorded.failed,
-            "artifacts": {
-                "trace": files["report"],
-                "firefox": files["firefox"],
-                "summary": files["summary"],
-                "cpu_profile": null,
-            },
-        }})
-    }
-
-    #[cfg(not(feature = "profiling"))]
-    fn profile(&mut self, _: &Map<String, Value>) -> Value {
-        self.error(
-            &Error::new(ErrorCode::ProfilingUnavailable, "$.deep").expected(Expected::Supported),
-        )
-    }
-
+        })
+        .map_err(|error| file_error("$.name", &path, &error))?;
     #[cfg(feature = "profiling")]
-    fn describe_profile(&mut self, command: &Map<String, Value>) -> Value {
-        let fields = ["verb", "name"];
-        if let Some(unknown) = command.keys().find(|key| !fields.contains(&key.as_str())) {
-            return self.error(
-                &Error::new(ErrorCode::UnknownField, "$")
-                    .got(unknown)
-                    .variants(fields),
-            );
-        }
-        let mut reply = self.status();
-        if reply["ok"] != true {
-            return reply;
-        }
-        let (durations, events) = (engine::PROFILE_DURATION_MS, engine::PROFILE_EVENTS);
-        reply["result"] = json!({
-            "name": PROFILE_CAPTURE,
-            "kind": "tooling",
-            "schema": {"type": "object", "additionalProperties": false, "properties": {
-                "deep": {"type": "object", "additionalProperties": false, "properties": {
-                    "duration_ms": {
-                        "type": "integer",
-                        "minimum": durations.start(),
-                        "maximum": durations.end(),
-                        "default": durations.end(),
-                    },
-                    "max_events": {
-                        "type": "integer",
-                        "minimum": events.start(),
-                        "maximum": events.end(),
-                        "default": events.end(),
-                    },
-                    "cpu_samples": {"type": "boolean", "default": true},
-                }},
-            }},
-            "status": {
-                "available": true,
-                "native": true,
-            },
-        });
-        reply
+    {
+        *OPENED.lock().unwrap_or_else(PoisonError::into_inner) = Some(folder);
     }
+    Ok(Box::new(RunFile {
+        lines: Some(lines),
+        writer: Some(writer),
+    }))
+}
 
-    #[cfg(not(feature = "profiling"))]
-    fn describe_profile(&mut self, _: &Map<String, Value>) -> Value {
-        self.error(&Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Supported))
+struct RunFile {
+    lines: Option<SyncSender<String>>,
+    writer: Option<JoinHandle<()>>,
+}
+
+impl RunSink for RunFile {
+    fn line(&mut self, line: String) -> bool {
+        self.lines
+            .as_ref()
+            .is_some_and(|lines| lines.try_send(line).is_ok())
     }
 }
 
-fn adapter<G: Game>(host: &GameHost<G>) -> Value {
-    json!(engine::host::AdapterStatus::of(host.adapter()))
+impl Drop for RunFile {
+    fn drop(&mut self) {
+        #[cfg(feature = "profiling")]
+        {
+            *OPENED.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        }
+        drop(self.lines.take());
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
+    }
 }
 
-fn request_id(line: &str) -> (Option<Value>, String) {
-    match serde_json::from_str::<Value>(line) {
-        Ok(Value::Object(mut command)) if command.contains_key("id") => {
-            let id = command.remove("id");
-            (id, Value::Object(command).to_string())
-        }
-        _ => (None, line.to_owned()),
-    }
+fn say(line: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}").and_then(|()| out.flush());
 }
 
 fn read_lines() -> Receiver<String> {
@@ -506,7 +350,7 @@ fn read_lines() -> Receiver<String> {
     std::thread::Builder::new()
         .name("engine-dev-input".into())
         .spawn(move || {
-            engine::profiling::announce_thread(format_args!("Dev input"));
+            engine_profile::announce_thread(format_args!("Dev input"));
             for line in std::io::stdin().lock().lines() {
                 let Ok(line) = line else { break };
                 if !line.trim().is_empty() && send.send(line).is_err() {

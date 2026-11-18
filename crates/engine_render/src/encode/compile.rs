@@ -4,6 +4,7 @@ use super::warming::{Asked, Warm, WarmShape};
 use super::*;
 use crate::install::{Faces, FragmentUse, RenderDecl};
 use crate::machine::{BuiltPipeline, Stage};
+use crate::pipelines::Listing;
 
 fn stage_key(
     stage: &Stage,
@@ -205,6 +206,13 @@ fn blend_targets(targets: &mut [Option<wgpu::ColorTargetState>], alpha: crate::s
     }
 }
 
+fn entry_of(program: &Program) -> &'static str {
+    match program {
+        Program::Render(desc) => desc.vertex.name(),
+        Program::Compute(entry) => entry.name(),
+    }
+}
+
 impl Machine {
     fn pass_name(&self, pipeline: u32) -> &'static str {
         let Some(built) = self.pipelines.get(pipeline as usize) else {
@@ -217,6 +225,27 @@ impl Machine {
                 .passes
                 .get(pass as usize)
                 .map_or("", |declared| declared.group.unwrap_or(declared.name)),
+        }
+    }
+
+    fn asker(&self, pipeline: u32, asked: Asked) -> crate::pipelines::Asker {
+        let built = self.pipelines.get(pipeline as usize);
+        let part = built.and_then(|built| self.declared.parts.get(built.decl.part as usize));
+        crate::pipelines::Asker {
+            entry: built.map_or("", |built| entry_of(&built.decl.program)),
+            part: part.map_or("", |part| part.name),
+            brick: part.map_or("", |part| part.package),
+            pass: self.pass_name(pipeline),
+            by: asked.name(),
+        }
+    }
+
+    pub(crate) fn draw_key(&self, pass: u32, pipeline: u32) -> crate::profiling::DrawKey {
+        let asker = self.asker(pipeline, Asked::Drawn);
+        crate::profiling::DrawKey {
+            pass: self.declared.passes.get(pass as usize).map_or("", |pass| pass.name),
+            part: asker.part,
+            pipeline: asker.entry,
         }
     }
 
@@ -240,6 +269,7 @@ pub(crate) struct Compiler<'r> {
     machine: &'r mut Machine,
     parts: &'r [Option<Box<dyn Installed>>],
     pipelines: &'r mut Pipelines,
+    frame: u64,
 }
 
 struct Shape<'f> {
@@ -404,17 +434,22 @@ fn computed_by_program(
         })
 }
 
-fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) {
-    if from_list {
+fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) -> Listing {
+    let listing = if from_list {
         pipelines.up_front += 1;
-    } else if pipelines
-        .listed
-        .as_ref()
-        .is_some_and(|listed| !listed.iter().any(|known| known.same(&compiled)))
-    {
-        pipelines.unlisted += 1;
-    }
+        Listing::FromList
+    } else {
+        match &pipelines.listed {
+            None => Listing::NoList,
+            Some(listed) if listed.iter().any(|known| known.same(&compiled)) => Listing::Listed,
+            Some(_) => {
+                pipelines.unlisted += 1;
+                Listing::Unlisted
+            }
+        }
+    };
     pipelines.compiled.push(compiled);
+    listing
 }
 
 struct Keyed {
@@ -436,6 +471,7 @@ impl Run {
                 machine: &mut self.machine,
                 parts: &self.parts,
                 pipelines: &mut self.pipelines,
+                frame: self.frames.asked,
             },
             &mut self.assets,
         )
@@ -501,8 +537,10 @@ impl Run {
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
-    ) -> Option<wgpu::RenderPipeline> {
-        self.split().0.compile(pipeline, targets, shown, variant)
+    ) -> Option<(u64, wgpu::RenderPipeline)> {
+        self.split()
+            .0
+            .compile_with(pipeline, targets, shown, variant, Asked::Drawn)
     }
 
     pub(super) fn pipeline_of(&self, handle: u32) -> Option<(u32, Option<usize>)> {
@@ -552,16 +590,16 @@ impl Run {
                 .standing_in(pipeline, targets, shown, variants),
             None => self
                 .compile(pipeline, targets, shown, variant)
-                .map(|made| (made, true)),
+                .map(|(key, made)| (key, made, true)),
         };
-        let Some((made, exact)) = found else {
+        let Some((key, made, exact)) = found else {
             return Err(if self.pipelines.making.program_waits(program) {
                 DropReason::PipelineCompiling
             } else {
                 DropReason::PipelineRefused
             });
         };
-        self.tallies.rebuilt.compiles += 1;
+        self.pipelines.making.book.used((program, key), self.frames.asked);
         let built = self
             .machine
             .pipelines
@@ -581,7 +619,10 @@ impl Run {
         pipeline: u32,
         wait: bool,
     ) -> Option<wgpu::ComputePipeline> {
-        self.compute_with(pipeline, if wait { Asked::Waited } else { Asked::Drawn })
+        let found = self.compute_with(pipeline, if wait { Asked::Waited } else { Asked::Drawn })?;
+        let program = self.machine.pipelines.get(pipeline as usize)?.program_key;
+        self.pipelines.making.book.used((program, 0), self.frames.asked);
+        Some(found)
     }
 
     pub(super) fn compute_with(&mut self, pipeline: u32, asked: Asked) -> Option<wgpu::ComputePipeline> {
@@ -633,6 +674,11 @@ impl Run {
                 )
             });
             let pass = self.machine.pass_name(pipeline);
+            let machine = &self.machine;
+            self.pipelines
+                .making
+                .book
+                .asked(made, self.frames.asked, || machine.asker(pipeline, asked));
             self.pipelines
                 .making
                 .submit((made, false), (pass, noted, stages), move || job.make());
@@ -683,11 +729,10 @@ impl Compiler<'_> {
             let made = match finished.made {
                 Ok(made) => made,
                 Err(error) => {
-                    self.pipelines
-                        .making
-                        .refuse((finished.program, finished.key));
-                    let refused = (finished.pass, finished.program, error.to_string());
-                    self.pipelines.refused.push(refused);
+                    self.pipelines.making.refuse(done);
+                    let error = error.to_string();
+                    self.pipelines.making.book.refused(done, self.frame, &error);
+                    self.pipelines.refused.push((finished.pass, finished.program, error));
                     continue;
                 }
             };
@@ -717,9 +762,11 @@ impl Compiler<'_> {
                     }
                 }
             }
-            if let Some((compiled, from_list)) = finished.noted {
-                note(self.pipelines, compiled, from_list);
-            }
+            let listing = match finished.noted {
+                Some((compiled, from_list)) => note(self.pipelines, compiled, from_list),
+                None => Listing::MakesRecords,
+            };
+            self.pipelines.making.book.ready(done, self.frame, listing);
         }
     }
 
@@ -733,20 +780,6 @@ impl Compiler<'_> {
         Some(found)
     }
 
-    pub(crate) fn compile(
-        &mut self,
-        pipeline: u32,
-        targets: (
-            &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
-        ),
-        shown: (bool, bool),
-        variant: Option<crate::surface::MaterialVariant>,
-    ) -> Option<wgpu::RenderPipeline> {
-        self.compile_with(pipeline, targets, shown, variant, Asked::Drawn)
-            .map(|(_, made)| made)
-    }
-
     pub(crate) fn compile_now(
         &mut self,
         pipeline: u32,
@@ -757,7 +790,10 @@ impl Compiler<'_> {
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
-        self.compile_with(pipeline, targets, shown, variant, Asked::Waited)
+        let (key, made) = self.compile_with(pipeline, targets, shown, variant, Asked::Waited)?;
+        let program = self.machine.pipelines.get(pipeline as usize)?.program_key;
+        self.pipelines.making.book.used((program, key), self.frame);
+        Some((key, made))
     }
 
     pub(super) fn speedup_unmade(
@@ -811,12 +847,12 @@ impl Compiler<'_> {
             crate::surface::MaterialVariant,
             crate::surface::MaterialVariant,
         ),
-    ) -> Option<(wgpu::RenderPipeline, bool)> {
+    ) -> Option<(u64, wgpu::RenderPipeline, bool)> {
         self.collect(None);
         let keyed = self.keyed(pipeline, targets, shown, Some(specialized))?;
         let made = (keyed.program, keyed.key);
         if let Some(found) = self.made(pipeline, made) {
-            return Some((found, true));
+            return Some((keyed.key, found, true));
         }
         let records = self.machine.makes_records(pipeline);
         let refused = self.pipelines.making.refused(made);
@@ -828,7 +864,7 @@ impl Compiler<'_> {
         if !refused && exact {
             return self
                 .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
-                .map(|(_, made)| (made, true));
+                .map(|(key, made)| (key, made, true));
         }
         if !refused {
             if !self.pipelines.standing.contains(&made) {
@@ -851,7 +887,7 @@ impl Compiler<'_> {
             }
         }
         self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn)
-            .map(|(_, made)| (made, false))
+            .map(|(key, made)| (key, made, false))
     }
 
     fn keyed(
@@ -972,6 +1008,11 @@ impl Compiler<'_> {
                 )
             });
             let pass = self.machine.pass_name(pipeline);
+            let machine = &*self.machine;
+            self.pipelines
+                .making
+                .book
+                .asked(made, self.frame, || machine.asker(pipeline, asked));
             let later = self
                 .machine
                 .pipelines
