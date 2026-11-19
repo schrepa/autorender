@@ -709,7 +709,7 @@ fn text_of(cx: &SceneCx<'_>, uri: &str, at: &str) -> Result<Option<String>, Erro
 }
 
 fn markers_of(text: &str, at: &str) -> Result<Markers, Error> {
-    let file: MarkerFile = engine::bricks::parse_value_at(engine::bricks::parse_json(text)?, at)?;
+    let file: MarkerFile = engine::bricks::parse_json(text).map_err(|error| error.within(at))?;
     let find = |name: &str| {
         file.markers
             .iter()
@@ -749,9 +749,8 @@ impl PuppetFile {
         let Some(text) = text_of(cx, &self.file, &at)? else {
             return Ok(self);
         };
-        let whole = engine::bricks::parse_json(&text).map_err(|error| error.within(&at))?;
         let table: PuppetTable =
-            engine::bricks::parse_value_at(whole, "$").map_err(|error| error.within(&at))?;
+            engine::bricks::parse_json(&text).map_err(|error| error.within(&at))?;
         table
             .shade
             .maps

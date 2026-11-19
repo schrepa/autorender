@@ -1,7 +1,7 @@
 use engine::prelude::*;
 use glam::Vec3;
 
-use super::{Setup, thrown_to, ticks_per_second};
+use super::{Setup, thrown_to};
 use crate::play::actors::{Actor, Alive, Body, Wish};
 use crate::play::arms::{Arms, Drops};
 use crate::play::events::arms::{ArmsEvents, PickupEvent};
@@ -38,9 +38,7 @@ pub(super) fn pick(
     let Some(numbers) = setup.numbers.as_ref() else {
         return;
     };
-    let Some(tps) = ticks_per_second(&time) else {
-        return;
-    };
+    let tps = time.rate;
     let mut order: Vec<_> = actors.iter_mut().collect();
     order.sort_by_key(|(actor, ..)| actor.slot);
     for (actor, wish, body, mut arms, alive) in order {

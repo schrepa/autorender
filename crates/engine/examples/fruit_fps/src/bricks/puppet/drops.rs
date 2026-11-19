@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use engine::prelude::*;
 use engine_core::math::clamp;
-use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext};
+use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext, Stats};
 use glam::{Quat, Vec3};
 
 use super::{DroppedWeapon, PuppetBrick, PuppetStats};
@@ -32,7 +32,7 @@ type Reads<'w, 's> = (
 );
 
 type Writes<'w, 's> = (
-    (ResMut<'w, PuppetStats>, ResMut<'w, Flights>),
+    (Stats<'w, PuppetStats>, ResMut<'w, Flights>),
     ResMut<'w, Refusals>,
     Spawner<'w, 's, PuppetBrick>,
     Moves<'w, 's, PuppetBrick>,
@@ -150,8 +150,6 @@ pub(super) fn lie(
         .held
         .retain(|id, _| items.iter().any(|item| item.id == *id));
     let count = u32::try_from(items.len()).unwrap_or(u32::MAX);
-    if stats.dropped != count {
-        stats.dropped = count;
-    }
+    stats.edit(|stats| stats.dropped = count);
     refusals.judge(owner, DROPPED_PART, refusal.map_or(Ok(()), Err));
 }

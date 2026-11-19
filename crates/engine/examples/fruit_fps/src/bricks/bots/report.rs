@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use engine::prelude::*;
 
-use super::{Book, BotStat, BotsStats, SquadStat, ThrowStat, WishStat};
+use super::{Book, BotStat, BotsStats, BotsTest, SquadStat, ThrowStat, WishStat};
 use crate::play::bots::BotMinds;
 use crate::play::paths::Paths;
 
@@ -26,9 +26,10 @@ pub(super) fn report(
     minds: Res<BotMinds>,
     paths: Res<Paths>,
     book: Res<Book>,
-    mut stats: ResMut<BotsStats>,
+    (test, mut stats): (DevSetting<BotsTest>, Stats<BotsStats>),
 ) {
     let places = book.places.as_deref();
+    let (queries, expanded) = paths.counts();
     let mut throws = ThrowStat::default();
     for bot in &minds.bots {
         throws.solved += bot.throws.solved;
@@ -78,12 +79,12 @@ pub(super) fn report(
             line_up_state: bot.line_up.map(|(_, state)| state.key().to_owned()),
         })
         .collect();
-    stats.set_if_neq(BotsStats {
+    stats.show(|| BotsStats {
         problem: minds.problem.clone(),
         tick: minds.tick,
-        frozen: minds.frozen,
-        queries: minds.queries,
-        expanded: minds.expanded,
+        frozen: test.get().is_some_and(|test| test.frozen),
+        queries,
+        expanded,
         throws,
         drops: minds.drops,
         gifts: minds.gifts,

@@ -1,6 +1,6 @@
 use engine::prelude::*;
 use engine_core::math::{clamp, max, min, sin_cos};
-use engine_core::{Mobility, Parent, SceneContext};
+use engine_core::{Mobility, Parent, SceneContext, Stats};
 
 use super::hands::Hands;
 use super::{FirstPersonWeapon, ViewModelBrick, ViewModelStats};
@@ -155,13 +155,13 @@ type Parts<'w, 's> = Query<
 type Writes<'w, 's> = (
     ResMut<'w, Held>,
     ResMut<'w, ViewModel>,
-    ResMut<'w, ViewModelStats>,
+    Stats<'w, ViewModelStats>,
     Moves<'w, 's, ViewModelBrick>,
     Spawner<'w, 's, ViewModelBrick>,
 );
 
 fn refused(
-    stats: &mut ViewModelStats,
+    stats: &mut Stats<ViewModelStats>,
     (held, parts): (&Held, &Parts),
     spawner: &mut Spawner<ViewModelBrick>,
     why: Option<&str>,
@@ -171,10 +171,10 @@ fn refused(
     {
         spawner.insert(entity, moving(false));
     }
-    *stats = ViewModelStats {
+    stats.show(|| ViewModelStats {
         refusal: why.map(str::to_owned),
         ..ViewModelStats::default()
-    };
+    });
 }
 
 fn equipped(
@@ -571,7 +571,7 @@ fn published(
     (held, frame): (&Held, &Frame),
     (body, yaw, pitch): (&Body, f32, f32),
     shown: Shown<'_>,
-    (tick, view, stats): (u64, &mut ViewModel, &mut ViewModelStats),
+    (tick, view, stats): (u64, &mut ViewModel, &mut Stats<ViewModelStats>),
 ) {
     let Shown {
         slot,
@@ -608,22 +608,23 @@ fn published(
     if *view != fresh {
         *view = fresh;
     }
-    let report = ViewModelStats {
-        weapon: Some(weapon.to_owned()),
-        clip,
-        offset: frame.sight.to_array(),
-        scale,
-        raise,
-        scope: held.scope,
-        lower: held.lower,
-        kick: held.kick_back,
-        muzzle: muzzle.map(|at| at.to_array()),
-        bound: stats.bound.take(),
-        hidden: stats.hidden.take(),
-        refusal: None,
-        hands: std::mem::take(&mut stats.hands),
-    };
-    *stats = report;
+    stats.edit(|stats| {
+        *stats = ViewModelStats {
+            weapon: Some(weapon.to_owned()),
+            clip,
+            offset: frame.sight.to_array(),
+            scale,
+            raise,
+            scope: held.scope,
+            lower: held.lower,
+            kick: held.kick_back,
+            muzzle: muzzle.map(|at| at.to_array()),
+            bound: stats.bound.take(),
+            hidden: stats.hidden.take(),
+            refusal: None,
+            hands: std::mem::take(&mut stats.hands),
+        };
+    });
 }
 
 type Subject<'a> = (
@@ -681,31 +682,29 @@ pub(super) fn veil(
     ((flow, test), scene): (Veiled, Option<Res<SceneContext>>),
     held: Res<Held>,
     parts: Query<(&Node, &Drawn), With<FirstPersonWeapon>>,
-    (mut stats, mut spawner): (ResMut<ViewModelStats>, Spawner<ViewModelBrick>),
+    (mut stats, mut spawner): (Stats<ViewModelStats>, Spawner<ViewModelBrick>),
 ) {
     let part = held.entity.and_then(|entity| parts.get(entity).ok());
-    let bound = part
-        .and_then(|(_, drawn)| drawn.geometry)
-        .zip(scene.as_deref())
-        .and_then(|(geometry, scene)| {
-            scene
-                .assets
-                .meshes
-                .iter()
-                .find(|(_, handle)| **handle == geometry)
-                .map(|(name, _)| name.clone())
-        });
     let shown = shown_now(flow.as_deref(), test.as_deref());
-    let hidden = match (shown, test.as_deref().is_some_and(|test| test.outside)) {
-        (true, _) => held.hidden,
-        (false, true) => Some("free camera"),
-        (false, false) => Some("not playing"),
-    }
-    .map(str::to_owned);
-    if stats.bound != bound || stats.hidden != hidden {
-        stats.bound = bound;
-        stats.hidden = hidden;
-    }
+    stats.edit(|stats| {
+        stats.bound = part
+            .and_then(|(_, drawn)| drawn.geometry)
+            .zip(scene.as_deref())
+            .and_then(|(geometry, scene)| {
+                scene
+                    .assets
+                    .meshes
+                    .iter()
+                    .find(|(_, handle)| **handle == geometry)
+                    .map(|(name, _)| name.clone())
+            });
+        stats.hidden = match (shown, test.as_deref().is_some_and(|test| test.outside)) {
+            (true, _) => held.hidden,
+            (false, true) => Some("free camera"),
+            (false, false) => Some("not playing"),
+        }
+        .map(str::to_owned);
+    });
     if shown {
         return;
     }

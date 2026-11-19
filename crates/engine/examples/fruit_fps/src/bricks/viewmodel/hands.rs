@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use engine::prelude::*;
 use engine_core::math::max;
-use engine_core::{Parent, SceneContext};
+use engine_core::{Parent, SceneContext, Stats};
 
 use super::place::{Held, camera_lit, camera_of, moving, shown_now};
 use super::{FirstPersonHands, HandsStats, ViewModelBrick, ViewModelStats};
@@ -336,7 +336,7 @@ pub(super) fn draw(
     mut parts: Parts,
     (mut hands, mut stats, mut moves, mut spawner): (
         ResMut<Hands>,
-        ResMut<ViewModelStats>,
+        Stats<ViewModelStats>,
         Moves<ViewModelBrick>,
         Spawner<ViewModelBrick>,
     ),
@@ -417,24 +417,22 @@ pub(super) fn draw(
         (None, None) => {}
     }
     let playing = hands.playing.as_ref();
-    let prop = holding
-        .held
-        .as_ref()
-        .filter(|held| held.holds(fixed.tick))
-        .map(|held| held.prop.clone());
-    let report = HandsStats {
-        shown,
-        ability: playing.map(|playing| playing.ability.clone()),
-        phase: playing.map(|playing| playing.phase.key().to_owned()),
-        clip: playing.map(|playing| playing.clip.clone()),
-        seconds,
-        prop,
-        release_tick: playing.and_then(|playing| playing.release),
-        item_r: item,
-        missing: hands.missing.clone(),
-        refusal: hands.refusal.map(str::to_owned),
-    };
-    if stats.hands != report {
-        stats.hands = report;
-    }
+    stats.edit(|stats| {
+        stats.hands = HandsStats {
+            shown,
+            ability: playing.map(|playing| playing.ability.clone()),
+            phase: playing.map(|playing| playing.phase.key().to_owned()),
+            clip: playing.map(|playing| playing.clip.clone()),
+            seconds,
+            prop: holding
+                .held
+                .as_ref()
+                .filter(|held| held.holds(fixed.tick))
+                .map(|held| held.prop.clone()),
+            release_tick: playing.and_then(|playing| playing.release),
+            item_r: item,
+            missing: hands.missing.clone(),
+            refusal: hands.refusal.map(str::to_owned),
+        };
+    });
 }

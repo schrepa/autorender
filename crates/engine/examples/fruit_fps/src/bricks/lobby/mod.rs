@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use engine::math;
 use engine::prelude::*;
+use engine_core::Stats;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +108,9 @@ impl Brick for LobbyBrick {
             .moves::<LobbyFigure>(Pace::Frame)
             .resource::<LobbyView>()
             .resource::<LobbyBook>()
-            .stats::<LobbyStats>()
+            .dev(|dev| {
+                dev.stats::<LobbyStats>();
+            })
             .systems(Schedule::Presentation, stage);
     }
 }
@@ -405,7 +408,7 @@ type Reads<'w> = (
 type Writes<'w, 's> = (
     ResMut<'w, LobbyBook>,
     ResMut<'w, LobbyView>,
-    ResMut<'w, LobbyStats>,
+    Stats<'w, LobbyStats>,
     (Moves<'w, 's, LobbyBrick>, Spawner<'w, 's, LobbyBrick>),
 );
 
@@ -469,7 +472,7 @@ fn stage(
                 (entity, node, play.is_some(), joints.is_some()),
             );
         }
-        report(&mut stats, (flow.stage, None, None), Vec::new(), problems);
+        report(&mut stats, (flow.stage, None, None), Vec::new, problems);
         return;
     };
     let planned = match shot {
@@ -525,22 +528,19 @@ fn stage(
                 &mut spawner,
                 (entity, node, play.is_some(), joints.is_some()),
             );
-            rows.push(LobbyFigureStats {
-                character: character.to_owned(),
-                ..LobbyFigureStats::default()
-            });
+            rows.push((character, None));
             continue;
         };
         clips_missing(clips, (character, figure), &mut problems);
         let cue = book.cues.entry(entity).or_default();
-        let row = placed(
+        let shown = placed(
             &scene,
-            (wanted, clips, character),
+            (wanted, clips),
             cue,
             (entity, node, play, joints),
             (&mut moves, &mut spawner, &mut problems),
         );
-        rows.push(row);
+        rows.push((character, Some(shown)));
     }
     report(
         &mut stats,
@@ -549,27 +549,72 @@ fn stage(
             Some(shot),
             Some((lobby.place.name.as_str(), drifted.0)),
         ),
-        rows,
+        || {
+            (rows.into_iter())
+                .map(|(character, shown)| row(&scene, character, shown))
+                .collect()
+        },
         problems,
     );
 }
 
-fn placed(
+struct Shown<'a> {
+    feet: Vec3,
+    yaw: f32,
+    clips: &'a Clips,
+    weight: Option<f32>,
+    visible: bool,
+    joints: Option<&'a FigureJoints>,
+}
+
+fn row(scene: &Scene<'_>, character: &str, shown: Option<Shown<'_>>) -> LobbyFigureStats {
+    let Some(shown) = shown else {
+        return LobbyFigureStats {
+            character: character.to_owned(),
+            ..LobbyFigureStats::default()
+        };
+    };
+    let (checks, joints) = (scene.lobby.checks, shown.joints);
+    LobbyFigureStats {
+        character: character.to_owned(),
+        position: shown.feet.to_array(),
+        facing_degrees: shown.yaw.to_degrees(),
+        clip: Some(shown.clips.idle.clone()),
+        seconds: joints.map_or(0.0, |joints| joints.base_seconds),
+        pick_seconds: shown.weight.and(joints).map(|joints| joints.upper_seconds),
+        pick_weight: shown.weight.unwrap_or(0.0),
+        pick: shown.weight.map(|_| shown.clips.pick.clip.clone()),
+        shown: shown.visible,
+        in_sight: scene
+            .arena
+            .filter(|arena| arena.ready())
+            .map(|arena| {
+                arena.sees(scene.drifted.0, shown.feet + Vec3::Y * checks.sight_height_m)
+            }),
+        feet_frame: framed(scene.drifted, checks.frame_aspect, shown.feet),
+        head_frame_y: joints
+            .and_then(|joints| joints.head_top)
+            .and_then(|top| framed(scene.drifted, checks.frame_aspect, top))
+            .map(|[_, y]| y),
+    }
+}
+
+fn placed<'a>(
     scene: &Scene<'_>,
-    (wanted, clips, character): (&Wanted, &Clips, &str),
+    (wanted, clips): (&Wanted, &'a Clips),
     cue: &mut Cue,
     (entity, node, play, joints): (
         Entity,
         &Node,
         Option<Mut<FigurePlay>>,
-        Option<&FigureJoints>,
+        Option<&'a FigureJoints>,
     ),
     (moves, spawner, problems): (
         &mut Moves<LobbyBrick>,
         &mut Spawner<LobbyBrick>,
         &mut Vec<String>,
     ),
-) -> LobbyFigureStats {
+) -> Shown<'a> {
     let lobby = scene.lobby;
     let feet = floored(scene.arena, (lobby, wanted), problems);
     let toward = Vec3::from_array(scene.camera.position) - feet;
@@ -583,11 +628,7 @@ fn placed(
         transform.set_if_neq(next);
     }
     let (wanted_play, shown) = played(lobby, (wanted, clips, joints), cue, scene.now);
-    let clip = wanted_play.base.clip.clone();
-    let pick = wanted_play
-        .upper
-        .as_ref()
-        .map(|upper| (upper.clip.clone(), upper.weight));
+    let weight = wanted_play.upper.as_ref().map(|upper| upper.weight);
     match play {
         Some(mut play) => {
             play.set_if_neq(wanted_play);
@@ -606,44 +647,29 @@ fn placed(
             },
         );
     }
-    let checks = lobby.checks;
-    let in_sight = scene
-        .arena
-        .filter(|arena| arena.ready())
-        .map(|arena| arena.sees(scene.drifted.0, feet + Vec3::Y * checks.sight_height_m));
-    LobbyFigureStats {
-        character: character.to_owned(),
-        position: feet.to_array(),
-        facing_degrees: yaw.to_degrees(),
-        clip: Some(clip),
-        seconds: joints.map_or(0.0, |joints| joints.base_seconds),
-        pick_seconds: pick.as_ref().and(joints).map(|joints| joints.upper_seconds),
-        pick_weight: pick.as_ref().map_or(0.0, |(_, weight)| *weight),
-        pick: pick.map(|(clip, _)| clip),
-        shown,
-        in_sight,
-        feet_frame: framed(scene.drifted, checks.frame_aspect, feet),
-        head_frame_y: joints
-            .and_then(|joints| joints.head_top)
-            .and_then(|top| framed(scene.drifted, checks.frame_aspect, top))
-            .map(|[_, y]| y),
+    Shown {
+        feet,
+        yaw,
+        clips,
+        weight,
+        visible: shown,
+        joints,
     }
 }
 
 fn report(
-    stats: &mut ResMut<LobbyStats>,
+    stats: &mut Stats<LobbyStats>,
     (stage, shot, place): (Stage, Option<Shot>, Option<(&str, Vec3)>),
-    figures: Vec<LobbyFigureStats>,
+    figures: impl FnOnce() -> Vec<LobbyFigureStats>,
     mut problems: Vec<String>,
 ) {
     problems.dedup();
-    let next = LobbyStats {
+    stats.show(|| LobbyStats {
         stage: stage.key().to_owned(),
         camera: shot.map_or("player", Shot::key).to_owned(),
         place: place.map_or_else(String::new, |(name, _)| name.to_owned()),
         camera_position: place.map(|(_, at)| at.to_array()),
-        figures,
+        figures: figures(),
         refusal: (!problems.is_empty()).then(|| problems.join("; ")),
-    };
-    stats.set_if_neq(next);
+    });
 }

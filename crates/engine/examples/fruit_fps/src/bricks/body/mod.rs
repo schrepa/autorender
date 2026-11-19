@@ -8,12 +8,14 @@ mod watch;
 
 use engine::math;
 use engine::prelude::*;
-use engine_core::Asked;
+use engine_core::{Asked, Stats};
 use glam::{Quat, Vec3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::play::actors::{Actor, Alive, Body, Gait, Health, Human, Motion, SpeedFactor, Wish};
+use crate::play::actors::{
+    Actor, Alive, Body, Eye, Gait, Health, Human, Motion, SpeedFactor, Wish,
+};
 use crate::play::events::body::BodyEvents;
 use crate::play::numbers::{Numbers, PlayerNumbers};
 use crate::play::powers::{Powers, Push};
@@ -24,7 +26,10 @@ use crate::rules::Side;
 use crate::solids::{self, Moved};
 
 use arena::ArenaFile;
-use input::{Latched, NumbersFile, Swallow};
+use input::{NumbersFile, Spun, Swallow};
+
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+struct Sight;
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 struct Tally {
@@ -127,8 +132,9 @@ impl Brick for BodyBrick {
                     .prepare(ArenaFile::prepared),
             )
             .moves::<Actor>(Pace::Tick)
+            .moves::<Sight>(Pace::Tick)
             .resource::<Numbers>()
-            .resource::<Latched>()
+            .resource::<Spun>()
             .resource::<Arena>()
             .resource::<Swallow>()
             .resource::<BodyEvents>()
@@ -136,18 +142,19 @@ impl Brick for BodyBrick {
             .resource::<Watched>()
             .resource::<Barrier>()
             .settings::<Controls>()
-            .stats::<BodyStats>()
-            .systems(Schedule::FrameStart, input::adopt_numbers)
-            .systems(Schedule::FrameStart, adopt)
-            .systems(Schedule::FrameStart, input::capture)
-            .systems(Schedule::FrameStart, input::aim)
-            .systems(Schedule::FrameStart, input::latch)
-            .systems(Schedule::FrameStart, embody)
+            .systems(Schedule::BeforeTicks, input::adopt_numbers)
+            .systems(Schedule::BeforeTicks, adopt)
+            .systems(Schedule::BeforeTicks, input::capture)
+            .systems(Schedule::BeforeTicks, input::aim)
+            .systems(Schedule::BeforeTicks, embody)
             .systems(Schedule::FixedSimulation, input::wish)
             .systems(Schedule::FixedSimulation, advance)
             .systems(Schedule::FixedSimulation, barrier::publish)
             .systems(Schedule::FixedSimulation, watch::watch)
-            .systems(Schedule::Presentation, report);
+            .dev(|dev| {
+                dev.stats::<BodyStats>()
+                    .systems(Schedule::Presentation, report);
+            });
     }
 }
 
@@ -179,7 +186,7 @@ fn eye_height(player: &PlayerNumbers, crouch: f32) -> f32 {
 }
 
 fn embody(
-    actors: Query<(Entity, &Actor), Without<Body>>,
+    actors: Query<(Entity, &Actor), Without<Eye>>,
     numbers: Res<Numbers>,
     moves: Moves<BodyBrick>,
     mut spawner: Spawner<BodyBrick>,
@@ -193,7 +200,17 @@ fn embody(
             continue;
         };
         let feet = placed.translation;
-        let eye = feet + Vec3::Y * player.eye_height_m;
+        let lifted = Vec3::Y * player.eye_height_m;
+        let sight = spawner.spawn((
+            Transform::from_translation(lifted),
+            Node {
+                mobility: Some(Mobility::Moving),
+                ..Node::default()
+            },
+            Sight,
+        ));
+        spawner.set_parent(sight, Some(entity));
+        spawner.insert(entity, Eye { node: sight });
         spawner.insert(
             entity,
             (
@@ -203,8 +220,7 @@ fn embody(
                     grounded: false,
                     crouched: false,
                     crouch: 0.0,
-                    eye,
-                    eye_before: eye,
+                    eye: feet + lifted,
                     motion: Motion::Air,
                     ground: None,
                     landed: None,
@@ -276,7 +292,6 @@ fn moved_body(player: &PlayerNumbers, body: &Body, wish: &Wish, moved: &Moved, d
         crouched: moved.body.crouched,
         crouch,
         eye: feet + Vec3::Y * eye_height(player, crouch),
-        eye_before: body.eye,
         motion: motion_of(moved, wish),
         ground: moved.ground,
         landed: moved.landed,
@@ -287,6 +302,7 @@ type Moving<'a> = (
     Entity,
     &'a Actor,
     &'a Wish,
+    &'a Eye,
     &'a mut Body,
     &'a mut Tally,
     Option<&'a SpeedFactor>,
@@ -390,14 +406,14 @@ fn advance(
     let player = &numbers.player;
     let dt = world.time.delta_seconds;
     let mut peers: Vec<Peer> = (actors.iter())
-        .map(|(entity, actor, _, body, ..)| {
+        .map(|(entity, actor, _, _, body, ..)| {
             let capsule = solids::capsule_of(&solid(body), &player.moving);
             (actor.slot, capsule, entity)
         })
         .collect();
     peers.sort_unstable_by_key(|&(slot, _, entity)| (slot, entity));
     for own in 0..peers.len() {
-        let Ok((entity, actor, wish, mut body, mut tally, factor, push)) =
+        let Ok((entity, actor, wish, eye, mut body, mut tally, factor, push)) =
             actors.get_mut(peers[own].2)
         else {
             continue;
@@ -470,6 +486,12 @@ fn advance(
             transform.translation = next.feet;
             transform.rotation = rotation;
         }
+        let lifted = Vec3::Y * eye_height(player, next.crouch);
+        if let Some(mut sight) = moves.get_mut(eye.node)
+            && sight.translation != lifted
+        {
+            sight.translation = lifted;
+        }
     }
     count(&events, &mut counted);
 }
@@ -515,7 +537,7 @@ fn report(
     arena: Res<Arena>,
     (counted, watched): (Res<EventStats>, Res<Watched>),
     actors: Query<Shown<'_>>,
-    mut stats: ResMut<BodyStats>,
+    mut stats: Stats<BodyStats>,
 ) {
     let mut listed: Vec<_> = actors.iter().collect();
     listed.sort_by_key(|(actor, ..)| actor.slot);
@@ -574,5 +596,5 @@ fn report(
                 .collect(),
         },
     };
-    stats.set_if_neq(next);
+    stats.show(|| next);
 }

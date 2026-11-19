@@ -31,6 +31,7 @@ pub enum LevelChoice {
 }
 
 settings! {
+    #[dev]
     #[section("bots_test")]
     #[serde(deny_unknown_fields)]
     pub struct BotsTest {
@@ -185,19 +186,17 @@ impl Brick for BotsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<BotsTest>()
-            .stats::<BotsStats>()
             .resource::<BotMinds>()
             .resource::<Book>()
             .resource::<think::Minds>()
             .systems(Schedule::FixedSimulation, adopt)
             .systems(Schedule::FixedSimulation, think::think)
-            .systems(Schedule::Presentation, report::report);
+            .dev(|dev| {
+                dev.settings::<BotsTest>()
+                    .stats::<BotsStats>()
+                    .systems(Schedule::Presentation, report::report);
+            });
     }
-}
-
-fn ticks_per_second(time: &FixedTime) -> Option<u32> {
-    (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
 }
 
 fn thrown_range(speed: f32, gravity: f32) -> f32 {
@@ -312,10 +311,10 @@ fn places_of(paths: &Paths) -> Result<Option<Places>, String> {
 
 fn adopt(time: Res<FixedTime>, numbers: Res<Numbers>, paths: Res<Paths>, mut book: ResMut<Book>) {
     if book.numbers_revision != Some(numbers.revision())
-        && let (Some(game), Some(tps)) = (numbers.get(), ticks_per_second(&time))
+        && let Some(game) = numbers.get()
     {
         book.numbers_revision = Some(numbers.revision());
-        match load(&game.text, tps, game) {
+        match load(&game.text, time.rate, game) {
             Ok(loaded) => {
                 book.loaded = Some(Arc::new(loaded));
                 book.numbers_problem = None;

@@ -6,8 +6,7 @@ mod roster;
 use std::sync::Arc;
 
 use engine::prelude::*;
-use engine::{Pause, PauseReason};
-use engine_core::Readiness;
+use engine_core::{DevSetting, Host, Pause, Readiness, Stats};
 
 use crate::bricks::screen::ScreenSource;
 use crate::play::flow::{Flow, SeatChoice, Stage};
@@ -18,10 +17,10 @@ use crate::rules::{Control, Phase};
 
 use roster::Seated;
 
-const PAUSED_BY: PauseReason = PauseReason::Brick("fruit_fps_flow");
-const HOST_AWAY: [PauseReason; 2] = [PauseReason::Focus, PauseReason::Hidden];
+const PAUSED_BY: &str = "fruit_fps_flow";
 
 settings! {
+    #[dev]
     #[section("flow")]
     #[serde(deny_unknown_fields)]
     pub struct FlowSetup {
@@ -72,14 +71,16 @@ impl Brick for FlowBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<FlowSetup>()
-            .stats::<FlowStats>()
             .resource::<Flow>()
             .resource::<FlowBook>()
             .resource::<keep::KeepBook>()
             .systems(Schedule::Presentation, keep::keep_settings)
             .systems(Schedule::Presentation, steer)
-            .systems(Schedule::Presentation, report);
+            .dev(|dev| {
+                dev.settings::<FlowSetup>()
+                    .stats::<FlowStats>()
+                    .systems(Schedule::Presentation, report);
+            });
     }
 }
 
@@ -139,7 +140,7 @@ fn loaded_share(readiness: Option<&Readiness>) -> f32 {
 fn loading(
     flow: &mut Flow,
     book: &mut FlowBook,
-    (pause, sound, readiness): (&Pause, Option<&SoundLoad>, Option<&Readiness>),
+    (host, sound, readiness): (&Host, Option<&SoundLoad>, Option<&Readiness>),
     (now, least): (f64, f64),
 ) {
     let waited = now - book.loading_since;
@@ -149,7 +150,7 @@ fn loading(
     } else {
         1.0
     };
-    let host_ready = !pause.holds(PauseReason::Preparing);
+    let host_ready = host.showing;
     let sound_ready = sound.is_none_or(|sound| sound.ready);
     let seated = book.seated_game == Some(flow.game);
     let share = if host_ready {
@@ -185,14 +186,14 @@ type Reads<'w, 's> = (
     Option<Res<'w, Numbers>>,
     Option<Res<'w, Round>>,
     Option<Res<'w, Readiness>>,
-    Res<'w, FrameTime>,
-    Res<'w, FlowSetup>,
+    (Res<'w, FrameTime>, Res<'w, Host>),
+    DevSetting<'w, FlowSetup>,
     Query<'w, 's, &'static ScreenSource>,
     Option<Res<'w, SoundLoad>>,
 );
 
 fn steer(
-    (numbers, round, readiness, time, setup, sources, sound): Reads,
+    (numbers, round, readiness, (time, host), setup, sources, sound): Reads,
     actors: Query<Seated<'_>>,
     mut commands: Commands,
     mut flow: ResMut<Flow>,
@@ -205,9 +206,10 @@ fn steer(
     let seats = numbers
         .as_deref()
         .and_then(|numbers| defaults(book, numbers));
+    let play_now = setup.get().is_some_and(|setup| setup.play_now);
     if let Some(seats) = seats.as_deref().filter(|_| flow.restored) {
         choose_defaults(flow, seats);
-        if setup.play_now && !book.jumped {
+        if play_now && !book.jumped {
             flow.roster.clear();
             roster::seat_human(&mut commands, seats, &actors);
             flow.settings_open = false;
@@ -216,7 +218,7 @@ fn steer(
             book.seated_game = Some(flow.game);
             book.saw_live = false;
         }
-        book.jumped = setup.play_now;
+        book.jumped = play_now;
         if flow.stage == Stage::Loading && book.seated_game != Some(flow.game) {
             flow.roster = roster::chosen(seats, &flow.character, &flow.level);
             roster::seat_human(&mut commands, &flow.roster, &actors);
@@ -233,13 +235,13 @@ fn steer(
         loading(
             flow,
             book,
-            (&pause, sound.as_deref(), readiness.as_deref()),
+            (&host, sound.as_deref(), readiness.as_deref()),
             (now, least),
         );
     } else {
         book.waiting.clear();
     }
-    let away = HOST_AWAY.iter().any(|reason| pause.holds(*reason));
+    let away = !host.focused || host.hidden;
     if away && flow.stage == Stage::Playing {
         flow.stage = Stage::Paused;
     }
@@ -289,7 +291,7 @@ fn report(
     pause: Res<Pause>,
     (book, kept): (Res<FlowBook>, Res<keep::KeepBook>),
     humans: Query<&crate::play::actors::Actor, With<crate::play::actors::Human>>,
-    mut stats: ResMut<FlowStats>,
+    mut stats: Stats<FlowStats>,
 ) {
     let next = FlowStats {
         stage: flow.stage.key().to_owned(),
@@ -307,5 +309,5 @@ fn report(
         settings_problem: kept.problem.clone(),
         problem: book.problem.clone(),
     };
-    stats.set_if_neq(next);
+    stats.show(|| next);
 }

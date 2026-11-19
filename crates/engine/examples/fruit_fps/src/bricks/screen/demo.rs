@@ -544,7 +544,11 @@ pub(super) fn demo(words: &Words) -> HudFacts {
         },
         minimap: minimap(),
         armor_break: None,
-        kill: KillFacts::default(),
+        kill: KillFacts {
+            label: words.kills.first().cloned().unwrap_or_default(),
+            victim_icon: "char_banana_defend".to_owned(),
+            ..KillFacts::default()
+        },
         scope_ease: 0.0,
         damage: damage(),
         phase: Some(Phase::Buy),

@@ -72,7 +72,7 @@ pub(super) struct Minds {
 #[derive(SystemParam)]
 pub(super) struct Facts<'w> {
     time: Res<'w, FixedTime>,
-    test: Res<'w, BotsTest>,
+    test: DevSetting<'w, BotsTest>,
     book: Res<'w, Book>,
     round: Option<Res<'w, Round>>,
     paths: Res<'w, Paths>,
@@ -741,10 +741,8 @@ fn gate(facts: &Facts<'_>, has_match: bool) -> Option<String> {
     if let Some(flow) = facts.flow.as_deref().filter(|flow| !flow.stage.moving()) {
         return Some(format!("flow stage {}: bots rest", flow.stage.key()));
     }
-    facts
-        .test
-        .frozen
-        .then(|| "frozen by settings.bots_test".to_owned())
+    let frozen = facts.test.get().is_some_and(|test| test.frozen);
+    frozen.then(|| "frozen by settings.bots_test".to_owned())
 }
 
 fn unthought(seats: &Query<Seat<'_>>, state: &Minds) -> Option<String> {
@@ -786,10 +784,11 @@ pub(super) fn think(
     mut minds: ResMut<BotMinds>,
 ) {
     let tick = facts.time.tick;
+    let level = facts
+        .test
+        .get()
+        .map_or(LevelChoice::Seat, |test| test.level);
     minds.tick = tick;
-    minds.frozen = facts.test.frozen;
-    minds.queries = 0;
-    minds.expanded = 0;
     minds.bots.clear();
     let round = facts.round.as_deref();
     let view = round.and_then(Round::view);
@@ -823,13 +822,13 @@ pub(super) fn think(
         seed: round.seed,
         numbers: facts.book.numbers_revision,
         paths: facts.book.paths_revision,
-        level: facts.test.level,
+        level,
     };
     if state.key != Some(key) {
         state.key = Some(key);
         reset(state, &ctx);
     }
-    ensure_brains(state, round, facts.test.level);
+    ensure_brains(state, round, level);
     let events = Events {
         body: said.body.as_deref(),
         arms: said.arms.as_deref(),
@@ -846,7 +845,6 @@ pub(super) fn think(
     read_powers(state, &ctx);
     read_hazards(state, facts.hazards.as_deref());
     let games = [0, 1].map(|team| senses::match_sense(round, view, places, view.sides[team]));
-    let before = facts.paths.counts();
     team_sight(state, &ctx, &mut minds.sight);
     reserve_gifts(state, &ctx);
     plan(state, &ctx, &games);
@@ -879,9 +877,6 @@ pub(super) fn think(
             state.intents.push((state.whos[at].slot, intent));
         }
     }
-    let after = facts.paths.counts();
-    minds.queries = after.0.saturating_sub(before.0);
-    minds.expanded = after.1.saturating_sub(before.1);
     for team in 0..2 {
         state.calls[team] = std::mem::take(&mut state.next_calls[team]);
     }

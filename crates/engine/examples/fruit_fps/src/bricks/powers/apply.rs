@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use engine::prelude::*;
+use engine_core::{DevSetting, Stats};
 use glam::{Mat3, Vec3};
 
 use super::cast::{Asked, rules_slot, slot_key};
@@ -74,7 +75,7 @@ impl World for ArenaWorld<'_> {
 #[derive(SystemParam)]
 pub(super) struct Facts<'w> {
     time: Res<'w, FixedTime>,
-    setup: Res<'w, PowerSetup>,
+    setup: DevSetting<'w, PowerSetup>,
     round: Option<ResMut<'w, Round>>,
     round_events: Option<Res<'w, RoundEvents>>,
     paths: Option<Res<'w, Paths>>,
@@ -88,7 +89,7 @@ pub(super) struct Out<'w> {
     events: ResMut<'w, PowerEvents>,
     feed: Option<ResMut<'w, EffectsFeed>>,
     hazards: Option<ResMut<'w, Hazards>>,
-    stats: ResMut<'w, PowerStats>,
+    stats: Stats<'w, PowerStats>,
     book: ResMut<'w, Book>,
     arms: Option<ResMut<'w, ArmsEvents>>,
 }
@@ -363,10 +364,10 @@ fn ordered(rows: &Query<Row<'_>>, spawner: &mut Spawner<PowersBrick>) -> Vec<(u3
     order
 }
 
-fn tally(book: &mut Book, events: &PowerEvents, tick: u64) {
+fn tally(stats: &mut PowerStats, events: &PowerEvents, tick: u64) {
     for cast in &events.casts {
-        book.casts_total += 1;
-        book.last_cast = Some(CastStat {
+        stats.casts_total += 1;
+        stats.last_cast = Some(CastStat {
             tick,
             slot: cast.slot,
             ability: slot_key(cast.ability).to_owned(),
@@ -374,8 +375,8 @@ fn tally(book: &mut Book, events: &PowerEvents, tick: u64) {
         });
     }
     for refused in &events.refused {
-        book.refused_total += 1;
-        book.last_refusal = Some(CastStat {
+        stats.refused_total += 1;
+        stats.last_refusal = Some(CastStat {
             tick,
             slot: refused.slot,
             ability: slot_key(refused.ability).to_owned(),
@@ -516,11 +517,15 @@ fn living(rows: &Query<Row<'_>>, order: &[(u32, Entity)], parts: &Parts) -> Vec<
         .collect()
 }
 
-fn asked<'a>(abilities: Option<&'a abilities::AbilityBook>, facts: &'a Facts<'_>) -> Asked<'a> {
+fn asked<'a>(
+    abilities: Option<&'a abilities::AbilityBook>,
+    facts: &'a Facts<'_>,
+    free: bool,
+) -> Asked<'a> {
     Asked {
         book: abilities,
         view: facts.round.as_deref().and_then(Round::view),
-        free: facts.setup.free,
+        free,
     }
 }
 
@@ -581,6 +586,7 @@ pub(super) fn act(
     mut spawner: Spawner<PowersBrick>,
 ) {
     let tick = facts.time.tick;
+    let setup = facts.setup.get().cloned().unwrap_or_default();
     let Out {
         arena,
         powers,
@@ -595,7 +601,6 @@ pub(super) fn act(
     let powers: &mut Powers = powers;
     let events: &mut PowerEvents = events;
     let book: &mut Book = book;
-    let stats: &mut PowerStats = stats;
     *events = PowerEvents::default();
     events.tick = tick;
     let order = ordered(&rows, &mut spawner);
@@ -615,7 +620,10 @@ pub(super) fn act(
         (&rows, &order),
     ));
     let Some(parts) = book.parts else {
-        publish::write_stats(stats, book, &facts.setup, &[], tick);
+        stats.edit(|stats| {
+            stats.live.clear();
+            publish::write_stats(stats, book, &setup, tick);
+        });
         return;
     };
     let living = living(&rows, &order, &parts);
@@ -637,16 +645,16 @@ pub(super) fn act(
         (&rows, &order),
         (restarted, tick),
     );
-    let asked = asked(book.abilities.as_ref(), &facts);
+    let asked = asked(book.abilities.as_ref(), &facts, setup.free);
     let fallen = fallen(&applied);
     let casting = Casting {
-        relay: facts.setup.cast_as,
+        relay: setup.cast_as,
         asked: &asked,
         parts: &parts,
         fallen: &fallen,
-        free: facts.setup.free,
+        free: setup.free,
         tick,
-        cast_at: fresh_cast_at(&mut book.cast_at_done, &facts.setup),
+        cast_at: fresh_cast_at(&mut book.cast_at_done, &setup),
     };
     casting.run(
         world.arena,
@@ -657,7 +665,7 @@ pub(super) fn act(
     powers.recovering.retain(|(_, until)| *until > tick);
     let watched = facts.watched.as_deref().and_then(|watched| watched.slot);
     casting.previews(world.arena, &rows, (&order, watched), powers);
-    publish::remember_cues(&mut book.recent_cues, &ticked, tick);
+    stats.edit(|stats| publish::remember_cues(&mut stats.recent_cues, &ticked, tick));
     let faces = faces(&rows, &order);
     let sheet = Sheet {
         book: &*book,
@@ -678,18 +686,21 @@ pub(super) fn act(
     if let Some(hazards) = hazards.as_deref_mut() {
         *hazards = sheet.hazards();
     }
-    let human_slots = sheet.human_slots();
-    let live = sheet.live();
-    let props = publish::prop_stats(&sheet.props());
-    tally(book, events, tick);
+    stats.edit(|stats| {
+        stats.live = sheet.live();
+        stats.human_slots = sheet.human_slots();
+        stats.props = publish::prop_stats(&sheet.props());
+    });
     if let Some(arms) = arms.as_deref_mut() {
         arms.deaths.extend(applied.deaths);
     }
     events.events = ticked;
     powers.actors = actors;
-    publish::write_stats(stats, book, &facts.setup, &live, tick);
-    publish::write_tick_stats(stats, events, powers, human_slots);
-    stats.hidden_from_human = hidden_from_human(&rows, &order, powers);
-    stats.props = props;
-    orbs::write_stats(stats, powers, book, tick);
+    stats.edit(|stats| {
+        tally(stats, events, tick);
+        publish::write_stats(stats, book, &setup, tick);
+        publish::write_tick_stats(stats, events, powers);
+        stats.hidden_from_human = hidden_from_human(&rows, &order, powers);
+        orbs::write_stats(stats, powers, book, tick);
+    });
 }

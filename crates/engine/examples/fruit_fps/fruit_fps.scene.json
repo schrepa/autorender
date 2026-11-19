@@ -1,11 +1,6 @@
 {
   "id": "fruit_fps",
   "revision": 1,
-  "environment": {
-    "flow": {
-      "play_now": false
-    }
-  },
   "textures": [
     {
       "id": "banana_base_color",

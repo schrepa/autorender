@@ -25,12 +25,9 @@ pub struct BotMind {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct BotMinds {
     pub tick: u64,
-    pub frozen: bool,
     pub problem: Option<String>,
     pub bots: Vec<BotMind>,
     pub squads: [Option<SquadDebug>; 2],
-    pub queries: u32,
-    pub expanded: u32,
     pub drops: u32,
     pub gifts: u32,
     pub buy_calls: [Option<&'static str>; 2],

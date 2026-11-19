@@ -1,4 +1,5 @@
 use engine::prelude::*;
+use engine_core::DevSetting;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -35,9 +36,11 @@ pub struct EndRound {
 }
 
 settings! {
+    #[dev]
     #[section("match_test")]
     #[serde(deny_unknown_fields)]
     pub struct MatchTest {
+        pub skip_buy: bool = false => any,
         pub credits: Option<Credits> = None => any,
         pub end_round: Option<EndRound> = None => any,
         pub ready: Option<u32> = None => any,
@@ -45,10 +48,10 @@ settings! {
     }
 }
 
-pub(super) fn door(test: Res<MatchTest>, mut round: ResMut<Round>) {
-    if !test.is_changed() {
+pub(super) fn door(test: DevSetting<MatchTest>, mut round: ResMut<Round>) {
+    let Some(test) = test.changed() else {
         return;
-    }
+    };
     let Some(game) = round.game.as_mut() else {
         return;
     };

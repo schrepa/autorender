@@ -138,7 +138,6 @@ struct Mark {
 struct Heat {
     marks: Vec<Mark>,
     read_tick: Option<u64>,
-    hazards: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -183,10 +182,12 @@ impl Brick for PathsBrick {
             .resource::<Hazards>()
             .resource::<State>()
             .resource::<Heat>()
-            .stats::<PathsStats>()
-            .systems(Schedule::FrameStart, adopt)
+            .systems(Schedule::BeforeDraw, adopt)
             .systems(Schedule::FixedSimulation, overlay)
-            .systems(Schedule::Presentation, report);
+            .dev(|dev| {
+                dev.stats::<PathsStats>()
+                    .systems(Schedule::Presentation, report);
+            });
     }
 }
 
@@ -340,8 +341,6 @@ fn overlay(
     remember_deaths(&mut heat, events.as_deref(), &actors, tick);
     let span = numbers.heat_seconds / time.delta_seconds;
     heat.marks.retain(|mark| ((tick - mark.tick) as f32) < span);
-    heat.hazards =
-        (hazards.teams.iter().map(Vec::len).sum::<usize>() + hazards.smokes.len()) as u32;
     let overlay = Overlay {
         built,
         hazards: &hazards,
@@ -360,8 +359,9 @@ fn report(
     paths: Res<Paths>,
     state: Res<State>,
     heat: Res<Heat>,
+    hazards: Res<Hazards>,
     human: Query<&Body, With<Human>>,
-    mut stats: ResMut<PathsStats>,
+    mut stats: Stats<PathsStats>,
 ) {
     let built = paths.built();
     let (queries, expanded) = paths.counts();
@@ -370,7 +370,7 @@ fn report(
         Some(MeshSource::Cooked) => "cooked",
         None => "none",
     };
-    let next = PathsStats {
+    stats.show(|| PathsStats {
         ready: paths.ready(),
         source: source.to_owned(),
         polygons: built.map_or(0, |b| b.mesh.polygon_count() as u32),
@@ -379,7 +379,7 @@ fn report(
         empty_triangles: built.map_or(0, |b| b.mesh.report().empty_triangles as u32),
         queries,
         expanded,
-        hazards: heat.hazards,
+        hazards: (hazards.teams.iter().map(Vec::len).sum::<usize>() + hazards.smokes.len()) as u32,
         heat: heat.marks.len() as u32,
         human_place: human.iter().next().and_then(|body| {
             paths.place_at(body.feet).map(|place| PlaceStats {
@@ -388,6 +388,5 @@ fn report(
             })
         }),
         problem: state.problem.clone(),
-    };
-    stats.set_if_neq(next);
+    });
 }

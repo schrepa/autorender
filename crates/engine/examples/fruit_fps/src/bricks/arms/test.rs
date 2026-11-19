@@ -1,8 +1,9 @@
 use engine::prelude::*;
+use engine_core::DevSetting;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{ArmsBrick, Book, Setup, drop_weapon, ticks_per_second};
+use super::{ArmsBrick, Book, Setup, drop_weapon};
 use crate::play::actors::{Actor, Alive, Body, Health};
 use crate::play::arms::{Arms, Drops};
 use crate::play::events::arms::{ArmsEvents, DeathEvent};
@@ -32,6 +33,7 @@ pub struct Give {
 }
 
 settings! {
+    #[dev]
     #[section("arms_test")]
     #[serde(deny_unknown_fields)]
     pub struct ArmsTest {
@@ -66,22 +68,20 @@ type Tested<'a> = (
 );
 
 pub(super) fn door(
-    test: Res<ArmsTest>,
+    test: DevSetting<ArmsTest>,
     time: Res<FixedTime>,
     setup: Res<Setup>,
     mut actors: Query<Tested<'_>>,
     mut out: Outputs,
     mut spawner: Spawner<ArmsBrick>,
 ) {
-    if !test.is_changed() {
+    let Some(test) = test.changed() else {
         return;
-    }
+    };
     let Some(numbers) = setup.numbers.as_ref() else {
         return;
     };
-    let Some(tps) = ticks_per_second(&time) else {
-        return;
-    };
+    let tps = time.rate;
     for (_, actor, _, mut arms, _, alive) in &mut actors {
         if let Some(give) = test.give
             && give.slot == actor.slot

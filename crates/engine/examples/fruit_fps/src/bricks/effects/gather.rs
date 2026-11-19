@@ -1,5 +1,6 @@
 use engine::math;
 use engine::prelude::*;
+use engine_core::DevSetting;
 
 use super::numbers::{self, EffectsNumbers, Parsed};
 use super::{Device, EffectsBrick, EffectsShow, Show};
@@ -588,7 +589,7 @@ fn showcase(
 pub(super) fn gather(
     time: Res<FixedTime>,
     setup: Res<Setup>,
-    show: Res<EffectsShow>,
+    show: DevSetting<EffectsShow>,
     arms: Option<Res<ArmsEvents>>,
     round: Option<Res<Round>>,
     (feed, powers): (Option<Res<EffectsFeed>>, Option<Res<PowerEvents>>),
@@ -645,7 +646,7 @@ pub(super) fn gather(
         }
         spawns.device_was = round.device;
     }
-    if show.show != Show::Off {
+    if let Some(show) = show.get().filter(|show| show.show != Show::Off) {
         showcase(look, show.show, &cast, arena.as_deref(), &mut spawns, now);
     }
 }
@@ -675,7 +676,7 @@ pub(super) fn device_spot(
 
 pub(super) fn place_device(
     setup: Res<Setup>,
-    show: Res<EffectsShow>,
+    show: DevSetting<EffectsShow>,
     round: Option<Res<Round>>,
     humans: Query<(&Body, &Wish), With<Human>>,
     devices: Query<(Entity, &Node), With<Device>>,
@@ -687,7 +688,7 @@ pub(super) fn place_device(
     };
     let spot = device_spot(
         round.as_deref(),
-        show.show,
+        show.get().map_or(Show::Off, |show| show.show),
         humans.iter().next(),
         &parsed.look,
     );

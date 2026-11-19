@@ -59,13 +59,15 @@ impl Brick for ViewModelBrick {
             .resource::<Holding>()
             .resource::<place::Held>()
             .resource::<hands::Hands>()
-            .stats::<ViewModelStats>()
             .moves::<FirstPersonWeapon>(Pace::Tick)
             .moves::<FirstPersonHands>(Pace::Tick)
             .systems(
                 Schedule::FixedSimulation,
                 (hands::decide, place::place, hands::draw),
             )
-            .systems(Schedule::Presentation, place::veil);
+            .systems(Schedule::Presentation, place::veil)
+            .dev(|dev| {
+                dev.stats::<ViewModelStats>();
+            });
     }
 }

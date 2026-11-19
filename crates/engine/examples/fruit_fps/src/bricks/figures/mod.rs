@@ -135,7 +135,6 @@ impl Brick for FiguresBrick {
                     .schema(engine_core::schema_of::<Light>)
                     .check(Light::checked),
             )
-            .stats::<FiguresStats>()
             .resource::<FigureFiles>()
             .resource::<FigureClocks>()
             .resource::<FigureDrawing>()
@@ -166,6 +165,9 @@ impl Brick for FiguresBrick {
             .systems(Schedule::FixedSimulation, figure_tick)
             .systems(Schedule::Presentation, play::figure_draw)
             .systems(Schedule::Presentation, reveal::outline)
-            .systems(Schedule::Presentation, play::count);
+            .dev(|dev| {
+                dev.stats::<FiguresStats>()
+                    .systems(Schedule::Presentation, play::count);
+            });
     }
 }

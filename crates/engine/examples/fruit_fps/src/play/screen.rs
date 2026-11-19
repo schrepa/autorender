@@ -456,9 +456,6 @@ pub struct DamageMark {
     pub age: f32,
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Covered(pub bool);
-
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct HudFacts {
     pub keys: Vec<(String, String)>,

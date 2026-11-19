@@ -6,6 +6,7 @@ mod start;
 mod test;
 
 use engine::prelude::*;
+use engine_core::Stats;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -20,8 +21,13 @@ settings! {
     #[serde(deny_unknown_fields)]
     pub struct MatchSetup {
         pub seed: u64 = 1 => any,
-        pub skip_buy: bool = false => any,
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Chosen {
+    seed: u64,
+    skip_buy: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -74,7 +80,7 @@ stats! {
 
 #[derive(Resource, Default)]
 struct RoundBook {
-    applied: Option<MatchSetup>,
+    applied: Option<Chosen>,
     numbers_revision: u64,
     start: Option<(u64, Result<start::StartNumbers, String>)>,
     recent: Vec<&'static str>,
@@ -112,14 +118,18 @@ impl Brick for RoundBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<MatchSetup>()
-            .settings::<test::MatchTest>()
-            .stats::<RoundStats>()
             .resource::<Round>()
             .resource::<RoundEvents>()
             .resource::<RoundBook>()
-            .systems(Schedule::FixedSimulation, test::door)
+            .dev(|dev| {
+                dev.settings::<test::MatchTest>()
+                    .systems(Schedule::FixedSimulation, test::door);
+            })
             .systems(Schedule::FixedSimulation, (facts::advance, apply::apply))
-            .systems(Schedule::Presentation, report);
+            .dev(|dev| {
+                dev.stats::<RoundStats>()
+                    .systems(Schedule::Presentation, report);
+            });
     }
 }
 
@@ -184,7 +194,7 @@ fn device_name(device: &DeviceSpot) -> &'static str {
     }
 }
 
-fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>) {
+fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: Stats<RoundStats>) {
     let mut next = RoundStats {
         matches: round.matches,
         seed: round.seed,
@@ -253,5 +263,5 @@ fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>
             next.alive[team.index()] = alive as u32;
         }
     }
-    stats.set_if_neq(next);
+    stats.show(|| next);
 }

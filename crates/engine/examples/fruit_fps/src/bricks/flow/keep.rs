@@ -8,12 +8,10 @@ use crate::play::sound::Volume;
 use crate::play::view::Controls;
 
 const NAME: &str = "fruit_fps_settings";
-const FORMAT: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Blob {
-    format: u32,
     controls: Controls,
     volume: Volume,
     options: Options,
@@ -34,7 +32,6 @@ pub(super) struct KeepBook {
 fn current(world: &World) -> Blob {
     let flow = world.resource::<Flow>();
     Blob {
-        format: FORMAT,
         controls: world.resource::<Controls>().clone(),
         volume: world.resource::<Volume>().clone(),
         options: world.resource::<Options>().clone(),
@@ -67,9 +64,9 @@ fn read_kept(book: &mut KeepBook, kept: &Kept) -> Option<Result<Option<Blob>, St
     let read = match reading.poll(kept) {
         Landed::Waiting => return None,
         Landed::Ready(None) => Ok(None),
-        Landed::Ready(Some(bytes)) => Ok(serde_json::from_slice::<Blob>(bytes)
-            .ok()
-            .filter(|blob| blob.format == FORMAT)),
+        Landed::Ready(Some(bytes)) => serde_json::from_slice::<Blob>(bytes)
+            .map(Some)
+            .map_err(|error| format!("saved settings {NAME}: {error}")),
         Landed::Failed(error) => Err(error.to_string()),
     };
     book.reading = None;

@@ -28,7 +28,6 @@ pub(super) struct NumbersFile {
 fn part<T: serde::de::DeserializeOwned>(whole: &Value, key: &str) -> Result<T, Error> {
     let value = whole
         .get(key)
-        .cloned()
         .ok_or_else(|| Error::new(ErrorCode::MissingField, format!("$.{key}")))?;
     engine::bricks::parse_value_at(value, &format!("$.{key}"))
 }
@@ -41,7 +40,7 @@ fn parsed(text: &str) -> Result<GameNumbers, Error> {
         spectate: part(&whole, "spectate")?,
         weapons: part(&whole, "weapons")?,
         hit_shapes: part(&whole, "hit_shapes")?,
-        rules: engine::bricks::parse_value_at(whole, "$")?,
+        rules: engine::bricks::parse_value_at(&whole, "$")?,
         text: Arc::from(text),
     })
 }
@@ -65,35 +64,19 @@ impl NumbersFile {
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct Latched {
-    fire: bool,
-    jump: bool,
-    reload: bool,
-    inspect: bool,
-    drop: bool,
-    scope: bool,
-    equip: Option<Equip>,
-    cast: Option<AbilitySlot>,
-    buy_menu: bool,
-    ready: bool,
-    cycle: i32,
-    spun: f32,
-}
+pub(super) struct Spun(f32);
 
-fn cycled(latched: &Latched, turned: f32) -> (i32, f32) {
-    let mut spun = if turned * latched.spun < 0.0 {
+fn cycled(spun: f32, turned: f32) -> (i32, f32) {
+    let spun = if turned * spun < 0.0 {
         turned
     } else {
-        latched.spun + turned
+        spun + turned
     };
-    let mut cycle = latched.cycle;
-    if cycle == 0 && spun.abs() >= 1.0 {
-        cycle = if spun > 0.0 { 1 } else { -1 };
+    if spun.abs() >= 1.0 {
+        (if spun > 0.0 { 1 } else { -1 }, spun.fract())
+    } else {
+        (0, spun)
     }
-    if cycle != 0 {
-        spun = spun.fract();
-    }
-    (cycle, spun)
 }
 
 pub(super) fn adopt_numbers(files: Query<Ref<NumbersFile>>, mut numbers: ResMut<Numbers>) {
@@ -126,8 +109,6 @@ pub(super) fn capture(
     } else if *cursor != CursorMode::Captured && KeyMap::pressed(&devices, &numbers.keys.capture) {
         *cursor = CursorMode::Captured;
         swallow.set_if_neq(Swallow(true));
-    } else if swallow.0 && !KeyMap::held(&devices, &numbers.keys.capture) {
-        *swallow = Swallow(false);
     }
 }
 
@@ -153,63 +134,11 @@ pub(super) fn aim(
     }
 }
 
-pub(super) fn latch(
-    devices: Res<Devices>,
-    numbers: Res<Numbers>,
-    swallow: Res<Swallow>,
-    mut latched: ResMut<Latched>,
-) {
-    let Some(numbers) = numbers.get() else {
-        return;
-    };
-    let keys = &numbers.keys;
-    let pressed = |binding: &[Input]| KeyMap::pressed(&devices, binding);
-    let turned =
-        KeyMap::turns(&devices, &keys.next_item) - KeyMap::turns(&devices, &keys.previous_item);
-    let (cycle, spun) = cycled(&latched, turned);
-    let equips = [
-        (&keys.primary, Equip::Primary),
-        (&keys.sidearm, Equip::Sidearm),
-        (&keys.melee, Equip::Melee),
-        (&keys.device, Equip::Device),
-    ];
-    let casts = [
-        (&keys.ability_c, AbilitySlot::C),
-        (&keys.ability_q, AbilitySlot::Q),
-        (&keys.ability_e, AbilitySlot::E),
-        (&keys.ability_x, AbilitySlot::X),
-    ];
-    let next = Latched {
-        fire: latched.fire || (!swallow.0 && pressed(&keys.fire)),
-        jump: latched.jump || pressed(&keys.jump),
-        buy_menu: latched.buy_menu || pressed(&keys.buy_menu),
-        reload: latched.reload || pressed(&keys.reload),
-        inspect: latched.inspect || pressed(&keys.inspect),
-        ready: latched.ready || pressed(&keys.ready),
-        drop: latched.drop || pressed(&keys.drop),
-        cycle,
-        spun,
-        scope: latched.scope || pressed(&keys.scope),
-        equip: equips
-            .iter()
-            .find(|(binding, _)| pressed(binding))
-            .map(|&(_, equip)| equip)
-            .or(latched.equip),
-        cast: casts
-            .iter()
-            .find(|(binding, _)| pressed(binding))
-            .map(|&(_, slot)| slot)
-            .or(latched.cast),
-    };
-    latched.set_if_neq(next);
-}
-
 pub(super) fn wish(
     devices: Res<Devices>,
     numbers: Res<Numbers>,
     (screen, round): (Option<Res<ScreenState>>, Option<Res<Round>>),
-    swallow: Res<Swallow>,
-    mut latched: ResMut<Latched>,
+    (mut swallow, mut spun): (ResMut<Swallow>, ResMut<Spun>),
     mut humans: Query<&mut Wish, With<Human>>,
     mut buys: Option<ResMut<ScreenBuys>>,
 ) {
@@ -224,12 +153,34 @@ pub(super) fn wish(
     let playing = !menu_open(screen.as_deref());
     let buying = round.as_deref().is_some_and(|round| round.buy_lock);
     let held = |binding: &[Input]| KeyMap::held(&devices, binding);
+    let pressed = |binding: &[Input]| KeyMap::pressed(&devices, binding);
     let played = |binding: &[Input]| playing && held(binding);
+    let acted = |binding: &[Input]| playing && pressed(binding);
     let axis = |plus: bool, minus: bool| f32::from(u8::from(plus)) - f32::from(u8::from(minus));
     let ahead = axis(played(&keys.forward), played(&keys.back));
     let aside = axis(played(&keys.right), played(&keys.left));
-    let spent = std::mem::take(&mut *latched);
-    latched.spun = spent.spun;
+    let turned =
+        KeyMap::turns(&devices, &keys.next_item) - KeyMap::turns(&devices, &keys.previous_item);
+    let (cycle, carried) = cycled(spun.0, turned);
+    spun.set_if_neq(Spun(carried));
+    let equips = [
+        (&keys.primary, Equip::Primary),
+        (&keys.sidearm, Equip::Sidearm),
+        (&keys.melee, Equip::Melee),
+        (&keys.device, Equip::Device),
+    ];
+    let casts = [
+        (&keys.ability_c, AbilitySlot::C),
+        (&keys.ability_q, AbilitySlot::Q),
+        (&keys.ability_e, AbilitySlot::E),
+        (&keys.ability_x, AbilitySlot::X),
+    ];
+    let equip = (equips.iter())
+        .find(|(binding, _)| acted(binding))
+        .map(|&(_, equip)| equip);
+    let cast = (casts.iter())
+        .find(|(binding, _)| acted(binding))
+        .map(|&(_, slot)| slot);
     for mut wish in &mut humans {
         let (sin, cos) = math::sin_cos(wish.yaw_radians);
         let forward = Vec3::new(-sin, 0.0, -cos);
@@ -241,20 +192,23 @@ pub(super) fn wish(
             Gait::Run
         };
         wish.crouch = played(&keys.crouch);
-        wish.jump = playing && spent.jump;
+        wish.jump = acted(&keys.jump);
         wish.fire_held = played(&keys.fire) && !swallow.0;
-        wish.fire_pressed = playing && spent.fire;
-        wish.reload = playing && spent.reload;
-        wish.inspect = playing && spent.inspect;
-        wish.ready = playing && buying && spent.ready;
-        wish.drop = playing && spent.drop;
-        wish.cycle = if playing { spent.cycle } else { 0 };
-        wish.scope = playing && spent.scope;
-        wish.equip = spent.equip.filter(|_| playing);
+        wish.fire_pressed = acted(&keys.fire) && !swallow.0;
+        wish.reload = acted(&keys.reload);
+        wish.inspect = acted(&keys.inspect);
+        wish.ready = buying && acted(&keys.ready);
+        wish.drop = acted(&keys.drop);
+        wish.cycle = if playing { cycle } else { 0 };
+        wish.scope = acted(&keys.scope);
+        wish.equip = equip;
         wish.interact_held = played(&keys.interact);
-        wish.cast = spent.cast.filter(|_| playing);
-        wish.buy_menu = spent.buy_menu;
+        wish.cast = cast;
+        wish.buy_menu = pressed(&keys.buy_menu);
         wish.scoreboard = held(&keys.scoreboard);
         wish.buys.clone_from(&bought);
+    }
+    if swallow.0 && !held(&keys.capture) {
+        *swallow = Swallow(false);
     }
 }

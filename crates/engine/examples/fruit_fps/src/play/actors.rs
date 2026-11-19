@@ -1,4 +1,4 @@
-use engine::prelude::Component;
+use engine::prelude::{Component, Entity};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -115,6 +115,11 @@ pub enum Motion {
     Air,
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Eye {
+    pub node: Entity,
+}
+
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Body {
     pub feet: Vec3,
@@ -123,7 +128,6 @@ pub struct Body {
     pub crouched: bool,
     pub crouch: f32,
     pub eye: Vec3,
-    pub eye_before: Vec3,
     pub motion: Motion,
     pub ground: Option<Ground>,
     pub landed: Option<Landed>,

@@ -12,6 +12,10 @@ crate-type = ["cdylib", "rlib"]
 name = "fruit_fps-native"
 path = "src/main.rs"
 
+[[bin]]
+name = "fruit_fps-cook"
+path = "src/cook/main.rs"
+
 [package.metadata.engine]
 kind = "game"
 page = "fruit_fps.html"
@@ -21,7 +25,7 @@ native = "fruit_fps-native"
 [features]
 default = []
 dev = ["engine/dev", "engine_native/dev"]
-profiling = ["engine/profiling", "engine_native/profiling"]
+profiling = ["dev", "engine/profiling", "engine_native/profiling"]
 
 [build-dependencies]
 engine_sources.workspace = true
@@ -41,6 +45,10 @@ serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true
+cook.workspace = true
+cook_model.workspace = true
+cook_texture.workspace = true
+gltf.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

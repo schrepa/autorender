@@ -15,10 +15,8 @@ use super::play::FigureDrawing;
 use super::shaders::figures::{figure, ground, light, material, reveal};
 use super::{JOINTS, WEIGHTS};
 use crate::names::COLOR_PASS;
-use crate::play::figures::{FIGURE, GROUND, REVEALED};
 use crate::play::light::{Light, LightField, Lighting};
 use crate::play::puppet::{PuppetFile, ShadeMaps};
-use crate::play::screen::Covered;
 
 gpu_struct! {
     pub struct FigureLight {
@@ -90,7 +88,6 @@ pub(super) struct FiguresGpu {
     synced: Option<u64>,
     unlit: Texture<Self>,
     field_bound: Option<Option<TextureRef>>,
-    covered: bool,
     maps: Option<ShadeMaps>,
 }
 
@@ -231,7 +228,6 @@ impl GpuPart for FiguresGpu {
         (
             Option<Res<'static, Lighting>>,
             Query<'static, 'static, &'static PuppetFile>,
-            Option<Res<'static, Covered>>,
         ),
     );
     const NAME: &'static str = "figures";
@@ -272,26 +268,15 @@ impl GpuPart for FiguresGpu {
             synced: None,
             unlit,
             field_bound: None,
-            covered: false,
             maps: None,
         })
     }
 
     fn prepare(
         &mut self,
-        (book, lights, residency, library, (lighting, files, covered)): SystemParamItem<
-            '_,
-            '_,
-            Self::Reads,
-        >,
+        (book, lights, residency, library, (lighting, files)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.covered = covered.is_some_and(|covered| covered.0);
-        if self.covered {
-            for kind in [FIGURE, REVEALED, GROUND] {
-                cx.skip_kind(kind, "covered");
-            }
-        }
         let field = lighting.as_deref().and_then(|lighting| lighting.field);
         let bound = self.bind_field(field.map(|field| field.map), cx);
         let shade = files
@@ -360,7 +345,7 @@ impl FiguresGpu {
         wanted: Option<TextureRef>,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<TextureRef> {
-        if cx.allocate(self.unlit, TEXEL, 1) == Allocation::Fresh {
+        if cx.allocate(self.unlit, TEXEL) == Allocation::Fresh {
             let layout = wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
@@ -406,21 +391,15 @@ impl FiguresGpu {
     }
 
     pub(super) fn draw_figures(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if !self.covered {
-            draw.batches(&self.figure, 0..0);
-        }
+        draw.batches(&self.figure, 0..0, |_| Some(0));
     }
 
     pub(super) fn draw_revealed(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if !self.covered {
-            draw.batches(&self.revealed, 0..0);
-        }
+        draw.batches(&self.revealed, 0..0, |_| Some(0));
     }
 
     pub(super) fn draw_ground(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if !self.covered {
-            draw.batches(&self.ground, 0..0);
-        }
+        draw.batches(&self.ground, 0..0, |_| Some(0));
     }
 
     fn sync(

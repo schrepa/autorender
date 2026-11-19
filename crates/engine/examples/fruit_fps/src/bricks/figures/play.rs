@@ -6,7 +6,7 @@ use engine_core::glam::{Mat4, Quat, Vec3};
 use engine_core::{
     Asset, AssetLibrary, AssetResidency, Drawn, DrawnTable, Error, ErrorCode, FixedTime, FrameTime,
     GeometryHandle, GlobalTransforms, InstanceValues, Interest, Moves, Parent, Refusals,
-    SceneContext, Spawner, Transform,
+    SceneContext, Spawner, Stats, Transform, ViewSkip,
 };
 use engine_rig::{PaletteRow, Posed, Reach};
 
@@ -22,7 +22,6 @@ use crate::play::figures::{
 use crate::play::light::Light;
 use crate::play::numbers::Numbers;
 use crate::play::puppet::{PuppetFile, Seen};
-use crate::play::screen::Covered;
 use engine_core::math::{max, min};
 
 const DRAW_PART: &str = "figures_draw";
@@ -735,7 +734,7 @@ type TickReads<'w, 's> = (
 type TickState<'w> = (
     ResMut<'w, FigureFiles>,
     ResMut<'w, FigureClocks>,
-    ResMut<'w, FiguresStats>,
+    Stats<'w, FiguresStats>,
 );
 
 type TickFigures<'w, 's> = Query<
@@ -879,7 +878,7 @@ pub fn figure_tick(
             }
         }
     }
-    stats.ticked = ticked;
+    stats.edit(|stats| stats.ticked = ticked);
 }
 
 fn submitted(
@@ -931,10 +930,10 @@ type DrawFigures<'w, 's> = Query<
     ),
 >;
 
-type Placing<'w> = (
+type Placing<'w, 's> = (
     Option<Res<'w, SceneContext>>,
     Option<Res<'w, AssetResidency>>,
-    Option<Res<'w, Covered>>,
+    Query<'w, 's, (), With<ViewSkip>>,
 );
 
 struct Shelf<'a> {
@@ -947,12 +946,13 @@ fn held_forms(
     shelf: &Shelf<'_>,
     figures: &DrawFigures,
     held: &mut BTreeMap<Entity, (Vec<GeometryHandle>, Vec<Interest<Asset>>)>,
-) -> Vec<FigureForms> {
+    stats: &mut Stats<'_, FiguresStats>,
+) {
     held.retain(|entity, _| figures.contains(*entity));
+    stats.edit(|stats| stats.forms.clear());
     let (Some(scene), Some(residency)) = (shelf.scene, shelf.residency) else {
-        return Vec::new();
+        return;
     };
-    let mut listed = Vec::new();
     for (entity, _, _, figure) in figures {
         let Some(forms) = &figure.forms else {
             held.remove(&entity);
@@ -967,14 +967,15 @@ fn held_forms(
         }
         let resident =
             |mesh: Option<GeometryHandle>| mesh.is_some_and(|mesh| residency.resident(mesh));
-        listed.push(FigureForms {
-            entity: entity.to_string(),
-            named: mid.is_some() && far.is_some(),
-            mid: resident(mid),
-            far: resident(far),
+        stats.edit(|stats| {
+            stats.forms.push(FigureForms {
+                entity: entity.to_string(),
+                named: mid.is_some() && far.is_some(),
+                mid: resident(mid),
+                far: resident(far),
+            });
         });
     }
-    listed
 }
 
 fn viewed(
@@ -1088,19 +1089,21 @@ fn chosen(
 
 pub(super) fn figure_draw(
     (time, globals, clocks, (seen, library)): DrawReads,
-    (mut files, (scene, residency, covered)): (ResMut<FigureFiles>, Placing),
+    (mut files, (scene, residency, skipped)): (ResMut<FigureFiles>, Placing),
     figures: DrawFigures,
-    (mut drawing, mut stats): (ResMut<FigureDrawing>, ResMut<FiguresStats>),
+    (mut drawing, mut stats): (ResMut<FigureDrawing>, Stats<FiguresStats>),
     (mut scratch, mut refusals, mut spawner): Report,
 ) {
     drawing.written.clear();
     refusals.keep_part(DRAW_PART, |entity| figures.contains(entity));
     refusals.keep_part(FORMS_PART, |entity| figures.contains(entity));
-    if covered.as_deref().is_some_and(|covered| covered.0) {
-        stats.view = FigureView {
-            posed: stats.ticked,
-            ..FigureView::default()
-        };
+    if !skipped.is_empty() {
+        stats.edit(|stats| {
+            stats.view = FigureView {
+                posed: stats.ticked,
+                ..FigureView::default()
+            };
+        });
         return;
     }
     let shelf = Shelf {
@@ -1108,10 +1111,8 @@ pub(super) fn figure_draw(
         residency: residency.as_deref(),
         library: library.as_deref(),
     };
-    let forms = held_forms(&shelf, &figures, &mut drawing.forms);
-    if stats.forms != forms {
-        stats.forms = forms;
-    }
+    held_forms(&shelf, &figures, &mut drawing.forms, &mut stats);
+    stats.edit(|stats| stats.heads.clear());
     let mut forms_drawn = [0_u32; 3];
     let current = seen.as_deref().filter(|seen| seen.frame == time.frame);
     let mut listed: Vec<(Entity, Option<&FigurePlay>, &Drawn, &Figure)> = figures
@@ -1125,7 +1126,6 @@ pub(super) fn figure_draw(
     let listed_count = listed.len();
     let mut vertices = 0_u64;
     let back = 1.0 - time.alpha;
-    let mut heads = Vec::with_capacity(listed.len());
     let mut drawn_now = Vec::with_capacity(listed.len());
     for (entity, play, drawn, figure) in listed {
         let Some(clock) = clocks.held.get(&entity) else {
@@ -1174,16 +1174,17 @@ pub(super) fn figure_draw(
                 if let Some(moved) = placed(drawn, at as f32, geometry) {
                     spawner.insert(entity, moved);
                 }
-                let seconds = clock
-                    .base
-                    .as_ref()
-                    .map_or(0.0, |base| base.at(rig.duration(&base.clip), back));
-                heads.push(FigureHead {
-                    entity: entity.to_string(),
-                    time: seconds,
-                    head: rig
-                        .head
-                        .map(|joint| scratch.base[joint].position.to_array()),
+                stats.edit(|stats| {
+                    stats.heads.push(FigureHead {
+                        entity: entity.to_string(),
+                        time: clock
+                            .base
+                            .as_ref()
+                            .map_or(0.0, |base| base.at(rig.duration(&base.clip), back)),
+                        head: rig
+                            .head
+                            .map(|joint| scratch.base[joint].position.to_array()),
+                    });
                 });
             }
             Err(error) => refusals.refuse(entity, DRAW_PART, error),
@@ -1193,18 +1194,19 @@ pub(super) fn figure_draw(
     drawing.full.retain(|entity, _| figures.contains(*entity));
     let joints: usize = drawing.written.iter().map(|(_, length)| length).sum();
     let (skeletons, clips) = files.counts();
-    stats.sampled = drawn_now.len() as u32;
-    stats.view = viewed(
-        (seen.as_deref(), current),
-        (&drawn_now, listed_count),
-        (forms_drawn, vertices),
-        stats.ticked,
-    );
-    stats.joints = joints as u32;
-    stats.palette_bytes = joints as u64 * ROW_BYTES;
-    stats.skeletons = skeletons;
-    stats.clips = clips;
-    stats.heads = heads;
+    stats.edit(|stats| {
+        stats.sampled = drawn_now.len() as u32;
+        stats.view = viewed(
+            (seen.as_deref(), current),
+            (&drawn_now, listed_count),
+            (forms_drawn, vertices),
+            stats.ticked,
+        );
+        stats.joints = joints as u32;
+        stats.palette_bytes = joints as u64 * ROW_BYTES;
+        stats.skeletons = skeletons;
+        stats.clips = clips;
+    });
 }
 
 type Refusing<'w, 's> = (
@@ -1216,7 +1218,7 @@ pub(super) fn count(
     (table, library): (Res<DrawnTable>, Option<Res<AssetLibrary>>),
     (lights, files): (Query<(), With<Light>>, Query<&PuppetFile>),
     (refusals, owned): Refusing,
-    mut stats: ResMut<FiguresStats>,
+    mut stats: Stats<FiguresStats>,
 ) {
     let mut refused = Vec::new();
     for entity in &owned {
@@ -1231,9 +1233,6 @@ pub(super) fn count(
         }
     }
     refused.sort_unstable_by(|a, b| (&a.entity, &a.part).cmp(&(&b.entity, &b.part)));
-    if stats.refused != refused {
-        stats.refused = refused;
-    }
     let (mut figures, mut indices) = (0_u32, 0_u64);
     for kind in [FIGURE, GROUND] {
         for batch in table.batches(kind) {
@@ -1250,12 +1249,15 @@ pub(super) fn count(
             }
         }
     }
-    stats.figures = figures;
-    stats.indices = indices;
-    stats.triangles = indices / 3;
-    stats.lit = !lights.is_empty();
-    stats.maps = files
-        .iter()
-        .find_map(PuppetFile::book)
-        .map(|book| book.table.shade.maps);
+    stats.edit(|stats| {
+        stats.refused = refused;
+        stats.figures = figures;
+        stats.indices = indices;
+        stats.triangles = indices / 3;
+        stats.lit = !lights.is_empty();
+        stats.maps = files
+            .iter()
+            .find_map(PuppetFile::book)
+            .map(|book| book.table.shade.maps);
+    });
 }

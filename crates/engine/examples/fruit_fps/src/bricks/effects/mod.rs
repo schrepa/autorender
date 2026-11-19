@@ -72,7 +72,6 @@ pub(crate) struct EffectsDrawing {
     pub frame: EffectsFrame,
     pub screen: bool,
     pub field: Option<engine_core::TextureRef>,
-    pub covered: bool,
 }
 
 impl EffectsDrawing {
@@ -113,6 +112,7 @@ pub enum Show {
 }
 
 settings! {
+    #[dev]
     #[section("effects_show")]
     #[serde(deny_unknown_fields)]
     pub struct EffectsShow {
@@ -176,8 +176,6 @@ impl Brick for EffectsBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<Device>("device").schema(engine_core::schema_of::<Device>),
             )
-            .settings::<EffectsShow>()
-            .stats::<EffectsStats>()
             .resource::<EffectsFeed>()
             .resource::<gather::Setup>()
             .resource::<gather::Spawns>()
@@ -203,8 +201,12 @@ impl Brick for EffectsBrick {
             .systems(Schedule::FixedSimulation, gather::setup)
             .systems(Schedule::FixedSimulation, gather::gather)
             .systems(Schedule::FixedSimulation, gather::place_device)
-            .systems(Schedule::FixedSimulation, models::showcase_models)
             .systems(Schedule::Presentation, assemble::assemble)
-            .systems(Schedule::Presentation, foes::mark_figures);
+            .systems(Schedule::Presentation, foes::mark_figures)
+            .dev(|dev| {
+                dev.settings::<EffectsShow>()
+                    .stats::<EffectsStats>()
+                    .systems(Schedule::FixedSimulation, models::showcase_models);
+            });
     }
 }

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use engine::prelude::*;
 use engine_core::math::max;
-use engine_core::{AssetLibrary, SceneContext};
+use engine_core::{AssetLibrary, SceneContext, Stats};
 use glam::{Mat3, Quat, Vec3};
 
 use super::drops::{drawn_of, ground_node};
@@ -57,7 +57,7 @@ struct Shelf<'a> {
 }
 
 type Writes<'w, 's> = (
-    (ResMut<'w, PuppetStats>, ResMut<'w, Spins>),
+    (Stats<'w, PuppetStats>, ResMut<'w, Spins>),
     Spawner<'w, 's, PuppetBrick>,
     Moves<'w, 's, PuppetBrick>,
 );
@@ -288,9 +288,7 @@ pub(super) fn show(
         viewer,
     };
     let in_hands = in_hand_shown(&hands, &shelf, &in_hand, &mut spawner);
-    if stats.in_hand != in_hands {
-        stats.in_hand = in_hands;
-    }
+    stats.edit(|stats| stats.in_hand = in_hands);
     let mut wanted = Vec::new();
     let mut rows = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
@@ -345,19 +343,14 @@ pub(super) fn show(
     let live = |effect: &u32| props.iter().any(|prop| prop.effect.0 == *effect);
     spins.held.retain(|effect, _| live(effect));
     spins.facing.retain(|effect, _| live(effect));
-    if stats.props != rows {
+    stats.edit(|stats| {
         stats.props = rows;
-    }
-    let missed = u32::try_from(skipped.len()).unwrap_or(u32::MAX);
-    if stats.props_skipped != missed {
-        stats.props_skipped = missed;
-    }
-    skipped.sort();
-    skipped.dedup();
-    skipped.truncate(4);
-    if stats.props_skipped_keys != skipped {
+        stats.props_skipped = u32::try_from(skipped.len()).unwrap_or(u32::MAX);
+        skipped.sort();
+        skipped.dedup();
+        skipped.truncate(4);
         stats.props_skipped_keys = skipped;
-    }
+    });
 }
 
 fn in_hand_shown(

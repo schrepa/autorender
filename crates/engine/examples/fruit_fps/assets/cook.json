@@ -1,780 +1,739 @@
 {
-  "output": "cooked",
-  "uri_prefix": "assets/cooked/",
-  "keys_per_second": 24,
   "tolerance": 1e-05,
+  "keys_per_second": 24,
+  "variants": {
+    "maps": [
+      {
+        "name": "bc",
+        "base_color": "bc7_srgb",
+        "normal": "bc5",
+        "orm": "bc7"
+      },
+      {
+        "name": "rgba8",
+        "base_color": "rgba8_srgb",
+        "normal": "rgba8",
+        "orm": "rgba8"
+      }
+    ],
+    "linear": {
+      "bc": "bc7",
+      "rgba8": "rgba8"
+    },
+    "srgb": {
+      "bc": "bc7_srgb",
+      "rgba8": "rgba8_srgb"
+    }
+  },
   "entries": [
     {
-      "kind": "character",
+      "kind": "model",
       "name": "banana",
-      "source": "source/char_banana.glb",
-      "scale": 1.883,
-      "texture_size": 1024,
-      "root_motion": "Hip",
-      "clips": {
-        "idle": "idle",
-        "fall": "fall",
-        "turn": "turn",
-        "hit_to_head": "hit_to_head",
-        "hit_to_body_01": "hit_to_body",
-        "cast_a_spell": "cast",
-        "dig": "dig",
-        "hit_to_side": "hit_to_side",
-        "hit_to_stomach": "hit_to_stomach",
-        "victory_celebration": "victory"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 26000,
-        "vertices": 26000,
-        "joints": 96,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
+      "sources": [
+        "source/char_banana.glb"
       ],
-      "map_sizes": {
-        "orm": 512
+      "params": {
+        "kind": "character",
+        "scale": 1.883,
+        "texture_size": 1024,
+        "root_motion": "Hip",
+        "clips": {
+          "idle": "idle",
+          "fall": "fall",
+          "turn": "turn",
+          "hit_to_head": "hit_to_head",
+          "hit_to_body_01": "hit_to_body",
+          "cast_a_spell": "cast",
+          "dig": "dig",
+          "hit_to_side": "hit_to_side",
+          "hit_to_stomach": "hit_to_stomach",
+          "victory_celebration": "victory"
+        },
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 26000,
+          "vertices": 26000,
+          "joints": 96,
+          "influences": 4
+        },
+        "textures": "maps",
+        "map_sizes": {
+          "orm": 512
+        }
       }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "strawberry",
-      "source": "source/char_strawberry.glb",
-      "scale": 1.755,
-      "texture_size": 1024,
-      "root_motion": "Hip",
-      "clips": {},
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 26000,
-        "vertices": 26000,
-        "joints": 96,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
+      "sources": [
+        "source/char_strawberry.glb"
       ],
-      "map_sizes": {
-        "orm": 512
+      "params": {
+        "kind": "character",
+        "scale": 1.755,
+        "texture_size": 1024,
+        "root_motion": "Hip",
+        "clips": {},
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 26000,
+          "vertices": 26000,
+          "joints": 96,
+          "influences": 4
+        },
+        "textures": "maps",
+        "map_sizes": {
+          "orm": 512
+        }
       }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "orange",
-      "source": "source/char_orange.glb",
-      "scale": 1.802,
-      "texture_size": 1024,
-      "root_motion": "Hip",
-      "clips": {},
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 26000,
-        "vertices": 26000,
-        "joints": 96,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
+      "sources": [
+        "source/char_orange.glb"
       ],
-      "map_sizes": {
-        "orm": 512
+      "params": {
+        "kind": "character",
+        "scale": 1.802,
+        "texture_size": 1024,
+        "root_motion": "Hip",
+        "clips": {},
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 26000,
+          "vertices": 26000,
+          "joints": 96,
+          "influences": 4
+        },
+        "textures": "maps",
+        "map_sizes": {
+          "orm": 512
+        }
       }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "eggplant",
-      "source": "source/char_eggplant.glb",
-      "scale": 1.915,
-      "texture_size": 1024,
-      "root_motion": "Hip",
-      "clips": {},
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 26000,
-        "vertices": 26000,
-        "joints": 96,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
+      "sources": [
+        "source/char_eggplant.glb"
       ],
-      "map_sizes": {
-        "orm": 512
+      "params": {
+        "kind": "character",
+        "scale": 1.915,
+        "texture_size": 1024,
+        "root_motion": "Hip",
+        "clips": {},
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 26000,
+          "vertices": 26000,
+          "joints": 96,
+          "influences": 4
+        },
+        "textures": "maps",
+        "map_sizes": {
+          "orm": 512
+        }
       }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "watermelon",
-      "source": "source/char_watermelon.glb",
-      "scale": 1.746,
-      "texture_size": 1024,
-      "root_motion": "Hip",
-      "clips": {},
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 26000,
-        "vertices": 26000,
-        "joints": 96,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
+      "sources": [
+        "source/char_watermelon.glb"
       ],
-      "map_sizes": {
-        "orm": 512
+      "params": {
+        "kind": "character",
+        "scale": 1.746,
+        "texture_size": 1024,
+        "root_motion": "Hip",
+        "clips": {},
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 26000,
+          "vertices": 26000,
+          "joints": 96,
+          "influences": 4
+        },
+        "textures": "maps",
+        "map_sizes": {
+          "orm": 512
+        }
       }
     },
     {
       "kind": "form",
       "name": "banana_mid",
-      "source": "../../../../../artifacts/game/art/glb/far/char_banana_mid.glb",
-      "form_of": "banana",
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_banana_mid.glb"
+      ],
+      "params": {
+        "form_of": "banana",
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "banana_far",
-      "source": "../../../../../artifacts/game/art/glb/far/char_banana_far.glb",
-      "form_of": "banana",
-      "budgets": {
-        "triangles": 4000,
-        "vertices": 7000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_banana_far.glb"
+      ],
+      "params": {
+        "form_of": "banana",
+        "budgets": {
+          "triangles": 4000,
+          "vertices": 7000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "strawberry_mid",
-      "source": "../../../../../artifacts/game/art/glb/far/char_strawberry_mid.glb",
-      "form_of": "strawberry",
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_strawberry_mid.glb"
+      ],
+      "params": {
+        "form_of": "strawberry",
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "strawberry_far",
-      "source": "../../../../../artifacts/game/art/glb/far/char_strawberry_far.glb",
-      "form_of": "strawberry",
-      "budgets": {
-        "triangles": 4000,
-        "vertices": 7000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_strawberry_far.glb"
+      ],
+      "params": {
+        "form_of": "strawberry",
+        "budgets": {
+          "triangles": 4000,
+          "vertices": 7000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "orange_mid",
-      "source": "../../../../../artifacts/game/art/glb/far/char_orange_mid.glb",
-      "form_of": "orange",
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_orange_mid.glb"
+      ],
+      "params": {
+        "form_of": "orange",
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "orange_far",
-      "source": "../../../../../artifacts/game/art/glb/far/char_orange_far.glb",
-      "form_of": "orange",
-      "budgets": {
-        "triangles": 4000,
-        "vertices": 7000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_orange_far.glb"
+      ],
+      "params": {
+        "form_of": "orange",
+        "budgets": {
+          "triangles": 4000,
+          "vertices": 7000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "eggplant_mid",
-      "source": "../../../../../artifacts/game/art/glb/far/char_eggplant_mid.glb",
-      "form_of": "eggplant",
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_eggplant_mid.glb"
+      ],
+      "params": {
+        "form_of": "eggplant",
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "eggplant_far",
-      "source": "../../../../../artifacts/game/art/glb/far/char_eggplant_far.glb",
-      "form_of": "eggplant",
-      "budgets": {
-        "triangles": 4000,
-        "vertices": 7000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_eggplant_far.glb"
+      ],
+      "params": {
+        "form_of": "eggplant",
+        "budgets": {
+          "triangles": 4000,
+          "vertices": 7000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "watermelon_mid",
-      "source": "../../../../../artifacts/game/art/glb/far/char_watermelon_mid.glb",
-      "form_of": "watermelon",
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_watermelon_mid.glb"
+      ],
+      "params": {
+        "form_of": "watermelon",
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "influences": 4
+        }
       }
     },
     {
       "kind": "form",
       "name": "watermelon_far",
-      "source": "../../../../../artifacts/game/art/glb/far/char_watermelon_far.glb",
-      "form_of": "watermelon",
-      "budgets": {
-        "triangles": 4000,
-        "vertices": 7000,
-        "influences": 4
+      "sources": [
+        "../../../../../artifacts/game/art/glb/far/char_watermelon_far.glb"
+      ],
+      "params": {
+        "form_of": "watermelon",
+        "budgets": {
+          "triangles": 4000,
+          "vertices": 7000,
+          "influences": 4
+        }
       }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "ground",
-      "source": "source/static_ground.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 2000,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/static_ground.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 2000,
+          "vertices": 1000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "rifle",
-      "source": "source/fp_rifle.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {
-        "fire": "rifle_fire",
-        "reload_parts": "rifle_reload_parts",
-        "equip": "rifle_equip"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "joints": 16,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_rifle.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {
+          "fire": "rifle_fire",
+          "reload_parts": "rifle_reload_parts",
+          "equip": "rifle_equip"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "joints": 16,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "sidearm",
-      "source": "source/fp_sidearm.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {
-        "fire": "sidearm_fire",
-        "reload_parts": "sidearm_reload_parts",
-        "equip": "sidearm_equip"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "joints": 16,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_sidearm.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {
+          "fire": "sidearm_fire",
+          "reload_parts": "sidearm_reload_parts",
+          "equip": "sidearm_equip"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "joints": 16,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "smg",
-      "source": "source/fp_smg.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {
-        "fire": "smg_fire",
-        "reload_parts": "smg_reload_parts",
-        "equip": "smg_equip"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "joints": 16,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_smg.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {
+          "fire": "smg_fire",
+          "reload_parts": "smg_reload_parts",
+          "equip": "smg_equip"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "joints": 16,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "sniper",
-      "source": "source/fp_sniper.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {
-        "fire": "sniper_fire",
-        "reload_parts": "sniper_reload_parts",
-        "equip": "sniper_equip"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 12000,
-        "vertices": 16000,
-        "joints": 16,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_sniper.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {
+          "fire": "sniper_fire",
+          "reload_parts": "sniper_reload_parts",
+          "equip": "sniper_equip"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 12000,
+          "vertices": 16000,
+          "joints": 16,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "tp_rifle",
-      "source": "source/tp_rifle.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 2500,
-        "vertices": 6000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/tp_rifle.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 2500,
+          "vertices": 6000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "tp_sidearm",
-      "source": "source/tp_sidearm.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 2500,
-        "vertices": 6000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/tp_sidearm.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 2500,
+          "vertices": 6000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "tp_smg",
-      "source": "source/tp_smg.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 2500,
-        "vertices": 6000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/tp_smg.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 2500,
+          "vertices": 6000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "tp_sniper",
-      "source": "source/tp_sniper.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 2500,
-        "vertices": 6000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/tp_sniper.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 2500,
+          "vertices": 6000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "map",
+      "kind": "level",
       "name": "mercato",
-      "source": "source/map_mercato.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure",
-        "emissive_value": "emissive_strength"
-      },
-      "merge": [
-        {
-          "prefix": "col_",
-          "output": "mercato_col",
-          "triangles": 12000
-        },
-        {
-          "prefix": "nav_",
-          "output": "mercato_nav",
-          "triangles": 20000
-        }
+      "sources": [
+        "source/map_mercato.glb"
       ],
-      "budgets": {
-        "triangles": 370000,
-        "vertices": 575000,
-        "materials": 20,
-        "object_vertices": 131072
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7",
-          "material_sizes": {
-            "m_wood_blue": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_green": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_teal": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_raw": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_crate": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_limestone": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_rooftile": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_sage": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_sky": {
-              "base_color": 512,
-              "normal": 512
-            },
-            "m_wood_brick": {
-              "base_color": 512,
-              "normal": 512
-            }
+      "params": {
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure",
+          "emissive_value": "emissive_strength"
+        },
+        "merge": [
+          {
+            "prefix": "col_",
+            "output": "mercato_col",
+            "triangles": 12000
+          },
+          {
+            "prefix": "nav_",
+            "output": "mercato_nav",
+            "triangles": 20000
           }
+        ],
+        "budgets": {
+          "triangles": 370000,
+          "vertices": 575000,
+          "materials": 20,
+          "object_vertices": 131072
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ],
-      "map_sizes": {
-        "orm": 512
-      },
-      "baked": {
-        "uv1": {
-          "kind": "level",
-          "maps": {
-            "lightmap": {
-              "picture": "mercato_light",
-              "variant": "bc",
-              "sampling": {
-                "tex_coord": 1,
-                "wrap_u": "clamp_to_edge",
-                "wrap_v": "clamp_to_edge",
-                "mag_filter": "linear",
-                "min_filter": "linear"
+        "textures": [
+          {
+            "name": "bc",
+            "base_color": "bc7_srgb",
+            "normal": "bc5",
+            "orm": "bc7",
+            "material_sizes": {
+              "m_wood_blue": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_green": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_teal": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_raw": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_crate": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_limestone": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_rooftile": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_sage": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_sky": {
+                "base_color": 512,
+                "normal": 512
+              },
+              "m_wood_brick": {
+                "base_color": 512,
+                "normal": 512
               }
             }
           },
-          "values": {
-            "lightmap_scale": 4.0
+          {
+            "name": "rgba8",
+            "base_color": "rgba8_srgb",
+            "normal": "rgba8",
+            "orm": "rgba8"
           }
+        ],
+        "map_sizes": {
+          "orm": 512
         },
-        "color": {
-          "kind": "level_detail",
-          "values": {
-            "lightmap_scale": 4.0
-          }
-        }
-      },
-      "material_sizes": {
-        "m_props_atlas": {
-          "base_color": 2048,
-          "normal": 2048,
-          "orm": 1024
-        }
-      },
-      "value_maps": {
-        "macro": {
-          "picture": "macro_breakup",
-          "variant": "bc",
-          "sampling": {
-            "wrap_u": "repeat",
-            "wrap_v": "repeat",
-            "mag_filter": "linear",
-            "min_filter": "linear",
-            "mipmap_filter": "linear",
-            "tex_coord": 0
+        "baked": {
+          "uv1": {
+            "kind": "level",
+            "maps": {
+              "lightmap": {
+                "picture": "mercato_light",
+                "sampling": {
+                  "tex_coord": 1,
+                  "wrap_u": "clamp_to_edge",
+                  "wrap_v": "clamp_to_edge",
+                  "mag_filter": "linear",
+                  "min_filter": "linear"
+                }
+              }
+            },
+            "values": {
+              "lightmap_scale": 4.0
+            }
           },
-          "when": [
-            "macro_color",
-            "macro_rough"
-          ],
-          "needs": [
-            "macro_tile_m"
-          ]
-        }
-      },
-      "value_rules": {
-        "lightmap_curve": {
-          "one_of": [
-            1.0,
-            2.0
-          ]
+          "color": {
+            "kind": "level_detail",
+            "values": {
+              "lightmap_scale": 4.0
+            }
+          }
         },
-        "mirror": {
-          "min": 0.0,
-          "max": 1.0
+        "material_sizes": {
+          "m_props_atlas": {
+            "base_color": 2048,
+            "normal": 2048,
+            "orm": 1024
+          }
+        },
+        "value_maps": {
+          "macro": {
+            "picture": "macro_breakup",
+            "sampling": {
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "when": [
+              "macro_color",
+              "macro_rough"
+            ],
+            "needs": [
+              "macro_tile_m"
+            ]
+          }
+        },
+        "value_rules": {
+          "lightmap_curve": {
+            "one_of": [
+              1.0,
+              2.0
+            ]
+          },
+          "mirror": {
+            "min": 0.0,
+            "max": 1.0
+          }
+        },
+        "chunks": {
+          "cell_m": 12.0,
+          "fold_triangles": 500,
+          "detail_classes_m": [
+            0.25,
+            0.5,
+            1.0
+          ]
         }
-      },
-      "chunks": {
-        "cell_m": 12.0,
-        "fold_triangles": 500,
-        "detail_classes_m": [
-          0.25,
-          0.5,
-          1.0
-        ]
-      },
-      "visible_sets": {
-        "data": "../data/mercato.json",
+      }
+    },
+    {
+      "kind": "visible_sets",
+      "name": "mercato_sets",
+      "sources": [
+        "../data/mercato.json"
+      ],
+      "params": {
+        "level": "mercato",
         "cell_m": 2.0,
         "eye_inset_m": 0.2,
         "eye_heights_m": [
@@ -823,1227 +782,940 @@
     {
       "kind": "clip",
       "name": "banana_extra",
-      "source": "source/anim_banana_extra.glb",
-      "root_motion": "Hip",
-      "rig_from": "banana",
-      "clips": {
-        "death_back": "death_back",
-        "death_front": "death_front",
-        "death_side": "death_side"
-      },
-      "budgets": {
-        "joints": 96
+      "sources": [
+        "source/anim_banana_extra.glb"
+      ],
+      "params": {
+        "root_motion": "Hip",
+        "rig_from": "banana",
+        "clips": {
+          "death_back": "death_back",
+          "death_front": "death_front",
+          "death_side": "death_side"
+        },
+        "budgets": {
+          "joints": 96
+        }
       }
     },
     {
       "kind": "clip",
       "name": "banana_move",
-      "source": "../../../../../artifacts/game/art/anim/anim_banana_move.glb",
-      "root_motion": "Hip",
-      "rig_from": "banana",
-      "clips": {
-        "run": "move_run",
-        "sprint": "move_sprint",
-        "walk": "move_walk",
-        "crouch_walk": "move_crouch_walk",
-        "run_left": "move_run_left",
-        "run_right": "move_run_right",
-        "run_back": "move_run_back",
-        "land_hard": "move_land_hard",
-        "jump_takeoff": "move_jump_takeoff",
-        "crouch_hold": "move_crouch_hold",
-        "walk_left": "move_walk_left",
-        "walk_right": "move_walk_right",
-        "walk_back": "move_walk_back",
-        "crouch_walk_left": "move_crouch_walk_left",
-        "crouch_walk_right": "move_crouch_walk_right",
-        "crouch_walk_back": "move_crouch_walk_back"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 96
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_banana_move.glb"
+      ],
+      "params": {
+        "root_motion": "Hip",
+        "rig_from": "banana",
+        "clips": {
+          "run": "move_run",
+          "sprint": "move_sprint",
+          "walk": "move_walk",
+          "crouch_walk": "move_crouch_walk",
+          "run_left": "move_run_left",
+          "run_right": "move_run_right",
+          "run_back": "move_run_back",
+          "land_hard": "move_land_hard",
+          "jump_takeoff": "move_jump_takeoff",
+          "crouch_hold": "move_crouch_hold",
+          "walk_left": "move_walk_left",
+          "walk_right": "move_walk_right",
+          "walk_back": "move_walk_back",
+          "crouch_walk_left": "move_crouch_walk_left",
+          "crouch_walk_right": "move_crouch_walk_right",
+          "crouch_walk_back": "move_crouch_walk_back"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 96
+        }
       }
     },
     {
       "kind": "clip",
       "name": "banana_upper",
-      "source": "../../../../../artifacts/game/art/anim/anim_banana_upper.glb",
-      "root_motion": "Hip",
-      "rig_from": "banana",
-      "clips": {
-        "fire_pistol": "fire_pistol",
-        "fire_long": "fire_long",
-        "fire_sniper": "fire_sniper",
-        "reload_pistol": "reload_pistol",
-        "reload_long": "reload_long",
-        "reload_smg": "reload_smg",
-        "reload_sniper": "reload_sniper",
-        "throw_ready": "throw_ready",
-        "throw_ready_smg": "throw_ready_smg",
-        "throw_ready_sniper": "throw_ready_sniper",
-        "throw_ready_sidearm": "throw_ready_sidearm",
-        "throw_hold": "throw_hold",
-        "throw_release": "throw_release",
-        "throw_release_smg": "throw_release_smg",
-        "throw_release_sniper": "throw_release_sniper",
-        "throw_release_sidearm": "throw_release_sidearm",
-        "throw_roll": "throw_roll",
-        "throw_roll_smg": "throw_roll_smg",
-        "throw_roll_sniper": "throw_roll_sniper",
-        "throw_roll_sidearm": "throw_roll_sidearm"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 96
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_banana_upper.glb"
+      ],
+      "params": {
+        "root_motion": "Hip",
+        "rig_from": "banana",
+        "clips": {
+          "fire_pistol": "fire_pistol",
+          "fire_long": "fire_long",
+          "fire_sniper": "fire_sniper",
+          "reload_pistol": "reload_pistol",
+          "reload_long": "reload_long",
+          "reload_smg": "reload_smg",
+          "reload_sniper": "reload_sniper",
+          "throw_ready": "throw_ready",
+          "throw_ready_smg": "throw_ready_smg",
+          "throw_ready_sniper": "throw_ready_sniper",
+          "throw_ready_sidearm": "throw_ready_sidearm",
+          "throw_hold": "throw_hold",
+          "throw_release": "throw_release",
+          "throw_release_smg": "throw_release_smg",
+          "throw_release_sniper": "throw_release_sniper",
+          "throw_release_sidearm": "throw_release_sidearm",
+          "throw_roll": "throw_roll",
+          "throw_roll_smg": "throw_roll_smg",
+          "throw_roll_sniper": "throw_roll_sniper",
+          "throw_roll_sidearm": "throw_roll_sidearm"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 96
+        }
       }
     },
     {
       "kind": "clip",
       "name": "banana_tasks",
-      "source": "../../../../../artifacts/game/art/anim/anim_banana_tasks.glb",
-      "root_motion": "Hip",
-      "rig_from": "banana",
-      "clips": {
-        "device_kneel": "device_kneel",
-        "device_plant_loop": "device_plant_loop",
-        "device_defuse_loop": "device_defuse_loop",
-        "device_stand": "device_stand",
-        "knife_light_a": "knife_light_a",
-        "knife_light_b": "knife_light_b",
-        "knife_heavy": "knife_heavy",
-        "draw_sidearm": "draw_sidearm",
-        "draw_rifle": "draw_rifle",
-        "draw_smg": "draw_smg",
-        "draw_sniper": "draw_sniper"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 96
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_banana_tasks.glb"
+      ],
+      "params": {
+        "root_motion": "Hip",
+        "rig_from": "banana",
+        "clips": {
+          "device_kneel": "device_kneel",
+          "device_plant_loop": "device_plant_loop",
+          "device_defuse_loop": "device_defuse_loop",
+          "device_stand": "device_stand",
+          "knife_light_a": "knife_light_a",
+          "knife_light_b": "knife_light_b",
+          "knife_heavy": "knife_heavy",
+          "draw_sidearm": "draw_sidearm",
+          "draw_rifle": "draw_rifle",
+          "draw_smg": "draw_smg",
+          "draw_sniper": "draw_sniper"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 96
+        }
       }
     },
     {
       "kind": "clip",
       "name": "banana_casts",
-      "source": "../../../../../artifacts/game/art/anim/anim_banana_casts.glb",
-      "root_motion": "Hip",
-      "rig_from": "banana",
-      "clips": {
-        "cast_wall": "cast_wall",
-        "cast_wall_smg": "cast_wall_smg",
-        "cast_wall_sniper": "cast_wall_sniper",
-        "cast_wall_sidearm": "cast_wall_sidearm",
-        "cast_wall_knife": "cast_wall_knife",
-        "cast_self": "cast_self",
-        "cast_self_smg": "cast_self_smg",
-        "cast_self_sniper": "cast_self_sniper",
-        "cast_self_sidearm": "cast_self_sidearm",
-        "cast_self_knife": "cast_self_knife",
-        "cast_press": "cast_press",
-        "cast_press_smg": "cast_press_smg",
-        "cast_press_sniper": "cast_press_sniper",
-        "cast_press_sidearm": "cast_press_sidearm",
-        "cast_press_knife": "cast_press_knife",
-        "cast_place": "cast_place",
-        "cast_place_smg": "cast_place_smg",
-        "cast_place_sniper": "cast_place_sniper",
-        "cast_place_sidearm": "cast_place_sidearm",
-        "cast_place_knife": "cast_place_knife",
-        "cast_ultimate": "cast_ultimate",
-        "cast_ultimate_smg": "cast_ultimate_smg",
-        "cast_ultimate_sniper": "cast_ultimate_sniper",
-        "cast_ultimate_sidearm": "cast_ultimate_sidearm",
-        "cast_ultimate_knife": "cast_ultimate_knife",
-        "death_headshot": "death_headshot"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 96
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_banana_casts.glb"
+      ],
+      "params": {
+        "root_motion": "Hip",
+        "rig_from": "banana",
+        "clips": {
+          "cast_wall": "cast_wall",
+          "cast_wall_smg": "cast_wall_smg",
+          "cast_wall_sniper": "cast_wall_sniper",
+          "cast_wall_sidearm": "cast_wall_sidearm",
+          "cast_wall_knife": "cast_wall_knife",
+          "cast_self": "cast_self",
+          "cast_self_smg": "cast_self_smg",
+          "cast_self_sniper": "cast_self_sniper",
+          "cast_self_sidearm": "cast_self_sidearm",
+          "cast_self_knife": "cast_self_knife",
+          "cast_press": "cast_press",
+          "cast_press_smg": "cast_press_smg",
+          "cast_press_sniper": "cast_press_sniper",
+          "cast_press_sidearm": "cast_press_sidearm",
+          "cast_press_knife": "cast_press_knife",
+          "cast_place": "cast_place",
+          "cast_place_smg": "cast_place_smg",
+          "cast_place_sniper": "cast_place_sniper",
+          "cast_place_sidearm": "cast_place_sidearm",
+          "cast_place_knife": "cast_place_knife",
+          "cast_ultimate": "cast_ultimate",
+          "cast_ultimate_smg": "cast_ultimate_smg",
+          "cast_ultimate_sniper": "cast_ultimate_sniper",
+          "cast_ultimate_sidearm": "cast_ultimate_sidearm",
+          "cast_ultimate_knife": "cast_ultimate_knife",
+          "death_headshot": "death_headshot"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 96
+        }
       }
     },
     {
       "kind": "clip",
       "name": "lobby",
-      "source": "../../../../../artifacts/game/art/anim/anim_lobby.glb",
-      "root_motion": "Hip",
-      "rig_from": "banana",
-      "clips": {
-        "lobby_idle_banana": "lobby_idle_banana",
-        "lobby_idle_strawberry": "lobby_idle_strawberry",
-        "lobby_idle_orange": "lobby_idle_orange",
-        "lobby_idle_watermelon": "lobby_idle_watermelon",
-        "lobby_idle_eggplant": "lobby_idle_eggplant",
-        "lobby_pick_banana": "lobby_pick_banana",
-        "lobby_pick_strawberry": "lobby_pick_strawberry",
-        "lobby_pick_orange": "lobby_pick_orange",
-        "lobby_pick_watermelon": "lobby_pick_watermelon",
-        "lobby_pick_eggplant": "lobby_pick_eggplant"
-      },
-      "budgets": {
-        "joints": 96
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_lobby.glb"
+      ],
+      "params": {
+        "root_motion": "Hip",
+        "rig_from": "banana",
+        "clips": {
+          "lobby_idle_banana": "lobby_idle_banana",
+          "lobby_idle_strawberry": "lobby_idle_strawberry",
+          "lobby_idle_orange": "lobby_idle_orange",
+          "lobby_idle_watermelon": "lobby_idle_watermelon",
+          "lobby_idle_eggplant": "lobby_idle_eggplant",
+          "lobby_pick_banana": "lobby_pick_banana",
+          "lobby_pick_strawberry": "lobby_pick_strawberry",
+          "lobby_pick_orange": "lobby_pick_orange",
+          "lobby_pick_watermelon": "lobby_pick_watermelon",
+          "lobby_pick_eggplant": "lobby_pick_eggplant"
+        },
+        "budgets": {
+          "joints": 96
+        }
       }
     },
     {
       "kind": "clip",
       "name": "fp_rifle_inspect",
-      "source": "../../../../../artifacts/game/art/anim/anim_fp_rifle.glb",
-      "rig_from": "rifle",
-      "clips": {
-        "inspect": "rifle_inspect"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 16
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_fp_rifle.glb"
+      ],
+      "params": {
+        "rig_from": "rifle",
+        "clips": {
+          "inspect": "rifle_inspect"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 16
+        }
       }
     },
     {
       "kind": "clip",
       "name": "fp_smg_inspect",
-      "source": "../../../../../artifacts/game/art/anim/anim_fp_smg.glb",
-      "rig_from": "smg",
-      "clips": {
-        "inspect": "smg_inspect"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 16
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_fp_smg.glb"
+      ],
+      "params": {
+        "rig_from": "smg",
+        "clips": {
+          "inspect": "smg_inspect"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 16
+        }
       }
     },
     {
       "kind": "clip",
       "name": "fp_sniper_inspect",
-      "source": "../../../../../artifacts/game/art/anim/anim_fp_sniper.glb",
-      "rig_from": "sniper",
-      "clips": {
-        "inspect": "sniper_inspect"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 16
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_fp_sniper.glb"
+      ],
+      "params": {
+        "rig_from": "sniper",
+        "clips": {
+          "inspect": "sniper_inspect"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 16
+        }
       }
     },
     {
       "kind": "clip",
       "name": "fp_sidearm_inspect",
-      "source": "../../../../../artifacts/game/art/anim/anim_fp_sidearm.glb",
-      "rig_from": "sidearm",
-      "clips": {
-        "inspect": "sidearm_inspect"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 16
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_fp_sidearm.glb"
+      ],
+      "params": {
+        "rig_from": "sidearm",
+        "clips": {
+          "inspect": "sidearm_inspect"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 16
+        }
       }
     },
     {
       "kind": "clip",
       "name": "fp_melee_swings",
-      "source": "../../../../../artifacts/game/art/anim/anim_fp_melee.glb",
-      "rig_from": "melee",
-      "clips": {
-        "knife_light_a": "melee_knife_light_a",
-        "knife_light_b": "melee_knife_light_b",
-        "knife_heavy": "melee_knife_heavy"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 16
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_fp_melee.glb"
+      ],
+      "params": {
+        "rig_from": "melee",
+        "clips": {
+          "knife_light_a": "melee_knife_light_a",
+          "knife_light_b": "melee_knife_light_b",
+          "knife_heavy": "melee_knife_heavy"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 16
+        }
       }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "device",
-      "source": "source/fp_device.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {
-        "equip": "device_equip",
-        "plant": "device_plant",
-        "defuse": "device_defuse"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 8000,
-        "vertices": 8000,
-        "joints": 16,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_device.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {
+          "equip": "device_equip",
+          "plant": "device_plant",
+          "defuse": "device_defuse"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 8000,
+          "vertices": 8000,
+          "joints": 16,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "melee",
-      "source": "source/fp_melee.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {
-        "equip": "melee_equip",
-        "slash_light": "melee_slash_light",
-        "slash_heavy": "melee_slash_heavy"
-      },
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 4000,
-        "vertices": 4000,
-        "joints": 16,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_melee.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {
+          "equip": "melee_equip",
+          "slash_light": "melee_slash_light",
+          "slash_heavy": "melee_slash_heavy"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
+        },
+        "budgets": {
+          "triangles": 4000,
+          "vertices": 4000,
+          "joints": 16,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "character",
+      "kind": "model",
       "name": "hands",
-      "source": "source/fp_hands.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "clips": {},
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 6000,
-        "vertices": 4000,
-        "joints": 31,
-        "influences": 4
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/fp_hands.glb"
+      ],
+      "params": {
+        "kind": "character",
+        "scale": 1.0,
+        "texture_size": 64,
+        "clips": {},
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 6000,
+          "vertices": 4000,
+          "joints": 31,
+          "influences": 4
+        },
+        "textures": "maps"
+      }
     },
     {
       "kind": "clip",
       "name": "hands_ability",
-      "source": "../../../../../artifacts/game/art/anim/anim_fp_hands.glb",
-      "rig_from": "hands",
-      "clips": {
-        "fp_ability_ready": "fp_ability_ready",
-        "fp_ability_hold": "fp_ability_hold",
-        "fp_ability_throw": "fp_ability_throw",
-        "fp_ability_roll": "fp_ability_roll",
-        "fp_ability_place": "fp_ability_place",
-        "fp_ability_press": "fp_ability_press",
-        "fp_ability_wall": "fp_ability_wall",
-        "fp_ability_cast": "fp_ability_cast",
-        "fp_ability_self": "fp_ability_self",
-        "fp_ability_ultimate": "fp_ability_ultimate"
-      },
-      "keys_per_second": 60,
-      "budgets": {
-        "joints": 32
+      "sources": [
+        "../../../../../artifacts/game/art/anim/anim_fp_hands.glb"
+      ],
+      "params": {
+        "rig_from": "hands",
+        "clips": {
+          "fp_ability_ready": "fp_ability_ready",
+          "fp_ability_hold": "fp_ability_hold",
+          "fp_ability_throw": "fp_ability_throw",
+          "fp_ability_roll": "fp_ability_roll",
+          "fp_ability_place": "fp_ability_place",
+          "fp_ability_press": "fp_ability_press",
+          "fp_ability_wall": "fp_ability_wall",
+          "fp_ability_cast": "fp_ability_cast",
+          "fp_ability_self": "fp_ability_self",
+          "fp_ability_ultimate": "fp_ability_ultimate"
+        },
+        "keys_per_second": 60,
+        "budgets": {
+          "joints": 32
+        }
       }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "tp_device",
-      "source": "source/tp_device.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 2500,
-        "vertices": 3000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/tp_device.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 2500,
+          "vertices": 3000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "device_planted",
-      "source": "source/device_planted.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 5500,
-        "vertices": 5500
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/device_planted.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 5500,
+          "vertices": 5500
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "tp_melee",
-      "source": "source/tp_melee.glb",
-      "scale": 1.0,
-      "texture_size": 64,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 800,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/tp_melee.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 64,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ]
+        "budgets": {
+          "triangles": 800,
+          "vertices": 1000
+        },
+        "textures": "maps"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_peel",
-      "source": "source/prop_peel.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 800,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_peel.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 800,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "make": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_ripe_flash",
-      "source": "source/prop_ripe_flash.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_ripe_flash.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_jam_pool",
-      "source": "source/prop_jam_pool.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_jam_pool.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_seed_sensor",
-      "source": "source/prop_seed_sensor.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 800,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_seed_sensor.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 800,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_sweet_spot",
-      "source": "source/prop_sweet_spot.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_sweet_spot.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_zest_bomb",
-      "source": "source/prop_zest_bomb.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_zest_bomb.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_pulp_cloud",
-      "source": "source/prop_pulp_cloud.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_pulp_cloud.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_seed_grenade",
-      "source": "source/prop_seed_grenade.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_seed_grenade.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_melon_drop",
-      "source": "source/prop_melon_drop.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 800,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_melon_drop.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 800,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_nightshade",
-      "source": "source/prop_nightshade.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 300,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_nightshade.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 300,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
-      "kind": "static",
+      "kind": "model",
       "name": "prop_vine_wire",
-      "source": "source/prop_vine_wire.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 800,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
+      "sources": [
+        "source/prop_vine_wire.glb"
+      ],
+      "params": {
+        "kind": "static",
+        "scale": 1.0,
+        "texture_size": 1024,
+        "material": {
+          "slot": "figure",
+          "module": "figure",
+          "lighting": "figure"
         },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
+        "budgets": {
+          "triangles": 800,
+          "vertices": 1000
+        },
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ],
+        "shared_maps": {
+          "use": "abilities"
         }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
+      }
     },
     {
       "kind": "picture",
       "name": "fredoka",
-      "source": "ui/fredoka.png",
-      "encodings": {
-        "bc": "bc7",
-        "rgba8": "rgba8"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/fredoka.png"
+      ],
+      "params": {
+        "encodings": "linear",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "nunito",
-      "source": "ui/nunito.png",
-      "encodings": {
-        "bc": "bc7",
-        "rgba8": "rgba8"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/nunito.png"
+      ],
+      "params": {
+        "encodings": "linear",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "icons_atlas",
-      "source": "ui/icons_atlas.png",
-      "encodings": {
-        "bc": "bc7",
-        "rgba8": "rgba8"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/icons_atlas.png"
+      ],
+      "params": {
+        "encodings": "linear",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "portraits",
-      "source": "ui/portraits.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/portraits.png"
+      ],
+      "params": {
+        "encodings": "srgb",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "stickers",
-      "source": "ui/stickers.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/stickers.png"
+      ],
+      "params": {
+        "encodings": "srgb",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "minimap",
-      "source": "ui/minimap.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/minimap.png"
+      ],
+      "params": {
+        "encodings": "srgb",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "settings_paving",
-      "source": "ui/settings_paving.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/settings_paving.png"
+      ],
+      "params": {
+        "encodings": "srgb",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "settings_hall",
-      "source": "ui/settings_hall.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": true,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "ui/settings_hall.png"
+      ],
+      "params": {
+        "encodings": "srgb",
+        "mips": true,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "mercato_light",
-      "source": "source/map_mercato_light.png",
-      "encodings": {
-        "bc": "bc7",
-        "rgba8": "rgba8"
-      },
-      "mips": false,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "source/map_mercato_light.png"
+      ],
+      "params": {
+        "encodings": "linear",
+        "mips": false,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "macro_breakup",
-      "source": "../../../../../artifacts/game/art/map/textures/kit/macro.png",
-      "encodings": {
-        "bc": "bc7",
-        "rgba8": "rgba8"
-      },
-      "mips": true,
-      "wrap": [
-        "repeat",
-        "repeat"
-      ]
+      "sources": [
+        "../../../../../artifacts/game/art/map/textures/kit/macro.png"
+      ],
+      "params": {
+        "encodings": "linear",
+        "mips": true,
+        "wrap": [
+          "repeat",
+          "repeat"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "sky_panorama",
-      "source": "source/sky_pano.png",
-      "encodings": {
-        "bc": "bc7_srgb",
-        "rgba8": "rgba8_srgb"
-      },
-      "mips": false,
-      "wrap": [
-        "repeat",
-        "clamp_to_edge"
-      ]
+      "sources": [
+        "source/sky_pano.png"
+      ],
+      "params": {
+        "encodings": "srgb",
+        "mips": false,
+        "wrap": [
+          "repeat",
+          "clamp_to_edge"
+        ]
+      }
     },
     {
       "kind": "picture",
       "name": "mercato_field",
-      "source": "source/mercato_field.png",
-      "encodings": {
-        "rgba8": "rgba8"
-      },
-      "mips": false,
-      "wrap": [
-        "clamp_to_edge",
-        "clamp_to_edge"
+      "sources": [
+        "source/mercato_field.png"
       ],
-      "optional": true
-    }
-  ],
-  "scene_parts": [
-    {
-      "id": "light_field",
-      "scene": "../fruit_fps.scene.json",
-      "needs": [
-        "mercato_field"
-      ],
-      "textures": [
-        {
-          "id": "mercato_field",
-          "uri": "assets/cooked/mercato_field.rgba8.ktx2"
-        }
-      ],
-      "materials": [
-        {
-          "id": "mercato_field",
-          "color": [
-            1.0,
-            1.0,
-            1.0,
-            1.0
-          ],
-          "slots": {
-            "field": {
-              "module": "field",
-              "maps": {
-                "field": {
-                  "id": "mercato_field",
-                  "wrap_u": "clamp_to_edge",
-                  "wrap_v": "clamp_to_edge",
-                  "mag_filter": "linear",
-                  "min_filter": "linear"
-                }
-              }
-            }
-          },
-          "values": {
-            "min_x": -45.0,
-            "min_z": -44.0,
-            "max_x": 45.0,
-            "max_z": 46.0,
-            "height_m": 1.2,
-            "lightmap_scale": 4.0
-          }
-        }
-      ],
-      "entities": [
-        {
-          "id": "light_field",
-          "drawn": {
-            "kind": "light_field",
-            "material": "mercato_field"
-          },
-          "transform": {}
-        }
-      ]
-    },
-    {
-      "id": "distance_forms",
-      "scene": "../fruit_fps.scene.json",
-      "needs": [],
-      "meshes": [
-        {
-          "id": "banana_mid",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/banana_mid.emb"
-          }
+      "params": {
+        "encodings": {
+          "rgba8": "rgba8"
         },
-        {
-          "id": "banana_far",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/banana_far.emb"
-          }
-        },
-        {
-          "id": "strawberry_mid",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/strawberry_mid.emb"
-          }
-        },
-        {
-          "id": "strawberry_far",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/strawberry_far.emb"
-          }
-        },
-        {
-          "id": "orange_mid",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/orange_mid.emb"
-          }
-        },
-        {
-          "id": "orange_far",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/orange_far.emb"
-          }
-        },
-        {
-          "id": "eggplant_mid",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/eggplant_mid.emb"
-          }
-        },
-        {
-          "id": "eggplant_far",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/eggplant_far.emb"
-          }
-        },
-        {
-          "id": "watermelon_mid",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/watermelon_mid.emb"
-          }
-        },
-        {
-          "id": "watermelon_far",
-          "source": {
-            "kind": "buffer",
-            "uri": "assets/cooked/watermelon_far.emb"
-          }
-        }
-      ],
-      "entities": [
-        {
-          "id": "first_banana",
-          "figure": {
-            "forms": {
-              "mid": "banana_mid",
-              "far": "banana_far"
-            }
-          }
-        },
-        {
-          "id": "first_strawberry",
-          "figure": {
-            "forms": {
-              "mid": "strawberry_mid",
-              "far": "strawberry_far"
-            }
-          }
-        },
-        {
-          "id": "first_orange",
-          "figure": {
-            "forms": {
-              "mid": "orange_mid",
-              "far": "orange_far"
-            }
-          }
-        },
-        {
-          "id": "first_watermelon",
-          "figure": {
-            "forms": {
-              "mid": "watermelon_mid",
-              "far": "watermelon_far"
-            }
-          }
-        },
-        {
-          "id": "first_eggplant",
-          "figure": {
-            "forms": {
-              "mid": "eggplant_mid",
-              "far": "eggplant_far"
-            }
-          }
-        },
-        {
-          "id": "second_banana",
-          "figure": {
-            "forms": {
-              "mid": "banana_mid",
-              "far": "banana_far"
-            }
-          }
-        },
-        {
-          "id": "second_strawberry",
-          "figure": {
-            "forms": {
-              "mid": "strawberry_mid",
-              "far": "strawberry_far"
-            }
-          }
-        },
-        {
-          "id": "second_orange",
-          "figure": {
-            "forms": {
-              "mid": "orange_mid",
-              "far": "orange_far"
-            }
-          }
-        },
-        {
-          "id": "second_watermelon",
-          "figure": {
-            "forms": {
-              "mid": "watermelon_mid",
-              "far": "watermelon_far"
-            }
-          }
-        },
-        {
-          "id": "second_eggplant",
-          "figure": {
-            "forms": {
-              "mid": "eggplant_mid",
-              "far": "eggplant_far"
-            }
-          }
-        }
-      ]
-    }
-  ],
-  "scenes": [
-    {
-      "from": "../fruit_fps.scene.json",
-      "to": "../fruit_fps.rgba8.scene.json",
-      "replaces": "bc",
-      "variant": "rgba8"
+        "mips": false,
+        "wrap": [
+          "clamp_to_edge",
+          "clamp_to_edge"
+        ]
+      }
     }
   ]
 }

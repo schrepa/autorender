@@ -3,6 +3,7 @@ use std::fmt::Write;
 use engine::math;
 use engine::prelude::*;
 use engine::{FrameTime, Projection, Views};
+use engine_core::DevSetting;
 
 use crate::play::actors::{Actor, Body, Health, Human, Motion, Wish};
 use crate::play::arms::Arms;
@@ -24,7 +25,6 @@ use super::{ScreenSetup, ScreenSource, Words};
 const WALL_SECONDS: f64 = 1.0;
 const DEVICE_ICON: &str = "device";
 const DEMO_CHANNEL: f32 = 0.6;
-const DEMO_VICTIM: &str = "char_banana_defend";
 const DEMO_SCORE: [&str; 2] = ["5", "3"];
 const DEMO_POOR_NEED: [u32; 4] = [0, 1150, 2450, 4250];
 
@@ -773,7 +773,7 @@ type Reads<'w, 's> = (
     Option<Res<'w, Numbers>>,
     Res<'w, Views>,
     Res<'w, FrameTime>,
-    (Res<'w, ScreenSetup>, Option<Res<'w, Watched>>),
+    (DevSetting<'w, ScreenSetup>, Option<Res<'w, Watched>>),
 );
 
 fn watched_slot(watched: Option<&Watched>) -> Option<u32> {
@@ -859,7 +859,6 @@ fn demo_part(facts: &mut HudFacts, setup: &ScreenSetup, source: &ScreenSource) {
     let kill = &mut facts.kill;
     kill.active = setup.demo_kills > 0;
     kill.count = setup.demo_kills;
-    set(&mut kill.victim_icon, DEMO_VICTIM);
     let words = &source.words.kills;
     let at = (setup.demo_kills as usize).clamp(1, words.len().max(1)) - 1;
     set(&mut kill.label, words.get(at).map_or("", String::as_str));
@@ -882,13 +881,16 @@ pub(super) fn fill(
     };
     let view = round.as_deref().and_then(Round::view);
     let human = humans.iter().next();
-    let (Some(view), Some((actor, health, arms, body, wish)), false) = (view, human, setup.demo)
-    else {
+    let setup = setup.get();
+    let demo = setup.is_some_and(|setup| setup.demo);
+    let (Some(view), Some((actor, health, arms, body, wish)), false) = (view, human, demo) else {
         if !recent.demo_shown {
             facts.clone_from(&loaded.demo);
             recent.demo_shown = true;
         }
-        demo_part(&mut facts, &setup, source);
+        if let Some(setup) = setup {
+            demo_part(&mut facts, setup, source);
+        }
         return;
     };
     recent.demo_shown = false;

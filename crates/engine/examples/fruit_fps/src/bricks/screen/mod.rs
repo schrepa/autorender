@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use engine::prelude::*;
 use engine::{Error, ErrorCode};
-use engine_core::{SceneContext, SceneCx};
+use engine_core::{SceneContext, SceneCx, Stats};
 use engine_render::RenderBricks;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,8 @@ use crate::play::camera::TestCamera;
 use crate::play::flow::Flow;
 use crate::play::numbers::Input;
 use crate::play::screen::{
-    BOUND_SLOTS, Covered, Face, Font, GLYPH_SLOTS, Glyph, HudFacts, Icons, PICTURE_SLOTS, Picture,
-    Quad, ScreenBuys, ScreenDraw, ScreenState, Shown,
+    BOUND_SLOTS, Face, Font, GLYPH_SLOTS, Glyph, HudFacts, Icons, PICTURE_SLOTS, Picture, Quad,
+    ScreenBuys, ScreenDraw, ScreenState, Shown,
 };
 
 use layout::{Layout, Seg};
@@ -621,6 +621,7 @@ pub enum Showing {
 }
 
 settings! {
+    #[dev]
     #[section("screen_show")]
     #[serde(deny_unknown_fields)]
     pub struct ScreenSetup {
@@ -697,14 +698,11 @@ impl Brick for ScreenBrick {
                     .files(ScreenSource::files)
                     .prepare(ScreenSource::prepared),
             )
-            .settings::<ScreenSetup>()
-            .stats::<ScreenStats>()
             .resource::<HudFacts>()
             .resource::<ScreenDraw>()
             .resource::<ScreenState>()
             .resource::<ScreenBuys>()
             .resource::<ScreenBook>()
-            .resource::<Covered>()
             .resource::<facts::Recent>()
             .settings::<menu::Options>()
             .resource::<menu::OptionsWrite>()
@@ -716,9 +714,13 @@ impl Brick for ScreenBrick {
             .systems(Schedule::Presentation, tactics::fill_tactics)
             .systems(Schedule::Presentation, more::fill_menu)
             .systems(Schedule::Presentation, control::control)
-            .systems(Schedule::FrameStart, cover)
+            .systems(Schedule::BeforeDraw, cover)
             .systems(Schedule::Presentation, draw_screen)
-            .systems(Schedule::Presentation, report_flow)
+            .dev(|dev| {
+                dev.settings::<ScreenSetup>()
+                    .stats::<ScreenStats>()
+                    .systems(Schedule::Presentation, report_flow);
+            })
             .systems(Schedule::Presentation, menu::write_options);
     }
 }
@@ -807,17 +809,30 @@ type Shared<'w, 's> = (
 
 const IN_ROUND: [Shown; 4] = [Shown::Hud, Shown::Buy, Shown::Scoreboard, Shown::RoundEnd];
 
-fn cover(book: Res<ScreenBook>, mut covered: ResMut<Covered>) {
-    covered.set_if_neq(Covered(book.opaque));
+fn cover(
+    book: Res<ScreenBook>,
+    views: Res<Views>,
+    listed: Query<(Entity, Has<ViewSkip>), With<View>>,
+    mut spawner: Spawner<ScreenBrick>,
+) {
+    let main = views.main().map(|facts| facts.view);
+    for (view, skipped) in &listed {
+        let wanted = book.opaque && Some(view) == main;
+        if wanted && !skipped {
+            spawner.insert(view, ViewSkip);
+        } else if skipped && !wanted {
+            spawner.remove::<ViewSkip>(view);
+        }
+    }
 }
 
 fn draw_screen(
     (sources, scene, views, facts, state, time, camera): Shared,
     mut draw: ResMut<ScreenDraw>,
     mut book: ResMut<ScreenBook>,
-    mut stats: ResMut<ScreenStats>,
+    mut stats: Stats<ScreenStats>,
     (mut scratch, mut spare): (Local<String>, Local<String>),
-    covered: Res<Covered>,
+    skipped: Query<(), With<ViewSkip>>,
 ) {
     let shown = views.frame().display_size;
     let size = Vec2::new(shown.x as f32, shown.y as f32);
@@ -825,7 +840,7 @@ fn draw_screen(
     let draw = &mut *draw;
     let book = &mut *book;
     adopt(draw, book, source.and_then(|source| source.loaded.as_ref()));
-    let mut problem = match source {
+    let problem = match source {
         None => Some("no entity carries the `screen` component".to_owned()),
         Some(source) if source.loaded.is_none() => {
             Some("the screen files are not read yet".to_owned())
@@ -873,7 +888,7 @@ fn draw_screen(
         }
     }
     draw.settle();
-    if covered.0
+    if !skipped.is_empty()
         && !draw.opaque
         && let Some(held) = book.held
     {
@@ -887,50 +902,51 @@ fn draw_screen(
         book.previous_size = size;
         draw.revision += 1;
     }
-    let stats = &mut *stats;
-    live::set(&mut stats.shown, state.shown.key());
-    stats.live = facts.live;
-    stats.hud_hidden = hud_hidden;
-    stats.quads = draw.quads.len() as u32;
-    stats.bytes_written = if changed {
-        16 + (draw.quads.len() * size_of::<Quad>()) as u64
-    } else {
-        0
-    };
-    stats.covered_pixels = draw.covered_pixels();
-    stats.opaque = draw.opaque;
-    let screen = draw.size.x * draw.size.y;
-    stats.covered_share = if screen > 0.0 {
-        stats.covered_pixels as f32 / screen
-    } else {
-        0.0
-    };
-    stats.texts = draw.texts;
-    stats.glyphs = draw.glyphs;
-    stats.glyphs_missing = draw.glyphs_missing;
-    stats.icons_missing = draw.icons_missing;
-    stats.texts_fitted = draw.fitted;
-    stats.pointer = book.pointer.map(|pointer| [pointer.x, pointer.y]);
-    match book
-        .hovered
-        .and_then(|hovered| control::card(&facts, hovered))
-    {
-        Some(card) => live::set(stats.hovered.get_or_insert_with(String::new), &card.name),
-        None => stats.hovered = None,
-    }
-    stats.buys = book.buys;
-    let applied = book.applied.as_deref();
-    stats.elements = applied.map_or(0, |loaded| loaded.layout.elements() as u32);
-    stats.screens = applied.map_or(0, |loaded| loaded.layout.screens.len() as u32);
-    stats.screens_unread = applied.map_or(0, |loaded| loaded.layout.unread.len() as u32);
-    let skipped = applied.map_or(&[][..], |loaded| loaded.layout.skipped.as_slice());
-    stats.elements_skipped = skipped.len() as u32;
-    if stats.skipped.as_slice() != skipped {
-        stats.skipped = skipped.to_vec();
-    }
-    if stats.problem != problem {
-        stats.problem = problem.take();
-    }
+    stats.edit(|stats| {
+        live::set(&mut stats.shown, state.shown.key());
+        stats.live = facts.live;
+        stats.hud_hidden = hud_hidden;
+        stats.quads = draw.quads.len() as u32;
+        stats.bytes_written = if changed {
+            16 + (draw.quads.len() * size_of::<Quad>()) as u64
+        } else {
+            0
+        };
+        stats.covered_pixels = draw.covered_pixels();
+        stats.opaque = draw.opaque;
+        let screen = draw.size.x * draw.size.y;
+        stats.covered_share = if screen > 0.0 {
+            stats.covered_pixels as f32 / screen
+        } else {
+            0.0
+        };
+        stats.texts = draw.texts;
+        stats.glyphs = draw.glyphs;
+        stats.glyphs_missing = draw.glyphs_missing;
+        stats.icons_missing = draw.icons_missing;
+        stats.texts_fitted = draw.fitted;
+        stats.pointer = book.pointer.map(|pointer| [pointer.x, pointer.y]);
+        match book
+            .hovered
+            .and_then(|hovered| control::card(&facts, hovered))
+        {
+            Some(card) => live::set(stats.hovered.get_or_insert_with(String::new), &card.name),
+            None => stats.hovered = None,
+        }
+        stats.buys = book.buys;
+        let applied = book.applied.as_deref();
+        stats.elements = applied.map_or(0, |loaded| loaded.layout.elements() as u32);
+        stats.screens = applied.map_or(0, |loaded| loaded.layout.screens.len() as u32);
+        stats.screens_unread = applied.map_or(0, |loaded| loaded.layout.unread.len() as u32);
+        let skipped = applied.map_or(&[][..], |loaded| loaded.layout.skipped.as_slice());
+        stats.elements_skipped = skipped.len() as u32;
+        if stats.skipped.as_slice() != skipped {
+            stats.skipped = skipped.to_vec();
+        }
+        if stats.problem != problem {
+            stats.problem = problem;
+        }
+    });
 }
 
 type FlowReads<'w> = (
@@ -939,16 +955,17 @@ type FlowReads<'w> = (
     Res<'w, menu::OptionsWrite>,
 );
 
-fn report_flow((flow, state, writes): FlowReads, mut stats: ResMut<ScreenStats>) {
-    let stats = &mut *stats;
-    if let Some(flow) = flow.as_deref() {
-        live::set(&mut stats.flow, flow.stage.key());
-        stats.flow_settings_open = flow.settings_open;
-        live::set(&mut stats.character, &flow.character);
-        live::set(&mut stats.level, &flow.level);
-    }
-    stats.quit_asked = state.quit_asked;
-    if stats.options_problem != writes.problem {
-        stats.options_problem.clone_from(&writes.problem);
-    }
+fn report_flow((flow, state, writes): FlowReads, mut stats: Stats<ScreenStats>) {
+    stats.edit(|stats| {
+        if let Some(flow) = flow.as_deref() {
+            live::set(&mut stats.flow, flow.stage.key());
+            stats.flow_settings_open = flow.settings_open;
+            live::set(&mut stats.character, &flow.character);
+            live::set(&mut stats.level, &flow.level);
+        }
+        stats.quit_asked = state.quit_asked;
+        if stats.options_problem != writes.problem {
+            stats.options_problem.clone_from(&writes.problem);
+        }
+    });
 }

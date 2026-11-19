@@ -3,9 +3,10 @@ engine::brick!(look);
 use engine::glam::{Quat, Vec3};
 use engine::math;
 use engine::prelude::*;
+use engine_core::{DevSetting, Poses, Stats};
 
 use crate::names::{FAR, NEAR, PITCH_LIMIT_DEGREES};
-use crate::play::actors::{Actor, Body, Human, Wish};
+use crate::play::actors::{Actor, Body, Eye, Human, Wish};
 use crate::play::camera::TestCamera;
 use crate::play::lobby::LobbyView;
 use crate::play::numbers::{Numbers, SpectateNumbers};
@@ -46,6 +47,7 @@ pub struct FollowCamera {
 }
 
 settings! {
+    #[dev]
     #[section("look_test")]
     #[serde(deny_unknown_fields)]
     pub struct LookTest {
@@ -80,11 +82,12 @@ impl Brick for LookBrick {
                 ComponentKind::of::<Look>("look").schema(engine_core::schema_of::<Look>),
             )
             .moves::<Look>(Pace::Frame)
-            .settings::<LookTest>()
             .resource::<TestCamera>()
-            .stats::<LookStats>()
-            .systems(Schedule::FrameStart, lens)
-            .systems(Schedule::FrameStart, place);
+            .dev(|dev| {
+                dev.settings::<LookTest>().stats::<LookStats>();
+            })
+            .systems(Schedule::BeforeDraw, lens)
+            .systems(Schedule::BeforeDraw, place);
     }
 }
 
@@ -118,17 +121,21 @@ struct Shot {
     zoom: f32,
 }
 
-fn first_person(alpha: f32, (body, wish, offsets): (&Body, &Wish, &ViewOffsets)) -> Shot {
+fn drawn_at(poses: &Poses<'_>, node: Entity) -> Option<Vec3> {
+    poses.drawn_pose(node).map(|pose| pose.w_axis.truncate())
+}
+
+fn first_person(poses: &Poses<'_>, (eye, wish, offsets): Seen<'_>) -> Option<Shot> {
     let limit = PITCH_LIMIT_DEGREES.to_radians();
     let yaw = wish.yaw_radians + offsets.yaw_radians();
     let pitch = math::clamp(wish.pitch_radians + offsets.pitch_radians(), -limit, limit);
-    Shot {
-        position: body.eye_before.lerp(body.eye, alpha),
+    Some(Shot {
+        position: drawn_at(poses, eye.node)?,
         rotation: Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch),
         yaw,
         pitch,
         zoom: offsets.zoom,
-    }
+    })
 }
 
 fn corpse_shot(corpse: &CorpseView, spectate: &SpectateNumbers, ticks: f32) -> Shot {
@@ -190,15 +197,20 @@ fn aimed_shot(position: Vec3, target: Vec3, path: &str) -> Result<Shot, String> 
 
 fn followed(
     follow: &FollowCamera,
-    alpha: f32,
-    actors: &Query<'_, '_, (&Actor, Seen<'static>)>,
+    poses: &Poses<'_>,
+    actors: &Query<'_, '_, Slotted<'static>>,
 ) -> Result<Shot, String> {
-    let (_, (body, wish, _)) = actors
+    let (_, eye, body, wish) = actors
         .iter()
-        .find(|(actor, _)| actor.slot == follow.slot)
+        .find(|(actor, ..)| actor.slot == follow.slot)
         .ok_or_else(|| format!("$.look_test.follow.slot: no actor in slot {}", follow.slot))?;
-    let drawn_eye = body.eye_before.lerp(body.eye, alpha);
-    let feet = body.feet + (drawn_eye - body.eye);
+    let drawn_eye = drawn_at(poses, eye.node).ok_or_else(|| {
+        format!(
+            "$.look_test.follow.slot: actor in slot {} has no drawn pose",
+            follow.slot
+        )
+    })?;
+    let feet = drawn_eye - (body.eye - body.feet);
     let turn = Quat::from_rotation_y(wish.yaw_radians);
     let position = feet + turn * Vec3::from_array(follow.offset);
     aimed_shot(
@@ -209,12 +221,11 @@ fn followed(
 }
 
 fn test_shot(view: &Viewing<'_, '_>) -> Option<Result<(Shot, f32), String>> {
-    let test = view.test.as_deref()?;
+    let test = view.test.get()?;
     if let Some(follow) = test.follow.as_ref() {
         return Some(
-            fov_checked(follow.fov_degrees, "$.look_test.follow").and_then(|fov| {
-                followed(follow, view.frame.alpha, &view.slots).map(|shot| (shot, fov))
-            }),
+            fov_checked(follow.fov_degrees, "$.look_test.follow")
+                .and_then(|fov| followed(follow, &view.poses, &view.slots).map(|shot| (shot, fov))),
         );
     }
     let free = test.free.as_ref()?;
@@ -236,7 +247,9 @@ fn lobby_shot(view: &Viewing<'_, '_>) -> Option<(Shot, f32)> {
     Some((shot, fov))
 }
 
-type Seen<'a> = (&'a Body, &'a Wish, &'a ViewOffsets);
+type Seen<'a> = (&'a Eye, &'a Wish, &'a ViewOffsets);
+
+type Slotted<'a> = (&'a Actor, &'a Eye, &'a Body, &'a Wish);
 
 #[derive(SystemParam)]
 struct Viewing<'w, 's> {
@@ -244,11 +257,12 @@ struct Viewing<'w, 's> {
     tick: Res<'w, FixedTime>,
     numbers: Res<'w, Numbers>,
     controls: Res<'w, Controls>,
+    poses: Poses<'w>,
     watched: Option<Res<'w, Watched>>,
     lobby: Option<Res<'w, LobbyView>>,
-    test: Option<Res<'w, LookTest>>,
+    test: DevSetting<'w, LookTest>,
     actors: Query<'w, 's, Seen<'static>>,
-    slots: Query<'w, 's, (&'static Actor, Seen<'static>)>,
+    slots: Query<'w, 's, Slotted<'static>>,
     humans: Query<'w, 's, Seen<'static>, With<Human>>,
 }
 
@@ -269,12 +283,12 @@ fn shot_of(view: &Viewing<'_, '_>) -> Option<Shot> {
             .actors
             .get(entity)
             .ok()
-            .map(|seen| first_person(alpha, seen)),
+            .and_then(|seen| first_person(&view.poses, seen)),
         (_, _, None) => view
             .humans
             .iter()
             .next()
-            .map(|seen| first_person(alpha, seen)),
+            .and_then(|seen| first_person(&view.poses, seen)),
     }
 }
 
@@ -282,7 +296,7 @@ fn place(
     view: Viewing<'_, '_>,
     mut eyes: Query<(Entity, &mut Camera), With<Look>>,
     mut moves: Moves<LookBrick>,
-    (mut stats, mut outside): (ResMut<LookStats>, ResMut<TestCamera>),
+    (mut stats, mut outside): (Stats<LookStats>, ResMut<TestCamera>),
 ) {
     let tested = test_shot(&view);
     let test_refusal = tested
@@ -290,7 +304,7 @@ fn place(
         .and_then(|tested| tested.as_ref().err().cloned());
     let tested = tested.and_then(Result::ok);
     let free = tested.is_some();
-    let hud_hidden = view.test.as_deref().is_some_and(|test| test.hide_hud);
+    let hud_hidden = view.test.get().is_some_and(|test| test.hide_hud);
     let lobby = lobby_shot(&view).filter(|_| tested.is_none());
     let in_lobby = lobby.is_some();
     let (shot, fov_degrees) = match tested.or(lobby) {
@@ -322,7 +336,7 @@ fn place(
         } => vertical_fov_radians,
         Projection::Orthographic { .. } | Projection::Fitted { .. } => 0.0,
     };
-    stats.set_if_neq(LookStats {
+    stats.show(|| LookStats {
         yaw: shot.yaw,
         pitch: shot.pitch,
         position: shot.position.to_array(),
@@ -330,7 +344,7 @@ fn place(
         free,
         follow: view
             .test
-            .as_deref()
+            .get()
             .and_then(|test| test.follow)
             .filter(|_| free)
             .map(|follow| follow.slot),

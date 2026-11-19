@@ -402,22 +402,10 @@ pub(super) fn remember_cues(recent: &mut Vec<CueStat>, events: &[Event], tick: u
     }
 }
 
-pub(super) fn write_stats(
-    stats: &mut PowerStats,
-    book: &Book,
-    setup: &PowerSetup,
-    live: &[Count],
-    tick: u64,
-) {
+pub(super) fn write_stats(stats: &mut PowerStats, book: &Book, setup: &PowerSetup, tick: u64) {
     stats.refusal = book.refusal.clone();
     stats.tick = tick;
     stats.free = setup.free;
-    stats.live = live.to_vec();
-    stats.casts_total = book.casts_total;
-    stats.refused_total = book.refused_total;
-    stats.last_cast = book.last_cast.clone();
-    stats.last_refusal = book.last_refusal.clone();
-    stats.recent_cues.clone_from(&book.recent_cues);
 }
 
 pub(super) fn prop_stats(props: &[PropShown]) -> Vec<PropStat> {
@@ -474,12 +462,7 @@ fn held_stat(held: &Held) -> HeldStat {
     }
 }
 
-pub(super) fn write_tick_stats(
-    stats: &mut PowerStats,
-    events: &PowerEvents,
-    powers: &Powers,
-    human_slots: Vec<SlotStat>,
-) {
+pub(super) fn write_tick_stats(stats: &mut PowerStats, events: &PowerEvents, powers: &Powers) {
     stats.accepted = events
         .casts
         .iter()
@@ -505,7 +488,6 @@ pub(super) fn write_tick_stats(
         count(&mut counts, event_key(event));
     }
     stats.events = counts;
-    stats.human_slots = human_slots;
     stats.holds = events
         .holds
         .iter()

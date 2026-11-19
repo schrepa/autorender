@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use engine::Error;
 use engine::prelude::*;
-use engine_core::{Loaded, Output, Play, SceneCx, SoundId, Sounds, Tune};
+use engine_core::{Loaded, Output, Play, SceneCx, SoundId, Sounds, Stats, Tune};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -110,17 +110,8 @@ struct Mixdown {
     repeaters: Repeaters,
     drops_seen: Vec<u32>,
     was_ready: bool,
-    heard: BTreeMap<String, u64>,
     started_at: BTreeMap<String, u64>,
     scopes: BTreeMap<u32, (crate::play::events::arms::Weapon, usize)>,
-    cues_tick: u32,
-    cues: u64,
-    started: u64,
-    stolen: u64,
-    dropped: u64,
-    inaudible: u64,
-    unmapped: u64,
-    refused: u64,
 }
 
 pub struct SoundBrick;
@@ -140,10 +131,13 @@ impl Brick for SoundBrick {
             .settings::<Volume>()
             .resource::<Bank>()
             .resource::<Mixdown>()
-            .stats::<SoundStats>()
             .systems(Schedule::FixedSimulation, mix)
             .systems(Schedule::Presentation, prepare)
-            .systems(Schedule::Presentation, report);
+            .systems(Schedule::Presentation, load)
+            .dev(|dev| {
+                dev.stats::<SoundStats>()
+                    .systems(Schedule::Presentation, report);
+            });
     }
 }
 
@@ -212,10 +206,6 @@ fn adopt(bank: &mut Bank, table: Arc<Table>, sounds: &mut Sounds) {
     bank.reached = None;
 }
 
-fn ticks_per_second(time: &FixedTime) -> Option<u32> {
-    (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
-}
-
 type ActorRow<'a> = (
     &'a Actor,
     &'a Body,
@@ -270,12 +260,13 @@ fn mix(
     watched: Option<Res<Watched>>,
     volume: Res<Volume>,
     actors: Query<ActorRow<'_>>,
-    mut mixdown: ResMut<Mixdown>,
+    (mut mixdown, mut stats): (ResMut<Mixdown>, Stats<SoundStats>),
     mut sounds: ResMut<Sounds>,
 ) {
-    let (Some(table), Some(tps)) = (bank.table.as_ref(), ticks_per_second(&time)) else {
+    let Some(table) = bank.table.as_ref() else {
         return;
     };
+    let tps = time.rate;
     let mixdown = &mut *mixdown;
     let now = time.tick;
     let rows = rows_of(&actors);
@@ -358,11 +349,13 @@ fn mix(
         );
     }
     hum(mixdown, barrier, table, now, &mut fresh);
-    for cue in &fresh {
-        *mixdown.heard.entry(cue.event.clone()).or_default() += 1;
-    }
-    mixdown.cues_tick = u32::try_from(fresh.len()).unwrap_or(u32::MAX);
-    mixdown.cues += fresh.len() as u64;
+    stats.edit(|stats| {
+        for cue in &fresh {
+            *stats.heard.entry(cue.event.clone()).or_default() += 1;
+        }
+        stats.cues_tick = u32::try_from(fresh.len()).unwrap_or(u32::MAX);
+        stats.cues += fresh.len() as u64;
+    });
     let Some((_, listener)) = heard_by else {
         return;
     };
@@ -384,7 +377,7 @@ fn mix(
     let rng = mixdown.rng.get_or_insert_with(|| Rng::new(table.seed));
     let mut rng = *rng;
     for cue in fresh {
-        start(mixdown, &place, &bank, &mut rng, cue, &mut sounds);
+        start(mixdown, &place, &bank, &mut rng, cue, &mut sounds, &mut stats);
     }
     mixdown.rng = Some(rng);
 }
@@ -607,6 +600,7 @@ fn start(
     rng: &mut Rng,
     cue: Cue,
     sounds: &mut Sounds,
+    stats: &mut Stats<'_, SoundStats>,
 ) {
     let table = place.table;
     if let (Some(tag), Some(hold)) = (cue.tag, cue.hold_ticks)
@@ -623,21 +617,21 @@ fn start(
         .get(&cue.event)
         .and_then(|name| Some((name, table.sounds.get(name)?)))
     else {
-        mixdown.unmapped += 1;
+        stats.edit(|stats| stats.unmapped += 1);
         return;
     };
     let Some(curve) = table.curves.get(&sound.curve) else {
-        mixdown.unmapped += 1;
+        stats.edit(|stats| stats.unmapped += 1);
         return;
     };
     if clashed(mixdown, place, name, sounds) {
-        mixdown.dropped += 1;
+        stats.edit(|stats| stats.dropped += 1);
         return;
     }
     let pick = voices::variation(rng, sound.files.len(), mixdown.last.get(name).copied());
     mixdown.last.insert(name.clone(), pick);
     let Some(file) = sound.files.get(pick) else {
-        mixdown.unmapped += 1;
+        stats.edit(|stats| stats.unmapped += 1);
         return;
     };
     let own = place.own(cue.source);
@@ -648,7 +642,7 @@ fn start(
     let base = sound.gain * level * cue.gain * if own { sound.own_gain } else { 1.0 };
     let gain = base * place.group(sound.group) * attenuation * occlusion;
     if gain < table.audible_gain {
-        mixdown.inaudible += 1;
+        stats.edit(|stats| stats.inaudible += 1);
         return;
     }
     match voices::admit(&mixdown.voices, table.voices, sound.priority, gain) {
@@ -658,10 +652,10 @@ fn start(
             if let Some(door) = stolen.door {
                 sounds.stop(door, table.steal_fade_seconds);
             }
-            mixdown.stolen += 1;
+            stats.edit(|stats| stats.stolen += 1);
         }
         Admit::Drop => {
-            mixdown.dropped += 1;
+            stats.edit(|stats| stats.dropped += 1);
             return;
         }
     }
@@ -682,10 +676,10 @@ fn start(
         });
         played.ok()
     });
-    if door.is_none() {
-        mixdown.refused += 1;
-    }
-    mixdown.started += 1;
+    stats.edit(|stats| {
+        stats.refused += u64::from(door.is_none());
+        stats.started += 1;
+    });
     mixdown.voices.push(Voice {
         door,
         sound: name.clone(),
@@ -734,14 +728,7 @@ fn clashed(mixdown: &mut Mixdown, place: &Place<'_>, name: &str, sounds: &mut So
     lost
 }
 
-fn report(
-    bank: Res<Bank>,
-    mixdown: Res<Mixdown>,
-    sounds: Res<Sounds>,
-    mut load: ResMut<SoundLoad>,
-    mut stats: ResMut<SoundStats>,
-) {
-    let door = sounds.report();
+fn load(bank: Res<Bank>, sounds: Res<Sounds>, mut load: ResMut<SoundLoad>) {
     let count = |ready: bool| {
         bank.files
             .values()
@@ -754,6 +741,23 @@ fn report(
     };
     let (loaded, failed) = (count(true), count(false));
     let asked = bank.files.len();
+    load.set_if_neq(SoundLoad {
+        ready: bank.refusal.is_some() || (bank.table.is_some() && loaded + failed == asked),
+        asked: u32::try_from(asked).unwrap_or(u32::MAX),
+        loaded: u32::try_from(loaded).unwrap_or(u32::MAX),
+        failed: u32::try_from(failed).unwrap_or(u32::MAX),
+        refusal: bank.refusal.clone(),
+    });
+}
+
+fn report(
+    bank: Res<Bank>,
+    mixdown: Res<Mixdown>,
+    sounds: Res<Sounds>,
+    load: Res<SoundLoad>,
+    mut stats: Stats<SoundStats>,
+) {
+    let door = sounds.report();
     let waiting: Vec<String> = bank
         .files
         .iter()
@@ -765,13 +769,6 @@ fn report(
         })
         .take(10)
         .collect();
-    load.set_if_neq(SoundLoad {
-        ready: bank.refusal.is_some() || (bank.table.is_some() && loaded + failed == asked),
-        asked: u32::try_from(asked).unwrap_or(u32::MAX),
-        loaded: u32::try_from(loaded).unwrap_or(u32::MAX),
-        failed: u32::try_from(failed).unwrap_or(u32::MAX),
-        refusal: bank.refusal.clone(),
-    });
     let table = match (&bank.refusal, &bank.table) {
         (Some(refusal), _) => refusal.clone(),
         (None, Some(_)) => "ready".to_owned(),
@@ -783,33 +780,26 @@ fn report(
         } => Some(*latency_seconds),
         Output::Closed | Output::Asked | Output::Failed(_) | Output::Absent(_) => None,
     };
-    let next = SoundStats {
-        table,
-        cues_tick: mixdown.cues_tick,
-        cues: mixdown.cues,
-        voices: u32::try_from(mixdown.voices.len()).unwrap_or(u32::MAX),
-        started: mixdown.started,
-        stolen: mixdown.stolen,
-        dropped: mixdown.dropped,
-        inaudible: mixdown.inaudible,
-        unmapped: mixdown.unmapped,
-        refused: mixdown.refused,
-        asked: u32::try_from(asked).unwrap_or(u32::MAX),
-        loaded: u32::try_from(loaded).unwrap_or(u32::MAX),
-        ready: load.ready,
-        waiting,
-        heard: mixdown.heard.clone(),
-        door: DoorStats {
-            output: door.output.to_owned(),
-            voices: door.voices.live,
-            ready: door.sounds.ready,
-            failed: door.sounds.failed,
-            bytes_decoded: door.bytes_decoded,
-            refused: door.refused.total(),
-            dropped: door.voices.dropped,
-            underruns: door.underruns,
-            latency_seconds,
-        },
-    };
-    stats.set_if_neq(next);
+    stats.edit(|stats| {
+        *stats = SoundStats {
+            table,
+            voices: u32::try_from(mixdown.voices.len()).unwrap_or(u32::MAX),
+            asked: load.asked,
+            loaded: load.loaded,
+            ready: load.ready,
+            waiting,
+            door: DoorStats {
+                output: door.output.to_owned(),
+                voices: door.voices.live,
+                ready: door.sounds.ready,
+                failed: door.sounds.failed,
+                bytes_decoded: door.bytes_decoded,
+                refused: door.refused.total(),
+                dropped: door.voices.dropped,
+                underruns: door.underruns,
+                latency_seconds,
+            },
+            ..std::mem::take(stats)
+        };
+    });
 }

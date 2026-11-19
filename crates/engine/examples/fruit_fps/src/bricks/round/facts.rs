@@ -1,13 +1,15 @@
 use engine::prelude::*;
+use engine_core::DevSetting;
 
 use super::start::{SeatNumbers, StartNumbers, seats, start_numbers};
-use crate::play::figures::FigureJoints;
-use super::{MatchSetup, RoundBook};
+use super::test::MatchTest;
+use super::{Chosen, MatchSetup, RoundBook};
 use crate::play::actors::{Actor, Body, Health, Human, Wish};
 use crate::play::arms::{Arms, Held};
 use crate::play::events::arms::{ArmsEvents, Weapon};
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
+use crate::play::figures::FigureJoints;
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::round::{DeviceSpot, Round, Seat};
@@ -15,14 +17,6 @@ use crate::play::world::{Arena, Zone};
 use crate::rules::{
     Catalog, Device, Event, Holding, Match, Phase, PlayerFacts, Side, TickInput, WeaponId, ticks,
 };
-
-pub(super) fn ticks_per_second(time: &FixedTime) -> u32 {
-    if time.delta_seconds > 0.0 {
-        (1.0 / time.delta_seconds).round() as u32
-    } else {
-        0
-    }
-}
 
 type ActorRow<'a> = (
     Entity,
@@ -37,14 +31,14 @@ type ActorRow<'a> = (
 
 fn fresh_match(
     numbers: &GameNumbers,
-    setup: &MatchSetup,
+    skip_buy: bool,
     seats: Vec<Seat>,
     seed: u64,
     tps: u32,
     round: &mut Round,
 ) -> Result<(), String> {
     let mut rules = numbers.rules.clone();
-    if setup.skip_buy {
+    if skip_buy {
         rules.round.buy_seconds = 0.0;
         rules.round.buy_seconds_first_round_of_half = 0.0;
     }
@@ -63,7 +57,7 @@ fn fresh_match(
 fn wants_fresh(
     round: &Round,
     book: &RoundBook,
-    setup: &MatchSetup,
+    chosen: Chosen,
     revision: u64,
     seats: &[Seat],
     flow: Option<&Flow>,
@@ -72,7 +66,7 @@ fn wants_fresh(
     round.game.is_none()
         || over
         || flow.is_some_and(|flow| book.flow_game != Some(flow.game))
-        || book.applied.as_ref() != Some(setup)
+        || book.applied != Some(chosen)
         || book.numbers_revision != revision
         || round
             .seats
@@ -84,7 +78,7 @@ fn wants_fresh(
 fn prepare(
     numbers: &GameNumbers,
     revision: u64,
-    setup: &MatchSetup,
+    setup: Chosen,
     tps: u32,
     (round, book): (&mut Round, &mut RoundBook),
     actors: &Query<ActorRow<'_>>,
@@ -116,7 +110,7 @@ fn prepare(
         return Ok(start);
     }
     book.flow_game = flow.map(|flow| flow.game);
-    let fresh_setup = book.applied.as_ref() != Some(setup) || book.numbers_revision != revision;
+    let fresh_setup = book.applied != Some(setup) || book.numbers_revision != revision;
     let seed = if fresh_setup || round.game.is_none() {
         setup.seed
     } else {
@@ -125,8 +119,8 @@ fn prepare(
     if fresh_setup {
         round.matches = 0;
     }
-    fresh_match(numbers, setup, seated, seed, tps, round)?;
-    book.applied = Some(setup.clone());
+    fresh_match(numbers, setup.skip_buy, seated, seed, tps, round)?;
+    book.applied = Some(setup);
     book.numbers_revision = revision;
     book.recent.clear();
     book.planted = None;
@@ -330,7 +324,7 @@ fn remember(book: &mut RoundBook, events: &[Event]) {
 pub(super) fn advance(
     time: Res<FixedTime>,
     numbers: Res<Numbers>,
-    setup: Res<MatchSetup>,
+    (setup, test): (Res<MatchSetup>, DevSetting<MatchTest>),
     arena: Res<Arena>,
     arms: Res<ArmsEvents>,
     powers: Option<Res<PowerEvents>>,
@@ -349,11 +343,15 @@ pub(super) fn advance(
         book.waiting = Some("numbers.json not read yet".to_owned());
         return;
     };
-    let tps = ticks_per_second(&time);
+    let tps = time.rate;
+    let chosen = Chosen {
+        seed: setup.seed,
+        skip_buy: test.get().is_some_and(|test| test.skip_buy),
+    };
     let start = match prepare(
         game_numbers,
         numbers.revision(),
-        &setup,
+        chosen,
         tps,
         (&mut round, &mut book),
         &actors,

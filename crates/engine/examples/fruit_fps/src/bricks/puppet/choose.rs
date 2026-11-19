@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use engine::prelude::*;
 use engine_core::math::{clamp, max, min, sin_cos};
-use engine_core::{Error, ErrorCode, Refusals};
+use engine_core::{Error, ErrorCode, Refusals, Stats};
 
 use super::locomotion::{Moved, moved};
 use super::{
@@ -123,21 +123,20 @@ pub(super) struct Memory {
     missing: Vec<String>,
     pub(super) carry: Option<Carry>,
     pub(super) hand: Option<InHand>,
-    pub(super) stats: ActorStats,
 }
 
 impl Memory {
-    fn locomotion(&self, body: &Body) -> LocomotionStats {
+    fn locomotion(&self, body: &Body, shown: &ActorStats) -> LocomotionStats {
         let Some(moved) = self.moving.as_ref() else {
             let speed = Vec3::new(body.velocity.x, 0.0, body.velocity.z).length();
             return LocomotionStats {
-                slot: self.stats.slot,
+                slot: shown.slot,
                 state: "standing".to_owned(),
                 clips: vec![ClipWeight {
-                    clip: self.stats.base.clone(),
+                    clip: shown.base.clone(),
                     weight: 1.0,
                 }],
-                rate: self.stats.rate,
+                rate: shown.rate,
                 stride: 1.0,
                 hip_turn: 0.0,
                 speed_mps: speed,
@@ -162,7 +161,7 @@ impl Memory {
         }))
         .collect();
         LocomotionStats {
-            slot: self.stats.slot,
+            slot: shown.slot,
             state: "moving".to_owned(),
             clips,
             rate: moved.rate,
@@ -221,7 +220,6 @@ impl Default for Memory {
             missing: Vec::new(),
             carry: None,
             hand: None,
-            stats: ActorStats::default(),
         }
     }
 }
@@ -1485,7 +1483,7 @@ fn judged(refusals: &mut Refusals, entity: Entity, weapon: Option<&str>, posed: 
     }
 }
 
-fn abilities_follow(memories: &mut Memories, numbers: &Numbers, delta: f32) {
+fn abilities_follow(memories: &mut Memories, numbers: &Numbers, ticks_per_second: u32) {
     let revision = numbers.revision();
     if memories
         .abilities
@@ -1494,11 +1492,6 @@ fn abilities_follow(memories: &mut Memories, numbers: &Numbers, delta: f32) {
     {
         return;
     }
-    let ticks_per_second = if delta > 0.0 {
-        (1.0 / delta).round() as u32
-    } else {
-        0
-    };
     let book = numbers
         .get()
         .and_then(|numbers| AbilityBook::parse(&numbers.text, ticks_per_second).ok())
@@ -1580,7 +1573,7 @@ type Actors<'w, 's> = Query<
 
 type Writes<'w, 's> = (
     ResMut<'w, Memories>,
-    ResMut<'w, PuppetStats>,
+    Stats<'w, PuppetStats>,
     ResMut<'w, Refusals>,
     Spawner<'w, 's, PuppetBrick>,
 );
@@ -1695,14 +1688,10 @@ pub(super) fn animate(
 ) {
     let Some(book) = files.iter().find_map(PuppetFile::book).cloned() else {
         let refusal = Some("no prepared `puppet` component (scene entity `game`)".to_owned());
-        if stats.refusal != refusal {
-            stats.refusal = refusal;
-        }
+        stats.edit(|stats| stats.refusal = refusal);
         return;
     };
-    if stats.refusal.is_some() {
-        stats.refusal = None;
-    }
+    stats.edit(|stats| stats.refusal = None);
     let outside = test.as_deref().is_some_and(|test| test.outside);
     let followed = watched.and_then(|watched| watched.entity);
     let watched = followed.filter(|_| !outside);
@@ -1710,7 +1699,7 @@ pub(super) fn animate(
         .iter()
         .map(|((_, actor, body, _), ..)| (actor.slot, body.feet))
         .collect();
-    abilities_follow(&mut memories, &numbers, fixed.delta_seconds);
+    abilities_follow(&mut memories, &numbers, fixed.rate);
     let abilities = memories
         .abilities
         .as_ref()
@@ -1730,7 +1719,7 @@ pub(super) fn animate(
     };
     let table = &book.table;
     let mut seen = Vec::new();
-    let mut listed = Vec::new();
+    stats.edit(|stats| stats.actors.clear());
     for ((entity, actor, body, wish), (arms, offsets), (alive, _, figure), joints, play) in
         &mut actors
     {
@@ -1778,14 +1767,15 @@ pub(super) fn animate(
             alive && !viewed,
         ));
         let wanted = figure_play(table, memory, &shape, (look_yaw, hold));
-        memory.stats = actor_stats(
-            (memory, table),
-            (actor, body, joints),
-            (&shape, wanted.hold.is_some(), look_yaw),
-            (weapon, alive, reload, dip),
-        );
+        stats.edit(|stats| {
+            stats.actors.push(actor_stats(
+                (memory, table),
+                (actor, body, joints),
+                (&shape, wanted.hold.is_some(), look_yaw),
+                (weapon, alive, reload, dip),
+            ));
+        });
         memory.moving = shape.moving;
-        listed.push((actor.slot, memory.stats.clone()));
         match play {
             Some(mut play) => {
                 play.set_if_neq(wanted);
@@ -1795,12 +1785,10 @@ pub(super) fn animate(
     }
     memories.held.retain(|entity, _| seen.contains(entity));
     refusals.keep_part(PUPPET_PART, |entity| seen.contains(&entity));
-    listed.sort_unstable_by_key(|(slot, _)| *slot);
-    let reported: Vec<ActorStats> = listed.into_iter().map(|(_, stats)| stats).collect();
-    if stats.actors != reported {
-        stats.actors = reported;
-    }
-    watched_report(&mut stats, &memories, (&actors, followed), facts.numbers);
+    stats.edit(|stats| {
+        stats.actors.sort_unstable_by_key(|actor| actor.slot);
+        watched_report(stats, &memories, (&actors, followed), facts.numbers);
+    });
 }
 
 fn watched_report(
@@ -1810,20 +1798,15 @@ fn watched_report(
     numbers: Option<&GameNumbers>,
 ) {
     let watched = followed.and_then(|entity| Some((entity, actors.get(entity).ok()?)));
-    let locomotion = watched.and_then(|(entity, ((_, _, body, _), ..))| {
-        Some(memories.held.get(&entity)?.locomotion(body))
+    let locomotion = watched.and_then(|(entity, ((_, actor, body, _), ..))| {
+        let shown = stats.actors.iter().find(|shown| shown.slot == actor.slot)?;
+        Some(memories.held.get(&entity)?.locomotion(body, shown))
     });
-    let eyes = eye_fits(actors, numbers);
-    if stats.eyes != eyes {
-        stats.eyes = eyes;
-    }
-    let head = watched.and_then(|(_, ((_, actor, body, _), _, _, joints, _))| {
+    stats.eyes = eye_fits(actors, numbers);
+    stats.head = watched.and_then(|(_, ((_, actor, body, _), _, _, joints, _))| {
         head_check(numbers, (actor.slot, body), joints)
     });
-    if stats.head != head {
-        stats.head = head;
-    }
-    let aim = watched.and_then(
+    stats.aim = watched.and_then(
         |(entity, ((_, actor, _, wish), (_, offsets), _, joints, _))| {
             aim_check(
                 memories.held.get(&entity)?,
@@ -1832,27 +1815,19 @@ fn watched_report(
             )
         },
     );
-    if stats.aim != aim {
-        stats.aim = aim;
-    }
-    if stats.locomotion != locomotion {
-        stats.locomotion = locomotion;
-    }
-    let mut missing: Vec<String> = memories
-        .held
-        .values()
-        .flat_map(|memory| {
+    stats.locomotion = locomotion;
+    let mut missing: Vec<String> = actors
+        .iter()
+        .filter_map(|((entity, actor, ..), ..)| Some((actor.slot, memories.held.get(&entity)?)))
+        .flat_map(|(slot, memory)| {
             memory
                 .missing
                 .iter()
-                .map(|clip| format!("slot {}: {clip}", memory.stats.slot))
+                .map(move |clip| format!("slot {slot}: {clip}"))
         })
         .collect();
     missing.sort_unstable();
-    let count = missing.len() as u32;
+    stats.missing_count = missing.len() as u32;
     missing.truncate(8);
-    if stats.missing_clips != missing || stats.missing_count != count {
-        stats.missing_clips = missing;
-        stats.missing_count = count;
-    }
+    stats.missing_clips = missing;
 }

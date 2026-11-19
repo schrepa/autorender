@@ -1,6 +1,6 @@
 use engine::prelude::*;
 use engine::{CursorMode, Devices};
-use engine_core::Closing;
+use engine_core::{Closing, DevSetting};
 
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::{KeyMap, Numbers};
@@ -177,7 +177,7 @@ fn options_facts(
 
 type Reads<'w> = (
     Res<'w, Devices>,
-    Res<'w, ScreenSetup>,
+    DevSetting<'w, ScreenSetup>,
     Res<'w, ScreenDraw>,
     Option<Res<'w, Numbers>>,
     (Res<'w, Controls>, Res<'w, Options>, Res<'w, Volume>),
@@ -264,7 +264,9 @@ pub(super) fn control(
     }
     next.board_held = playing && map.is_some_and(|map| KeyMap::held(&devices, &map.scoreboard));
     let flowing = flow.as_deref().and_then(menu::chosen_screen);
-    next.shown = chosen(setup.show)
+    next.shown = setup
+        .get()
+        .and_then(|setup| chosen(setup.show))
         .or(flowing)
         .unwrap_or_else(|| automatic(facts, next));
     next.holds_pointer =

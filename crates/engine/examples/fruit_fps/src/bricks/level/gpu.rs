@@ -9,18 +9,17 @@ use engine_core::{
 };
 use engine_render::{BatchGroup, GroupEntry, PerBatch, Scene, Texture, Variant, wgpu};
 
-use super::chunks::{self, Chunk, PieceSizes, Sized};
+use super::chunks::{self, Pieces, Seen, Sized};
 use super::sets::VisibleSets;
 use super::shaders::level::{light, map, material, picture, sky};
 use super::{
-    COLOR_STREAM, EMISSIVE_STRENGTH, LEVEL_DETAIL, LIGHT_FIELD, LIGHTMAP_CURVE, LIGHTMAP_SCALE,
-    MACRO_COLOR, MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE,
-    SKY_BELOW, SKY_FADE, SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
+    COLOR_STREAM, EMISSIVE_STRENGTH, LEVEL_DETAIL, LIGHTMAP_CURVE, LIGHTMAP_SCALE, MACRO_COLOR,
+    MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE, SKY_BELOW, SKY_FADE,
+    SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
 };
 use crate::bricks::figures::{LEVEL, LIGHTMAP_MAP};
 use crate::names::COLOR_PASS;
 use crate::play::light::{DetailLimit, Filtering, Lighting};
-use crate::play::screen::Covered;
 
 gpu_struct! {
     pub struct LevelLight {
@@ -149,10 +148,10 @@ pub(super) struct LevelGpu {
     slots: u32,
     pictured: Option<Pictured>,
     ready: bool,
-    chunks: [Vec<Chunk>; 2],
-    order: [Vec<u32>; 2],
+    pieces: Pieces,
+    facts: Option<ViewFacts>,
+    small: BTreeSet<GeometryHandle>,
     filtering: Filtering,
-    covered: bool,
     detail_limit: DetailLimit,
     held_small: BTreeSet<GeometryHandle>,
     sets: VisibleSets,
@@ -499,11 +498,7 @@ impl GpuPart for LevelGpu {
         Res<'static, DrawnTable>,
         Option<Res<'static, AssetResidency>>,
         Option<Res<'static, AssetLibrary>>,
-        (
-            Option<Res<'static, Covered>>,
-            Res<'static, PieceSizes>,
-            Res<'static, VisibleSets>,
-        ),
+        (Res<'static, Pieces>, Res<'static, VisibleSets>),
     );
     const NAME: &'static str = "level";
 
@@ -580,10 +575,10 @@ impl GpuPart for LevelGpu {
             slots: 0,
             pictured: None,
             ready: false,
-            chunks: [Vec::new(), Vec::new()],
-            order: [Vec::new(), Vec::new()],
+            pieces: Pieces::default(),
+            facts: None,
+            small: BTreeSet::new(),
             filtering: Filtering::default(),
-            covered: false,
             detail_limit: DetailLimit::default(),
             held_small: BTreeSet::new(),
             sets: VisibleSets::default(),
@@ -593,19 +588,9 @@ impl GpuPart for LevelGpu {
 
     fn prepare(
         &mut self,
-        (lighting, table, residency, library, (covered, pieces, sets)): SystemParamItem<
-            '_,
-            '_,
-            Self::Reads,
-        >,
+        (lighting, table, residency, library, (pieces, sets)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.covered = covered.is_some_and(|covered| covered.0);
-        if self.covered {
-            for kind in [LEVEL, LEVEL_DETAIL, SKY, LIGHT_FIELD] {
-                cx.skip_kind(kind, "covered");
-            }
-        }
         let layout = wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4),
@@ -616,12 +601,12 @@ impl GpuPart for LevelGpu {
         if self.sets != *sets {
             self.sets = sets.clone();
         }
-        for (kind, into) in [LEVEL, LEVEL_DETAIL].into_iter().zip(&mut self.chunks) {
-            chunks::listed((&table, library.as_deref(), &pieces), kind, into);
+        if pieces.is_changed() {
+            self.pieces = pieces.clone();
         }
-        let mut fresh = cx.allocate(self.unbaked, TEXEL, 1) == Allocation::Fresh;
+        let mut fresh = cx.allocate(self.unbaked, TEXEL) == Allocation::Fresh;
         for texture in self.plain {
-            fresh |= cx.allocate(texture, TEXEL, 1) == Allocation::Fresh;
+            fresh |= cx.allocate(texture, TEXEL) == Allocation::Fresh;
         }
         if fresh {
             cx.write_texture(
@@ -690,60 +675,49 @@ impl GpuPart for LevelGpu {
     }
 
     fn view(&mut self, facts: &ViewFacts, _cx: &mut Prepare<'_, Self>) {
-        let set = if self.sets_on {
-            self.sets.at(facts.eye)
-        } else {
-            None
-        };
+        let set = self.sets_on.then(|| self.sets.at(facts.eye)).flatten();
+        let scale = chunks::pixel_scale(facts);
         let mut sized = Sized {
             limit: self.detail_limit,
             held: Some(&mut self.held_small),
-            set,
         };
-        for (listed, order) in self.chunks.iter().zip(&mut self.order) {
-            chunks::ordered(listed, facts, &mut sized, order);
+        self.small.clear();
+        for (mesh, piece, size) in self.pieces.sized() {
+            if let Seen::Near(near) = chunks::seen(Some(piece), Some(mesh), facts, set)
+                && !sized.shown((mesh, size), near, scale)
+            {
+                self.small.insert(mesh);
+            }
         }
+        self.facts = Some(*facts);
     }
 }
 
 impl LevelGpu {
     pub(super) fn draw_level(&self, draw: &mut Draw<'_, Self, Scene>) {
-        self.submit(draw, &self.level, 0);
+        self.submit(draw, &self.level);
     }
 
     pub(super) fn draw_detail(&self, draw: &mut Draw<'_, Self, Scene>) {
-        self.submit(draw, &self.detail, 1);
+        self.submit(draw, &self.detail);
     }
 
-    fn submit(
-        &self,
-        draw: &mut Draw<'_, Self, Scene>,
-        pipeline: &Pipeline<Self, Scene>,
-        at: usize,
-    ) {
-        if self.covered {
+    fn submit(&self, draw: &mut Draw<'_, Self, Scene>, pipeline: &Pipeline<Self, Scene>) {
+        let Some(facts) = self.facts.as_ref() else {
             return;
-        }
-        let pass = draw.pass();
-        for &index in &self.order[at] {
-            let chunk = &self.chunks[at][index as usize];
-            if !chunk.drawn_in(pass) {
-                continue;
-            }
-            let shape = match chunk.mesh {
-                Some(mesh) => Shape::Mesh {
-                    mesh,
-                    key: chunk.material,
-                    instances: chunk.instances.clone(),
-                },
-                None => Shape::Pulled {
-                    vertices: 0..0,
-                    instances: chunk.instances.clone(),
-                    key: chunk.material,
-                },
+        };
+        let set = self.sets_on.then(|| self.sets.at(facts.eye)).flatten();
+        draw.batches(pipeline, 0..0, |batch| {
+            let piece = self.pieces.single(batch.geometry, batch.instances);
+            let Seen::Near(near) = chunks::seen(piece, batch.geometry, facts, set) else {
+                return None;
             };
-            draw.draw(pipeline, shape);
-        }
+            let small = piece.is_some_and(|piece| piece.largest_m.is_some())
+                && batch
+                    .geometry
+                    .is_some_and(|mesh| self.small.contains(&mesh));
+            (!small).then_some(near.to_bits())
+        });
     }
 
     pub(super) fn draw_field(&self, _draw: &mut Draw<'_, Self, Scene>) {}
@@ -753,9 +727,6 @@ impl LevelGpu {
     }
 
     pub(super) fn draw_sky(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if self.covered {
-            return;
-        }
         let shown = self
             .pictured
             .as_ref()

@@ -1,7 +1,7 @@
 use engine::prelude::*;
 use glam::Vec3;
 
-use super::{ArmsBrick, Book, Setup, drop_weapon, thrown_to, ticks_per_second};
+use super::{ArmsBrick, Book, Setup, drop_weapon, thrown_to};
 use crate::names::{HEAD, HIP, SPINE};
 use crate::play::actors::{Actor, Alive, Body, Equip, Health, SpeedFactor, Wish};
 use crate::play::arms::{Arms, Drops, Hand, HandAction, Held};
@@ -90,9 +90,7 @@ pub(super) fn act(
     let Some(numbers) = setup.numbers.as_ref() else {
         return;
     };
-    let Some(tps) = ticks_per_second(&time) else {
-        return;
-    };
+    let tps = time.rate;
     let mut order: Vec<(u32, Entity)> = actors
         .iter()
         .map(|(entity, actor, ..)| (actor.slot, entity))

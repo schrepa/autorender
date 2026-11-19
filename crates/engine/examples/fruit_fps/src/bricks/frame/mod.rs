@@ -1,10 +1,10 @@
 engine::brick!(frame);
 
-use bevy_ecs::prelude::Res;
+use bevy_ecs::prelude::{Entity, Query, Res, With};
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
     Brick, Bricks, Error, GpuStruct, Pass, PassName, PassViews, Sampler, Source, TargetName,
-    ViewFacts, Writes, gpu_struct,
+    ViewFacts, ViewSkip, Writes, gpu_struct,
 };
 use engine_render::{
     Access, Allocation, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
@@ -14,7 +14,6 @@ use engine_render::{
 
 use crate::names::{COLOR, COLOR_PASS, COMPOSITE_PASS, DEPTH};
 use crate::play::light::{Grade, Lighting};
-use crate::play::screen::Covered;
 use crate::play::view::Controls;
 
 gpu_struct! {
@@ -30,6 +29,8 @@ const TONED: TargetName = TargetName("toned");
 const TONE_PASS: &str = "tone";
 
 const COVER_PASS: &str = "cover";
+
+const SKY: [f64; 4] = [0.36, 0.58, 0.88, 1.0];
 
 pub struct ColorPass;
 
@@ -62,7 +63,7 @@ struct Composite {
     cover: engine_render::Pass<Self>,
     grade: Buffer<Self>,
     sent: Option<FrameGrade>,
-    covered: bool,
+    skipped: Vec<Entity>,
 }
 
 fn graded(grade: Grade, antialias: bool) -> FrameGrade {
@@ -95,7 +96,7 @@ impl GpuPart for Composite {
     type Reads = (
         Option<Res<'static, Lighting>>,
         Option<Res<'static, Controls>>,
-        Option<Res<'static, Covered>>,
+        Query<'static, 'static, Entity, With<ViewSkip>>,
     );
     const NAME: &'static str = "frame";
 
@@ -105,7 +106,7 @@ impl GpuPart for Composite {
             name: COLOR,
             format: wgpu::TextureFormat::Rgba16Float,
             samples: 1,
-            clear: TargetClear::Color([0.0, 0.0, 0.0, 1.0]),
+            clear: TargetClear::Color(SKY),
         });
         cx.shared_target(SharedTarget {
             name: DEPTH,
@@ -163,16 +164,17 @@ impl GpuPart for Composite {
             cover,
             grade,
             sent: None,
-            covered: false,
+            skipped: Vec::new(),
         })
     }
 
     fn prepare(
         &mut self,
-        (lighting, controls, covered): SystemParamItem<'_, '_, Self::Reads>,
+        (lighting, controls, skipped): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.covered = covered.is_some_and(|covered| covered.0);
+        self.skipped.clear();
+        self.skipped.extend(&skipped);
         let scale = controls.map_or(1.0, |controls| controls.render_scale);
         cx.scale_target(COLOR, scale);
         cx.scale_target(DEPTH, scale);
@@ -188,8 +190,8 @@ impl GpuPart for Composite {
         }
     }
 
-    fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if self.covered {
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if self.skipped.contains(&view.view) {
             cx.run(self.cover);
             return;
         }

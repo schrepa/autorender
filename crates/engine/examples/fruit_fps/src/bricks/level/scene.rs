@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, DrawnTable, Error, ErrorCode, Expected, Material,
-    MaterialHandle, SceneContext, Views,
+    MaterialHandle, Poses, SceneContext, Stats, Views,
 };
 
-use super::chunks::{self, PieceSizes, Sized};
+use super::chunks::{self, Pieces, Seen, Sized};
 use super::gpu::problems_of;
 use super::numbers::Antialias;
 use super::numbers::{self, LightingNumbers};
@@ -195,10 +195,10 @@ pub(super) fn light(
 }
 
 pub(super) fn blobs(
-    time: Res<FrameTime>,
     setup: Res<Setup>,
     arena: Option<Res<Arena>>,
-    actors: Query<&Body, With<Alive>>,
+    actors: Query<Entity, (With<Body>, With<Alive>)>,
+    poses: Poses,
     mut marks: ResMut<GroundMarks>,
 ) {
     let (Some(numbers), Some(arena)) = (setup.parsed.as_ref(), arena.as_deref()) else {
@@ -210,9 +210,10 @@ pub(super) fn blobs(
     let blob = &numbers.blob;
     let mut blobs = Vec::new();
     if arena.ready() {
-        for body in &actors {
-            let drawn_eye = body.eye_before.lerp(body.eye, time.alpha);
-            let feet = body.feet + (drawn_eye - body.eye);
+        for actor in &actors {
+            let Some(feet) = poses.drawn_pose(actor).map(|pose| pose.w_axis.truncate()) else {
+                continue;
+            };
             let lift = Vec3::Y * blob.depth_m;
             let Some(hit) = arena.ground_under(feet + lift, blob.fade_height_m + blob.depth_m)
             else {
@@ -244,14 +245,9 @@ pub(super) fn count(
     lighting: Res<Lighting>,
     lights: Query<&Light>,
     marks: Res<GroundMarks>,
-    (table, views, pieces, sets): (
-        Res<DrawnTable>,
-        Res<Views>,
-        Res<PieceSizes>,
-        Res<VisibleSets>,
-    ),
+    (table, views, pieces, sets): (Res<DrawnTable>, Res<Views>, Res<Pieces>, Res<VisibleSets>),
     (library, residency, scene): LevelAssets<'_>,
-    mut stats: ResMut<LevelStats>,
+    mut stats: Stats<LevelStats>,
 ) {
     let mut next = LevelStats {
         refusal: setup.refusal.clone(),
@@ -318,7 +314,7 @@ pub(super) fn count(
         Some(Err(problem)) => next.field_refusal = Some(problem.to_string()),
         None => {}
     }
-    stats.set_if_neq(next);
+    stats.show(|| next);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -387,7 +383,7 @@ fn judged(
 
 fn submitted(
     next: &mut LevelStats,
-    sources: (&DrawnTable, Option<&AssetLibrary>, &PieceSizes),
+    (table, library, pieces): (&DrawnTable, Option<&AssetLibrary>, &Pieces),
     (views, judged, (on, sets)): (
         &Views,
         &BTreeMap<MaterialHandle, Judged>,
@@ -395,42 +391,51 @@ fn submitted(
     ),
     limit: DetailLimit,
 ) {
-    let mut listed = Vec::new();
-    let mut order = Vec::new();
-    let set = views
-        .main()
-        .filter(|_| on)
-        .and_then(|facts| sets.at(facts.eye));
+    let facts = views.main();
+    let set = facts.filter(|_| on).and_then(|facts| sets.at(facts.eye));
     next.sets = set.is_some();
     next.set_cell = set.map(|set| set.cell);
-    let mut sized = Sized {
-        limit,
-        held: None,
-        set,
-    };
-    for kind in [LEVEL, LEVEL_DETAIL] {
-        chunks::listed(sources, kind, &mut listed);
-        next.chunks += listed.len() as u32;
-        let Some(facts) = views.main() else {
+    let scale = facts.and_then(chunks::pixel_scale);
+    let mut sized = Sized { limit, held: None };
+    for batch in table.batches(LEVEL).chain(table.batches(LEVEL_DETAIL)) {
+        next.chunks += 1;
+        let Some(facts) = facts.filter(|facts| batch.layers.overlaps(facts.layers)) else {
             continue;
         };
-        let counts = chunks::ordered(&listed, facts, &mut sized, &mut order);
-        next.skipped_small += counts.small;
-        next.kept_by_frustum += counts.framed;
-        next.kept_by_set += counts.framed - counts.hidden;
-        for chunk in order.iter().map(|&at| &listed[at as usize]) {
-            let verdict = chunk.material.map_or(Judged::Ready, |handle| {
-                judged.get(&handle).copied().unwrap_or(Judged::Waiting)
-            });
-            match verdict {
-                Judged::Ready => {
-                    next.submitted += 1;
-                    next.vertices += chunk.vertices;
-                    next.triangles_submitted += chunk.vertices / 3;
-                }
-                Judged::Broken => next.skipped += 1,
-                Judged::Waiting => next.waiting += 1,
+        let piece = pieces.single(batch.geometry, &batch.instances);
+        let near = match chunks::seen(piece, batch.geometry, facts, set) {
+            Seen::Outside => continue,
+            Seen::Hidden => {
+                next.kept_by_frustum += 1;
+                continue;
             }
+            Seen::Near(near) => near,
+        };
+        next.kept_by_frustum += 1;
+        next.kept_by_set += 1;
+        if let (Some(mesh), Some(size)) = (batch.geometry, piece.and_then(|piece| piece.largest_m))
+            && !sized.shown((mesh, size), near, scale)
+        {
+            next.skipped_small += 1;
+            continue;
+        }
+        let vertices = batch
+            .geometry
+            .zip(library)
+            .and_then(|(geometry, library)| library.mesh(geometry))
+            .map_or(0, |mesh| mesh.indices().len() as u64)
+            * batch.instances.len() as u64;
+        let verdict = batch.material.map_or(Judged::Ready, |handle| {
+            judged.get(&handle).copied().unwrap_or(Judged::Waiting)
+        });
+        match verdict {
+            Judged::Ready => {
+                next.submitted += 1;
+                next.vertices += vertices;
+                next.triangles_submitted += vertices / 3;
+            }
+            Judged::Broken => next.skipped += 1,
+            Judged::Waiting => next.waiting += 1,
         }
     }
 }

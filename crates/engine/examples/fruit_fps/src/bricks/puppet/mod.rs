@@ -206,13 +206,15 @@ impl Brick for PuppetBrick {
             .resource::<props::Spins>()
             .resource::<Seen>()
             .moves::<PropShown>(Pace::Tick)
-            .stats::<PuppetStats>()
             .systems(Schedule::FixedSimulation, choose::animate)
             .systems(Schedule::FixedSimulation, carry::carry)
             .systems(Schedule::FixedSimulation, drops::lie)
             .systems(Schedule::FixedSimulation, device::place)
             .systems(Schedule::FixedSimulation, props::show)
             .systems(Schedule::Presentation, seen::cull)
-            .systems(Schedule::Presentation, carry::checked);
+            .dev(|dev| {
+                dev.stats::<PuppetStats>()
+                    .systems(Schedule::Presentation, carry::checked);
+            });
     }
 }

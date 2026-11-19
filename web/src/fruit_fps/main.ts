@@ -1,6 +1,6 @@
 import { adapterFeatures } from "../engine/adapter";
 import { playGame } from "../engine/game";
-import { refuseGpu, watchStart } from "./shell";
+import { failed, progress, refuseGpu, shown } from "./shell";
 
 interface KeyboardLock { lock(codes?: string[]): Promise<void>; unlock(): void }
 
@@ -41,10 +41,9 @@ if (!window.isSecureContext) {
 } else if (!("gpu" in navigator)) {
   refuseGpu("This browser does not offer WebGPU, or it is switched off.");
 } else {
-  watchStart();
   interruptions();
   adapterFeatures().then(
-    features => playGame({ wasm: "fruit_fps", scene: features.includes("texture-compression-bc") ? "fruit_fps.scene.json" : "fruit_fps.rgba8.scene.json", load: () => import("../../pkg/fruit_fps"), game: bindings => bindings.FruitFpsGame }),
+    features => playGame({ wasm: "fruit_fps", scene: features.includes("texture-compression-bc") ? "fruit_fps.scene.json" : "fruit_fps.rgba8.scene.json", load: () => import("../../pkg/fruit_fps"), game: bindings => bindings.FruitFpsGame, shown, failed, progress }),
     () => refuseGpu("This browser has WebGPU but gave no graphics adapter: hardware acceleration may be off, or the GPU or its driver is blocked. chrome://gpu (Chrome, Edge) or about:support (Firefox) shows why."),
   );
 }

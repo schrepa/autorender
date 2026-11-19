@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine::prelude::*;
-use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext};
+use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext, Stats};
 
 use engine_core::{GlobalTransforms, Parent};
 
@@ -33,7 +33,7 @@ type Carried<'w, 's> = Query<
 
 type Writes<'w, 's> = (
     (ResMut<'w, Muzzles>, ResMut<'w, Tasks>),
-    ResMut<'w, PuppetStats>,
+    Stats<'w, PuppetStats>,
     ResMut<'w, Refusals>,
     Spawner<'w, 's, PuppetBrick>,
 );
@@ -153,9 +153,7 @@ pub(super) fn carry(
         actors,
     };
     muzzles.set_if_neq(fresh);
-    if stats.held != shown {
-        stats.held = shown;
-    }
+    stats.edit(|stats| stats.held = shown);
 }
 
 type Checked<'w, 's> = Query<
@@ -187,7 +185,7 @@ pub(super) fn checked(
     (globals, seen): (Res<GlobalTransforms>, Option<Res<Seen>>),
     carried: Checked,
     holders: Query<&FigureJoints>,
-    mut stats: ResMut<PuppetStats>,
+    mut stats: Stats<PuppetStats>,
 ) {
     let mut listed: Vec<CarriedStats> = carried
         .iter()
@@ -212,7 +210,5 @@ pub(super) fn checked(
         })
         .collect();
     listed.sort_unstable_by_key(|row| row.slot);
-    if stats.carried != listed {
-        stats.carried = listed;
-    }
+    stats.edit(|stats| stats.carried = listed);
 }

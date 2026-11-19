@@ -119,11 +119,10 @@ impl Brick for LevelBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .stats::<LevelStats>()
             .resource::<Lighting>()
             .resource::<GroundMarks>()
             .resource::<scene::Setup>()
-            .resource::<chunks::PieceSizes>()
+            .resource::<chunks::Pieces>()
             .resource::<sets::VisibleSets>()
             .join::<SceneComponents>(
                 ComponentKind::of::<sets::LevelSets>("level_sets")
@@ -167,8 +166,11 @@ impl Brick for LevelBrick {
             .systems(Schedule::Presentation, scene::setup)
             .systems(Schedule::Presentation, scene::light)
             .systems(Schedule::Presentation, scene::blobs)
-            .systems(Schedule::Presentation, scene::count)
             .systems(Schedule::Presentation, chunks::pieces)
-            .systems(Schedule::Presentation, sets::adopt);
+            .systems(Schedule::Presentation, sets::adopt)
+            .dev(|dev| {
+                dev.stats::<LevelStats>()
+                    .systems(Schedule::Presentation, scene::count);
+            });
     }
 }

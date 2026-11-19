@@ -51,6 +51,7 @@ pub struct CastAt {
 }
 
 settings! {
+    #[dev]
     #[section("powers_test")]
     #[serde(deny_unknown_fields)]
     pub struct PowerSetup {
@@ -225,11 +226,6 @@ struct Book {
     matches_seen: u32,
     shields: Vec<ShieldHeld>,
     ledger: DamageLedger,
-    casts_total: u64,
-    refused_total: u64,
-    last_cast: Option<CastStat>,
-    last_refusal: Option<CastStat>,
-    recent_cues: Vec<CueStat>,
     solid_kinds: Vec<SolidKind>,
     ticks_per_second: u32,
     guns: Option<WeaponNumbers>,
@@ -247,18 +243,15 @@ impl Brick for PowersBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<PowerSetup>()
-            .stats::<PowerStats>()
             .resource::<Powers>()
             .resource::<PowerEvents>()
             .resource::<Book>()
+            .dev(|dev| {
+                dev.settings::<PowerSetup>().stats::<PowerStats>();
+            })
             .systems(Schedule::FixedSimulation, setup)
             .systems(Schedule::FixedSimulation, apply::act);
     }
-}
-
-fn ticks_per_second(time: &FixedTime) -> Option<u32> {
-    (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
 }
 
 fn setup(
@@ -270,9 +263,7 @@ fn setup(
     let Some(game) = numbers.get() else {
         return;
     };
-    let Some(tps) = ticks_per_second(&time) else {
-        return;
-    };
+    let tps = time.rate;
     if book.revision == Some(numbers.revision()) {
         return;
     }

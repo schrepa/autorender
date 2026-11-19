@@ -9,7 +9,7 @@ use engine_render::{
 
 use super::assemble::BOX_VERTICES;
 use super::shaders::effects::{barrier, field, glow, items, screen, sheet, slab, solid, volume};
-use super::{DEVICE, EFFECTS, EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
+use super::{EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
 use crate::names::{COLOR, COLOR_PASS, DEPTH};
 
 const FULLSCREEN_VERTICES: u32 = 3;
@@ -115,7 +115,10 @@ fn pulled(vertices: u32, instances: &Range<u32>) -> Shape {
 }
 
 impl GpuPart for EffectsGpu {
-    type Reads = Res<'static, EffectsDrawing>;
+    type Reads = (
+        Res<'static, EffectsDrawing>,
+        Query<'static, 'static, (), With<ViewSkip>>,
+    );
     const NAME: &'static str = "effects";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -230,13 +233,9 @@ impl GpuPart for EffectsGpu {
 
     fn prepare(
         &mut self,
-        drawing: SystemParamItem<'_, '_, Self::Reads>,
+        (drawing, skipped): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if drawing.covered {
-            cx.skip_kind(DEVICE, "covered");
-            cx.skip_kind(EFFECTS, "covered");
-        }
         let slots = drawing.items.len().max(1).next_power_of_two();
         let _ = cx.allocate_buffer(self.items, (slots * size_of::<Item>()) as u64);
         if !drawing.items.is_empty() {
@@ -262,7 +261,7 @@ impl GpuPart for EffectsGpu {
         self.barrier_range = drawing.barrier.clone();
         self.glow_vertices = drawing.glow_vertices;
         self.screened = drawing.screen;
-        self.own = !drawing.covered && drawing.own_pass();
+        self.own = skipped.is_empty() && drawing.own_pass();
     }
 
     fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
@@ -291,7 +290,7 @@ impl EffectsGpu {
         wanted: Option<TextureRef>,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<TextureRef> {
-        if cx.allocate(self.unlit, TEXEL, 1) == Allocation::Fresh {
+        if cx.allocate(self.unlit, TEXEL) == Allocation::Fresh {
             let layout = wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),

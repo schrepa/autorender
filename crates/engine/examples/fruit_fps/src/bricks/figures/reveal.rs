@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine::prelude::*;
-use engine_core::{Drawn, Mobility, Spawner, Transform};
+use engine_core::{Drawn, Mobility, Spawner, Stats, Transform};
 
 use super::{FiguresBrick, FiguresStats};
 use crate::play::figures::{FIGURE, Figure, REVEALED};
@@ -31,7 +31,7 @@ fn outlined(drawn: &Drawn) -> Option<Drawn> {
 pub(super) fn outline(
     figures: Shown,
     outlines: Outlines,
-    (mut stats, mut spawner): (ResMut<FiguresStats>, Spawner<FiguresBrick>),
+    (mut stats, mut spawner): (Stats<FiguresStats>, Spawner<FiguresBrick>),
 ) {
     let mut shown = 0;
     let mut held: BTreeMap<Entity, (Entity, &Drawn)> = outlines
@@ -60,7 +60,5 @@ pub(super) fn outline(
     for (outline, _) in held.into_values() {
         spawner.despawn(outline);
     }
-    if stats.revealed != shown {
-        stats.revealed = shown;
-    }
+    stats.edit(|stats| stats.revealed = shown);
 }

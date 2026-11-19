@@ -1,7 +1,6 @@
 use engine::prelude::*;
 
 use super::RoundBook;
-use super::facts::ticks_per_second;
 use crate::play::actors::{Actor, Alive, Body, Health, Motion, Wish};
 use crate::play::arms::Arms;
 use crate::play::events::round::RoundEvents;
@@ -49,15 +48,13 @@ fn gun_kind(view: &View<'_>, player: PlayerId) -> Option<GunKind> {
 }
 
 fn place(numbers: &GameNumbers, spawn: Spawn, actor: &mut Actor, body: &mut Body, wish: &mut Wish) {
-    let eye = spawn.position + Vec3::Y * numbers.player.eye_height_m;
     *body = Body {
         feet: spawn.position,
         velocity: Vec3::ZERO,
         grounded: true,
         crouched: false,
         crouch: 0.0,
-        eye,
-        eye_before: eye,
+        eye: spawn.position + Vec3::Y * numbers.player.eye_height_m,
         motion: Motion::Standing,
         ground: body.ground,
         landed: None,
@@ -164,7 +161,7 @@ pub(super) fn apply(
     }
     rearm.sort_unstable();
     rearm.dedup();
-    let tps = ticks_per_second(&time);
+    let tps = time.rate;
     for player in rearm {
         let Some(entity) = entity_of(player) else {
             continue;

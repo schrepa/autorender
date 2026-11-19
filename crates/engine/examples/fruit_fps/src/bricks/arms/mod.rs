@@ -5,6 +5,7 @@ mod pickup;
 mod test;
 
 use engine::prelude::*;
+use engine_core::Stats;
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -138,15 +139,17 @@ impl Brick for ArmsBrick {
             .resource::<ArmsEvents>()
             .resource::<Setup>()
             .resource::<Book>()
-            .stats::<ArmsStats>()
-            .settings::<test::ArmsTest>()
             .resource::<Drops>()
             .systems(Schedule::FixedSimulation, setup)
             .systems(Schedule::FixedSimulation, arm)
             .systems(Schedule::FixedSimulation, fire::act)
             .systems(Schedule::FixedSimulation, pickup::pick)
-            .systems(Schedule::FixedSimulation, test::door)
-            .systems(Schedule::FixedSimulation, report);
+            .dev(|dev| {
+                dev.settings::<test::ArmsTest>()
+                    .stats::<ArmsStats>()
+                    .systems(Schedule::FixedSimulation, test::door)
+                    .systems(Schedule::FixedSimulation, report);
+            });
     }
 }
 
@@ -180,9 +183,7 @@ fn arm(
     let Some(numbers) = setup.numbers.as_ref() else {
         return;
     };
-    let Some(tps) = ticks_per_second(&time) else {
-        return;
-    };
+    let tps = time.rate;
     let matched = round.as_deref().filter(|round| round.game.is_some());
     let (primary, seed) = match matched {
         Some(round) => (None, round.seed),
@@ -216,10 +217,6 @@ fn thrown_to(arena: &Arena, throw: &KeyDrop, feet: Vec3, yaw_radians: f32) -> Ve
         .map(|step| lift + ahead * (travel * (steps - step) as f32 / steps as f32))
         .find_map(|from| arena.ground_under(from, throw.lift_m + throw.floor_drop_m))
         .map_or(feet, |hit| hit.point)
-}
-
-fn ticks_per_second(time: &FixedTime) -> Option<u32> {
-    (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
 }
 
 fn action_name(action: HandAction) -> String {
@@ -285,7 +282,7 @@ fn report(
     drops: Res<Drops>,
     arena: Res<Arena>,
     actors: Query<Reported<'_>>,
-    mut stats: ResMut<ArmsStats>,
+    mut stats: Stats<ArmsStats>,
 ) {
     book.picked_up += events.pickups.len() as u64;
     book.dropped += events.drops.len() as u64;
@@ -383,5 +380,5 @@ fn report(
             run_factor: arms.run_factor,
         });
     }
-    stats.set_if_neq(next);
+    stats.show(|| next);
 }

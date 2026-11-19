@@ -1,6 +1,6 @@
 use engine::math;
 use engine::prelude::*;
-use engine_core::{Mobility, SceneContext};
+use engine_core::{DevSetting, Mobility, SceneContext};
 use glam::{Quat, Vec3};
 
 use super::gather::{Setup, view_direction};
@@ -41,7 +41,11 @@ pub(super) fn traps_layout(body: &Body, wish: &Wish, case: &ShowcaseLook) -> Tra
 }
 
 type Reads<'w, 's> = (
-    (Res<'w, FixedTime>, Res<'w, EffectsShow>, Res<'w, Setup>),
+    (
+        Res<'w, FixedTime>,
+        DevSetting<'w, EffectsShow>,
+        Res<'w, Setup>,
+    ),
     Option<Res<'w, SceneContext>>,
     Query<'w, 's, (&'static Body, &'static Wish), With<Human>>,
     Query<'w, 's, (Entity, &'static ShowcaseModel)>,
@@ -105,6 +109,7 @@ pub(super) fn showcase_models(
     ((fixed, show, setup), scene, humans, shown): Reads,
     (mut models, mut spawner, mut moves): Writes,
 ) {
+    let show = show.get().map_or(Show::Off, |show| show.show);
     let case = setup.parsed.as_ref().map(|parsed| &parsed.look.showcase);
     let human = humans.iter().next();
     let (Some(case), Some(scene), Some((body, wish))) = (case, scene.as_deref(), human) else {
@@ -117,21 +122,18 @@ pub(super) fn showcase_models(
     let toward = view_direction(wish);
     let flat = Vec3::new(toward.x, 0.0, toward.z).normalize_or(Vec3::NEG_Z);
     let facing = Quat::from_rotation_arc(Vec3::Z, -flat);
-    let list: Vec<(String, Drawn, Transform)> = wanted(
-        (show.show, case, fixed.elapsed_seconds),
-        (body, wish),
-        scene,
-    )
-    .into_iter()
-    .filter_map(|(name, at)| {
-        let drawn = drawn(scene, &name)?;
-        Some((
-            name,
-            drawn,
-            Transform::from_translation(at).with_rotation(facing),
-        ))
-    })
-    .collect();
+    let list: Vec<(String, Drawn, Transform)> =
+        wanted((show, case, fixed.elapsed_seconds), (body, wish), scene)
+            .into_iter()
+            .filter_map(|(name, at)| {
+                let drawn = drawn(scene, &name)?;
+                Some((
+                    name,
+                    drawn,
+                    Transform::from_translation(at).with_rotation(facing),
+                ))
+            })
+            .collect();
     let mut placed = vec![false; list.len()];
     for (entity, model) in &shown {
         let free = list
@@ -160,9 +162,9 @@ pub(super) fn showcase_models(
         }
     }
     models.set_if_neq(ShowcaseModels {
-        shown: (show.show == Show::Models)
+        shown: (show == Show::Models)
             .then(|| list.first().map(|(name, ..)| name.clone()))
             .flatten(),
-        traps: show.show == Show::Traps && list.len() == 5,
+        traps: show == Show::Traps && list.len() == 5,
     });
 }

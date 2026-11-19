@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use engine::prelude::*;
 use engine_core::math::clamp;
-use engine_core::{Camera, Drawn, GlobalTransforms, Projection, SceneContext};
+use engine_core::{Camera, Drawn, GlobalTransforms, Projection, SceneContext, Stats, ViewSkip};
 
 use super::{DeviceShown, DroppedWeapon, PropShown, PuppetBrick, PuppetStats};
 use crate::names::CAMERA;
@@ -11,7 +11,6 @@ use crate::play::camera::TestCamera;
 use crate::play::figures::{Figure, FigureJoints, Form};
 use crate::play::lobby::LobbyView;
 use crate::play::puppet::{FormsTable, PuppetFile, Seen, ViewTest};
-use crate::play::screen::Covered;
 use crate::play::view::Watched;
 use crate::play::world::Arena;
 use crate::solids::Kind;
@@ -220,7 +219,7 @@ type Reads<'w, 's> = (
     (
         Option<Res<'w, TestCamera>>,
         Option<Res<'w, Watched>>,
-        Option<Res<'w, Covered>>,
+        Query<'w, 's, (), With<ViewSkip>>,
         Option<Res<'w, LobbyView>>,
     ),
 );
@@ -232,9 +231,9 @@ fn shown(spawner: &mut Spawner<PuppetBrick>, (entity, node): (Entity, &Node), vi
 }
 
 pub(super) fn cull(
-    ((time, globals), (scene, cameras), (arena, files), (test, watched, covered, lobby)): Reads,
+    ((time, globals), (scene, cameras), (arena, files), (test, watched, skipped, lobby)): Reads,
     (actors, items): (Actors, Items),
-    (mut seen, mut memo, mut stats): (ResMut<Seen>, Local<Memo>, ResMut<PuppetStats>),
+    (mut seen, mut memo, mut stats): (ResMut<Seen>, Local<Memo>, Stats<PuppetStats>),
     mut spawner: Spawner<PuppetBrick>,
 ) {
     let Memo {
@@ -245,7 +244,7 @@ pub(super) fn cull(
     let Some(book) = files.iter().find_map(PuppetFile::book) else {
         return;
     };
-    if covered.as_deref().is_some_and(|covered| covered.0) {
+    if !skipped.is_empty() {
         return;
     }
     let table = &book.table.view_test;
@@ -253,9 +252,7 @@ pub(super) fn cull(
     let followed = watched.as_deref().and_then(|watched| watched.entity);
     let own = followed.filter(|_| !outside);
     let lobby = !outside && lobby.as_deref().is_some_and(|lobby| lobby.camera.is_some());
-    if stats.lobby != lobby {
-        stats.lobby = lobby;
-    }
+    stats.edit(|stats| stats.lobby = lobby);
     let Some(eye) = eye_of((scene.as_deref(), &globals), &cameras, table.aspect_max) else {
         return;
     };
@@ -324,9 +321,7 @@ pub(super) fn cull(
         shown(&mut spawner, (entity, node), visible);
     }
     formless.sort_unstable();
-    if stats.formless != formless {
-        stats.formless = formless;
-    }
+    stats.edit(|stats| stats.formless = formless);
     for (entity, node) in &items {
         let bounds = globals
             .get(entity)
