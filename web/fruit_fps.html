@@ -9,7 +9,8 @@
     <link rel="icon" type="image/svg+xml" href="/fruit_fps/icon.svg" />
     <link rel="preload" href="/fruit_fps/fredoka-700.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fruit_fps/nunito-900.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fruit_fps/fruits.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/fruit_fps/fruits.webp" as="image" type="image/webp" media="not ((min-aspect-ratio: 1/1) and ((min-height: 1241px) or ((min-height: 993px) and (min-resolution: 1.25dppx)) or ((min-height: 827px) and (min-resolution: 1.5dppx)) or ((min-height: 621px) and (min-resolution: 2dppx))))" />
+    <link rel="preload" href="/fruit_fps/fruits_large.webp" as="image" type="image/webp" media="(min-aspect-ratio: 1/1) and ((min-height: 1241px) or ((min-height: 993px) and (min-resolution: 1.25dppx)) or ((min-height: 827px) and (min-resolution: 1.5dppx)) or ((min-height: 621px) and (min-resolution: 2dppx)))" />
     <style>
       @font-face{font-family:Fredoka;font-weight:700;font-display:swap;src:url(/fruit_fps/fredoka-700.woff2) format("woff2");ascent-override:95%;descent-override:25%;line-gap-override:0%}
       @font-face{font-family:Nunito;font-weight:900;font-display:swap;src:url(/fruit_fps/nunito-900.woff2) format("woff2");ascent-override:95.5%;descent-override:25%;line-gap-override:0%}
@@ -59,11 +60,11 @@
       .crowd { left: calc(50% - 960 * var(--s)); }
       .glow, .rays { position: absolute; border-radius: 50%; }
       .glow {
-        left: calc(740 * var(--s)); top: calc(-40 * var(--s)); width: calc(1120 * var(--s)); height: calc(1120 * var(--s));
+        left: calc(754.5 * var(--s)); top: calc(-40 * var(--s)); width: calc(1120 * var(--s)); height: calc(1120 * var(--s));
         background: radial-gradient(closest-side, #FFF0B8E0, #FFF0B880 45%, #FFF0B800);
       }
       .rays {
-        left: calc(500 * var(--s)); top: calc(-240 * var(--s)); width: calc(1600 * var(--s)); height: calc(1600 * var(--s));
+        left: calc(514.5 * var(--s)); top: calc(-240 * var(--s)); width: calc(1600 * var(--s)); height: calc(1600 * var(--s));
         background: repeating-conic-gradient(#FFFFFF38 0deg 5.8deg, #FFFFFF00 6.2deg 11.8deg, #FFFFFF38 12deg);
         -webkit-mask-image: radial-gradient(closest-side, #000 25%, #0000); mask-image: radial-gradient(closest-side, #000 25%, #0000);
         animation: spin 8s linear infinite;
@@ -77,17 +78,18 @@
           var(--cream);
       }
       .fruit {
-        position: absolute; left: calc((860 + 220 * var(--k)) * var(--s)); top: calc(270 * var(--s));
-        height: calc(600 * var(--s)); aspect-ratio: 232 / 600; translate: -50% 0;
+        --u: var(--s); position: absolute; left: calc(var(--x) * var(--s)); top: calc(265.42 * var(--s));
+        width: calc(257.37 * var(--u)); height: calc(623.46 * var(--u)); translate: -50% 0;
       }
       .fruit::before {
-        content: ""; position: absolute; left: 14%; right: 14%; bottom: calc(-8 * var(--s)); height: calc(24 * var(--s));
+        content: ""; position: absolute; left: 22%; right: 22%; top: calc(584.58 * var(--u)); height: calc(24 * var(--u));
         border-radius: 50%; background: #1E1B3A38;
       }
       .fruit i {
         position: absolute; inset: 0; background: url(/fruit_fps/fruits.webp) calc(var(--k) * 25%) 0 / 500% 100% no-repeat;
-        transform-origin: 50% 98%; animation: sway 4s ease-in-out infinite; animation-delay: calc(var(--k) * -0.8s);
+        transform-origin: 50% 95.69%; animation: sway 4s ease-in-out infinite; animation-delay: calc(var(--k) * -0.8s);
       }
+      @media (min-aspect-ratio: 1/1) and ((min-height: 1241px) or ((min-height: 993px) and (min-resolution: 1.25dppx)) or ((min-height: 827px) and (min-resolution: 1.5dppx)) or ((min-height: 621px) and (min-resolution: 2dppx))) { .fruit i { background-image: url(/fruit_fps/fruits_large.webp); } }
       .column { position: absolute; left: calc(108 * var(--s)); top: calc(196 * var(--s)); display: flex; flex-direction: column; align-items: flex-start; }
       .wordmark { display: block; width: calc(601 * var(--s)); height: calc(304 * var(--s)); }
       .tag {
@@ -111,8 +113,8 @@
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
       #loading-detail {
-        margin-top: calc(14em / 30); height: 1.5em; font: 900 max(12px, 20em / 30)/1.5 var(--text); text-align: center;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums;
+        margin-top: calc(14em / 30); min-height: 1.5em; font: 900 max(12px, 20em / 30)/1.5 var(--text); text-align: center;
+        text-wrap: balance; font-variant-numeric: tabular-nums;
       }
       @keyframes spin { to { transform: rotate(12deg); } }
       @keyframes sway { 0%, 100% { transform: rotate(-1deg); } 50% { transform: translateY(-1.5%) rotate(1deg); } }
@@ -123,7 +125,7 @@
         .glow { left: calc(-100 * var(--s)); top: calc(370 * var(--s)); width: calc(840 * var(--s)); height: calc(840 * var(--s)); }
         .rays { left: calc(-480 * var(--s)); top: calc(0 * var(--s)); width: calc(1600 * var(--s)); height: calc(1600 * var(--s)); }
         .floor { top: calc(930 * var(--s)); }
-        .fruit { left: calc((88 + 116 * var(--k)) * var(--s)); top: calc(690 * var(--s)); height: calc(290 * var(--s)); }
+        .fruit { --u: calc(0.4939 * var(--s)); left: calc(var(--px) * var(--s)); top: calc(680.35 * var(--s)); }
         .column { left: calc(40 * var(--s)); top: calc(249.37 * var(--s)); width: calc(560 * var(--s)); align-items: center; }
         .wordmark { width: calc(560 * var(--s)); height: calc(283.26 * var(--s)); }
         .tag { margin: calc(30 * var(--s)) 0 0; }
@@ -140,6 +142,9 @@
       #failure { background: var(--grape); }
       #failure.sheet { scrollbar-color: var(--paper) #0000; }
       #failure.sheet::-webkit-scrollbar-thumb { background: var(--paper); }
+      #failure .panel { max-height: 100%; }
+      #failure .card { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #1E1B3A66 #0000; }
+      #failure .card pre { min-height: 4.5em; }
       .panel { margin: auto 0; width: min(760px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
       .mini { display: block; flex: none; width: min(100%, calc(clamp(72px, 14vh, 168px) * 1.977)); height: auto; aspect-ratio: 601 / 304; }
       .card {
@@ -190,6 +195,8 @@
         .card { grid-column: 2; grid-row: 1 / span 2; padding: 24px; gap: 12px; }
         .card li { padding: 8px 16px; border-radius: 20px; }
         #failure-reload { grid-column: 1; grid-row: 2; margin-top: 4px; }
+        #failure .panel { height: 100%; }
+        #failure .card { max-height: 100%; }
       }
       @media (prefers-reduced-motion: reduce) {
         .shell, .shell * { animation: none !important; transition: none !important; }
@@ -212,11 +219,11 @@
           <div class="glow"></div>
           <div class="rays"></div>
           <div class="floor"></div>
-          <div class="fruit" style="--k: 0"><i></i></div>
-          <div class="fruit" style="--k: 1"><i></i></div>
-          <div class="fruit" style="--k: 2"><i></i></div>
-          <div class="fruit" style="--k: 3"><i></i></div>
-          <div class="fruit" style="--k: 4"><i></i></div>
+          <div class="fruit" style="--k: 0; --x: 870.7; --px: 100.8"><i></i></div>
+          <div class="fruit" style="--k: 1; --x: 1112.5; --px: 220.2"><i></i></div>
+          <div class="fruit" style="--k: 2; --x: 1335.9; --px: 330.5"><i></i></div>
+          <div class="fruit" style="--k: 3; --x: 1557.5; --px: 440"><i></i></div>
+          <div class="fruit" style="--k: 4; --x: 1785.6; --px: 552.7"><i></i></div>
         </div>
         <div class="stage">
           <div class="column">
