@@ -2,39 +2,36 @@ mod authoring;
 mod bricks;
 mod development;
 mod lint;
-mod pure;
 mod rules;
-mod scaffold;
 mod shader_report;
-mod ship;
 
 use std::{env, process::ExitCode};
 
 use engine_command_line::{self as command_line, Command, CommandOption};
-use xtask::{Failure, cook, pipeline, process};
+use xtask::{pipeline, process};
 
 fn main() -> ExitCode {
     match execute() {
         Ok(()) => ExitCode::SUCCESS,
         Err(failure) => {
-            eprintln!("xtask: {}", failure.message);
-            ExitCode::from(failure.code)
+            eprintln!("xtask: {failure}");
+            ExitCode::FAILURE
         }
     }
 }
 
-fn execute() -> Result<(), Failure> {
+fn execute() -> Result<(), String> {
     let mut arguments = env::args().skip(1);
     let task = arguments.next().unwrap_or_else(|| "help".to_owned());
     let options: Vec<_> = arguments.collect();
     if matches!(task.as_str(), "help" | "--help" | "-h")
         || options.iter().any(|option| option == "--help")
     {
-        return Ok(help(&options)?);
+        return help(&options);
     }
     let root = process::repository_root()?;
     if task == "scene" {
-        return Ok(development::scene(&options)?);
+        return development::scene(&options);
     }
     if task == "build" {
         let profiling = match options.as_slice() {
@@ -43,49 +40,27 @@ fn execute() -> Result<(), Failure> {
             _ => return Err("usage: build [--profiling]".into()),
         };
         authoring::validate_sources(&root)?;
-        return Ok(pipeline::build(&root, profiling)?);
-    }
-    if task == "pure" {
-        return pure::pure(&root, &options);
-    }
-    if task == "ship" {
-        return ship::ship(&root, &options);
+        return pipeline::build(&root, profiling);
     }
     if task == "lint" {
-        return Ok(lint::lint(&root, &options)?);
-    }
-    if task == "new" {
-        return Ok(scaffold::new(&root, &options)?);
+        return lint::lint(&root, &options);
     }
     if task == "shaders" {
-        return Ok(shader_report::run(&root, &options)?);
+        return shader_report::run(&root, &options);
     }
     if task == "generate" {
-        return Ok(authoring::generate(&root, &options)?);
+        return authoring::generate(&root, &options);
     }
     if let Some(argument) = options.first() {
         return Err(
-            format!("unexpected argument {argument:?}; run `cargo xtask help` for usage").into(),
+            format!("unexpected argument {argument:?}; run `cargo xtask help` for usage"),
         );
     }
-    Err(format!("unknown command {task:?}; run `cargo xtask help` for usage").into())
+    Err(format!("unknown command {task:?}; run `cargo xtask help` for usage"))
 }
 
 fn commands() -> Vec<Command> {
-    let mut commands = authoring_commands();
-    commands.extend(xtask::agent::commands());
-    commands.push(xtask::compare::command());
-    commands.extend(xtask::runs::commands());
-    commands.extend(checking_commands());
-    commands
-}
-
-fn authoring_commands() -> Vec<Command> {
-    let corpora = process::repository_root()
-        .map(|root| pure::names(&root))
-        .unwrap_or_default()
-        .join("|");
-    vec![
+    let mut commands = vec![
         Command::new("build", [CommandOption::flag("--profiling")]),
         Command::new(
             "dev",
@@ -112,52 +87,19 @@ fn authoring_commands() -> Vec<Command> {
         ),
         Command::new("generate", [CommandOption::flag("--check")]),
         Command::new(
-            "new app",
-            [CommandOption::taking("--project", "DIR").required()],
-        ),
-        Command::new(
-            "new brick",
-            [
-                CommandOption::taking("NAME", "NAME").required(),
-                CommandOption::taking("--project", "DIR").required(),
-            ],
-        ),
-        Command::new(
-            "pure",
-            [
-                CommandOption::flag("--bless"),
-                CommandOption::flag("--wasm"),
-                CommandOption::taking("CORPUS", format!("{corpora}...")),
-            ],
-        ),
-        Command::new(
             "shaders",
             [
                 CommandOption::taking("--out", "DIR").required(),
                 CommandOption::flag("--no-rga"),
             ],
         ),
-    ]
-}
-
-fn checking_commands() -> Vec<Command> {
-    vec![
-        Command::new(
-            "cook",
-            [
-                CommandOption::taking("--project", "DIR").required(),
-                CommandOption::taking("SCENE", "PATH.scene.json..."),
-                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
-                CommandOption::flag("--check"),
-            ],
-        ),
-        Command::new(
-            "ship",
-            [CommandOption::taking("--project", "DIR").required()],
-        ),
+    ];
+    commands.extend(xtask::agent::commands());
+    commands.extend([
         engine_checks::stages::command(),
         Command::new("help", [CommandOption::flag("--json")]),
-    ]
+    ]);
+    commands
 }
 
 fn help(options: &[String]) -> Result<(), String> {

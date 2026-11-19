@@ -39,7 +39,7 @@ pub fn ours(path: &str) -> bool {
 }
 
 pub fn source(path: &str) -> bool {
-    [".rs", ".wgsl", ".ts", ".mjs"]
+    [".rs", ".wgsl", ".ts"]
         .iter()
         .any(|extension| path.ends_with(extension))
 }

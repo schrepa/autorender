@@ -16,70 +16,31 @@ mod requests;
 mod views;
 
 use bevy_ecs::world::World;
-use serde_json::Value;
 
 pub use asks::Asked;
 pub use calls::{SCENE_SCHEMA, schema_of};
-pub use drawn::{
-    DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, Layers, NodeId,
-};
+pub use drawn::{DrawKind, Drawn, InstanceValues, KindDecl, Layers, NodeId};
 pub use engine_assets::{
     AttributeFormat, GeometryHandle, MaterialHandle, StreamShape, TextureHandle,
 };
 pub use engine_settings::{Error, ErrorCode};
 pub use feeds::{Changed, Changes, Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
-pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_removed};
+pub use names::{AuthoredId, OperationScene, SceneEntity, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     KindCell, KindJoin, Pass, PassBit, PassEntry, PassMask, PassName, PassViews, ScenePass,
     ScenePasses, TargetName, Writes,
 };
 pub use readback::{FrameId, Readable, Readback};
-pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
+pub use readiness::{CORE_ROW, Readiness, Unsettled};
 pub use requests::{Board, Census, Interest, Progress, Request, Requests, Settling, Ticket};
-pub use views::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
+pub use views::{Clear, Rect, Target, View};
 
 pub trait List: Send + Sync + 'static {
     const NAME: &'static str;
     type Member: Send + Sync + 'static;
 
     fn dropped(_world: &mut World, _member: &Self::Member) {}
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Stamp(u64);
-
-impl Stamp {
-    pub fn next() -> Self {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct JobRef {
-    name: Box<str>,
-    source: [u8; 32],
-}
-
-impl JobRef {
-    #[doc(hidden)]
-    pub fn named(name: &str, source: [u8; 32]) -> Self {
-        Self {
-            name: name.into(),
-            source,
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[doc(hidden)]
-    pub fn source(&self) -> [u8; 32] {
-        self.source
-    }
 }
 
 pub const UNIFORM_BINDING_BYTES: u64 = 16_384;
@@ -91,34 +52,10 @@ pub trait GpuStruct: bytemuck::Pod + Send + Sync + 'static {
 
 pub use engine_gpu_bits::gpu_bits;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BitField {
-    pub name: &'static str,
-    pub at: u32,
-    pub width: u32,
-    pub values: &'static [(u32, &'static str)],
-}
-
-impl BitField {
-    pub const fn mask(&self) -> u32 {
-        if self.width >= 32 {
-            u32::MAX
-        } else {
-            (1 << self.width) - 1
-        }
-    }
-
-    pub const fn read(&self, word: u32) -> u32 {
-        (word >> self.at) & self.mask()
-    }
-}
-
 pub trait BitValue: Copy + Sized {
     const WIDTH: u32;
-    const VALUES: &'static [(u32, &'static str)] = &[];
     const WGSL: &'static str = "";
     fn bits(self) -> u32;
-    fn of_bits(bits: u32) -> Option<Self>;
 }
 
 impl BitValue for bool {
@@ -126,10 +63,6 @@ impl BitValue for bool {
 
     fn bits(self) -> u32 {
         u32::from(self)
-    }
-
-    fn of_bits(bits: u32) -> Option<Self> {
-        Some(bits != 0)
     }
 }
 
@@ -139,10 +72,6 @@ impl BitValue for u8 {
     fn bits(self) -> u32 {
         u32::from(self)
     }
-
-    fn of_bits(bits: u32) -> Option<Self> {
-        Self::try_from(bits).ok()
-    }
 }
 
 impl BitValue for u16 {
@@ -150,10 +79,6 @@ impl BitValue for u16 {
 
     fn bits(self) -> u32 {
         u32::from(self)
-    }
-
-    fn of_bits(bits: u32) -> Option<Self> {
-        Self::try_from(bits).ok()
     }
 }
 
@@ -163,39 +88,11 @@ impl BitValue for u32 {
     fn bits(self) -> u32 {
         self
     }
-
-    fn of_bits(bits: u32) -> Option<Self> {
-        Some(bits)
-    }
 }
 
 pub trait GpuBits: Copy + Sized + Send + Sync + 'static {
     const WGSL: &'static str;
-    const FIELDS: &'static [BitField];
     fn pack(self) -> u32;
-    fn unpack(word: u32) -> Option<Self>;
-
-    fn decoded(word: u32) -> Value {
-        decode_bits(Self::FIELDS, word)
-    }
-}
-
-pub fn decode_bits(fields: &[BitField], word: u32) -> Value {
-    let mut decoded = serde_json::Map::new();
-    for field in fields {
-        let bits = field.read(word);
-        let value = if field.values.is_empty() {
-            Value::from(bits)
-        } else {
-            field
-                .values
-                .iter()
-                .find(|(known, _)| *known == bits)
-                .map_or(Value::Null, |(_, name)| Value::from(*name))
-        };
-        decoded.insert(field.name.to_owned(), value);
-    }
-    Value::Object(decoded)
 }
 
 #[macro_export]
@@ -296,211 +193,7 @@ macro_rules! gpu_struct {
     };
 }
 
-#[macro_export]
-macro_rules! gpu_consts {
-    (@munch [$($pieces:tt)*]) => {
-        pub const WGSL: &str = {
-            const __GPU_CONSTS_PIECES: &[$crate::__private::wgsl::Piece] = &[$($pieces)*];
-            const __GPU_CONSTS_LEN: usize =
-                $crate::__private::wgsl::write::<0>(__GPU_CONSTS_PIECES).len;
-            const __GPU_CONSTS_BYTES: [u8; __GPU_CONSTS_LEN] =
-                $crate::__private::wgsl::write::<__GPU_CONSTS_LEN>(__GPU_CONSTS_PIECES).bytes;
-            $crate::__private::wgsl::text(&__GPU_CONSTS_BYTES)
-        };
-    };
-    (@munch [$($pieces:tt)*] $vis:vis const $name:ident: $ty:ident = $value:literal; $($rest:tt)*) => {
-        $vis const $name: $ty = $value;
-        $crate::gpu_consts! {
-            @munch [
-                $($pieces)*
-                $crate::__private::wgsl::Piece::Text(::core::concat!(
-                    "const ", ::core::stringify!($name), ": ", ::core::stringify!($ty), " = ",
-                    ::core::stringify!($value), ";\n",
-                )),
-            ]
-            $($rest)*
-        }
-    };
-    (@munch [$($pieces:tt)*] $vis:vis const $name:ident: $ty:ident = $value:expr; $($rest:tt)*) => {
-        $vis const $name: $ty = $value;
-        $crate::gpu_consts! {
-            @munch [
-                $($pieces)*
-                $crate::__private::wgsl::Piece::Text(::core::concat!(
-                    "const ", ::core::stringify!($name), ": ", ::core::stringify!($ty), " = ",
-                )),
-                $crate::gpu_consts!(@value $ty $name),
-                $crate::__private::wgsl::Piece::Text(";\n"),
-            ]
-            $($rest)*
-        }
-    };
-    (@value u32 $name:ident) => { $crate::__private::wgsl::Piece::U32($name) };
-    (@value i32 $name:ident) => { $crate::__private::wgsl::Piece::I32($name) };
-    (@value f32 $name:ident) => { $crate::__private::wgsl::Piece::F32($name) };
-    (@value $ty:ident $name:ident) => {
-        ::core::compile_error!(::core::concat!(
-            "gpu_consts! writes WGSL for u32, i32 and f32, not ",
-            ::core::stringify!($ty)
-        ))
-    };
-    ($($body:tt)*) => {
-        $crate::gpu_consts! { @munch [] $($body)* }
-    };
-}
-
 #[doc(hidden)]
 pub mod __private {
     pub use ::bytemuck;
-
-    pub mod wgsl {
-        #[derive(Clone, Copy)]
-        pub enum Piece {
-            Text(&'static str),
-            U32(u32),
-            I32(i32),
-            F32(f32),
-        }
-
-        pub struct Written<const N: usize> {
-            pub bytes: [u8; N],
-            pub len: usize,
-        }
-
-        pub const fn write<const N: usize>(pieces: &[Piece]) -> Written<N> {
-            let mut out = Written {
-                bytes: [0; N],
-                len: 0,
-            };
-            let mut at = 0;
-            while at < pieces.len() {
-                match pieces[at] {
-                    Piece::Text(text) => out.text(text),
-                    Piece::U32(value) => out.whole(value as u128),
-                    Piece::I32(value) => {
-                        if value < 0 {
-                            out.push(b'-');
-                        }
-                        out.whole(value.unsigned_abs() as u128);
-                    }
-                    Piece::F32(value) => out.float(value),
-                }
-                at += 1;
-            }
-            out
-        }
-
-        pub const fn text(bytes: &'static [u8]) -> &'static str {
-            match core::str::from_utf8(bytes) {
-                Ok(text) => text,
-                Err(_) => panic!("gpu_consts WGSL is UTF-8"),
-            }
-        }
-
-        const LIMBS: usize = 6;
-
-        impl<const N: usize> Written<N> {
-            const fn push(&mut self, byte: u8) {
-                if self.len < N {
-                    self.bytes[self.len] = byte;
-                }
-                self.len += 1;
-            }
-
-            const fn text(&mut self, text: &str) {
-                let bytes = text.as_bytes();
-                let mut at = 0;
-                while at < bytes.len() {
-                    self.push(bytes[at]);
-                    at += 1;
-                }
-            }
-
-            const fn whole(&mut self, value: u128) {
-                let mut digits = [0_u8; 39];
-                let mut count = 0;
-                let mut rest = value;
-                loop {
-                    digits[count] = b'0' + (rest % 10) as u8;
-                    count += 1;
-                    rest /= 10;
-                    if rest == 0 {
-                        break;
-                    }
-                }
-                while count > 0 {
-                    count -= 1;
-                    self.push(digits[count]);
-                }
-            }
-
-            const fn float(&mut self, value: f32) {
-                let bits = value.to_bits();
-                let exponent = (bits >> 23) & 0xff;
-                assert!(exponent != 0xff, "a gpu_consts f32 is finite");
-                if bits >> 31 != 0 {
-                    self.push(b'-');
-                }
-                let fraction = bits & 0x7f_ffff;
-                let (mantissa, shift) = if exponent == 0 {
-                    (fraction, -149_i32)
-                } else {
-                    (fraction | 0x80_0000, exponent as i32 - 150)
-                };
-                if shift >= 0 {
-                    self.whole((mantissa as u128) << shift as u32);
-                    self.text(".0");
-                    return;
-                }
-                let below = shift.unsigned_abs();
-                let (whole, rest) = if below < 24 {
-                    (mantissa >> below, mantissa & ((1 << below) - 1))
-                } else {
-                    (0, mantissa)
-                };
-                self.whole(whole as u128);
-                self.push(b'.');
-                if rest == 0 {
-                    self.push(b'0');
-                    return;
-                }
-                let mut limbs = [0_u32; LIMBS];
-                limbs[0] = rest;
-                let word = (below / 32) as usize;
-                let bit = below % 32;
-                while !zero(&limbs) {
-                    let mut carry = 0_u64;
-                    let mut at = 0;
-                    while at < LIMBS {
-                        let wide = limbs[at] as u64 * 10 + carry;
-                        limbs[at] = wide as u32;
-                        carry = wide >> 32;
-                        at += 1;
-                    }
-                    let mut digit = limbs[word] >> bit;
-                    if bit > 28 {
-                        digit |= limbs[word + 1] << (32 - bit);
-                    }
-                    limbs[word] &= if bit == 0 { 0 } else { (1 << bit) - 1 };
-                    let mut above = word + 1;
-                    while above < LIMBS {
-                        limbs[above] = 0;
-                        above += 1;
-                    }
-                    self.push(b'0' + (digit & 0xf) as u8);
-                }
-            }
-        }
-
-        const fn zero(limbs: &[u32; LIMBS]) -> bool {
-            let mut at = 0;
-            while at < LIMBS {
-                if limbs[at] != 0 {
-                    return false;
-                }
-                at += 1;
-            }
-            true
-        }
-    }
 }

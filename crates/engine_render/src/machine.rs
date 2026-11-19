@@ -7,11 +7,11 @@ use wgpu::ShaderStages;
 
 use crate::graph::{
     Access as GraphAccess, BLACK, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
-    ResourceEntry, ResourceId, StaticGraph, TRANSPARENT,
+    ResourceEntry, ResourceId, StaticGraph,
 };
-use crate::install::{Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, Work};
+use crate::install::{Bound, Declared, PassDecl, PipelineDecl, Program, Scoped};
 use crate::linker::{Composed, Linker, Ty};
-use crate::{Access, DepthUse, Lifetime, SharedTarget, VertexLayout};
+use crate::{Access, DepthUse, Lifetime, SharedTarget};
 
 mod composing;
 mod layouts;
@@ -115,16 +115,6 @@ fn unknown_targets(declared: &Declared) -> Vec<Error> {
         }
     }
     for pass in &declared.passes {
-        if let Work::Copy { from, to } = pass.work {
-            for copied in [from, to] {
-                if let Copied::Target(name) = copied
-                    && !named(name)
-                {
-                    let path = format!("$.targets.{}", name.name());
-                    problems.push(Error::new(ErrorCode::UnknownVariable, path).got(name.name()));
-                }
-            }
-        }
         for name in pass.scene.iter().flat_map(|scene| scene.pass.writes.targets()) {
             if !named(*name) {
                 let path = format!("$.passes.{}.writes.{}", pass.name, name.name());
@@ -142,7 +132,6 @@ fn unknown_targets(declared: &Declared) -> Vec<Error> {
 }
 
 pub(crate) struct Ids {
-    pub(crate) textures: Vec<ResourceId>,
     pub(crate) buffers: Vec<ResourceId>,
     pub(crate) targets: Vec<ResourceId>,
     pub(crate) canvas: Option<ResourceId>,
@@ -190,7 +179,6 @@ pub(crate) struct OwnGroup {
     pub(crate) index: u32,
     pub(crate) layout: wgpu::BindGroupLayout,
     pub(crate) entries: Vec<(u32, Bound, Ty)>,
-    pub(crate) windows: usize,
 }
 
 pub(crate) struct Ready {
@@ -293,7 +281,7 @@ fn layout_entries(entries: &[(u32, Ty, ShaderStages)]) -> Vec<wgpu::BindGroupLay
         .map(|&(binding, ty, visibility)| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
-            ty: ty.binding(true, false),
+            ty: ty.binding(true),
             count: None,
         })
         .collect()
@@ -336,11 +324,7 @@ fn claimed_member(decl: &PipelineDecl, pass: &PassDecl) -> bool {
 
 fn owned_by(declared: &Declared, bound: &Bound, part: u32) -> bool {
     match bound {
-        Bound::Texture(texture) | Bound::Slice { texture, .. } => declared
-            .textures
-            .get(*texture as usize)
-            .is_some_and(|texture| texture.part == part),
-        Bound::Buffer(buffer) | Bound::Window { buffer, .. } => declared
+        Bound::Buffer(buffer) => declared
             .buffers
             .get(*buffer as usize)
             .is_some_and(|buffer| buffer.part == part),
@@ -385,46 +369,10 @@ fn reads_depth_direct(direct: &[bool], pass: usize) -> bool {
     direct.get(pass).copied().unwrap_or(false)
 }
 
-const EVERY: [u32; 2] = [0, u32::MAX];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Handle {
-    Texture {
-        texture: u32,
-        mips: [u32; 2],
-        layers: [u32; 2],
-    },
     Buffer(u32),
     Target(Target),
-}
-
-impl Handle {
-    fn whole(texture: u32) -> Self {
-        Self::Texture {
-            texture,
-            mips: EVERY,
-            layers: EVERY,
-        }
-    }
-
-    fn overlaps(self, other: Self) -> bool {
-        let meet = |[start, end]: [u32; 2], [low, high]: [u32; 2]| start < high && low < end;
-        match (self, other) {
-            (
-                Self::Texture {
-                    texture,
-                    mips,
-                    layers,
-                },
-                Self::Texture {
-                    texture: known,
-                    mips: known_mips,
-                    layers: known_layers,
-                },
-            ) => texture == known && meet(mips, known_mips) && meet(layers, known_layers),
-            _ => self == other,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -435,17 +383,7 @@ enum Usage {
 
 fn handle_of(declared: &Declared, bound: &Bound) -> Option<Handle> {
     match bound {
-        Bound::Texture(texture) => Some(Handle::whole(*texture)),
-        Bound::Slice {
-            texture,
-            mips,
-            layers,
-        } => Some(Handle::Texture {
-            texture: *texture,
-            mips: [mips.start, mips.end],
-            layers: [layers.start, layers.end],
-        }),
-        Bound::Buffer(buffer) | Bound::Window { buffer, .. } => Some(Handle::Buffer(*buffer)),
+        Bound::Buffer(buffer) => Some(Handle::Buffer(*buffer)),
         Bound::Target(name) => declared.target_of(*name).map(Handle::Target),
         Bound::Sampler(_) | Bound::Asset => None,
     }
@@ -470,9 +408,6 @@ fn own_writes(declared: &Declared, decl: &PipelineDecl, reached: &Reached) -> Ve
 
 fn attachments(declared: &Declared, pass: &PassDecl) -> Vec<Handle> {
     let mut found = Vec::new();
-    for &(texture, _) in pass.colors.iter().chain(&pass.depths) {
-        found.push(Handle::whole(texture));
-    }
     if shared(pass) {
         for (target, ..) in declared.pass_set(pass) {
             found.push(Handle::Target(target));
@@ -521,7 +456,7 @@ impl Machine {
         let limits = Limits::of(device);
         let mut unknown = unknown_targets(&declared);
         for pass in &declared.passes {
-            let colors = declared.pass_set(pass).len() + pass.targets.len() + pass.colors.len();
+            let colors = declared.pass_set(pass).len() + pass.targets.len();
             let path = format!("$.passes.{}", pass.name);
             unknown.extend(limits.over(&path, [0, colors, 0, 0]));
         }
@@ -585,7 +520,7 @@ impl Machine {
             };
             writes.get(pipeline as usize).is_some_and(|written| {
                 written.iter().any(|(known, usage)| {
-                    known.overlaps(*handle) && !(*usage == Usage::Stored && ty.writes())
+                    known == handle && !(*usage == Usage::Stored && ty.writes())
                 })
             })
         };
@@ -725,17 +660,11 @@ impl Machine {
                         index: found.group,
                         layout: empty.clone(),
                         entries: vec![entry],
-                        windows: 0,
                     }),
                 }
             }
             groups.sort_by_key(|group| group.index);
             for group in &mut groups {
-                group.windows = group
-                    .entries
-                    .iter()
-                    .filter(|(_, bound, _)| bound.window())
-                    .count();
                 let entries: Vec<wgpu::BindGroupLayoutEntry> = group
                     .entries
                     .iter()
@@ -752,8 +681,7 @@ impl Machine {
                         wgpu::BindGroupLayoutEntry {
                             binding: *binding,
                             visibility,
-                            ty: ty
-                                .binding(filterable_bound(Some(bound), &declared), bound.window()),
+                            ty: ty.binding(filterable_bound(Some(bound), &declared)),
                             count: None,
                         }
                     })
@@ -791,7 +719,7 @@ impl Machine {
             let camera = variants
                 .get(variant as usize)
                 .is_some_and(|found| found.camera);
-            let offsets = usize::from(camera) + groups.iter().map(|group| group.windows).sum::<usize>();
+            let offsets = usize::from(camera);
             let label = reaches.get(index).map_or("$", |(label, ..)| label.as_str());
             unbound.extend(limits.over(label, [streams, colors, used.len(), offsets]));
             let mut hasher = DefaultHasher::new();
@@ -803,14 +731,7 @@ impl Machine {
             layout_key.hash(&mut hasher);
             let program_key = hasher.finish();
             let geometry = match &decl.program {
-                Program::Render(desc) => desc
-                    .vertices
-                    .iter()
-                    .filter_map(|layout| match layout {
-                        VertexLayout::Geometry(stream) => Some(*stream),
-                        VertexLayout::Buffer(_) => None,
-                    })
-                    .collect(),
+                Program::Render(desc) => desc.vertices.clone(),
                 Program::Compute(_) => Vec::new(),
             };
             let holes = decl.holes() > 0;
@@ -890,10 +811,6 @@ fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
         });
     }
     let format = match bound {
-        Some(Bound::Texture(texture) | Bound::Slice { texture, .. }) => declared
-            .textures
-            .get(*texture as usize)
-            .map(|texture| texture.format),
         Some(Bound::Target(name)) => declared
             .target_of(*name)
             .and_then(|target| declared.target_format(target)),
@@ -917,10 +834,6 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 fn graph_of(
     declared: &Declared,
     pipelines: &[BuiltPipeline],
@@ -928,19 +841,10 @@ fn graph_of(
 ) -> Result<(StaticGraph, Ids), Error> {
     let mut resources = Vec::new();
     let mut ids = Ids {
-        textures: Vec::new(),
         buffers: Vec::new(),
         targets: Vec::new(),
         canvas: None,
     };
-    for texture in &declared.textures {
-        ids.textures.push(ResourceId::new(resources.len()));
-        resources.push(ResourceEntry {
-            label: texture.label,
-            life: life(texture.lifetime),
-            view: false,
-        });
-    }
     for buffer in &declared.buffers {
         ids.buffers.push(ResourceId::new(resources.len()));
         resources.push(ResourceEntry {
@@ -972,7 +876,6 @@ fn graph_of(
             brick: part.map_or("", |part| part.package),
             registered: index as u32,
             shared: shared(pass),
-            group: pass.group,
         };
         let direct_depth = reads_depth_direct(direct, index);
         let set = declared.pass_set(pass);
@@ -987,12 +890,7 @@ fn graph_of(
         let mut depth = None;
         let bound_id = |bound: &Bound| -> Option<ResourceId> {
             match bound {
-                Bound::Texture(texture) | Bound::Slice { texture, .. } => {
-                    ids.textures.get(*texture as usize).copied()
-                }
-                Bound::Buffer(buffer) | Bound::Window { buffer, .. } => {
-                    ids.buffers.get(*buffer as usize).copied()
-                }
+                Bound::Buffer(buffer) => ids.buffers.get(*buffer as usize).copied(),
                 Bound::Target(name) => declared.target_of(*name).and_then(|target| ids.target(target)),
                 Bound::Sampler(_) | Bound::Asset => None,
             }
@@ -1022,41 +920,6 @@ fn graph_of(
                 );
             }
         }
-        for input in &declared.inputs {
-            let (scoped, member) = match input.scope {
-                Scoped::Pass(own) => (own == index as u32, false),
-                Scoped::Outside(_) => (false, false),
-                Scoped::Scene(bit) => (
-                    scene_member(bit, input.part, pass),
-                    !shared(pass) && input.part != pass.part,
-                ),
-            };
-            if scoped && let Some(id) = ids.buffers.get(input.buffer as usize) {
-                reads.push(*id);
-                if member
-                    && declared
-                        .buffers
-                        .get(input.buffer as usize)
-                        .is_some_and(|buffer| buffer.part == input.part)
-                {
-                    current.push(*id);
-                }
-            }
-        }
-        match pass.work {
-            Work::Copy { from, to } => {
-                let id = |copied: Copied| match copied {
-                    Copied::Buffer(buffer) => ids.buffers.get(buffer as usize).copied(),
-                    Copied::Texture(texture) => ids.textures.get(texture as usize).copied(),
-                    Copied::Target(name) => declared.target_of(name).and_then(|target| ids.target(target)),
-                    Copied::Canvas => ids.target(Target::Canvas),
-                };
-                reads.extend(id(from));
-                writes.extend(id(to));
-            }
-            Work::Clear(buffer) => writes.extend(ids.buffers.get(buffer as usize).copied()),
-            Work::Render => {}
-        }
         if entry.shared {
             for (target, _, clear) in set {
                 colors.extend(ids.target(target).map(|id| (id, GraphAccess::Draw(clear))));
@@ -1073,21 +936,6 @@ fn graph_of(
         for &(name, access) in &pass.targets {
             if let Some(id) = declared.target_of(name).and_then(|target| ids.target(target)) {
                 colors.push((id, graph_access(access, Clear::Color(BLACK))));
-            }
-        }
-        for &(texture, access) in &pass.colors {
-            if let Some(id) = ids.textures.get(texture as usize) {
-                let clear = pass.clear_of(texture).unwrap_or(Clear::Color(TRANSPARENT));
-                colors.push((*id, graph_access(access, clear)));
-            }
-        }
-        for &(texture, access) in &pass.depths {
-            if let Some(id) = ids.textures.get(texture as usize) {
-                let clear = pass.clear_of(texture).unwrap_or(Clear::Depth(FAR));
-                match depth {
-                    None => depth = Some((*id, graph_access(access, clear))),
-                    Some(_) => writes.push(*id),
-                }
             }
         }
         passes.push(GraphPass {

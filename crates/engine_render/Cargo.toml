@@ -7,8 +7,8 @@ publish.workspace = true
 description = "Owned WebGPU resources and instanced 3D rendering for the browser engine"
 
 [features]
-dev = ["engine_profile/dev", "engine_registry/profiling", "engine_core/dev"]
-profiling = ["engine_profile/profiling", "engine_core/profiling"]
+dev = ["engine_profile/dev", "engine_registry/profiling", "engine_core/dev", "wgpu/serde"]
+profiling = ["engine_profile/profiling", "engine_core/profiling", "wgpu/serde"]
 
 [dependencies]
 engine_core.workspace = true
@@ -18,10 +18,8 @@ engine_profile.workspace = true
 bevy_ecs.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
-libm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-wgpu-types.workspace = true
 wesl.workspace = true
 
 [dependencies.wgpu]

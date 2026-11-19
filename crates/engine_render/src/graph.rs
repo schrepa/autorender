@@ -146,7 +146,6 @@ pub struct Ops {
     pub store: bool,
 }
 
-pub const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 pub const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 pub const FAR: f32 = 0.0;
 
@@ -163,7 +162,6 @@ pub struct PassEntry {
     pub brick: &'static str,
     pub registered: u32,
     pub shared: bool,
-    pub group: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -421,16 +419,9 @@ fn placed_order(nodes: &[Node], before: &[Bits]) -> Result<Vec<usize>, Error> {
     let mut placed = Bits::of(count);
     let mut order: Vec<usize> = Vec::with_capacity(count);
     while order.len() < count {
-        let last = order.last().map(|&last| &nodes[last].entry);
-        let continues = |index: usize| {
-            let entry = &nodes[index].entry;
-            last.is_some_and(|last| {
-                entry.group.is_some() && entry.group == last.group && entry.brick == last.brick
-            })
-        };
         let next = (0..count)
             .filter(|&index| !placed.contains(index) && before[index].without(&placed).is_empty())
-            .min_by_key(|&index| (!continues(index), nodes[index].key(index)));
+            .min_by_key(|&index| nodes[index].key(index));
         let Some(next) = next else {
             let stuck = (0..count)
                 .filter(|&index| !placed.contains(index))

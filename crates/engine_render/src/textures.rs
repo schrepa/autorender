@@ -12,71 +12,27 @@ use engine_core::{
     TextureFormat, TextureHandle, Wrap,
 };
 
-use crate::encode::Compiler;
-use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
-use crate::mipmaps::MipGenerator;
+use crate::gpu_data::{level_copy, mip_levels};
 
 pub(crate) struct GpuTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     pub byte_len: u64,
-    pub mip_bytes: u64,
     target: bool,
     revision: u64,
-    generates: bool,
 }
 
-fn mipped(
-    mips: &MipGenerator,
-    (device, encoder): (&wgpu::Device, &mut Option<wgpu::CommandEncoder>),
-    compiler: &mut Compiler<'_>,
-    handle: TextureHandle,
-    texture: &wgpu::Texture,
-) -> Result<Option<u32>, Error> {
-    let encoder = encoder.get_or_insert_with(|| {
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("engine/texture-mips"),
-        })
-    });
-    let wanted = texture.mip_level_count() - 1;
-    match mips.record((device, encoder), compiler, texture, None) {
-        None => Ok(None),
-        Some(made) if made == wanted => Ok(Some(made)),
-        Some(made) => Err(Error::new(
-            engine_core::ErrorCode::InvalidTexture,
-            format!("$.textures.{}", handle.slot()),
-        )
-        .expected(engine_core::Expected::Matching)
-        .range(f64::from(wanted), f64::from(wanted))
-        .got(serde_json::json!({ "mip_levels_made": made }))),
-    }
-}
-
+#[derive(Default)]
 pub(crate) struct TextureStore {
     samplers: HashMap<Sampler, wgpu::Sampler>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
     generation: u64,
     synced: Option<u64>,
-    mips: MipGenerator,
-    owed: BTreeMap<TextureHandle, GpuTexture>,
     refused: Vec<Error>,
     declined: BTreeMap<TextureHandle, u64>,
 }
 
 impl TextureStore {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        Self {
-            samplers: HashMap::default(),
-            textures: BTreeMap::new(),
-            generation: 0,
-            synced: None,
-            mips: MipGenerator::new(device),
-            owed: BTreeMap::new(),
-            refused: Vec::new(),
-            declined: BTreeMap::new(),
-        }
-    }
-
     pub(crate) fn take_refused(&mut self) -> Vec<Error> {
         std::mem::take(&mut self.refused)
     }
@@ -86,25 +42,22 @@ impl TextureStore {
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
         world: &World,
-        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
-    ) -> (u64, u32) {
+    ) -> u64 {
         let (Some(residency), Some(library)) = (
             world.get_resource::<AssetResidency>(),
             world.get_resource::<AssetLibrary>(),
         ) else {
-            return (0, 0);
+            return 0;
         };
         let generation = residency.revision();
-        let mut levels = self.record_owed(device, (&mut *encoder, &mut *compiler));
         if self.synced == Some(generation) {
-            return (0, levels);
+            return 0;
         }
         let before = self.textures.len();
         let kept = |handle: &TextureHandle, revision: u64| {
             residency.texture_resident(*handle) && library.revision_of(*handle) == Some(revision)
         };
         self.textures.retain(|handle, gpu| kept(handle, gpu.revision));
-        self.owed.retain(|handle, gpu| kept(handle, gpu.revision));
         self.declined.retain(|handle, revision| kept(handle, *revision));
         if self.textures.len() != before {
             self.generation += 1;
@@ -126,43 +79,10 @@ impl TextureStore {
                 continue;
             };
             let revision = library.revision_of(texture).unwrap_or_default();
-            let (more, generated) = self.upload_texture(
-                device,
-                queue,
-                (texture, revision),
-                source,
-                (&mut *encoder, &mut *compiler),
-            );
-            bytes += more;
-            levels += generated;
+            bytes += self.upload_texture(device, queue, (texture, revision), source);
         }
         self.synced = Some(generation);
-        (bytes, levels)
-    }
-
-    fn record_owed(
-        &mut self,
-        device: &wgpu::Device,
-        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
-    ) -> u32 {
-        let mut levels = 0;
-        for (handle, gpu) in std::mem::take(&mut self.owed) {
-            match mipped(&self.mips, (device, &mut *encoder), compiler, handle, &gpu.texture) {
-                Ok(Some(more)) => {
-                    levels += more;
-                    self.textures.insert(handle, gpu);
-                    self.generation += 1;
-                }
-                Ok(None) => {
-                    self.owed.insert(handle, gpu);
-                }
-                Err(error) => {
-                    self.refused.push(error);
-                    self.declined.insert(handle, gpu.revision);
-                }
-            }
-        }
-        levels
+        bytes
     }
 
     pub(crate) fn forget_sync(&mut self) {
@@ -175,42 +95,21 @@ impl TextureStore {
         queue: &crate::gpu_calls::Queue,
         (handle, revision): (TextureHandle, u64),
         source: &Texture,
-        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
-    ) -> (u64, u32) {
-        if self.textures.contains_key(&handle)
-            || self.owed.contains_key(&handle)
-            || self.declined.get(&handle) == Some(&revision)
-        {
-            return (0, 0);
+    ) -> u64 {
+        if self.textures.contains_key(&handle) || self.declined.get(&handle) == Some(&revision) {
+            return 0;
         }
-        let gpu = match create_texture(device, queue, (handle, source, revision)) {
-            Ok(gpu) => gpu,
-            Err(error) => {
-                self.refused.push(error);
-                self.declined.insert(handle, revision);
-                return (0, 0);
-            }
-        };
-        let bytes = gpu.byte_len;
-        if !gpu.generates {
-            self.textures.insert(handle, gpu);
-            self.generation += 1;
-            return (bytes, 0);
-        }
-        match mipped(&self.mips, (device, &mut *encoder), compiler, handle, &gpu.texture) {
-            Ok(Some(levels)) => {
+        match create_texture(device, queue, (handle, source, revision)) {
+            Ok(gpu) => {
+                let bytes = gpu.byte_len;
                 self.textures.insert(handle, gpu);
                 self.generation += 1;
-                (bytes, levels)
-            }
-            Ok(None) => {
-                self.owed.insert(handle, gpu);
-                (bytes, 0)
+                bytes
             }
             Err(error) => {
                 self.refused.push(error);
                 self.declined.insert(handle, revision);
-                (0, 0)
+                0
             }
         }
     }
@@ -237,10 +136,6 @@ impl TextureStore {
         self.generation
     }
 
-    pub(crate) fn mips(&self) -> &MipGenerator {
-        &self.mips
-    }
-
     pub(crate) fn is_texture_resident(&self, handle: TextureHandle) -> bool {
         self.textures.contains_key(&handle)
     }
@@ -256,7 +151,7 @@ impl TextureStore {
                 .entry(format!("{:?}", texture.texture.format()))
                 .or_default();
             held.0 += 1;
-            held.1 += texture.byte_len + texture.mip_bytes;
+            held.1 += texture.byte_len;
         }
         formats
     }
@@ -265,15 +160,11 @@ impl TextureStore {
         not(any(feature = "dev", feature = "profiling")),
         expect(dead_code, reason = "read by the gpu.assets names")
     )]
-    pub(crate) fn texture_totals(&self) -> (u32, u64, u64) {
+    pub(crate) fn texture_totals(&self) -> (u32, u64) {
         self.textures
             .values()
-            .fold((0, 0, 0), |(count, bytes, mips), texture| {
-                (
-                    count + 1,
-                    bytes + texture.byte_len,
-                    mips + texture.mip_bytes,
-                )
+            .fold((0, 0), |(count, bytes), texture| {
+                (count + 1, bytes + texture.byte_len)
             })
     }
 }
@@ -341,7 +232,7 @@ pub(crate) fn gpu_sampler(
     })
 }
 
-pub fn gpu_format(
+pub(crate) fn gpu_format(
     format: TextureFormat,
     space: ColorSpace,
 ) -> Option<(wgpu::TextureFormat, wgpu::Features)> {
@@ -367,34 +258,15 @@ pub fn gpu_format(
             },
             wgpu::Features::TEXTURE_COMPRESSION_BC,
         ),
-        TextureFormat::Etc2Rgba8 => (
-            if srgb {
-                Gpu::Etc2Rgba8UnormSrgb
-            } else {
-                Gpu::Etc2Rgba8Unorm
-            },
-            wgpu::Features::TEXTURE_COMPRESSION_ETC2,
-        ),
-        TextureFormat::Astc4x4 => (
-            Gpu::Astc {
-                block: wgpu::AstcBlock::B4x4,
-                channel: if srgb {
-                    wgpu::AstcChannel::UnormSrgb
-                } else {
-                    wgpu::AstcChannel::Unorm
-                },
-            },
-            wgpu::Features::TEXTURE_COMPRESSION_ASTC,
-        ),
         TextureFormat::Bc5 if srgb => return None,
         TextureFormat::Bc5 => (Gpu::Bc5RgUnorm, wgpu::Features::TEXTURE_COMPRESSION_BC),
     })
 }
 
-pub fn write_level(
+fn write_level(
     queue: &crate::gpu_calls::Queue,
     texture: &wgpu::Texture,
-    (level, layer): (u32, u32),
+    level: u32,
     (width, height): (u32, u32),
     format: TextureFormat,
     bytes: &[u8],
@@ -404,11 +276,7 @@ pub fn write_level(
         wgpu::TexelCopyTextureInfo {
             texture,
             mip_level: level,
-            origin: wgpu::Origin3d {
-                x: 0,
-                y: 0,
-                z: layer,
-            },
+            origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         bytes,
@@ -442,10 +310,8 @@ fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuT
         byte_len: TextureFormat::Rgba8.level_bytes(source.width(), source.height()) as u64,
         texture,
         view,
-        mip_bytes: 0,
         target: true,
         revision,
-        generates: false,
     }
 }
 
@@ -464,6 +330,14 @@ fn create_texture(
     if source.is_target() {
         return Ok(create_target(device, source, revision));
     }
+    let (width, height) = (source.width(), source.height());
+    let (levels, chain) = (source.levels().len() as u32, mip_levels(width, height));
+    if source.makes_levels() && chain > levels {
+        return Err(Error::new(engine_core::ErrorCode::InvalidTexture, path)
+            .expected(engine_core::Expected::Matching)
+            .range(f64::from(chain), f64::from(chain))
+            .got(serde_json::json!({ "levels": levels })));
+    }
     let space = source.color_space();
     let unsupported = |feature: Option<wgpu::Features>| {
         Error::new(engine_core::ErrorCode::InvalidTexture, path.clone())
@@ -479,46 +353,29 @@ fn create_texture(
     if !device.features().contains(feature) {
         return Err(unsupported(Some(feature)));
     }
-    let (width, height) = (source.width(), source.height());
-    let levels = if source.makes_levels() {
-        mip_levels(width, height)
-    } else {
-        source.levels().len() as u32
-    };
-    let generates = source.makes_levels() && levels > 1;
-    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-    if generates {
-        usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
-    }
     let label = match (source.format().is_compressed(), space) {
         (true, _) => "engine/compressed-texture",
         (false, ColorSpace::Srgb) => "engine/color-texture",
         (false, ColorSpace::Linear) => "engine/data-texture",
     };
-    let texture =
-        crate::targets::texture_2d(device, label, (width, height), 1, levels, format, usage);
+    let texture = crate::targets::texture_2d(
+        device,
+        label,
+        (width, height),
+        1,
+        levels,
+        format,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    );
     for (level, bytes) in source.levels().iter().enumerate() {
-        write_level(
-            queue,
-            &texture,
-            (level as u32, 0),
-            (width, height),
-            source.format(),
-            bytes,
-        );
+        write_level(queue, &texture, level as u32, (width, height), source.format(), bytes);
     }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     Ok(GpuTexture {
         texture,
         view,
         byte_len: source.byte_len() as u64,
-        mip_bytes: if generates {
-            mip_chain_bytes(width, height)
-        } else {
-            0
-        },
         target: false,
         revision,
-        generates,
     })
 }

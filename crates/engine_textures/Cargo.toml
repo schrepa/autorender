@@ -8,9 +8,7 @@ publish.workspace = true
 [dependencies]
 engine_assets.workspace = true
 engine_codec.workspace = true
-png.workspace = true
 serde_json.workspace = true
-zune-jpeg.workspace = true
 
 [lints]
 workspace = true

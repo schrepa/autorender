@@ -4,8 +4,6 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc};
 
-use super::Compiled;
-
 pub(crate) enum Created {
     Render(wgpu::RenderPipeline),
     Compute(wgpu::ComputePipeline),
@@ -20,8 +18,6 @@ pub(crate) struct Finished {
     pub(crate) program: u64,
     pub(crate) key: u64,
     pub(crate) pass: &'static str,
-    pub(crate) noted: Option<(Compiled, bool)>,
-    pub(crate) later: bool,
     pub(crate) made: Result<Created, wgpu::Error>,
 }
 
@@ -84,7 +80,7 @@ impl Making {
     pub(crate) fn submit(
         &mut self,
         (made, later): ((u64, u64), bool),
-        (pass, noted, stages): (&'static str, Option<(Compiled, bool)>, Vec<u64>),
+        (pass, stages): (&'static str, Vec<u64>),
         job: impl FnOnce() -> Creating + wgpu::WasmNotSend + 'static,
     ) {
         self.pending.push(made);
@@ -99,8 +95,6 @@ impl Making {
                 program,
                 key,
                 pass,
-                noted,
-                later,
                 made: job(),
             };
             if !self.started {
@@ -118,7 +112,6 @@ impl Making {
             .hand(Queued {
                 made,
                 pass,
-                noted,
                 later,
                 stages,
                 job: Box::new(job),
@@ -187,7 +180,6 @@ impl Making {
 struct Queued {
     made: (u64, u64),
     pass: &'static str,
-    noted: Option<(Compiled, bool)>,
     later: bool,
     stages: Vec<u64>,
     job: Box<dyn FnOnce() -> Creating>,
@@ -295,10 +287,9 @@ async fn fly(shared: Rc<RefCell<Flight>>, queued: Queued) {
     let Queued {
         made: (program, key),
         pass,
-        noted,
-        later,
         stages,
         job,
+        ..
     } = queued;
     let made = job().await;
     {
@@ -308,8 +299,6 @@ async fn fly(shared: Rc<RefCell<Flight>>, queued: Queued) {
             program,
             key,
             pass,
-            noted,
-            later,
             made,
         });
     }

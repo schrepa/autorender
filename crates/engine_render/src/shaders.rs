@@ -20,12 +20,11 @@ shader_modules! {
     "engine::fullscreen" = "fullscreen.wgsl";
     "engine::color" = "color.wgsl";
     "engine::math" = "math.wgsl";
-    "engine::mipmaps" = "mipmaps.wgsl";
     "engine::view" = "frame/view.wgsl";
     "engine::post::frame" = "effects.wgsl";
 }
 
-pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, [0; 32], TEXTS);
+pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, TEXTS);
 
 pub const FULLSCREEN: engine_core::Entry =
     engine_core::Entry::generated(Module::generated(&CORE, 0), "vs_fullscreen");

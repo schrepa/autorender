@@ -11,29 +11,12 @@ impl Run {
         if self.planning.merge && shares && self.recording.open().is_some_and(|open| open.shared) {
             return false;
         }
-        if self
-            .planning
-            .labelled
-            .is_some_and(|known| self.same_group(known, pass))
-        {
+        if self.planning.labelled == Some(pass) {
             self.end_render();
         } else {
             self.leave();
         }
         true
-    }
-
-    pub(crate) fn same_group(&self, first: u32, second: u32) -> bool {
-        if first == second {
-            return true;
-        }
-        let passes = &self.machine.declared.passes;
-        match (passes.get(first as usize), passes.get(second as usize)) {
-            (Some(first), Some(second)) => {
-                first.part == second.part && first.group.is_some() && first.group == second.group
-            }
-            (Some(_) | None, _) => false,
-        }
     }
 
     pub(crate) fn start_runs(&mut self) {
@@ -128,81 +111,20 @@ impl Run {
         Some(declared.label.unwrap_or(declared.name))
     }
 
-    pub(crate) fn group_of(&self, pass: u32) -> &'static str {
-        self.machine
-            .declared
-            .passes
-            .get(pass as usize)
-            .map_or("", |declared| declared.group.unwrap_or(declared.name))
-    }
-
     pub(crate) fn span_of(&self, pass: u32) -> Option<&'static str> {
         self.machine.declared.passes.get(pass as usize)?.span
     }
 
-    pub(crate) fn open_encode_span(&mut self, timer: &GpuProfiler) {
-        let Some(name) = self.timed.asked.take() else {
-            return;
-        };
-        self.end_render();
-        if let (Some(span), Some(encoder)) =
-            (self.encode_span(timer, name), self.recording.encoder())
-        {
-            span.mark(encoder, false);
-        }
-        self.timed.open = Some(name);
-    }
-
-    fn encode_span<'t>(
-        &self,
-        timer: &'t GpuProfiler,
-        name: &'static str,
-    ) -> Option<crate::profiling::Span<'t>> {
-        let group = self.group_of(self.pass);
-        if group == name {
-            timer.span(name)
-        } else {
-            timer.span_in(group, name)
-        }
-    }
-
-    pub(crate) fn close_encode_span(&mut self, timer: &GpuProfiler) {
-        self.timed.asked = None;
-        let Some(name) = self.timed.open.take() else {
-            return;
-        };
-        self.end_render();
-        if let (Some(span), Some(encoder)) =
-            (self.encode_span(timer, name), self.recording.encoder())
-        {
-            span.mark(encoder, true);
-        }
-    }
-
-    pub(crate) fn flush_clears(&mut self) {
-        if self.queued.cleared.is_empty() {
-            return;
-        }
-        self.end_render();
-        for buffer in std::mem::take(&mut self.queued.cleared) {
-            self.owe(buffer);
-            let made = self.buffer_held(buffer).map(|(made, _)| made.clone());
-            if let (Some(made), Some(encoder)) = (made, self.recording.encoder()) {
-                encoder.clear_buffer(&made, 0, None);
-            }
-        }
-    }
-
     pub(crate) fn group(&mut self, pass: u32) {
-        if !GROUPED
-            || self
-                .planning
-                .labelled
-                .is_some_and(|known| self.same_group(known, pass))
-        {
+        if !GROUPED || self.planning.labelled == Some(pass) {
             return;
         }
-        let name = self.group_of(pass);
+        let name = self
+            .machine
+            .declared
+            .passes
+            .get(pass as usize)
+            .map_or("", |declared| declared.name);
         if let Some(encoder) = self.recording.encoder() {
             if self.planning.labelled.is_some() {
                 encoder.pop_debug_group();
@@ -222,6 +144,12 @@ impl Run {
         }
     }
 
+    pub(crate) fn record_readbacks(&mut self) {
+        self.leave();
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        self.read_work();
+    }
+
     fn pass_set(&self, pass: u32) -> Arc<[SetFormat]> {
         self.planning
             .pass_sets
@@ -233,8 +161,7 @@ impl Run {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn begin_render(&mut self, attach: AttachRaw) -> bool {
-        self.pay_arena();
+    pub(crate) fn begin_render(&mut self) -> bool {
         let offset = self.view_offset();
         let Some(pass) = self.planning.pass_decls.get(self.pass as usize).cloned() else {
             return false;
@@ -263,17 +190,6 @@ impl Run {
                 .depth
                 .and_then(|(known, ops)| (Some(known) == id).then_some(ops))
         };
-        let declared_ops =
-            |access: crate::Access, clear: Option<Clear>, fallback: Clear| match access {
-                crate::Access::Load => Ops {
-                    load: Load::Load,
-                    store: true,
-                },
-                crate::Access::Clear => Ops {
-                    load: Load::Clear(clear.unwrap_or(fallback)),
-                    store: true,
-                },
-            };
         let kept = self.canvas.carried;
         let clear = self.canvas.clear;
         let loaded = self.canvas.load;
@@ -292,195 +208,69 @@ impl Run {
             },
             Target::Shared(_) | Target::Canvas => ops,
         };
-        match attach {
-            AttachRaw::Declared => {
-                let at = 0;
-                let declared = &self.machine.declared;
-                let key = |target: Target| declared.target_key(target);
-                if is_shared {
-                    let set = self.pass_set(self.pass);
-                    main = lit_set(&set);
-                    plain = !set.is_empty() && !main;
-                    for &(target, format, _) in set.iter() {
-                        let id = self.machine.ids.target(target);
-                        match ops_of(id) {
-                            Some(ops) => colors.push((
-                                key(target),
-                                self.view_of(target).cloned(),
-                                format,
-                                carried(target, ops),
-                            )),
-                            None => colors.push((
-                                key(target),
-                                None,
-                                format,
-                                Ops {
-                                    load: Load::Load,
-                                    store: false,
-                                },
-                            )),
-                        }
-                    }
-                    if let Some(target) = declared.depth_target()
-                        && let (Some(id), Some(made), Some(format)) = (
-                            self.machine.ids.target(target),
-                            self.view_of(target),
-                            declared.target_format(target),
-                        )
-                    {
-                        let ops = depth_of(Some(id))
-                            .unwrap_or(Some(Ops {
-                                load: Load::Load,
-                                store: true,
-                            }))
-                            .map(|ops| carried(target, ops));
-                        let attached = key(target) | u64::from(ops.is_none());
-                        depth = Some((attached, made.clone(), format, ops));
-                    }
+        let declared = &self.machine.declared;
+        let key = |target: Target| declared.target_key(target);
+        if is_shared {
+            let set = self.pass_set(self.pass);
+            main = lit_set(&set);
+            plain = !set.is_empty() && !main;
+            for &(target, format, _) in set.iter() {
+                let id = self.machine.ids.target(target);
+                match ops_of(id) {
+                    Some(ops) => colors.push((
+                        key(target),
+                        self.view_of(target).cloned(),
+                        format,
+                        carried(target, ops),
+                    )),
+                    None => colors.push((
+                        key(target),
+                        None,
+                        format,
+                        Ops {
+                            load: Load::Load,
+                            store: false,
+                        },
+                    )),
                 }
-                for &(name, _) in &pass.targets {
-                    let Some(target) = declared.target_of(name) else {
-                        continue;
-                    };
-                    let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
+            }
+            if let Some(target) = declared.depth_target()
+                && let (Some(id), Some(made), Some(format)) = (
+                    self.machine.ids.target(target),
+                    self.view_of(target),
+                    declared.target_format(target),
+                )
+            {
+                let ops = depth_of(Some(id))
+                    .unwrap_or(Some(Ops {
                         load: Load::Load,
                         store: true,
-                    });
-                    let (view, format) = match target {
-                        Target::Canvas => (self.view_canvas(), Some(self.canvas_format())),
-                        Target::Shared(_) => (
-                            self.view_of(target).cloned(),
-                            declared.target_format(target),
-                        ),
-                    };
-                    let Some(format) = format else {
-                        return self.mismatch(pass.name);
-                    };
-                    if view.is_some() || self.recording.collecting() {
-                        colors.push((key(target), view, format, carried(target, ops)));
-                    }
-                }
-                for &(texture, access) in &pass.colors {
-                    let id = self.machine.ids.textures.get(texture as usize).copied();
-                    let ops = ops_of(id).unwrap_or_else(|| {
-                        declared_ops(
-                            access,
-                            pass.clear_of(texture),
-                            Clear::Color(crate::graph::TRANSPARENT),
-                        )
-                    });
-                    let format = self.machine.declared.textures[texture as usize].format;
-                    let view = self.attachment_view(texture, 0, at);
-                    let attached = (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 1_000;
-                    colors.push((attached, view, format, ops));
-                }
-                if depth.is_none()
-                    && let Some(&(texture, access)) = pass.depths.first()
-                {
-                    let id = self.machine.ids.textures.get(texture as usize).copied();
-                    let ops = depth_of(id).unwrap_or_else(|| {
-                        Some(declared_ops(
-                            access,
-                            pass.clear_of(texture),
-                            Clear::Depth(FAR),
-                        ))
-                    });
-                    let format = self.machine.declared.textures[texture as usize].format;
-                    if let Some(view) = self.attachment_view(texture, 0, at) {
-                        let attached = (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 2_000;
-                        depth = Some((attached, view, format, ops));
-                    }
-                }
+                    }))
+                    .map(|ops| carried(target, ops));
+                let attached = key(target) | u64::from(ops.is_none());
+                depth = Some((attached, made.clone(), format, ops));
             }
-            AttachRaw::Color(texture, mip, ref layers) => {
-                let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == texture)
-                else {
-                    return self.mismatch(pass.name);
-                };
-                let id = self.machine.ids.textures.get(texture as usize).copied();
-                let planned = ops_of(id).unwrap_or_else(|| {
-                    declared_ops(
-                        access,
-                        pass.clear_of(texture),
-                        Clear::Color(crate::graph::TRANSPARENT),
-                    )
-                });
-                let ops = Ops {
-                    store: true,
-                    ..planned
-                };
-                let format = self.machine.declared.textures[texture as usize].format;
-                for at in layers.clone() {
-                    let view = self.attachment_view(texture, mip, at);
-                    let attachment =
-                        (u64::from(texture) * 4_096 + u64::from(at)) * 64 + u64::from(mip) + 10_000;
-                    colors.push((attachment, view, format, ops));
-                }
-            }
-            AttachRaw::Depth(texture, layer) => {
-                let layer = layer.unwrap_or(0);
-                if !self.depth_attachment(&pass, texture, layer, &mut depth) {
-                    return self.mismatch(pass.name);
-                }
-            }
-            AttachRaw::ColorDepth(color, layer, texture) => {
-                let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == color)
-                else {
-                    return self.mismatch(pass.name);
-                };
-                let id = self.machine.ids.textures.get(color as usize).copied();
-                let planned = ops_of(id).unwrap_or_else(|| {
-                    declared_ops(
-                        access,
-                        pass.clear_of(color),
-                        Clear::Color(crate::graph::TRANSPARENT),
-                    )
-                });
-                let ops = Ops {
-                    store: true,
-                    ..planned
-                };
-                let format = self.machine.declared.textures[color as usize].format;
-                let at = layer.unwrap_or(0);
-                let view = self.attachment_view(color, 0, at);
-                colors.push((
-                    (u64::from(color) * 4_096 + u64::from(at)) * 64 + 10_000,
-                    view,
-                    format,
-                    ops,
-                ));
-                if !self.depth_attachment(&pass, texture, at, &mut depth) {
-                    return self.mismatch(pass.name);
-                }
-            }
-            AttachRaw::Colors(ref attached) => {
-                for &(texture, at) in attached {
-                    let Some(&(_, access)) =
-                        pass.colors.iter().find(|(known, _)| *known == texture)
-                    else {
-                        return self.mismatch(pass.name);
-                    };
-                    let id = self.machine.ids.textures.get(texture as usize).copied();
-                    let planned = ops_of(id).unwrap_or_else(|| {
-                        declared_ops(
-                            access,
-                            pass.clear_of(texture),
-                            Clear::Color(crate::graph::TRANSPARENT),
-                        )
-                    });
-                    let ops = Ops {
-                        store: true,
-                        ..planned
-                    };
-                    let format = self.machine.declared.textures[texture as usize].format;
-                    let view = self.attachment_view(texture, 0, at);
-                    colors.push((
-                        (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 10_000,
-                        view,
-                        format,
-                        ops,
-                    ));
-                }
+        }
+        for &(name, _) in &pass.targets {
+            let Some(target) = declared.target_of(name) else {
+                continue;
+            };
+            let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
+                load: Load::Load,
+                store: true,
+            });
+            let (view, format) = match target {
+                Target::Canvas => (self.view_canvas(), Some(self.canvas_format())),
+                Target::Shared(_) => (
+                    self.view_of(target).cloned(),
+                    declared.target_format(target),
+                ),
+            };
+            let Some(format) = format else {
+                return self.mismatch(pass.name);
+            };
+            if view.is_some() || self.recording.collecting() {
+                colors.push((key(target), view, format, carried(target, ops)));
             }
         }
         let mut attachments = std::mem::take(&mut self.spare.attachments);
@@ -491,10 +281,6 @@ impl Run {
                 .map(|(key, ..)| *key)
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
-        let merge = self.planning.merge;
-        let differ = self.recording.open_mut().is_some_and(|open| {
-            merge && open.shared && is_shared && open.attachments != attachments
-        });
         if let Some(open) = self.recording.open_mut()
             && self.planning.merge
             && open.shared
@@ -571,7 +357,9 @@ impl Run {
                 multiview_mask: None,
             })
             .forget_lifetime();
-        self.opened(is_shared, differ);
+        if let Some(opened) = self.sets.counted.opened.get_mut(self.pass as usize) {
+            *opened += 1;
+        }
         self.bound.forget();
         self.recording.transition(Step::Render(Box::new(Open {
             pass: render,
@@ -579,7 +367,6 @@ impl Run {
             layout,
             offset,
             shared: is_shared,
-            layered: is_shared,
             label: None,
         })));
         colors.clear();
@@ -587,87 +374,13 @@ impl Run {
         true
     }
 
-    fn opened(&mut self, shared: bool, differ: bool) {
-        let pass = self.pass as usize;
-        let counted = &mut self.sets.counted;
-        if let Some(opened) = counted.opened.get_mut(pass) {
-            *opened += 1;
-        }
-        let why = match (shared, self.planning.merge, differ, counted.shared_open) {
-            (false, ..) => None,
-            (true, false, ..) => Some("merging_off"),
-            (true, true, true, _) => Some("attachments_differ"),
-            (true, true, false, true) => Some("group_boundary"),
-            (true, true, false, false) => None,
-        };
-        counted.shared_open = shared;
-        let Some(last) = counted.why.get_mut(pass) else {
-            return;
-        };
-        if why.is_none() || *last == why {
-            return;
-        }
-        *last = why;
-        if let (Some(why), Some(declared)) = (why, self.machine.declared.passes.get(pass))
-            && engine_profile::recording()
-        {
-            engine_profile::event(
-                "pass_merge",
-                declared.name,
-                &[("why", engine_profile::Fact::Text(why))],
-            );
-        }
-    }
-
-    pub(super) fn mismatch(&mut self, name: &str) -> bool {
+    fn mismatch(&mut self, name: &str) -> bool {
         let error = fault(
             self.path(&format!("passes.{name}.attach")),
             ErrorCode::PassMismatch,
         );
         self.fault(error);
         false
-    }
-
-    pub(super) fn depth_attachment(
-        &mut self,
-        pass: &crate::install::PassDecl,
-        texture: u32,
-        layer: u32,
-        depth: &mut Option<(u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>)>,
-    ) -> bool {
-        let Some(&(_, access)) = pass.depths.iter().find(|(known, _)| *known == texture) else {
-            return false;
-        };
-        let id = self.machine.ids.textures.get(texture as usize).copied();
-        let planned = self
-            .planned()
-            .and_then(|planned| planned.depth)
-            .and_then(|(known, ops)| (Some(known) == id).then_some(ops));
-        let ops = planned
-            .flatten()
-            .map(|ops| Ops { store: true, ..ops })
-            .or_else(|| {
-                Some(match access {
-                    crate::Access::Load => Ops {
-                        load: Load::Load,
-                        store: true,
-                    },
-                    crate::Access::Clear => Ops {
-                        load: Load::Clear(pass.clear_of(texture).unwrap_or(Clear::Depth(FAR))),
-                        store: true,
-                    },
-                })
-            });
-        let format = self.machine.declared.textures[texture as usize].format;
-        if let Some(view) = self.attachment_view(texture, 0, layer) {
-            *depth = Some((
-                (u64::from(texture) * 4_096 + u64::from(layer)) * 64 + 20_000,
-                view,
-                format,
-                ops,
-            ));
-        }
-        true
     }
 
     pub(crate) fn canvas_format(&self) -> wgpu::TextureFormat {
@@ -698,25 +411,6 @@ impl Run {
             occlusion_query_set: None,
             multiview_mask: None,
         }));
-    }
-
-    pub(super) fn attachment_view(
-        &mut self,
-        texture: u32,
-        mip: u32,
-        layer: u32,
-    ) -> Option<wgpu::TextureView> {
-        let made = self
-            .texture_tables_mut(texture)
-            .textures
-            .get_mut(texture as usize)?
-            .as_mut()?;
-        made.slice(
-            &(mip..mip + 1),
-            &(layer..layer + 1),
-            Some(wgpu::TextureViewDimension::D2),
-        )
-        .cloned()
     }
 
     pub(crate) fn end_render(&mut self) {

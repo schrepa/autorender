@@ -1,4 +1,5 @@
 use bevy_ecs::entity::Entity;
+use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_core::{
     AssetLibrary, Camera, Drawn, FixedTime, GlobalTransforms, Held, Kind, Lands, NameEntry, Pause,
@@ -50,6 +51,21 @@ struct PauseArgs {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct InstrumentArgs {
+    value: Vec<String>,
+}
+
+#[derive(Resource)]
+pub struct Instruments {
+    pub names: &'static [&'static str],
+    pub switch: fn(&mut ReachMut<'_>, &str, bool) -> Result<&'static str, &'static str>,
+}
+
+#[derive(Resource, Default)]
+struct InstrumentsOn(Vec<&'static str>);
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SpawnArgs {
     entities: Vec<Value>,
 }
@@ -76,10 +92,8 @@ pub fn install(world: &mut World) {
         bare("bricks", |reach| Ok(bricks(reach.world))),
         bare("entities.refused", |reach| Ok(crate::entities::refused(reach))),
         bare("kept", kept),
-        bare("records", |reach| {
-            Ok(json!(reach.world.get_resource::<engine_core::Records>()))
-        }),
         camera(),
+        instruments(),
         pause(),
         NameEntry::call("spawn", spawn).args(
             engine_core::schema_of::<SpawnArgs>(),
@@ -97,6 +111,7 @@ pub fn install(world: &mut World) {
     for row in rows {
         engine_registry::register(world, row);
     }
+    world.init_resource::<InstrumentsOn>();
 }
 
 fn none(given: &Value) -> Result<(), Error> {
@@ -384,6 +399,62 @@ fn pause() -> NameEntry {
         held.paused = paused;
         Ok(json!({ "before": before, "after": paused }))
     })
+}
+
+fn instruments() -> NameEntry {
+    NameEntry::read("instruments", Kind::Setting, |reach, given| {
+        none(given)?;
+        Ok(json!(reach.world.resource::<InstrumentsOn>().0))
+    })
+    .args(
+        engine_core::schema_of::<InstrumentArgs>(),
+        json!({ "value": ["gpu.passes"] }),
+    )
+    .set(Lands::ThisFrame, set_instruments)
+}
+
+fn set_instruments(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {
+    let given: InstrumentArgs = args(given)?;
+    let host = reach.world.get_resource::<Instruments>().ok_or_else(|| {
+        Error::new(ErrorCode::MissingResource, "$.name").expected(Expected::Supported)
+    })?;
+    let (names, switch) = (host.names, host.switch);
+    let mut wanted: Vec<&'static str> = Vec::with_capacity(given.value.len());
+    for (at, name) in given.value.iter().enumerate() {
+        let found = names
+            .iter()
+            .copied()
+            .find(|known| *known == name.as_str())
+            .ok_or_else(|| unknown(name, &format!("$.args.value[{at}]"), names))?;
+        if !wanted.contains(&found) {
+            wanted.push(found);
+        }
+    }
+    let before = std::mem::take(&mut reach.world.resource_mut::<InstrumentsOn>().0);
+    let (mut after, mut changes, mut refused) = (Vec::new(), Map::new(), Map::new());
+    for &name in before.iter().filter(|name| !wanted.contains(*name)) {
+        if let Err(reason) = switch(reach, name, false) {
+            refused.insert(name.to_owned(), json!(reason));
+            after.push(name);
+        }
+    }
+    for name in wanted {
+        if before.contains(&name) {
+            after.push(name);
+            continue;
+        }
+        match switch(reach, name, true) {
+            Ok(change) => {
+                changes.insert(name.to_owned(), json!(change));
+                after.push(name);
+            }
+            Err(reason) => {
+                refused.insert(name.to_owned(), json!(reason));
+            }
+        }
+    }
+    reach.world.resource_mut::<InstrumentsOn>().0.clone_from(&after);
+    Ok(json!({ "before": before, "after": after, "changes": changes, "refused": refused }))
 }
 
 fn each<T>(

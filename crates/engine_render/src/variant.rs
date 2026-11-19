@@ -17,7 +17,7 @@ impl PerBatch {
     };
 }
 
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Variant {
     pub constants: Vec<(String, f64)>,
     pub targets: Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>>,

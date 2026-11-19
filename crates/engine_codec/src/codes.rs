@@ -1,49 +1,8 @@
-const BRICK_CODE_BYTES: usize = 48;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BrickCode {
-    bytes: [u8; BRICK_CODE_BYTES],
-    len: u8,
-}
-
-impl BrickCode {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "a brick code name holds at most BRICK_CODE_BYTES bytes"
-    )]
-    const fn new(name: &str) -> Option<BrickCode> {
-        let name = name.as_bytes();
-        if name.len() > BRICK_CODE_BYTES {
-            return None;
-        }
-        let mut bytes = [0; BRICK_CODE_BYTES];
-        bytes.split_at_mut(name.len()).0.copy_from_slice(name);
-        Some(BrickCode {
-            bytes,
-            len: name.len() as u8,
-        })
-    }
-
-    pub const fn as_str(&self) -> &str {
-        match std::str::from_utf8(self.bytes.split_at(self.len as usize).0) {
-            Ok(name) => name,
-            Err(_) => "",
-        }
-    }
-}
-
-impl std::fmt::Debug for BrickCode {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self.as_str(), formatter)
-    }
-}
-
 macro_rules! error_codes {
     ($($variant:ident => $code:literal,)*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum ErrorCode {
             $($variant,)*
-            Brick(BrickCode),
         }
 
         impl ErrorCode {
@@ -56,14 +15,6 @@ macro_rules! error_codes {
             pub const fn as_str(&self) -> &str {
                 match self {
                     $(ErrorCode::$variant => $code,)*
-                    ErrorCode::Brick(code) => code.as_str(),
-                }
-            }
-
-            pub const fn brick(name: &str) -> ErrorCode {
-                match BrickCode::new(name) {
-                    Some(code) => ErrorCode::Brick(code),
-                    None => panic!("a brick error code name is longer than BRICK_CODE_BYTES"),
                 }
             }
 
@@ -92,9 +43,8 @@ impl serde::Serialize for ErrorCode {
 impl<'de> serde::Deserialize<'de> for ErrorCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Ok(Self::named(&name).unwrap_or_else(|| {
-            BrickCode::new(&name).map_or(ErrorCode::CodeTooLong, ErrorCode::Brick)
-        }))
+        Self::named(&name)
+            .ok_or_else(|| <D::Error as serde::de::Error>::unknown_variant(&name, Self::NAMES))
     }
 }
 
@@ -123,7 +73,6 @@ error_codes! {
     InvalidRequest => "invalid_request",
     UnsupportedCommand => "unsupported_command",
     InvalidUtf8 => "invalid_utf8",
-    CodeTooLong => "code_too_long",
     InvalidName => "invalid_name",
     InvalidPage => "invalid_page",
     InvalidPath => "invalid_path",
@@ -134,7 +83,6 @@ error_codes! {
     InvalidArguments => "invalid_arguments",
     InvalidPresentationAlpha => "invalid_presentation_alpha",
 
-    GameRule => "game_rule",
     UnknownEntity => "unknown_entity",
     EntityRemoved => "entity_removed",
     MissingComponent => "missing_component",
@@ -168,25 +116,17 @@ error_codes! {
     InvalidWorldTransform => "invalid_world_transform",
     InvalidEnvironment => "invalid_environment",
 
-    CommandBusy => "command_busy",
     BrowserCommandFailed => "browser_command_failed",
     RuntimePanicked => "runtime_panicked",
     ProfilingUnavailable => "profiling_unavailable",
-    QueueFull => "queue_full",
-    CommandTimeout => "command_timeout",
     SessionClosed => "session_closed",
     RuntimeUnavailable => "runtime_unavailable",
-    BuildMismatch => "build_mismatch",
-
-    InvalidPack => "invalid_pack",
 
     InvalidRecord => "invalid_record",
     UnsupportedFeature => "unsupported_feature",
-    JobUnsupported => "job_unsupported",
     SectionUnlisted => "section_unlisted",
 
     PlaceNotFilled => "place_not_filled",
-    ForeignAccess => "foreign_access",
     NameTwice => "name_twice",
     PlaceCycle => "place_cycle",
     AmbiguousPasses => "ambiguous_passes",
@@ -194,8 +134,6 @@ error_codes! {
     UsageConflict => "usage_conflict",
     BindingLimit => "binding_limit",
     UnknownVariable => "unknown_variable",
-    InputUnread => "input_unread",
-    SlotUnopened => "slot_unopened",
     PassMismatch => "pass_mismatch",
     ShaderLink => "shader_link",
     UnknownModule => "unknown_module",

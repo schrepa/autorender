@@ -13,11 +13,8 @@ pub struct FrameStats {
     pub preparation_ms: f64,
     pub dropped_seconds: f64,
     pub cut_seconds: f64,
-    pub pipelines_listed: u32,
-    pub pipelines_unlisted: u32,
     pub readiness: engine_core::Readiness,
     pub resolution: ResolutionStats,
-    pub jobs: engine_core::JobStats,
     pub refused_views: u32,
     #[serde(flatten)]
     pub render: engine_core::RenderStats,

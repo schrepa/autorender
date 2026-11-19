@@ -1,12 +1,17 @@
-use std::sync::{Arc, OnceLock};
-
 use engine_codec::{Error, ErrorCode, Expected};
 use glam::Vec3;
 
-use crate::{Attribute, AttributeFormat, Attributes, MeshLods, MeshVertex, StreamShape};
+use crate::{Attribute, AttributeFormat, Attributes, StreamShape};
 
 fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidMesh, path)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,8 +75,6 @@ pub struct Mesh {
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
     streams: Vec<NamedStream>,
-    lods: Option<Arc<MeshLods>>,
-    identity: OnceLock<u128>,
 }
 
 impl Mesh {
@@ -123,56 +126,7 @@ impl Mesh {
             colors: None,
             uv1: None,
             streams: Vec::new(),
-            lods: None,
-            identity: OnceLock::new(),
         })
-    }
-
-    pub fn identity(&self, hash: impl FnOnce(&[u8]) -> u128) -> u128 {
-        *self.identity.get_or_init(|| {
-            let mut bytes = Vec::with_capacity(self.byte_len() + 16);
-            bytes.extend_from_slice(&(self.vertices.len() as u32).to_le_bytes());
-            bytes.extend_from_slice(&(self.indices.len() as u32).to_le_bytes());
-            for vertex in &self.vertices {
-                for value in vertex
-                    .position
-                    .iter()
-                    .chain(&vertex.normal)
-                    .chain(&vertex.uv)
-                {
-                    bytes.extend_from_slice(&value.to_bits().to_le_bytes());
-                }
-            }
-            for index in &self.indices {
-                bytes.extend_from_slice(&index.to_le_bytes());
-            }
-            bytes.push(u8::from(self.colors.is_some()));
-            for value in self.colors.iter().flatten().flatten() {
-                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
-            }
-            bytes.push(u8::from(self.uv1.is_some()));
-            for value in self.uv1.iter().flatten().flatten() {
-                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
-            }
-            bytes.push(u8::from(!self.streams.is_empty()));
-            for stream in &self.streams {
-                bytes.extend_from_slice(&(stream.name.len() as u32).to_le_bytes());
-                bytes.extend_from_slice(stream.name.as_bytes());
-                bytes.extend_from_slice(&stream.format.code().to_le_bytes());
-                bytes.extend_from_slice(&stream.bytes);
-            }
-            hash(&bytes)
-        })
-    }
-
-    pub fn with_lods(mut self, lods: MeshLods) -> Result<Self, Error> {
-        lods.check(self.indices.len(), self.vertices.len())?;
-        self.lods = Some(Arc::new(lods));
-        Ok(self)
-    }
-
-    pub fn lods(&self) -> Option<&Arc<MeshLods>> {
-        self.lods.as_ref()
     }
 
     pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, Error> {
@@ -187,7 +141,6 @@ impl Mesh {
                 .got(colors[vertex]));
         }
         self.colors = Some(colors.into_boxed_slice());
-        self.identity = OnceLock::new();
         Ok(self)
     }
 
@@ -202,7 +155,6 @@ impl Mesh {
                 .got(uv1[vertex]));
         }
         self.uv1 = Some(uv1.into_boxed_slice());
-        self.identity = OnceLock::new();
         Ok(self)
     }
 
@@ -233,7 +185,6 @@ impl Mesh {
         self.streams.retain(|held| held.name != stream.name);
         let at = self.streams.partition_point(|held| held.name < stream.name);
         self.streams.insert(at, stream);
-        self.identity = OnceLock::new();
         Ok(self)
     }
 
@@ -298,7 +249,6 @@ impl Mesh {
                 .iter()
                 .map(|stream| stream.bytes.len())
                 .sum::<usize>()
-            + self.lods().map_or(0, |lods| lods.byte_len())
     }
 
     pub fn cube() -> Self {

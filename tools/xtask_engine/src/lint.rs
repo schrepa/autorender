@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use engine_checks::stages::{Changes, Stage};
@@ -7,7 +6,6 @@ use engine_checks::tools::clippy_free;
 use crate::{
     pipeline::{build_wasm, install_web_dependencies},
     process::{NPM, WASM_TARGET, clients, run},
-    pure,
     rules::{RULES, repository, warnings_allowed},
 };
 
@@ -90,14 +88,6 @@ const LINT: &[Stage<Lint>] = &[
         covers: clients_changed,
         run: |lint| run(&lint.root, NPM, &["run", "typecheck", "--prefix", "web"]),
     },
-    Stage {
-        name: "pure",
-        needs: &[],
-        covers: replay_changed,
-        run: |lint| {
-            pure::pure(&lint.root, &["--wasm".to_owned()]).map_err(|failure| failure.message)
-        },
-    },
 ];
 
 pub fn lint(root: &Path, arguments: &[String]) -> Result<(), String> {
@@ -112,43 +102,6 @@ fn clients_changed(lint: &Lint) -> bool {
     clients()
         .iter()
         .any(|client| lint.changes.affects(&client.package))
-}
-
-fn replay_changed(lint: &Lint) -> bool {
-    let (Ok(repository), Ok(games)) = (repository(&lint.root), pure::listed(&lint.root)) else {
-        return true;
-    };
-    let found = |package: Option<&str>| {
-        repository
-            .own()
-            .find(|own| Some(own.name.as_str()) == package)
-    };
-    let mut keys = BTreeSet::new();
-    let mut folders = vec![
-        "crates/engine_worker/".to_owned(),
-        "tools/xtask_engine/src/pure".to_owned(),
-        "tools/xtask_engine/pure/".to_owned(),
-    ];
-    for corpus in games.iter().flat_map(|game| &game.corpora) {
-        let Some(owner) = found(corpus["owner"].as_str()) else {
-            return true;
-        };
-        folders.extend(owner.file("src/pure/"));
-        for package in corpus["replays"].as_array().into_iter().flatten() {
-            let Some(replayed) = found(package.as_str()) else {
-                return true;
-            };
-            keys.extend(engine_sources::job_key_files(&replayed.folder));
-        }
-    }
-    lint.changes.any(|path| {
-        keys.contains(path)
-            || folders
-                .iter()
-                .any(|folder| path.starts_with(folder.as_str()))
-            || games.iter().any(|game| game.file == path)
-            || path == "tools/xtask_engine/src/bricks.rs"
-    })
 }
 
 fn shader_link(lint: &Lint) -> Result<(), String> {

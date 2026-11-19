@@ -30,16 +30,8 @@ pub struct Package {
 }
 
 impl Package {
-    pub fn crate_name(&self) -> String {
-        self.name.replace('-', "_")
-    }
-
     pub fn game(&self) -> Option<&str> {
         self.engine["game"].as_str()
-    }
-
-    pub fn native(&self) -> Option<&str> {
-        self.engine["native"].as_str()
     }
 
     pub fn project(&self) -> bool {
@@ -73,11 +65,7 @@ fn slashed(path: &Path) -> String {
 fn free_games(packages: &[Package]) -> Vec<String> {
     packages
         .iter()
-        .filter(|package| {
-            package.own()
-                && package.engine["kind"] == "game"
-                && package.engine["engine_rules"] != true
-        })
+        .filter(|package| package.own() && package.engine["kind"] == "game")
         .filter_map(|package| package.file(""))
         .collect()
 }
@@ -185,15 +173,6 @@ impl Repository {
 
     pub fn package(&self, name: &str) -> Option<&Package> {
         self.packages.iter().find(|package| package.name == name)
-    }
-
-    pub fn of_crate(&self, name: &str) -> Option<&Package> {
-        let named = |package: &&Package| package.crate_name() == name;
-        self.packages
-            .iter()
-            .filter(|package| package.member)
-            .find(named)
-            .or_else(|| self.packages.iter().find(named))
     }
 
     pub fn own(&self) -> impl Iterator<Item = &Package> + '_ {

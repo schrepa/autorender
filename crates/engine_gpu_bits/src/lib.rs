@@ -256,16 +256,6 @@ fn mask(width: u32) -> u32 {
     }
 }
 
-fn read_bits(field: &Bits) -> Tokens {
-    let (at, mask) = (field.at, mask(field.width));
-    match (at, field.width) {
-        (0, 32) => quote! { word },
-        (0, _) => quote! { word & #mask },
-        (_, width) if at + width == 32 => quote! { word >> #at },
-        (_, _) => quote! { (word >> #at) & #mask },
-    }
-}
-
 fn written_bits(field: &Bits) -> Tokens {
     let (at, mask, width) = (field.at, mask(field.width), field.width);
     let ident = &field.ident;
@@ -293,17 +283,6 @@ fn written_bits(field: &Bits) -> Tokens {
 
 fn word(root: &Path, name: &Ident, fields: &[Bits]) -> Tokens {
     let wgsl = word_wgsl(&snake(&name.to_string()), fields);
-    let entries = fields.iter().map(|field| {
-        let (label, at, width, ty) = (field.ident.to_string(), field.at, field.width, &field.ty);
-        quote! {
-            #root::BitField {
-                name: #label,
-                at: #at,
-                width: #width,
-                values: <#ty as #root::BitValue>::VALUES,
-            }
-        }
-    });
     let packs = fields.iter().map(|field| {
         let (ident, ty) = (&field.ident, &field.ty);
         let written = written_bits(field);
@@ -311,11 +290,6 @@ fn word(root: &Path, name: &Ident, fields: &[Bits]) -> Tokens {
             let value = <#ty as #root::BitValue>::bits(self.#ident);
             #written
         }
-    });
-    let unpacks = fields.iter().map(|field| {
-        let (ident, ty) = (&field.ident, &field.ty);
-        let read = read_bits(field);
-        quote! { #ident: <#ty as #root::BitValue>::of_bits(#read)?, }
     });
     let checks = fields
         .iter()
@@ -336,18 +310,11 @@ fn word(root: &Path, name: &Ident, fields: &[Bits]) -> Tokens {
 
         impl #root::GpuBits for #name {
             const WGSL: &'static str = #wgsl;
-            const FIELDS: &'static [#root::BitField] = &[#(#entries),*];
 
             fn pack(self) -> u32 {
                 let mut word = 0_u32;
                 #(#packs)*
                 word
-            }
-
-            fn unpack(word: u32) -> ::core::option::Option<Self> {
-                ::core::option::Option::Some(Self {
-                    #(#unpacks)*
-                })
             }
         }
     }
@@ -416,32 +383,17 @@ fn value(root: &Path, name: &Ident, variants: &[(Ident, u32)]) -> Tokens {
             snake(&ident.to_string()).to_uppercase()
         );
     }
-    let entries = variants.iter().map(|(ident, value)| {
-        let label = snake(&ident.to_string());
-        quote! { (#value, #label) }
-    });
     let bits = variants
         .iter()
         .map(|(ident, value)| quote! { Self::#ident => #value, });
-    let found = variants.iter().map(|(ident, value)| {
-        quote! { #value => ::core::option::Option::Some(Self::#ident), }
-    });
     quote! {
         impl #root::BitValue for #name {
             const WIDTH: u32 = #width;
-            const VALUES: &'static [(u32, &'static str)] = &[#(#entries),*];
             const WGSL: &'static str = #wgsl;
 
             fn bits(self) -> u32 {
                 match self {
                     #(#bits)*
-                }
-            }
-
-            fn of_bits(bits: u32) -> ::core::option::Option<Self> {
-                match bits {
-                    #(#found)*
-                    _ => ::core::option::Option::None,
                 }
             }
         }

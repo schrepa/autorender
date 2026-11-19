@@ -77,11 +77,6 @@ impl Sampler {
         mipmap_filter: Some(Filter::Nearest),
         ..Self::LINEAR_CLAMP
     };
-
-    pub const COMPARE_LINEAR: Self = Self {
-        compare: Some(Compare::LessEqual),
-        ..Self::LINEAR_CLAMP
-    };
 }
 
 impl Default for Sampler {
@@ -103,13 +98,6 @@ impl UvTransform {
         rotation: 0.0,
         scale: [1.0; 2],
     };
-
-    pub const fn repeat(scale: [f32; 2]) -> Self {
-        Self {
-            scale,
-            ..Self::IDENTITY
-        }
-    }
 
     fn is_finite(&self) -> bool {
         self.offset
@@ -240,52 +228,6 @@ impl Default for RenderState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SurfaceSlot {
-    Position,
-    BaseColor,
-    Opacity,
-    Cutoff,
-    Normal,
-    Emissive,
-    Kind,
-    Output,
-}
-
-impl SurfaceSlot {
-    pub const ALL: [Self; 8] = [
-        Self::Position,
-        Self::BaseColor,
-        Self::Opacity,
-        Self::Cutoff,
-        Self::Normal,
-        Self::Emissive,
-        Self::Kind,
-        Self::Output,
-    ];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Position => "position",
-            Self::BaseColor => "base_color",
-            Self::Opacity => "opacity",
-            Self::Cutoff => "cutoff",
-            Self::Normal => "normal",
-            Self::Emissive => "emissive",
-            Self::Kind => "kind",
-            Self::Output => "output",
-        }
-    }
-
-    pub fn named(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|slot| slot.name() == name)
-    }
-
-    pub const fn index(self) -> usize {
-        self as usize
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum LightingModel {
     #[default]
@@ -303,14 +245,11 @@ pub const MAPPED_MAPS: [(&str, ColorSpace); 3] = [
     (EMISSIVE_MAP, ColorSpace::Srgb),
 ];
 pub const MAPPED_SLOTS: [(&str, &[&str]); 5] = [
-    (SurfaceSlot::BaseColor.name(), &[BASE_COLOR_MAP]),
-    (SurfaceSlot::Opacity.name(), &[BASE_COLOR_MAP]),
-    (SurfaceSlot::Cutoff.name(), &[BASE_COLOR_MAP]),
-    (SurfaceSlot::Normal.name(), &[NORMAL_MAP]),
-    (
-        SurfaceSlot::Emissive.name(),
-        &[EMISSIVE_MAP, BASE_COLOR_MAP],
-    ),
+    ("base_color", &[BASE_COLOR_MAP]),
+    ("opacity", &[BASE_COLOR_MAP]),
+    ("cutoff", &[BASE_COLOR_MAP]),
+    ("normal", &[NORMAL_MAP]),
+    ("emissive", &[EMISSIVE_MAP, BASE_COLOR_MAP]),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -392,12 +331,6 @@ impl Material {
         Ok(self)
     }
 
-    #[must_use]
-    pub fn with_cull(mut self, cull: Cull) -> Self {
-        self.state.cull = cull;
-        self
-    }
-
     pub fn render_state(&self) -> RenderState {
         self.state
     }
@@ -437,13 +370,6 @@ impl Material {
         Ok(self)
     }
 
-    pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, Error> {
-        Self::new(color)?.with_mapped(
-            BASE_COLOR_MAP,
-            TextureRef::new(texture).with_sampler(Sampler::CLAMP),
-        )
-    }
-
     pub fn with_map(mut self, name: impl Into<String>, texture: TextureRef) -> Result<Self, Error> {
         let name = name.into();
         if !is_identifier(&name) {
@@ -457,16 +383,6 @@ impl Material {
             None => self.maps.push((name, texture)),
         }
         Ok(self)
-    }
-
-    pub fn with_mapped(self, map: &str, texture: TextureRef) -> Result<Self, Error> {
-        let mut material = self.with_map(map, texture)?;
-        for (slot, maps) in MAPPED_SLOTS {
-            if maps.contains(&map) && material.slot(slot).is_none() {
-                material = material.with_slot(slot, MAPPED)?;
-            }
-        }
-        Ok(material)
     }
 
     pub fn with_normal_scale(mut self, scale: f32) -> Result<Self, Error> {
@@ -536,13 +452,6 @@ impl Material {
         &self.surface
     }
 
-    pub fn surface_value(&self, name: &str) -> Option<f32> {
-        self.surface
-            .iter()
-            .find(|(known, _)| known == name)
-            .map(|(_, value)| *value)
-    }
-
     pub fn map(&self, name: &str) -> Option<TextureRef> {
         self.maps
             .iter()
@@ -566,13 +475,6 @@ impl Material {
         &self.slots
     }
 
-    pub fn slot(&self, slot: &str) -> Option<&str> {
-        self.slots
-            .iter()
-            .find(|(known, _)| known == slot)
-            .map(|(_, module)| module.as_str())
-    }
-
     pub fn values(&self) -> &[(String, f32)] {
         &self.values
     }
@@ -591,74 +493,6 @@ impl Material {
     pub fn textures(&self) -> impl Iterator<Item = TextureHandle> + '_ {
         self.maps.iter().map(|(_, map)| map.texture)
     }
-
-    pub fn binding(&self) -> Option<MaterialBinding> {
-        let plain = self.maps.is_empty()
-            && self.slots.is_empty()
-            && self.values.is_empty()
-            && self.emissive == [0.0; 3]
-            && self.state == RenderState::OPAQUE
-            && self.lighting == LightingModel::Unlit;
-        (!plain).then(|| MaterialBinding {
-            state: (
-                match self.state.alpha {
-                    AlphaMode::Opaque => (0, 0),
-                    AlphaMode::Mask { cutoff } => (1, cutoff.to_bits()),
-                    AlphaMode::Blend => (2, 0),
-                    AlphaMode::Additive => (3, 0),
-                },
-                self.state.depth_test,
-                self.state.depth_write,
-                self.state.cull,
-                (self.state.bias.constant, self.state.bias.slope.to_bits()),
-            ),
-            maps: self
-                .maps
-                .iter()
-                .map(|(name, map)| {
-                    let UvTransform {
-                        offset: [u, v],
-                        rotation,
-                        scale: [x, y],
-                    } = map.transform;
-                    (
-                        name.clone(),
-                        map.texture,
-                        map.sampler,
-                        [u, v, rotation, x, y].map(f32::to_bits),
-                        map.tex_coord,
-                    )
-                })
-                .collect(),
-            factors: [
-                self.normal_scale,
-                self.emissive[0],
-                self.emissive[1],
-                self.emissive[2],
-            ]
-            .map(f32::to_bits),
-            slots: self.slots.clone(),
-            values: self
-                .values
-                .iter()
-                .map(|(name, value)| (name.clone(), value.to_bits()))
-                .collect(),
-            lighting: self.lighting.clone(),
-        })
-    }
-}
-
-type BoundMap = (String, TextureHandle, Sampler, [u32; 5], u32);
-type BoundState = ((u8, u32), bool, bool, Cull, (i32, u32));
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MaterialBinding {
-    state: BoundState,
-    maps: Vec<BoundMap>,
-    factors: [u32; 4],
-    slots: Vec<(String, String)>,
-    values: Vec<(String, u32)>,
-    lighting: LightingModel,
 }
 
 fn is_identifier(name: &str) -> bool {

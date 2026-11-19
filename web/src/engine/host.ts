@@ -3,7 +3,6 @@ import { engineError, engineFailure } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { Development } from "./dev";
 import { BrowserInput } from "./input";
-import { type JobPool, jobPool } from "./jobs";
 import { fatal, panicReport } from "./panic";
 import { PageSound } from "./sound";
 import "./style.css";
@@ -62,7 +61,7 @@ class FrameHud {
     const stats = parseJson(runtime.stats());
     performance.mark("engine-preparing", { detail: {
       phase, tick: stats.tick, preparation_ms: stats.preparation_ms, readiness: stats.readiness,
-      pipelines: stats.pipelines, pipelines_created: stats.pipelines_created, jobs: stats.jobs, upload_bytes: stats.upload_bytes,
+      pipelines: stats.pipelines, pipelines_created: stats.pipelines_created, upload_bytes: stats.upload_bytes,
     } });
   }
 
@@ -92,7 +91,7 @@ class FrameHud {
     metric("draws", String(stats.draw_calls));
     element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
     const gpuTime = typeof gpu === "number" ? `GPU ${(this.gpu / this.timed).toFixed(2)} ms` : `GPU time unavailable: ${gpu.unavailable}`;
-    element("render-time").textContent = `${stats.instances.toLocaleString("en-US")} instances · ${stats.indirect_draws} indirect draws · CPU render ${(this.submission / this.samples).toFixed(2)} ms · ${gpuTime}`;
+    element("render-time").textContent = `${stats.instances.toLocaleString("en-US")} instances · CPU render${(this.submission / this.samples).toFixed(2)} ms · ${gpuTime}`;
     if (this.samples >= 4) {
       this.simulation = 0; this.extraction = 0; this.submission = 0; this.gpu = 0; this.timed = 0; this.samples = 0; this.elapsed = 0; this.intervals = 0;
     }
@@ -200,7 +199,6 @@ const pace = new GpuPace(canvas, () => {
   const current = live();
   if (current?.kind === "playing" && current.shown && !halted(current)) run(current, performance.now(), true);
 });
-let jobs: JobPool | undefined;
 const ticks = new MessageChannel();
 let tickCount = 0;
 ticks.port1.onmessage = (event: MessageEvent<number>) => {
@@ -296,8 +294,6 @@ function fail(error: unknown) {
   reset.disabled = true;
   halt();
   dev?.close(stopped ? `runtime_panicked ${stopped}` : `runtime_failed ${refused?.message ?? String(error)}`);
-  (jobs ?? jobPool())?.terminate();
-  jobs = undefined;
   console.error(error);
 }
 
@@ -319,7 +315,6 @@ function starting(current: Live<T>) {
 
 function started(current: Live<T>) {
   current.shown = true;
-  jobs?.started();
   hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;
@@ -348,13 +343,11 @@ function run(current: Live<T>, at: number, early: boolean) {
   const since = performance.now();
   const timestamp = current.kind === "playing" ? pace.time(at) : at;
   try {
-    jobs?.exchange();
     input.pollPads();
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     if (phase === FRAME_PHASES.playing) pace.submitted(since, early);
     input.setCursorMode(game.cursor_mode());
     sound.exchange(game);
-    jobs?.exchange();
     dev?.turned();
     if (current.kind === "preparing") hud.preparing(game, phase);
     if (phase === FRAME_PHASES.started) {
@@ -436,8 +429,6 @@ async function start() {
   state = { kind: "preparing", game: created, paused: false, shown: false };
   created.apply_host_settings(location.search);
   connectInput();
-  jobs = jobPool();
-  jobs?.attach(created, fail);
   resize();
   message.hidden = true;
   pause.disabled = false;
@@ -454,7 +445,6 @@ window.addEventListener("pagehide", () => { halt(); pauseGame("suspended"); }, l
 window.addEventListener("pageshow", () => { resumeGame("suspended"); resume(); }, listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
-  jobs?.detach();
   lifecycle.abort();
   stopClock(); observer.disconnect(); input.dispose(); sound.dispose(); ticks.port1.close(); pace.dispose();
   state = { kind: "disposed" };

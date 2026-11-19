@@ -2,7 +2,7 @@ use engine_settings::{ErrorCode, Expected};
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
-    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Placed, Transform, glam::Mat4, valid_global_matrix,
+    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix,
 };
 
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
@@ -91,7 +91,6 @@ impl SceneDocument {
                     .enumerate()
                     .map(|(index, entity)| (entity, format!("{path}[{index}]"))),
                 &transforms,
-                kinds,
             )?;
         }
 
@@ -173,14 +172,12 @@ fn expand_list(
                     .got(&entity.source.id),
             );
         }
-        kinds.check_placement(&entity.source, &entity.path)?;
     }
     validate_graph(
         entities
             .iter()
             .map(|entity| (&entity.source, entity.path.clone())),
         &transforms,
-        kinds,
     )?;
     Ok(ExpandedScene {
         entities,
@@ -221,7 +218,6 @@ pub(crate) fn validate_object(
 fn validate_graph<'a>(
     entries: impl Iterator<Item = (&'a SceneObject, String)>,
     transforms: &[Transform],
-    kinds: &SceneKinds,
 ) -> Result<(), Error> {
     let entries: Vec<_> = entries.collect();
     let ids: BTreeMap<_, _> = entries
@@ -309,11 +305,6 @@ fn validate_graph<'a>(
                 .expected(Expected::Invertible)
                 .got(entries[index].0.transform));
             }
-            kinds.check_placed(
-                entries[index].0,
-                Placed { world: matrix },
-                &entries[index].1,
-            )?;
             worlds[index] = Some(matrix);
             depths[index] = depth;
         }

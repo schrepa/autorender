@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use engine_math::collections::HashMap;
 use serde::{Serialize, Serializer};
 
-use crate::readiness::{Awaits, CORE_ROW};
+use crate::readiness::CORE_ROW;
 use crate::{Error, Readiness};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -18,15 +18,6 @@ pub struct Ticket(u64);
 static TICKETS: AtomicU64 = AtomicU64::new(0);
 
 impl Ticket {
-    #[doc(hidden)]
-    pub const fn numbered(number: u64) -> Self {
-        Self(number)
-    }
-
-    pub fn number(self) -> u64 {
-        self.0
-    }
-
     fn next() -> Self {
         Self(TICKETS.fetch_add(1, Ordering::Relaxed) + 1)
     }
@@ -88,7 +79,7 @@ impl<V> Request<V> {
 }
 
 enum Change<K> {
-    Ask(K, engine_profile::Carried),
+    Ask(K),
     Release(K),
 }
 
@@ -112,7 +103,7 @@ impl<K: Clone> Interest<K> {
 
 impl<K: Clone> Clone for Interest<K> {
     fn clone(&self) -> Self {
-        lock(&self.changes).push(Change::Ask(self.key.clone(), engine_profile::carry()));
+        lock(&self.changes).push(Change::Ask(self.key.clone()));
         Self {
             key: self.key.clone(),
             changes: Arc::clone(&self.changes),
@@ -139,7 +130,6 @@ struct Tally {
     failed: Vec<(u64, Error)>,
     joined: bool,
     owner: &'static str,
-    awaits: Awaits,
 }
 
 type Tallied = Arc<Mutex<Tally>>;
@@ -193,19 +183,14 @@ impl Board {
         run()
     }
 
-    pub fn add_to(&self, readiness: &mut Readiness, viewed: bool) {
+    pub fn add_to(&self, readiness: &mut Readiness) {
         lock(&self.0).retain(|member| {
             let Some(tally) = member.upgrade() else {
                 return false;
             };
             let tally = lock(&tally);
             readiness.load(tally.owner, tally.loading);
-            match tally.awaits {
-                Awaits::View if !viewed => readiness.await_view(tally.owner, tally.settling),
-                Awaits::Finished => readiness.finish(tally.owner, tally.settling),
-                Awaits::Frames => readiness.await_frames(tally.owner, tally.settling),
-                Awaits::Work | Awaits::View => readiness.settle(tally.owner, tally.settling),
-            }
+            readiness.settle(tally.owner, tally.settling);
             for (_, error) in &tally.failed {
                 readiness.fail(tally.owner, error.clone());
             }
@@ -249,24 +234,6 @@ impl Default for Settling {
 }
 
 impl Settling {
-    pub fn on_view() -> Self {
-        let settling = Self::default();
-        lock(&settling.0).awaits = Awaits::View;
-        settling
-    }
-
-    pub fn on_finished() -> Self {
-        let settling = Self::default();
-        lock(&settling.0).awaits = Awaits::Finished;
-        settling
-    }
-
-    pub fn on_frames() -> Self {
-        let settling = Self::default();
-        lock(&settling.0).awaits = Awaits::Frames;
-        settling
-    }
-
     pub fn left(&self, left: u32) {
         join(&self.0);
         lock(&self.0).settling = left;
@@ -292,7 +259,6 @@ struct Held<V, A> {
     since: f64,
     serial: u64,
     work: Option<A>,
-    asker: engine_profile::Carried,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -347,7 +313,7 @@ fn left_asked<V, A>(tally: &mut Tally, held: &Held<V, A>) {
 
 impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
     pub fn ask(&mut self, key: K) -> Interest<K> {
-        self.count(key.clone(), engine_profile::carry());
+        self.count(key.clone());
         Interest {
             key,
             changes: Arc::clone(&self.changes),
@@ -355,7 +321,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
     }
 
     pub fn ask_later(&self, key: K) -> Interest<K> {
-        lock(&self.changes).push(Change::Ask(key.clone(), engine_profile::carry()));
+        lock(&self.changes).push(Change::Ask(key.clone()));
         Interest {
             key,
             changes: Arc::clone(&self.changes),
@@ -378,13 +344,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         Some(ticket)
     }
 
-    pub fn cause(&self, key: &K) -> engine_profile::Cause {
-        self.entries
-            .get(key)
-            .map_or(engine_profile::Cause(0), |held| held.asker.cause())
-    }
-
-    fn count(&mut self, key: K, asker: engine_profile::Carried) {
+    fn count(&mut self, key: K) {
         match self.entries.entry(key) {
             Entry::Occupied(mut held) => {
                 held.get_mut().interests = held.get().interests.saturating_add(1);
@@ -401,27 +361,19 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
                     since: self.now,
                     serial: self.serials,
                     work: None,
-                    asker,
                 });
             }
         }
     }
 
     pub fn settle(&mut self, now: f64) -> Vec<(K, Request<V>)> {
-        self.settle_work(now)
-            .into_iter()
-            .map(|(key, request, _)| (key, request))
-            .collect()
-    }
-
-    pub fn settle_work(&mut self, now: f64) -> Vec<(K, Request<V>, Option<A>)> {
         join(&self.tally);
         self.now = now;
         let queued = std::mem::take(&mut *lock(&self.changes));
         let mut released = Vec::new();
         for change in queued {
             match change {
-                Change::Ask(key, asker) => self.count(key, asker),
+                Change::Ask(key) => self.count(key),
                 Change::Release(key) => {
                     let Some(held) = self.entries.get_mut(&key) else {
                         continue;
@@ -434,7 +386,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
                         if let Some(ticket) = held.request.asked() {
                             self.asked.remove(&ticket);
                         }
-                        released.push((key, held.request, held.work));
+                        released.push((key, held.request));
                     }
                 }
             }
@@ -458,20 +410,12 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         self.get(key).and_then(Request::asked)
     }
 
-    pub fn key_of(&self, ticket: Ticket) -> Option<&K> {
-        self.asked.get(&ticket)
-    }
-
     pub fn interests(&self, key: &K) -> u32 {
         self.entries.get(key).map_or(0, |held| held.interests)
     }
 
     pub fn work(&self, key: &K) -> Option<&A> {
         self.entries.get(key)?.work.as_ref()
-    }
-
-    pub fn work_mut(&mut self, key: &K) -> Option<&mut A> {
-        self.entries.get_mut(key)?.work.as_mut()
     }
 
     pub fn set_work(&mut self, key: &K, work: A) -> bool {
@@ -482,12 +426,6 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
             }
             Some(_) | None => false,
         }
-    }
-
-    pub fn works(&self) -> impl Iterator<Item = (&K, &A)> + '_ {
-        self.entries
-            .iter()
-            .filter_map(|(key, held)| Some((key, held.work.as_ref()?)))
     }
 
     pub fn ready(&mut self, key: &K, ticket: Ticket, value: V) -> bool {

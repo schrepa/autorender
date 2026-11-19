@@ -175,6 +175,7 @@ fn add_totals(run: &mut Run) {
     }
 }
 
+#[cfg(any(feature = "dev", feature = "profiling"))]
 fn dropped_name(run: &Run, dropped: &DroppedTally) -> String {
     let owner = match dropped.kind {
         Some(kind) => kind_name(run, kind),
@@ -183,31 +184,11 @@ fn dropped_name(run: &Run, dropped: &DroppedTally) -> String {
     format!("{owner}/{}", pass_name(run, dropped.pass))
 }
 
+#[cfg(any(feature = "dev", feature = "profiling"))]
 fn reason_name(reason: DropReason) -> String {
     match serde_json::to_value(reason) {
         Ok(serde_json::Value::String(name)) => name,
         Ok(_) | Err(_) => format!("{reason:?}"),
-    }
-}
-
-fn announce(run: &Run) {
-    if !engine_profile::recording() {
-        return;
-    }
-    let kinds = &run.tallies.kinds;
-    for dropped in &kinds.dropped {
-        let known = kinds.last_dropped.iter().any(|last| {
-            (last.part, last.kind, last.pass, last.reason)
-                == (dropped.part, dropped.kind, dropped.pass, dropped.reason)
-        });
-        if !known {
-            let why = reason_name(dropped.reason);
-            engine_profile::event(
-                "draw_dropped",
-                &dropped_name(run, dropped),
-                &[("why", engine_profile::Fact::Text(&why))],
-            );
-        }
     }
 }
 
@@ -224,7 +205,6 @@ pub(super) fn settle(run: &mut Run, world: &World) {
     {
         return;
     }
-    announce(run);
     let kinds = &mut run.tallies.kinds;
     kinds.settled = true;
     kinds.last_states.clone_from(&kinds.states);

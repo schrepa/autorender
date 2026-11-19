@@ -1,5 +1,4 @@
 use std::any::{Any, TypeId};
-use std::collections::BTreeMap;
 
 use bevy_ecs::change_detection::Res;
 use bevy_ecs::resource::Resource;
@@ -12,10 +11,9 @@ use bevy_ecs::world::World;
 use engine_place::{Board, CORE_ROW, Error, ErrorCode};
 use serde_json::Value;
 
-use crate::entries::{SettingsEntry, StatsEntry};
 #[cfg(feature = "profiling")]
 use crate::entries::names::NameEntry;
-use crate::jobs::JobQueue;
+use crate::entries::{SettingsEntry, StatsEntry};
 use crate::record::BrickRecord;
 use crate::state::{BrickStates, Despawn, Switches};
 
@@ -59,15 +57,6 @@ impl RegistryBuilder {
         let registry = &mut self.registry;
         registry.problems.append(&mut record.take_problems());
         let package = record.package;
-        #[cfg(feature = "profiling")]
-        let entries = std::mem::take(&mut record.entries);
-        #[cfg(feature = "profiling")]
-        for entry in entries {
-            match entry.downcast::<NameEntry>() {
-                Ok(named) => registry.register(named.owned_by(package)),
-                Err(other) => record.entries.push(other),
-            }
-        }
         if registry.has(package) {
             let path = format!("$.bricks.{package}");
             registry
@@ -102,9 +91,6 @@ impl RegistryBuilder {
         }
         registry.join_members(world);
         world.insert_resource(BrickStates::new(registry.bricks.len()));
-        if !world.contains_resource::<JobQueue>() {
-            world.init_resource::<JobQueue>();
-        }
         let mut systems = crate::attributed::Systems::new(schedules);
         registry.add_systems(world, &mut systems);
         world.insert_resource(systems);
@@ -208,10 +194,6 @@ impl Registry {
         self.id(package).is_some()
     }
 
-    pub fn brick(&self, package: &str) -> Option<&BrickRecord> {
-        self.record(self.id(package)?)
-    }
-
     pub fn record(&self, brick: BrickId) -> Option<&BrickRecord> {
         self.bricks.get(brick.index())
     }
@@ -248,19 +230,6 @@ impl Registry {
 
     pub fn section_schema(&self, key: &str) -> Option<schemars::Schema> {
         Some(self.section(key)?.schema())
-    }
-
-    pub fn corpora<C: Any>(&self) -> impl Iterator<Item = (&'static str, &'static C)> + '_ {
-        self.bricks.iter().flat_map(|record| {
-            let owner = record.crate_name();
-            record.corpora::<C>().map(move |corpus| (owner, corpus))
-        })
-    }
-
-    pub fn frame_stats(&self, world: &World) -> BTreeMap<&'static str, Value> {
-        self.stats()
-            .map(|entry| (entry.key, entry.read(world)))
-            .collect()
     }
 
     fn check_names(&mut self, record: &BrickRecord) {
@@ -320,11 +289,10 @@ impl Registry {
 
     fn join_members(&mut self, world: &mut World) {
         for (index, record) in self.bricks.iter_mut().enumerate() {
-            let owner = (record.package, record.brick());
             for joined in &mut record.joins {
                 (joined.init)(world);
                 if let Some(member) = joined.member.take() {
-                    (joined.add)(world, member, BrickId(index as u32), owner);
+                    (joined.add)(world, member, BrickId(index as u32), record.package);
                 }
             }
         }
@@ -340,16 +308,28 @@ impl Registry {
         for entry in [
             named("systems.runs", Kind::Count, runs::systems_runs),
             named("systems.time", Kind::Time, runs::systems_time).unit("ns"),
-            named("systems.allocations", Kind::Count, runs::systems_allocations),
-            named("systems.allocated_bytes", Kind::Bytes, runs::systems_allocated_bytes)
-                .unit("bytes"),
+            named(
+                "systems.allocations",
+                Kind::Count,
+                runs::systems_allocations,
+            ),
+            named(
+                "systems.allocated_bytes",
+                Kind::Bytes,
+                runs::systems_allocated_bytes,
+            )
+            .unit("bytes"),
             named("systems.brick", Kind::State, runs::systems_brick),
             named("systems.outside", Kind::Count, runs::systems_outside),
             named("bricks.runs", Kind::Count, runs::bricks_runs),
             named("bricks.time", Kind::Time, runs::bricks_time).unit("ns"),
             named("bricks.allocations", Kind::Count, runs::bricks_allocations),
-            named("bricks.allocated_bytes", Kind::Bytes, runs::bricks_allocated_bytes)
-                .unit("bytes"),
+            named(
+                "bricks.allocated_bytes",
+                Kind::Bytes,
+                runs::bricks_allocated_bytes,
+            )
+            .unit("bytes"),
         ] {
             self.register(entry);
         }

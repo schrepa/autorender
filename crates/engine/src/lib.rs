@@ -25,28 +25,20 @@ pub use engine_command_line as command_line;
 pub use engine_core::collections;
 
 mod games {
-    pub use crate::frame_stats::ResolutionStats;
     pub use engine_core::{
-        Aabb, AlphaMode, AssetBudget, AssetLibrary, Attribute, Attributes, Brick, BrickList,
-        Bricks, Camera, Clear, Clock, ColorSpace, Compare, ComponentKind, Cull, CursorMode,
-        DepthBias, Devices, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable, Engine,
-        EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
-        GlobalTransforms, InstanceValues, KindDecl, Layers, LightingModel, Listing,
-        MakeTextures, Material, MaterialHandle, Mesh, MeshVertex, Mobility, MouseButton, Mover,
-        MoverId, Moves, Node, NodeWord, Pace, PadButton, Parent, Pause, PauseReason,
-        Poses, Projection, ProvidedAssets, Rect, RenderState, Sampler, SceneComponents, Schedule,
-        Section, Source, Span, Spawner, SurfaceSlot, Target, Teleport, Texture, TextureHandle,
-        TextureRef, TextureSet, TextureSource, TextureUsage, TimeScale, TouchPhase, Transform,
-        UvTransform, View, ViewCut, ViewFacts, ViewHistory, Views, Wrap, main_camera, make_fresh,
-        math, place_camera, set_parent, set_parents,
+        AlphaMode, AssetLibrary, Attribute, Attributes, Brick, BrickList, Bricks, Camera, Clear,
+        Clock, Compare, ComponentKind, Cull, CursorMode, DepthBias, Devices, DrawKind, Drawn,
+        DrawnTable, Engine, Filter, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
+        InstanceValues, KindDecl, Layers, LightingModel, Listing, Material, MaterialHandle, Mesh,
+        Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, PauseReason, Projection,
+        Rect, RenderState, Sampler, SceneComponents, Schedule, Source, Spawner, Target, Teleport,
+        Texture, TextureHandle, TextureRef, TouchPhase, Transform, UvTransform, View, ViewFacts,
+        Views, math, set_parent,
     };
 }
 pub use games::*;
 
-pub use engine_core::{
-    ErrorCode, HierarchyReport, LodLevel, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, MeshLods,
-    TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
-};
+pub use engine_core::{ErrorCode, TextureFormat};
 
 pub mod bricks {
     pub use engine_core::{BrickList, Listing};
@@ -57,13 +49,11 @@ pub mod stats {
     #[cfg(feature = "schema")]
     pub use crate::frame_stats::frame_stats_schema;
     pub use crate::frame_stats::{FrameStats, GpuTime};
-    pub use engine_core::{Cut, JobStats, RenderStats};
+    pub use engine_core::RenderStats;
 }
 
 mod frame_stats;
 pub mod host;
-#[cfg(feature = "dev")]
-pub mod smokes;
 
 #[cfg(feature = "dev")]
 pub use engine_dev as dev;
@@ -76,15 +66,6 @@ pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
 pub use game_host::GameHost;
-
-pub fn scene_kinds(
-    bricks: impl FnOnce(BrickList) -> BrickList,
-) -> Result<engine_scene::SceneKinds> {
-    engine_scene::SceneKinds::listed(&bricks(BrickList::default()))
-}
-
-#[doc(hidden)]
-pub use engine_worker as __worker;
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser;

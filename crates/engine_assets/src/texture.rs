@@ -1,6 +1,5 @@
 use std::fmt;
 use std::ops::Deref;
-use std::sync::{Arc, OnceLock};
 
 use engine_codec::{Error, ErrorCode, Expected};
 
@@ -8,8 +7,6 @@ use engine_codec::{Error, ErrorCode, Expected};
 pub enum TextureFormat {
     Rgba8,
     Bc7,
-    Etc2Rgba8,
-    Astc4x4,
     Bc5,
 }
 
@@ -17,9 +14,7 @@ impl TextureFormat {
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
         let (columns, rows, block) = match self {
             Self::Rgba8 => (width, height, 4),
-            Self::Bc7 | Self::Etc2Rgba8 | Self::Astc4x4 | Self::Bc5 => {
-                (width.div_ceil(4), height.div_ceil(4), 16)
-            }
+            Self::Bc7 | Self::Bc5 => (width.div_ceil(4), height.div_ceil(4), 16),
         };
         (columns as usize)
             .saturating_mul(rows as usize)
@@ -38,38 +33,13 @@ pub enum ColorSpace {
     Linear,
 }
 
-impl ColorSpace {
-    pub fn tag(self) -> u8 {
-        match self {
-            Self::Srgb => 0,
-            Self::Linear => 1,
-        }
-    }
-
-    pub fn of_tag(tag: u8) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Srgb),
-            1 => Some(Self::Linear),
-            _ => None,
-        }
-    }
-}
-
-enum Bytes {
-    Owned(Box<[u8]>),
-    Shared(Arc<[u8]>, usize),
-}
-
-pub struct Level(Bytes);
+pub struct Level(Box<[u8]>);
 
 impl Deref for Level {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        match &self.0 {
-            Bytes::Owned(bytes) => bytes,
-            Bytes::Shared(bytes, start) => &bytes[*start..],
-        }
+        &self.0
     }
 }
 
@@ -92,48 +62,6 @@ enum Contents {
     Drawn,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TextureSummary {
-    pub color: [f32; 3],
-    pub mean: [f32; 4],
-}
-
-impl TextureSummary {
-    pub fn of_rgba8(pixels: &[u8]) -> Self {
-        let texels = pixels.as_chunks::<4>().0;
-        let count = texels.len().max(1) as f64;
-        let decode = srgb_decoded();
-        let mut color = [0.0_f64; 3];
-        let mut mean = [0_u64; 4];
-        for texel in texels {
-            for channel in 0..3 {
-                color[channel] += f64::from(decode[usize::from(texel[channel])]);
-            }
-            for (sum, &value) in mean.iter_mut().zip(texel) {
-                *sum += u64::from(value);
-            }
-        }
-        Self {
-            color: color.map(|sum| (sum / count) as f32),
-            mean: mean.map(|sum| (sum as f64 / (255.0 * count)) as f32),
-        }
-    }
-}
-
-pub fn srgb_decoded() -> &'static [f32; 256] {
-    static TABLE: OnceLock<[f32; 256]> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        std::array::from_fn(|value| {
-            let value = value as f32 / 255.0;
-            if value <= 0.040_45 {
-                value / 12.92
-            } else {
-                libm::powf((value + 0.055) / 1.055, 2.4)
-            }
-        })
-    })
-}
-
 #[derive(Debug)]
 pub struct Texture {
     width: u32,
@@ -141,8 +69,6 @@ pub struct Texture {
     format: TextureFormat,
     space: ColorSpace,
     contents: Contents,
-    summary: OnceLock<TextureSummary>,
-    identity: OnceLock<u128>,
 }
 
 impl Texture {
@@ -159,7 +85,7 @@ impl Texture {
     }
 
     pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, Error> {
-        let levels = [Level(Bytes::Owned(rgba8.into_boxed_slice()))];
+        let levels = [Level(rgba8.into_boxed_slice())];
         check_levels(TextureFormat::Rgba8, width, height, &levels)?;
         Ok(Self::of_contents(
             TextureFormat::Rgba8,
@@ -176,8 +102,6 @@ impl Texture {
             format: TextureFormat::Rgba8,
             space,
             contents: Contents::Drawn,
-            summary: OnceLock::new(),
-            identity: OnceLock::new(),
         })
     }
 
@@ -190,28 +114,12 @@ impl Texture {
         check_levels(format, width, height, &levels)?;
         let levels = levels
             .into_iter()
-            .map(|bytes| Level(Bytes::Owned(bytes.into_boxed_slice())))
+            .map(|bytes| Level(bytes.into_boxed_slice()))
             .collect();
         Ok(Self::of_contents(
             format,
             (width, height),
             Contents::Levels(levels),
-        ))
-    }
-
-    pub fn from_shared_rgba(
-        width: u32,
-        height: u32,
-        bytes: Arc<[u8]>,
-        start: usize,
-    ) -> Result<Self, Error> {
-        let start = start.min(bytes.len());
-        let levels = [Level(Bytes::Shared(bytes, start))];
-        check_levels(TextureFormat::Rgba8, width, height, &levels)?;
-        Ok(Self::of_contents(
-            TextureFormat::Rgba8,
-            (width, height),
-            Contents::Base(Box::new(levels)),
         ))
     }
 
@@ -222,34 +130,12 @@ impl Texture {
             format,
             space: ColorSpace::Srgb,
             contents,
-            summary: OnceLock::new(),
-            identity: OnceLock::new(),
         }
-    }
-
-    pub fn identity(&self, hash: impl FnOnce(&[u8]) -> u128) -> u128 {
-        *self.identity.get_or_init(|| {
-            let mut bytes = Vec::new();
-            for value in [self.width, self.height, self.format as u32] {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-            bytes.push(self.space.tag());
-            bytes.push(u8::from(self.is_target()));
-            bytes.push(u8::from(self.makes_levels()));
-            for level in self.levels() {
-                bytes.extend_from_slice(level);
-            }
-            hash(&bytes)
-        })
     }
 
     #[must_use]
     pub fn with_color_space(self, space: ColorSpace) -> Self {
-        Self {
-            space,
-            identity: OnceLock::new(),
-            ..self
-        }
+        Self { space, ..self }
     }
 
     pub fn color_space(&self) -> ColorSpace {
@@ -262,20 +148,6 @@ impl Texture {
 
     pub fn makes_levels(&self) -> bool {
         matches!(self.contents, Contents::Base(_))
-    }
-
-    #[must_use]
-    pub fn with_identity(self, identity: u128) -> Self {
-        Self {
-            identity: OnceLock::from(identity),
-            ..self
-        }
-    }
-
-    #[must_use]
-    pub fn with_summary(self, summary: TextureSummary) -> Self {
-        let summary = OnceLock::from(summary);
-        Self { summary, ..self }
     }
 
     pub fn width(&self) -> u32 {
@@ -299,17 +171,6 @@ impl Texture {
             Contents::Levels(levels) | Contents::Base(levels) => levels,
             Contents::Drawn => &[],
         }
-    }
-
-    pub fn summary(&self) -> Option<TextureSummary> {
-        if let Some(summary) = self.summary.get() {
-            return Some(*summary);
-        }
-        (self.format == TextureFormat::Rgba8 && !self.is_target()).then(|| {
-            *self
-                .summary
-                .get_or_init(|| TextureSummary::of_rgba8(self.pixels()))
-        })
     }
 
     pub fn byte_len(&self) -> usize {
@@ -361,6 +222,6 @@ fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidTexture, path)
 }
 
-pub fn full_chain(width: u32, height: u32) -> u32 {
+fn full_chain(width: u32, height: u32) -> u32 {
     32 - width.max(height).leading_zeros()
 }

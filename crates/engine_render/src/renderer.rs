@@ -34,7 +34,7 @@ pub use startup::StartingRenderer;
 pub(crate) fn new_assets(device: &wgpu::Device) -> Assets {
     Assets {
         meshes: GpuMeshes::new(device),
-        textures: TextureStore::new(device),
+        textures: TextureStore::default(),
         batches: crate::encode::HeldBatches::default(),
     }
 }
@@ -83,12 +83,6 @@ pub struct Renderer {
 impl Renderer {
     pub fn device_limits(&self) -> engine_core::DeviceLimits {
         self.core.limits
-    }
-
-    pub fn readback_overflows(&self) -> u64 {
-        self.run
-            .as_ref()
-            .map_or(0, |run| run.reading.list.overflows())
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

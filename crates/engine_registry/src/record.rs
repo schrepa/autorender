@@ -8,8 +8,7 @@ use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, List};
 
-use crate::entries::{JoinEntry, Kept, Owned, SettingsEntry, StatsEntry};
-use crate::jobs::JobMember;
+use crate::entries::{JoinEntry, Owned, SettingsEntry, StatsEntry};
 use crate::scene::SpawnedBy;
 use crate::state::SwitchFn;
 
@@ -18,8 +17,6 @@ pub trait RecordExt {
 }
 
 type MakeSystems = Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
-
-type Turn = fn(&mut World);
 
 pub(crate) struct SystemsCall {
     pub(crate) schedule: InternedScheduleLabel,
@@ -31,11 +28,7 @@ pub struct BrickRecord {
     game: bool,
     pub entries: Vec<Box<dyn Any + Send + Sync>>,
     pub render: Vec<Arc<dyn Any + Send + Sync>>,
-    brick: TypeId,
-    crate_name: &'static str,
-    source: [u8; 32],
     prefix: Option<&'static str>,
-    corpora: Vec<&'static (dyn Any + Send + Sync)>,
     switch: Option<(&'static str, SwitchFn)>,
     pub(crate) spawned: fn(&mut World) -> ComponentId,
     pub(crate) systems: Vec<SystemsCall>,
@@ -47,22 +40,13 @@ pub struct BrickRecord {
 }
 
 impl BrickRecord {
-    pub fn new<B: 'static>(
-        package: &'static str,
-        source: [u8; 32],
-        corpora: Vec<&'static (dyn Any + Send + Sync)>,
-    ) -> Self {
-        let type_name = std::any::type_name::<B>();
+    pub fn new<B: 'static>(package: &'static str) -> Self {
         Self {
             package,
             game: false,
             entries: Vec::new(),
             render: Vec::new(),
-            brick: TypeId::of::<B>(),
-            crate_name: type_name.split("::").next().unwrap_or(type_name),
-            source,
             prefix: None,
-            corpora,
             switch: None,
             spawned: spawned_id::<B>,
             systems: Vec::new(),
@@ -74,10 +58,6 @@ impl BrickRecord {
         }
     }
 
-    pub fn brick(&self) -> TypeId {
-        self.brick
-    }
-
     pub fn set_game(&mut self, game: bool) {
         self.game = game;
     }
@@ -86,22 +66,8 @@ impl BrickRecord {
         self.game
     }
 
-    pub fn source(&self) -> [u8; 32] {
-        self.source
-    }
-
     pub fn prefix(&self) -> Option<&'static str> {
         self.prefix
-    }
-
-    pub(crate) fn crate_name(&self) -> &'static str {
-        self.crate_name
-    }
-
-    pub fn corpora<C: Any>(&self) -> impl Iterator<Item = &'static C> + '_ {
-        self.corpora
-            .iter()
-            .filter_map(|&corpus| corpus.downcast_ref::<C>())
     }
 
     pub fn switch_key(&self) -> Option<&'static str> {
@@ -110,17 +76,6 @@ impl BrickRecord {
 
     pub(crate) fn switch_fn(&self) -> Option<SwitchFn> {
         self.switch.map(|(_, on)| on)
-    }
-
-    pub fn joins(&self) -> &[JoinEntry] {
-        &self.joins
-    }
-
-    pub fn take_members(&mut self) -> Vec<JobMember> {
-        self.joins
-            .iter_mut()
-            .filter_map(|joined| Some((joined.list, joined.take_member()?)))
-            .collect()
     }
 
     pub fn owned(&self) -> &[Owned] {
@@ -133,6 +88,14 @@ impl BrickRecord {
 
     pub fn stats_entries(&self) -> &[StatsEntry] {
         &self.stats
+    }
+
+    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
+        let list = TypeId::of::<L>();
+        self.joins
+            .iter()
+            .filter(move |joined| joined.list == list)
+            .filter_map(|joined| joined.member.as_deref()?.downcast_ref::<L::Member>())
     }
 
     pub fn entries<T: Any>(&self) -> impl Iterator<Item = &T> + '_ {
@@ -206,23 +169,19 @@ impl BrickRecord {
         std::mem::take(&mut self.problems)
     }
 
-    pub(crate) fn dropped(&self) -> Vec<(Turn, Turn)> {
+    pub(crate) fn dropped(&self) -> Vec<Owned> {
         self.owned
             .iter()
-            .filter_map(|owned| match owned.kept {
-                Kept::Dropped(remove) => Some((owned.init, remove)),
-                Kept::Survives(_) => None,
-            })
+            .filter(|owned| !owned.survives)
+            .copied()
             .collect()
     }
 
-    pub(crate) fn kept(&self) -> Vec<Turn> {
+    pub(crate) fn kept(&self) -> Vec<TypeId> {
         self.owned
             .iter()
-            .filter_map(|owned| match owned.kept {
-                Kept::Survives(touch) => Some(touch),
-                Kept::Dropped(_) => None,
-            })
+            .filter(|owned| owned.survives)
+            .map(|owned| owned.type_id)
             .collect()
     }
 

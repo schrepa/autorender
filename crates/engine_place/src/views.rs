@@ -1,8 +1,7 @@
 use bevy_ecs::component::Component;
-use bevy_ecs::entity::Entity;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, ErrorCode, FrameId, Layers, NodeId, TextureHandle};
+use crate::{Error, ErrorCode, Layers, NodeId, TextureHandle};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Target {
@@ -89,16 +88,6 @@ pub enum Clear {
     Nothing,
 }
 
-impl Clear {
-    pub const fn color(self) -> bool {
-        matches!(self, Self::All)
-    }
-
-    pub const fn depth(self) -> bool {
-        matches!(self, Self::All | Self::DepthOnly)
-    }
-}
-
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct View {
     pub camera: NodeId,
@@ -108,7 +97,6 @@ pub struct View {
     pub clear: Clear,
     pub clear_color: [f32; 4],
     pub order: i32,
-    pub steady: bool,
 }
 
 impl View {
@@ -123,34 +111,6 @@ impl View {
             clear: Clear::All,
             clear_color: Self::BLACK,
             order: 0,
-            steady: false,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ViewHistory {
-    #[default]
-    Fresh,
-    Valid {
-        since: FrameId,
-    },
-}
-
-impl ViewHistory {
-    pub const fn valid(self) -> bool {
-        matches!(self, Self::Valid { .. })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ViewCut {
-    pub view: Entity,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ViewLayer {
-    pub layer: u32,
-    pub rect: [u32; 4],
 }

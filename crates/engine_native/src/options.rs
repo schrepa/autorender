@@ -1,9 +1,8 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use engine::command_line::CommandOption;
-use engine::host::{HostSettings, JobRef, OVERLAY, SceneLoad};
+use engine::host::{HostSettings, OVERLAY, SceneLoad};
 use engine::scene::SceneKinds;
 use engine::{
     BrickList, DefaultScene, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost,
@@ -11,9 +10,7 @@ use engine::{
 };
 use serde_json::json;
 
-use crate::{CacheOptions, JobOptions, Offscreen, Window};
-
-const MIB: u64 = 1024 * 1024;
+use crate::{Offscreen, Window};
 
 pub fn options() -> Vec<CommandOption> {
     let defaults = HostOptions::default();
@@ -21,34 +18,17 @@ pub fn options() -> Vec<CommandOption> {
         GpuPreference::HighPerformance => "discrete",
         GpuPreference::LowPower => "integrated",
     };
-    let jobcache = match defaults.jobs.cache {
-        CacheOptions::Off => "off".to_owned(),
-        CacheOptions::Verify { sample: None } => "verify".to_owned(),
-        CacheOptions::Verify {
-            sample: Some(count),
-        } => format!("verify:{count}"),
-        CacheOptions::Keep { budget } => (budget / MIB).to_string(),
-    };
     vec![
         CommandOption::taking("--scene", "PATH"),
         CommandOption::taking("--size", "WxH").in_unit("px"),
         CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
-        CommandOption::taking("--workers", "N|off").defaults_to(defaults.jobs.workers),
-        CommandOption::taking("--jobcache", "off|verify|verify:N|N")
-            .defaults_to(jobcache)
-            .in_unit("MiB"),
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
         CommandOption::taking(&format!("--{OVERLAY}"), "KEY=JSON"),
-        CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
         CommandOption::taking("--offscreen", "[N]"),
-        CommandOption::taking("--packs", "DIR"),
-        CommandOption::taking("--cook", "FILE"),
         CommandOption::flag("--dev"),
         CommandOption::taking("--run", "NAME"),
-        CommandOption::taking("--record", "JSON"),
         CommandOption::flag("--schemas"),
         CommandOption::flag("--shaders"),
-        CommandOption::taking("--pure", "NAME,...|all|list"),
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
     ]
@@ -150,23 +130,18 @@ impl Iterator for Arguments {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub enum StartScene {
-    #[default]
-    Empty,
     File(PathBuf),
-    Declared {
-        scene: DefaultScene,
-        folder: String,
-    },
+    Declared { scene: DefaultScene, folder: String },
 }
 
 pub fn open_scene<G: Game>(host: &mut GameHost<G>, scene: &StartScene) -> engine::Result<()> {
     let kinds = SceneKinds::of(host.engine().app.world());
     match scene {
-        StartScene::Empty => {}
         StartScene::Declared { scene, folder } => {
-            let (document, files) = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::opened)?;
+            let (document, files) =
+                SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::opened)?;
             host.open_document(&document, &files)?;
             host.set_file_root(folder);
         }
@@ -212,20 +187,14 @@ pub struct HostOptions {
     pub assets: Option<PathBuf>,
     pub size: Option<(u32, u32)>,
     pub gpu: GpuPreference,
-    pub jobs: JobOptions,
     pub vsync: bool,
     pub settings: HostSettings,
-    pub limit_ms: Option<u64>,
     pub headless: bool,
     pub frames: Option<u32>,
     pub dev: bool,
     pub run: Option<String>,
-    pub record: Option<String>,
     pub schemas: bool,
     pub shaders: bool,
-    pub pure: Option<String>,
-    pub cook: Option<PathBuf>,
-    pub workers_given: bool,
 }
 
 impl Default for HostOptions {
@@ -235,52 +204,16 @@ impl Default for HostOptions {
             assets: None,
             size: None,
             gpu: GpuPreference::HighPerformance,
-            jobs: JobOptions::default(),
             vsync: true,
             settings: HostSettings::default(),
-            limit_ms: None,
             headless: false,
             frames: None,
             dev: false,
             run: None,
-            record: None,
             schemas: false,
             shaders: false,
-            pure: None,
-            cook: None,
-            workers_given: false,
         }
     }
-}
-
-fn job_cache(argument: &Argument, arguments: &mut Arguments) -> Result<CacheOptions, Error> {
-    let cache = arguments.value(argument)?;
-    if let Some(count) = cache.strip_prefix("verify:") {
-        let sample = count
-            .parse()
-            .ok()
-            .filter(|&count: &u32| count > 0)
-            .ok_or_else(|| {
-                argument
-                    .invalid(&cache)
-                    .expected(Expected::Integer)
-                    .range(1.0, f64::from(u32::MAX))
-            })?;
-        return Ok(CacheOptions::Verify {
-            sample: Some(sample),
-        });
-    }
-    Ok(match cache.as_str() {
-        "off" => CacheOptions::Off,
-        "verify" => CacheOptions::Verify { sample: None },
-        mebibytes => CacheOptions::Keep {
-            budget: mebibytes
-                .parse::<u64>()
-                .ok()
-                .and_then(|mebibytes| mebibytes.checked_mul(MIB))
-                .ok_or_else(|| argument.invalid(&cache).range(0.0, (u64::MAX / MIB) as f64))?,
-        },
-    })
 }
 
 impl HostOptions {
@@ -317,35 +250,12 @@ impl HostOptions {
                     }
                 }
             }
-            "--workers" => {
-                let workers = arguments.value(argument)?;
-                self.workers_given = true;
-                self.jobs.workers = match workers.as_str() {
-                    "off" => 0,
-                    count => count
-                        .parse::<usize>()
-                        .map_err(|_| argument.invalid(&workers).at_least(0))?,
-                };
-            }
-            "--jobcache" => self.jobs.cache = job_cache(argument, arguments)?,
             "--vsync" => self.vsync = arguments.switch(argument)?,
             switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
                 let value = arguments.value(argument)?;
                 self.settings
                     .set(&value)
                     .map_err(|error| error.within(switch))?;
-            }
-            "--packs" => self.jobs.packs = Some(arguments.value(argument)?.into()),
-            "--cook" => self.cook = Some(arguments.value(argument)?.into()),
-            "--limit-ms" => {
-                let limit = arguments.value(argument)?;
-                self.limit_ms = Some(
-                    limit
-                        .parse()
-                        .ok()
-                        .filter(|&limit: &u64| limit > 0)
-                        .ok_or_else(|| argument.invalid(&limit).expected(Expected::Integer))?,
-                );
             }
             "--offscreen" => {
                 self.headless = true;
@@ -356,7 +266,6 @@ impl HostOptions {
                 self.dev = true;
             }
             "--run" => self.run = Some(arguments.value(argument)?),
-            "--record" => self.record = Some(arguments.value(argument)?),
             "--schemas" => {
                 arguments.flag(argument)?;
                 self.schemas = true;
@@ -365,7 +274,6 @@ impl HostOptions {
                 arguments.flag(argument)?;
                 self.shaders = true;
             }
-            "--pure" => self.pure = Some(arguments.value(argument)?),
             _ => return Ok(false),
         }
         Ok(true)
@@ -378,10 +286,8 @@ impl HostOptions {
         let dev_only = [
             ("--dev", self.dev),
             ("--run", self.run.is_some()),
-            ("--record", self.record.is_some()),
             ("--schemas", self.schemas),
             ("--shaders", self.shaders),
-            ("--pure", self.pure.is_some()),
         ];
         if let Some((option, _)) = dev_only.iter().find(|(_, given)| *given)
             && !cfg!(feature = "dev")
@@ -395,41 +301,21 @@ impl HostOptions {
                 Error::new(ErrorCode::MissingField, "--offscreen").expected(Expected::Present)
             );
         }
-        let others = [
+        let other = [
             ("--offscreen", self.headless),
             ("--dev", self.dev),
             ("--run", self.run.is_some()),
-            ("--record", self.record.is_some()),
-        ];
-        let other = others
-            .iter()
-            .find(|(_, given)| *given)
-            .map(|(option, _)| *option);
-        if self.cook.is_some()
-            && let Some(other) = others
-                .iter()
-                .find(|(option, given)| *given && *option != "--offscreen")
-                .map(|(option, _)| *option)
-        {
-            return Err(excludes(other));
-        }
+        ]
+        .iter()
+        .find(|(_, given)| *given)
+        .map(|(option, _)| *option);
         if self.schemas
-            && let Some(other) = other.or(self.cook.is_some().then_some("--cook"))
+            && let Some(other) = other
         {
             return Err(excludes(other));
         }
         if self.shaders
-            && let Some(other) = other
-                .or(self.cook.is_some().then_some("--cook"))
-                .or(self.schemas.then_some("--schemas"))
-        {
-            return Err(excludes(other));
-        }
-        if self.pure.is_some()
-            && let Some(other) = other
-                .or(self.cook.is_some().then_some("--cook"))
-                .or(self.schemas.then_some("--schemas"))
-                .or(self.shaders.then_some("--shaders"))
+            && let Some(other) = other.or(self.schemas.then_some("--schemas"))
         {
             return Err(excludes(other));
         }
@@ -451,20 +337,9 @@ impl HostOptions {
                 Error::new(ErrorCode::InvalidArguments, "--shaders").got(problems)
             });
         }
-        #[cfg(feature = "dev")]
-        if let Some(names) = &options.pure {
-            return crate::pure::run(names, move |_| bricks);
-        }
         let scene = options.start_scene(&game);
         let build = game.build;
-        #[cfg(feature = "dev")]
-        if options.records("causes") {
-            engine_profile::trace(true);
-        }
-        crate::job_cache::keep_pipeline_cache();
-        if let Some(pack) = &options.cook {
-            return options.run_cook(pack, move |_| bricks, build, &scene);
-        }
+        crate::keep_pipeline_cache();
         if options.headless {
             return options.run_offscreen((move |_| bricks, build), &scene);
         }
@@ -482,11 +357,7 @@ impl HostOptions {
 
     pub(crate) fn for_game<G>(&self, game: &GameEntry<G>) -> Self {
         let mut options = self.clone();
-        let assets = default_assets(game.folder);
-        if options.jobs.packs.is_none() {
-            options.jobs.packs = Some(assets.join("cooked"));
-        }
-        options.assets = Some(assets);
+        options.assets = Some(default_assets(game.folder));
         options
     }
 
@@ -494,33 +365,20 @@ impl HostOptions {
         if let Some(path) = &self.scene {
             return StartScene::File(path.clone());
         }
-        match game.scene {
-            Some(scene) if cfg!(feature = "dev") && Path::new(scene.path).is_file() => {
-                StartScene::File(scene.path.into())
-            }
-            Some(scene) => StartScene::Declared {
-                scene,
-                folder: folder_of(&self.assets.clone().unwrap_or_default().join(scene.name)),
-            },
-            None => StartScene::Empty,
+        let scene = game.scene;
+        if cfg!(feature = "dev") && Path::new(scene.path).is_file() {
+            return StartScene::File(scene.path.into());
+        }
+        StartScene::Declared {
+            scene,
+            folder: folder_of(&self.assets.clone().unwrap_or_default().join(scene.name)),
         }
     }
 
-    #[cfg(feature = "dev")]
-    fn records(&self, instrument: &str) -> bool {
-        self.record
-            .as_deref()
-            .and_then(|args| serde_json::from_str::<serde_json::Value>(args).ok())
-            .is_some_and(|args| {
-                args["instruments"]
-                    .as_array()
-                    .is_some_and(|names| names.iter().any(|name| name == instrument))
-            })
-    }
-
     fn size(&self) -> engine::Result<(u32, u32)> {
-        self.size
-            .ok_or_else(|| Error::new(ErrorCode::MissingField, "--size").expected(Expected::Present))
+        self.size.ok_or_else(|| {
+            Error::new(ErrorCode::MissingField, "--size").expected(Expected::Present)
+        })
     }
 
     #[cfg(feature = "dev")]
@@ -528,132 +386,15 @@ impl HostOptions {
         &self,
         host: &mut GameHost<G>,
         size: (u32, u32),
-        scene: &StartScene,
-        (shell, pack): (&str, serde_json::Value),
     ) -> engine::Result<crate::dev::Session> {
-        let features: &[&str] = if cfg!(feature = "profiling") {
-            &["dev", "profiling"]
-        } else {
-            &["dev"]
-        };
-        let scene = match scene {
-            StartScene::Empty => json!({"unavailable": "no_scene_opened"}),
-            StartScene::File(path) => {
-                let workspace = std::env::current_dir().unwrap_or_default();
-                let path = path.strip_prefix(&workspace).unwrap_or(path);
-                json!(
-                    path.to_string_lossy()
-                        .replace(std::path::MAIN_SEPARATOR, "/")
-                )
-            }
-            StartScene::Declared { scene, .. } => json!(scene.name),
-        };
-        let about = json!({
-            "machine": {
-                "os": std::env::consts::OS,
-                "arch": std::env::consts::ARCH,
-                "adapter": engine::host::AdapterStatus::of(host.adapter()),
-            },
-            "host": "native",
-            "shell": shell,
-            "build": {"version": env!("CARGO_PKG_VERSION"), "features": features},
-            "scene": scene,
-            "picture": [size.0, size.1],
-            "pack": pack,
-        });
-        let serde_json::Value::Object(about) = about else {
-            unreachable!("about_is_an_object");
-        };
         crate::dev::Session::open(
             host,
             crate::dev::Start {
                 requests: self.dev,
                 size,
                 run: self.run.as_deref(),
-                record: self.record.as_deref(),
-                about,
             },
         )
-    }
-
-    fn run_cook<G: Game, E: Into<engine::Error>>(
-        &self,
-        path: &Path,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
-        scene: &StartScene,
-    ) -> engine::Result<()> {
-        let limit = self.limit_ms.ok_or_else(|| {
-            Error::new(ErrorCode::InvalidArguments, "--limit-ms").expected(Expected::Present)
-        })?;
-        let size = self.size()?;
-        let started = Instant::now();
-        let mut jobs = self.jobs.clone();
-        if !self.workers_given {
-            jobs.workers = std::thread::available_parallelism().map_or(1, usize::from);
-        }
-        let mut game = Offscreen::launch(size, self.gpu, jobs.pool(true), bricks, build)?;
-        open_scene(game.host_mut(), scene)?;
-        self.settings.apply(game.host_mut())?;
-        let read = game.jobs_mut().packed();
-        let (mut frame, mut said) = (0_u32, Instant::now());
-        let (after, mut played) = (self.frames.unwrap_or(0), 0_u32);
-        game.host_mut().set_preparation(true);
-        loop {
-            game.host_mut().cook();
-            let at = f64::from(frame) * 1000.0 / 60.0;
-            game.turn(at)?;
-            frame += 1;
-            let readiness = game.host().frame_times().readiness.clone();
-            if !readiness.failed.is_empty() {
-                return Err(Error::new(ErrorCode::RenderFailed, "--cook").got(json!({
-                    "failed": readiness.failed,
-                })));
-            }
-            let playing = readiness.settled() && !game.host().preparing();
-            if playing && played >= after {
-                break;
-            }
-            if playing {
-                played += 1;
-            }
-            if started.elapsed() >= Duration::from_millis(limit) {
-                return Err(Error::new(ErrorCode::CommandTimeout, "--limit-ms")
-                    .at_most(limit)
-                    .got(json!({
-                        "readiness": readiness,
-                        "jobs_held": game.host().jobs_held(),
-                    })));
-            }
-            if said.elapsed() > Duration::from_secs(5) {
-                said = Instant::now();
-                let record = json!({
-                    "event": "cooking",
-                    "readiness": readiness,
-                    "jobs_held": game.host().jobs_held(),
-                });
-                eprintln!("{record}");
-            }
-        }
-        let written = game
-            .jobs_mut()
-            .write_pack(path)
-            .map_err(|error| error.within("--cook"))?;
-        let jobs = game.host().progress().1;
-        println!(
-            "{:#}",
-            json!({
-                "pack": path.display().to_string(),
-                "records": written.records,
-                "kinds": written.kinds,
-                "bytes": written.bytes,
-                "packed_before": read,
-                "frames": frame,
-                "seconds": started.elapsed().as_secs_f64(),
-                "jobs": jobs,
-            })
-        );
-        Ok(())
     }
 
     fn run_offscreen<G: Game, E: Into<engine::Error>>(
@@ -665,21 +406,20 @@ impl HostOptions {
         scene: &StartScene,
     ) -> engine::Result<()> {
         let size = self.size()?;
-        let mut game = Offscreen::launch(size, self.gpu, self.jobs.pool(false), bricks, build)?;
+        let mut game = Offscreen::launch(size, self.gpu, bricks, build)?;
         open_scene(game.host_mut(), scene)?;
         self.settings.apply(game.host_mut())?;
         #[cfg(feature = "dev")]
         let played = {
-            let pack = pack_header(game.jobs_mut());
-            let mut session = self.session(game.host_mut(), size, scene, ("offscreen", pack))?;
+            let mut session = self.session(game.host_mut(), size)?;
             game.play(self.frames, |host, phase| {
                 crate::dev::follow_source(host);
                 session.after(host)?;
                 let wait = if phase == engine::host::FramePhase::Paused {
-                    Duration::try_from_secs_f64(host.refresh_interval() / 1000.0)
+                    std::time::Duration::try_from_secs_f64(host.refresh_interval() / 1000.0)
                         .unwrap_or_default()
                 } else {
-                    Duration::ZERO
+                    std::time::Duration::ZERO
                 };
                 Ok(session.receive(host, wait))
             })?
@@ -689,37 +429,14 @@ impl HostOptions {
         if self.frames.is_none() {
             return Ok(());
         }
-        let mut stats = serde_json::to_value(game.host().frame_times()).expect("stats_serialize");
-        stats["jobs"] = json!(game.host().progress().1);
-        let jobs = game.jobs_mut();
         let report = json!({
             "size": [size.0, size.1],
             "frames": played,
-            "mismatched": named(jobs.mismatched()),
-            "sampled": named(jobs.sampled()),
-            "stats": stats,
+            "stats": game.host().frame_times(),
         });
         println!("{report:#}");
         Ok(())
     }
-}
-
-#[cfg(feature = "dev")]
-pub(crate) fn pack_header(jobs: &crate::JobPool) -> serde_json::Value {
-    let mut packs: Vec<(String, u64)> = jobs
-        .packs()
-        .filter_map(|(path, bytes)| {
-            Some((path.file_stem()?.to_string_lossy().into_owned(), bytes))
-        })
-        .collect();
-    if packs.is_empty() {
-        return json!({"unavailable": "no_pack_loaded"});
-    }
-    packs.sort();
-    packs
-        .into_iter()
-        .map(|(name, bytes)| json!({"name": name, "bytes": bytes}))
-        .collect()
 }
 
 fn default_assets(folder: &str) -> PathBuf {
@@ -734,11 +451,4 @@ fn default_assets(folder: &str) -> PathBuf {
                 .find(|assets| assets.is_dir())
         })
         .unwrap_or_else(|| Path::new(folder).join("assets"))
-}
-
-fn named(records: &[(Option<JobRef>, String)]) -> Vec<serde_json::Value> {
-    records
-        .iter()
-        .map(|(kind, key)| json!({ "kind": kind.as_ref().map(JobRef::name), "key": key }))
-        .collect()
 }

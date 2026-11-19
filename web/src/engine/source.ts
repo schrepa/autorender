@@ -1,5 +1,4 @@
 import { engineFailure } from "../generated/errors";
-import { jobPool } from "./jobs.ts";
 
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(url, { cache: "no-cache", signal });
@@ -35,44 +34,27 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
 
 interface SceneLoad<Files> {
   take_reads(): { uri: string }[];
-  read(uri: string, bytes: Uint8Array): boolean;
-  image(uri: string, width: number, height: number, pixels: Uint8Array): void;
-  decode(uri: string, bytes: Uint8Array): void;
+  read(uri: string, bytes: Uint8Array): void;
   finish(): Files;
   free(): void;
 }
 
-interface SceneFileBindings<Files> {
+export interface SceneFileBindings<Files = unknown> {
   SceneLoad: new (source: string) => SceneLoad<Files>;
 }
 
 export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal): Promise<Files> {
   const load = new bindings.SceneLoad(source);
   const base = new URL(sceneUrl, location.href);
-  const pool = jobPool();
-  const file = async ({ uri }: { uri: string }) => {
-    const url = new URL(uri, base).href;
-    const bytes = await fetchBytes(url, signal);
-    if (load.read(uri, bytes)) {
-      if (pool) {
-        const image = await pool.decodeImage(uri, bytes.slice()).catch((error: unknown) => {
-          throw engineFailure({ code: "invalid_texture", path: "$", got: { file: uri, failed: String(error) } });
-        });
-        load.image(uri, image.width, image.height, image.pixels);
-      } else load.decode(uri, bytes);
-    }
-  };
   try {
-    for (let reads = load.take_reads(); reads.length > 0; reads = load.take_reads()) {
-      await Promise.all(reads.map(file));
-    }
+    await Promise.all(load.take_reads().map(async ({ uri }) => load.read(uri, await fetchBytes(new URL(uri, base).href, signal))));
     return load.finish();
   } finally {
     load.free();
   }
 }
 
-export async function fetchBytes(url: string, signal?: AbortSignal): Promise<Uint8Array> {
+async function fetchBytes(url: string, signal: AbortSignal): Promise<Uint8Array> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});

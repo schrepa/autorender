@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
-use bevy_ecs::query::With;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Query, Res, SystemParam};
 use bevy_ecs::world::World;
 use engine_settings::{Error, ErrorCode, Expected};
 
@@ -119,19 +117,4 @@ pub fn entity_removed(id: &str, path: &str) -> Error {
     Error::new(ErrorCode::EntityRemoved, path)
         .expected(Expected::Live)
         .got(id)
-}
-
-#[derive(SystemParam)]
-pub struct Named<'w, 's> {
-    scene: Option<Res<'w, OperationScene>>,
-    held: Query<'w, 's, (), With<SceneEntity>>,
-}
-
-impl Named<'_, '_> {
-    pub fn entity(&self, id: &str, path: &str) -> Result<Entity, Error> {
-        match &self.scene {
-            Some(scene) => scene.named(id, path, |entity| self.held.contains(entity)),
-            None => Err(Error::new(ErrorCode::UnknownEntity, path).got(id)),
-        }
-    }
 }

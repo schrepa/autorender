@@ -31,10 +31,8 @@ impl Adapt<SystemWithAccess> for Attributed {
             SystemIn<'_, SystemWithAccess>,
         ) -> Result<<SystemWithAccess as System>::Out, RunSystemError>,
     ) -> Result<Self::Out, RunSystemError> {
-        engine_profile::caused(engine_profile::cause(), || {
-            engine_profile::run(&self.runs, self.brick, self.name, || {
-                Board::owned_by(self.brick, || run_system(input))
-            })
+        engine_profile::run(&self.runs, self.brick, self.name, || {
+            Board::owned_by(self.brick, || run_system(input))
         })
     }
 }

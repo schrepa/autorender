@@ -12,7 +12,7 @@ use engine_registry::Registry;
 
 use crate::{Asked, Brick, GlobalTransforms, Mover, MoverId, Pace, Transform, edit_transform};
 
-pub const fn mover_of<B: Brick>() -> MoverId {
+pub(crate) const fn mover_of<B: Brick>() -> MoverId {
     if B::SOURCE.game() {
         MoverId::Game
     } else {
@@ -31,22 +31,6 @@ pub struct Moves<'w, 's, B: Brick> {
 impl<B: Brick> Moves<'_, '_, B> {
     pub const fn id() -> MoverId {
         mover_of::<B>()
-    }
-
-    pub fn contains(&self, node: Entity) -> bool {
-        self.nodes
-            .get(node)
-            .is_ok_and(|(_, _, mover)| mover.by == Self::id())
-    }
-
-    pub fn pace(&self, node: Entity) -> Option<Pace> {
-        let (_, _, mover) = self.nodes.get(node).ok()?;
-        (mover.by == Self::id()).then_some(mover.pace)
-    }
-
-    pub fn get(&self, node: Entity) -> Option<&Transform> {
-        let (_, transform, mover) = self.nodes.get(node).ok()?;
-        (mover.by == Self::id()).then_some(transform)
     }
 
     pub fn local(&self, node: Entity) -> Option<&Transform> {
@@ -71,15 +55,6 @@ impl<B: Brick> Moves<'_, '_, B> {
             .filter(move |(node, _, mover)| mover.by == Self::id() && globals.active(*node))
             .map(|(node, transform, _)| (node, transform))
     }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, Mut<'_, Transform>)> + '_ {
-        let Self { nodes, globals, .. } = self;
-        let globals = &**globals;
-        nodes
-            .iter_mut()
-            .filter(move |(node, _, mover)| mover.by == Self::id() && globals.active(*node))
-            .map(|(node, transform, _)| (node, transform))
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -94,7 +69,7 @@ pub fn send_ask<A: Send + Sync + 'static>(world: &mut World, ask: A) {
     }
 }
 
-pub fn take_asks<A: Send + Sync + 'static>(world: &mut World) -> Vec<A> {
+pub(crate) fn take_asks<A: Send + Sync + 'static>(world: &mut World) -> Vec<A> {
     if world.get_resource::<Asked<A>>().is_none_or(Asked::is_empty) {
         return Vec::new();
     }

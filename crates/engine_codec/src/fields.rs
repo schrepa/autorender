@@ -137,10 +137,6 @@ pub enum Rule {
     AboveTo(f64, f64),
     Above(f64),
     AtLeast(f64),
-    AtMost(f64),
-    Budget,
-    PowerOfTwo(f64, f64),
-    Multiple(f64, f64, f64),
     Id,
     Count(f64, f64),
 }
@@ -170,22 +166,6 @@ impl Rule {
         Self::AtLeast(min)
     }
 
-    pub const fn at_most(max: f64) -> Self {
-        Self::AtMost(max)
-    }
-
-    pub const fn budget() -> Self {
-        Self::Budget
-    }
-
-    pub const fn power_of_two(min: f64, max: f64) -> Self {
-        Self::PowerOfTwo(min, max)
-    }
-
-    pub const fn multiple(step: f64, min: f64, max: f64) -> Self {
-        Self::Multiple(step, min, max)
-    }
-
     pub const fn id() -> Self {
         Self::Id
     }
@@ -212,22 +192,6 @@ impl Rule {
                 Some(Expected::Finite),
                 Some(Allowed::Range { min, max: f64::MAX }),
             ),
-            Self::AtMost(max) if max >= 0.0 && max.fract() == 0.0 => (
-                Some(Expected::Finite),
-                Some(Allowed::AtMost { max: max as u64 }),
-            ),
-            Self::AtMost(max) => (
-                Some(Expected::Finite),
-                Some(Allowed::Range { min: f64::MIN, max }),
-            ),
-            Self::Budget => (Some(Expected::Integer), Some(Allowed::AtLeast { min: 1 })),
-            Self::PowerOfTwo(min, max) => (
-                Some(Expected::PowerOfTwo),
-                Some(Allowed::Range { min, max }),
-            ),
-            Self::Multiple(_, min, max) => {
-                (Some(Expected::Multiple), Some(Allowed::Range { min, max }))
-            }
             Self::Id => (
                 Some(Expected::Id),
                 Some(Allowed::AtMost {
@@ -274,25 +238,6 @@ impl Rule {
             }
             Self::AtLeast(min) => {
                 keywords.insert("minimum".into(), number(min));
-            }
-            Self::AtMost(max) => {
-                keywords.insert("maximum".into(), number(max));
-            }
-            Self::Budget => {
-                keywords.insert("minimum".into(), json!(1));
-            }
-            Self::PowerOfTwo(min, max) => {
-                let powers: Vec<Value> = (0..63)
-                    .map(|bit| 1_u64 << bit)
-                    .filter(|&power| (min..=max).contains(&(power as f64)))
-                    .map(Value::from)
-                    .collect();
-                keywords.insert("enum".into(), Value::Array(powers));
-            }
-            Self::Multiple(step, min, max) => {
-                keywords.insert("multipleOf".into(), number(step));
-                keywords.insert("minimum".into(), number(min));
-                keywords.insert("maximum".into(), number(max));
             }
             Self::Id => {
                 keywords.insert("maxLength".into(), json!(MAX_ID_BYTES));
@@ -356,26 +301,6 @@ pub fn at_least(min: impl Bound) -> Rule {
     Rule::AtLeast(min.bound())
 }
 
-pub fn at_most(max: impl Bound) -> Rule {
-    Rule::AtMost(max.bound())
-}
-
-pub fn budget() -> Rule {
-    Rule::Budget
-}
-
-pub fn power_of_two(min: impl Bound, max: impl Bound) -> Rule {
-    Rule::PowerOfTwo(min.bound(), max.bound())
-}
-
-pub fn multiple(step: impl Bound, min: impl Bound, max: impl Bound) -> Rule {
-    Rule::Multiple(step.bound(), min.bound(), max.bound())
-}
-
-pub fn same(rule: Option<Rule>) -> Rule {
-    rule.expect("mirrored_rule_declared")
-}
-
 pub fn id() -> Rule {
     Rule::Id
 }
@@ -432,11 +357,7 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
         | Rule::Range(..)
         | Rule::AboveTo(..)
         | Rule::Above(_)
-        | Rule::AtLeast(_)
-        | Rule::AtMost(_)
-        | Rule::Budget
-        | Rule::PowerOfTwo(..)
-        | Rule::Multiple(..) => numbers(property, field),
+        | Rule::AtLeast(_) => numbers(property, field),
     };
     let whole = has_type(target, "integer");
     target.extend(rule.keywords(whole));
@@ -482,10 +403,6 @@ impl Setting for f32 {
             Rule::AboveTo(min, max) => value > min as f32 && value <= max as f32,
             Rule::Above(min) => value.is_finite() && value > min as f32,
             Rule::AtLeast(min) => value.is_finite() && value >= min as f32,
-            Rule::AtMost(max) => value.is_finite() && value <= max as f32,
-            Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
-                panic!("rule_needs_whole_number {field}")
-            }
             Rule::Id | Rule::Count(..) => panic!("rule_needs_id_or_list {field}"),
         };
         if keeps {
@@ -504,10 +421,6 @@ fn whole_keeps(value: u64, rule: Rule) -> bool {
         Rule::AboveTo(min, max) => value > min as u64 && value <= max as u64,
         Rule::Above(min) => value > min as u64,
         Rule::AtLeast(min) => value >= min as u64,
-        Rule::AtMost(max) => value <= max as u64,
-        Rule::Budget => value >= 1,
-        Rule::PowerOfTwo(min, max) => within(min, max) && value.is_power_of_two(),
-        Rule::Multiple(step, min, max) => within(min, max) && value.is_multiple_of(step as u64),
         Rule::Id | Rule::Count(..) => panic!("rule_needs_id_or_list"),
     }
 }
@@ -520,13 +433,6 @@ fn whole_kept(value: u64, rule: Rule) -> u64 {
         Rule::AboveTo(min, max) => value.clamp(min as u64 + 1, max as u64),
         Rule::Above(min) => value.max(min as u64 + 1),
         Rule::AtLeast(min) => value.max(min as u64),
-        Rule::AtMost(max) => value.min(max as u64),
-        Rule::Budget => value.max(1),
-        Rule::PowerOfTwo(min, max) => clamp(min, max).next_power_of_two().min(max as u64),
-        Rule::Multiple(step, min, max) => {
-            let step = step as u64;
-            (clamp(min, max) / step * step).max(min as u64)
-        }
         Rule::Id | Rule::Count(..) => value,
     }
 }
@@ -566,10 +472,6 @@ impl Setting for f64 {
             Rule::AboveTo(min, max) => value > min && value <= max,
             Rule::Above(min) => value.is_finite() && value > min,
             Rule::AtLeast(min) => value.is_finite() && value >= min,
-            Rule::AtMost(max) => value.is_finite() && value <= max,
-            Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
-                panic!("rule_needs_whole_number {field}")
-            }
             Rule::Id | Rule::Count(..) => panic!("rule_needs_id_or_list {field}"),
         };
         if keeps {
@@ -593,10 +495,6 @@ impl Setting for String {
             | Rule::AboveTo(..)
             | Rule::Above(_)
             | Rule::AtLeast(_)
-            | Rule::AtMost(_)
-            | Rule::Budget
-            | Rule::PowerOfTwo(..)
-            | Rule::Multiple(..)
             | Rule::Count(..) => panic!("rule_needs_any_or_id {field}"),
         }
     }
@@ -681,13 +579,6 @@ macro_rules! fields {
                     $crate::fields::$rule($($($arg),*)?),
                 )?;)*
                 $crate::fields::ExtraRules::check_extra(self)
-            }
-
-            pub fn rule_of(field: &str) -> Option<$crate::fields::Rule> {
-                match field {
-                    $(stringify!($field) => Some($crate::fields::$rule($($($arg),*)?)),)*
-                    _ => None,
-                }
             }
 
             pub fn state_rules(schema: &mut $crate::__private::schemars::Schema) {

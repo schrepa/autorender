@@ -1,5 +1,4 @@
 import { engineFailure } from "../generated/errors";
-import { type JobBindings, type JobWorkerClass, jobPool, useJobs } from "./jobs";
 
 const simdProbe = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0,
@@ -25,15 +24,13 @@ export function requireWasmSimd(): void {
   }
 }
 
-export interface GameBindings extends JobBindings {
+export interface GameBindings {
   default(): Promise<unknown>;
 }
 
-export async function loadGame<T extends GameBindings>(load: () => Promise<T>, worker: JobWorkerClass): Promise<T> {
+export async function loadGame<T extends GameBindings>(load: () => Promise<T>): Promise<T> {
   requireWasmSimd();
   const bindings = await load();
   await bindings.default();
-  useJobs(bindings, worker);
-  jobPool();
   return bindings;
 }

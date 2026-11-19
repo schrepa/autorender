@@ -1,21 +1,16 @@
 use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 #[cfg(feature = "profiling")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, OnceLock};
-#[cfg(feature = "profiling")]
-use std::sync::{Mutex, PoisonError};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, channel, sync_channel};
-use std::thread::JoinHandle;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use std::time::Duration;
 
-use engine::bevy_ecs::world::World;
-use engine::dev::record::{RecordHost, RunSink};
 use engine::host::{AdapterStatus, Shot};
 use engine::scene::{SceneFiles, SceneKinds};
 use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use engine_registry::ReachMut;
-use serde_json::{Map, Value, json};
+use serde_json::json;
 
 use crate::{file_error, files};
 
@@ -23,9 +18,6 @@ const RUNS: &str = "artifacts/runs";
 
 const DEEP: &str = "deep";
 
-static ABOUT: OnceLock<Map<String, Value>> = OnceLock::new();
-#[cfg(feature = "profiling")]
-static OPENED: Mutex<Option<PathBuf>> = Mutex::new(None);
 #[cfg(feature = "profiling")]
 static DEEP_WANTED: AtomicBool = AtomicBool::new(false);
 static INSTRUMENTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -39,7 +31,6 @@ static INSTRUMENTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 pub struct Session {
     lines: Option<Receiver<String>>,
     run: Option<PathBuf>,
-    record: Option<u32>,
     #[cfg(feature = "profiling")]
     deep: Option<(engine_profiler::DeepCapture, PathBuf, String)>,
 }
@@ -48,36 +39,25 @@ pub struct Start<'a> {
     pub requests: bool,
     pub size: (u32, u32),
     pub run: Option<&'a str>,
-    pub record: Option<&'a str>,
-    pub about: Map<String, Value>,
 }
 
 impl Session {
     pub fn open<G: Game>(host: &mut GameHost<G>, start: Start<'_>) -> engine::Result<Self> {
-        let _ = ABOUT.set(start.about);
         #[cfg(feature = "profiling")]
         engine_profiler::deep_setting(host.engine_mut().app.world_mut());
-        host.engine_mut().app.world_mut().insert_resource(RecordHost {
-            about,
-            open,
-            instruments: &INSTRUMENTS,
-            instrument,
-        });
+        host.engine_mut()
+            .app
+            .world_mut()
+            .insert_resource(engine::dev::Instruments {
+                names: &INSTRUMENTS,
+                switch: instrument,
+            });
         let run = match start.run {
             Some(name) => {
                 let folder = run_folder("--run", name)?;
                 std::fs::create_dir_all(&folder)
                     .map_err(|error| file_error("--run", &folder, &error))?;
                 Some(folder)
-            }
-            None => None,
-        };
-        let record = match start.record {
-            Some(args) => {
-                let args: Value = serde_json::from_str(args)
-                    .map_err(|_| Error::new(ErrorCode::InvalidJson, "--record").got(args))?;
-                let line = json!({"verb": "call", "name": "record", "args": args});
-                Some(host.dev_push(&line.to_string()))
             }
             None => None,
         };
@@ -94,7 +74,6 @@ impl Session {
         Ok(Self {
             lines,
             run,
-            record,
             #[cfg(feature = "profiling")]
             deep: None,
         })
@@ -123,21 +102,13 @@ impl Session {
 
     pub fn after<G: Game>(&mut self, host: &mut GameHost<G>) -> engine::Result<()> {
         let take = host.dev_take();
-        for (ticket, line) in take.replies {
-            if self.record == Some(ticket) {
-                self.record = None;
-                let reply: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
-                if reply["ok"] != true {
-                    return Err(Error::new(ErrorCode::InvalidArguments, "--record")
-                        .got(reply["error"].clone()));
-                }
-            } else {
-                say(&line);
-            }
+        for (_, line) in take.replies {
+            say(&line);
         }
         for shot in take.pictures {
             if let Err(error) = self.picture(&shot) {
-                let record = json!({"event": "picture_not_written", "file": shot.file, "error": error});
+                let record =
+                    json!({"event": "picture_not_written", "file": shot.file, "error": error});
                 eprintln!("{record}");
             }
         }
@@ -157,8 +128,11 @@ impl Session {
 
     #[cfg(feature = "profiling")]
     fn follow_deep<G: Game>(&mut self, host: &GameHost<G>) -> engine::Result<()> {
-        let folder = OPENED.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        match (self.deep.take(), DEEP_WANTED.load(Ordering::Relaxed), folder) {
+        match (
+            self.deep.take(),
+            DEEP_WANTED.load(Ordering::Relaxed),
+            self.run.clone(),
+        ) {
             (None, true, Some(folder)) => {
                 let sizes = match engine_profiler::deep_sizes(host.engine().app.world()) {
                     Ok(sizes) => sizes,
@@ -174,15 +148,6 @@ impl Session {
                     .chain(engine_profiler::sampler::announced_threads())
                     .collect();
                 let stem = format!("deep-{}", host.frame_times().frame);
-                let (viewer, digest) = (format!("{stem}.firefox.json"), format!("{stem}.digest.json"));
-                engine_profile::event(
-                    "instrument",
-                    DEEP,
-                    &[
-                        ("viewer", engine_profile::Fact::Text(&viewer)),
-                        ("digest", engine_profile::Fact::Text(&digest)),
-                    ],
-                );
                 let capture = engine_profiler::DeepCapture::start(threads, sizes);
                 self.deep = Some((capture, folder, stem));
             }
@@ -197,12 +162,9 @@ impl Session {
     }
 
     fn picture(&self, shot: &Shot) -> engine::Result<()> {
-        let folder = match &shot.run {
-            Some(run) => run_folder("$.run", run)?,
-            None => self.run.clone().ok_or_else(|| {
-                Error::new(ErrorCode::MissingField, "--run").expected(Expected::Present)
-            })?,
-        };
+        let folder = self.run.as_ref().ok_or_else(|| {
+            Error::new(ErrorCode::MissingField, "--run").expected(Expected::Present)
+        })?;
         let path = folder.join(&shot.file);
         let failed = |_| {
             Error::new(ErrorCode::SourceIo, "$")
@@ -250,11 +212,11 @@ fn run_folder(path: &str, name: &str) -> engine::Result<PathBuf> {
     Ok(Path::new(RUNS).join(name))
 }
 
-fn about(_: &World) -> Map<String, Value> {
-    ABOUT.get().cloned().unwrap_or_default()
-}
-
-fn instrument(reach: &mut ReachMut<'_>, name: &str, on: bool) -> Result<&'static str, &'static str> {
+fn instrument(
+    reach: &mut ReachMut<'_>,
+    name: &str,
+    on: bool,
+) -> Result<&'static str, &'static str> {
     if name == DEEP {
         return deep(reach, on);
     }
@@ -273,71 +235,6 @@ fn deep(reach: &mut ReachMut<'_>, on: bool) -> Result<&'static str, &'static str
 #[cfg(not(feature = "profiling"))]
 fn deep(_: &mut ReachMut<'_>, _: bool) -> Result<&'static str, &'static str> {
     Err("deep_capture_needs_native_profiling_build")
-}
-
-fn open(name: &str, queue: usize) -> Result<Box<dyn RunSink>, Error> {
-    let folder = run_folder("$.name", name)?;
-    std::fs::create_dir_all(&folder).map_err(|error| file_error("$.name", &folder, &error))?;
-    let path = folder.join("record.jsonl");
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                Error::new(ErrorCode::SourceIo, "$.name")
-                    .expected(Expected::Absent)
-                    .got(path.display().to_string())
-            } else {
-                file_error("$.name", &path, &error)
-            }
-        })?;
-    let (lines, written) = sync_channel::<String>(queue);
-    let writer = std::thread::Builder::new()
-        .name("engine-run-writer".into())
-        .spawn(move || {
-            let mut file = BufWriter::new(file);
-            for line in written {
-                if writeln!(file, "{line}").and_then(|()| file.flush()).is_err() {
-                    break;
-                }
-            }
-        })
-        .map_err(|error| file_error("$.name", &path, &error))?;
-    #[cfg(feature = "profiling")]
-    {
-        *OPENED.lock().unwrap_or_else(PoisonError::into_inner) = Some(folder);
-    }
-    Ok(Box::new(RunFile {
-        lines: Some(lines),
-        writer: Some(writer),
-    }))
-}
-
-struct RunFile {
-    lines: Option<SyncSender<String>>,
-    writer: Option<JoinHandle<()>>,
-}
-
-impl RunSink for RunFile {
-    fn line(&mut self, line: String) -> bool {
-        self.lines
-            .as_ref()
-            .is_some_and(|lines| lines.try_send(line).is_ok())
-    }
-}
-
-impl Drop for RunFile {
-    fn drop(&mut self) {
-        #[cfg(feature = "profiling")]
-        {
-            *OPENED.lock().unwrap_or_else(PoisonError::into_inner) = None;
-        }
-        drop(self.lines.take());
-        if let Some(writer) = self.writer.take() {
-            let _ = writer.join();
-        }
-    }
 }
 
 fn say(line: &str) {

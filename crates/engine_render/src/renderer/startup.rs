@@ -134,11 +134,7 @@ impl Renderer {
         self.core.display.configure(&device, period);
         self.core.profiler = GpuProfiler::new(features, f64::from(period));
         self.core.ledger = crate::pipelines::Ledger::default();
-        self.core.limits = super::install::device_limits(
-            &device.limits(),
-            device.features(),
-            self.core.limits.cores,
-        );
+        self.core.limits = super::install::device_limits(&device.limits());
         self.core.adapter = crate::AdapterInfo::of(&adapter.get_info());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -174,7 +170,7 @@ impl Renderer {
         let queue = crate::gpu_calls::Queue::new(wgpu_queue);
         let health = Arc::new(Mutex::new(health::Reports::default()));
         watch(&device, &health);
-        let limits = super::install::device_limits(&device.limits(), device.features(), 0);
+        let limits = super::install::device_limits(&device.limits());
 
         let mut display = Display::new(
             instance,

@@ -12,9 +12,8 @@ use engine_place::Changed;
 use crate::shaders::core_module;
 use crate::uploads::{UploadRange, listed_ranges};
 use crate::{
-    Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
+    Allocation, Bind, Buffer, ComputePipeline, Encode, GpuPart, Install, Lifetime, Pass, Prepare,
     Recorded,
-    Prepare,
 };
 
 pub(crate) const DRAWN_MODULE: &str = "engine::drawn";
@@ -199,10 +198,6 @@ pub(crate) struct KindBatch {
     pub(crate) material: Option<MaterialHandle>,
     passes: Option<PassMask>,
     layers: Layers,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    pub(crate) cause: u32,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    pub(crate) drawn: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -224,8 +219,6 @@ impl Batches {
     }
 
     fn fill(&mut self, table: &DrawnTable, kind: engine_core::DrawKind) {
-        #[cfg(any(feature = "dev", feature = "profiling"))]
-        let held = std::mem::take(&mut self.listed);
         self.listed = table
             .batches(kind)
             .map(|batch| KindBatch {
@@ -234,20 +227,6 @@ impl Batches {
                 material: batch.material,
                 passes: batch.passes,
                 layers: batch.layers,
-                #[cfg(any(feature = "dev", feature = "profiling"))]
-                cause: batch.cause,
-                #[cfg(any(feature = "dev", feature = "profiling"))]
-                drawn: held
-                    .iter()
-                    .any(|known| {
-                        known.cause == batch.cause
-                            && known.geometry == batch.geometry
-                            && known.material == batch.material
-                            && known.passes == batch.passes
-                            && known.layers == batch.layers
-                            && known.drawn.load(std::sync::atomic::Ordering::Relaxed)
-                    })
-                    .into(),
             })
             .collect();
         self.filled = true;
@@ -624,16 +603,10 @@ impl GpuPart for DrawnGpu {
             if end > start
                 && let Some(pipeline) = self.compose.get(level)
             {
-                cx.dispatch(
-                    pipeline,
-                    Count::Groups([(end - start).div_ceil(POSE_GROUP), 1, 1]),
-                );
+                cx.dispatch(pipeline, [(end - start).div_ceil(POSE_GROUP), 1, 1]);
             }
         }
-        cx.dispatch(
-            &self.pose,
-            Count::Groups([self.slots.div_ceil(POSE_GROUP), 1, 1]),
-        );
+        cx.dispatch(&self.pose, [self.slots.div_ceil(POSE_GROUP), 1, 1]);
         self.owed = cx.recorded() != Recorded::Exact;
     }
 }

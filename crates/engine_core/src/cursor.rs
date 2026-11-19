@@ -18,8 +18,4 @@ impl CursorMode {
         (Self::Free, "free"),
         (Self::Captured, "captured"),
     ];
-
-    pub const fn name(self) -> &'static str {
-        Self::ALL[self as usize].1
-    }
 }

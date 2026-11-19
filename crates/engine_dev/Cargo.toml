@@ -9,7 +9,6 @@ publish.workspace = true
 bevy_ecs.workspace = true
 engine_settings = { workspace = true, features = ["schema"] }
 engine_core = { workspace = true, features = ["dev"] }
-engine_profile = { workspace = true, features = ["dev"] }
 engine_registry = { workspace = true, features = ["profiling"] }
 engine_scene = { workspace = true, features = ["schema"] }
 schemars.workspace = true

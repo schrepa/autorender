@@ -15,8 +15,8 @@ impl AppHost {
             None => self.renderer.install(world),
         }
         .map_err(|mut problems| match problems.len() {
-                1 => problems.remove(0),
-                _ => Error::new(ErrorCode::RenderFailed, "$.bricks").got(&problems),
-            })
+            1 => problems.remove(0),
+            _ => Error::new(ErrorCode::RenderFailed, "$.bricks").got(&problems),
+        })
     }
 }

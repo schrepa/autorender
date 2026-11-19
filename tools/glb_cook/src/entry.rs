@@ -6,11 +6,10 @@ use glam::{Mat4, Vec3};
 use serde_json::{Value, json};
 
 use engine_scene::{SceneMap, SceneMaterial, SceneSlot};
-use engine_textures::Image;
 
 use crate::config::{
-    BakedPlan, Character, ClipEntry, Cook, Entry, FormEntry, MapEntry, MaterialNames, SetsPlan,
-    TextureVariant, ValueMap, ValueRule,
+    BakedPlan, Character, ClipEntry, Cook, Encoding, Entry, FormEntry, MapEntry, MaterialNames,
+    SetsPlan, TextureVariant, ValueMap, ValueRule,
 };
 use crate::encode;
 use crate::fault::Fault;
@@ -19,6 +18,8 @@ use crate::fragment::{
     validate,
 };
 use crate::geometry::{self, Built};
+use crate::image::read;
+use crate::ktx2;
 use crate::maps::{self, MapKind};
 use crate::markers;
 use crate::mips;
@@ -131,7 +132,7 @@ pub struct Baked<'a> {
     pub plans: &'a BTreeMap<String, BakedPlan>,
     pub value_maps: &'a BTreeMap<String, ValueMap>,
     pub value_rules: &'a BTreeMap<String, ValueRule>,
-    pub pictures: Vec<(String, String, Image)>,
+    pub pictures: Vec<(String, String, Vec<u8>)>,
 }
 
 pub struct MaterialPlan<'a> {
@@ -315,7 +316,7 @@ pub struct Made<'a> {
     pub cooked: Vec<CookedMaterial>,
     pub scene: Vec<SceneMaterial>,
     pub pictures: Vec<(String, String)>,
-    pub picture_images: Vec<(String, &'a Image)>,
+    pub picture_files: Vec<(String, &'a [u8])>,
     pub entities: Vec<FragmentEntity>,
 }
 
@@ -549,61 +550,18 @@ fn cook_materials(
             .clone()
             .map(|(id, uri, _)| (id.clone(), uri.clone()))
             .collect(),
-        picture_images: pictures
-            .map(|(_, uri, image)| (uri.clone(), image))
+        picture_files: pictures
+            .map(|(_, uri, file)| (uri.clone(), file.as_slice()))
             .collect(),
     };
-    if plan.textures.is_empty() {
-        write_png(cook, source, report, (name, meshes), made);
-    } else {
-        write_variants(
-            cook,
-            source,
-            report,
-            (name, meshes),
-            &made,
-            (plan.textures, plan.exact_alpha),
-        );
-    }
-}
-
-fn write_png(
-    cook: &Cook,
-    source: &Source,
-    report: &mut Report,
-    (name, meshes): (&str, &[Built]),
-    made: Made<'_>,
-) {
-    let fragment = assemble(
-        (&cook.uri_prefix, ".png"),
-        meshes,
-        &made.cooked,
-        (made.scene, &made.pictures, made.entities),
+    write_variants(
+        cook,
+        source,
+        report,
+        (name, meshes),
+        &made,
+        (plan.textures, plan.exact_alpha),
     );
-    let images: Vec<(String, &Image)> = made
-        .cooked
-        .iter()
-        .flat_map(|material| &material.maps)
-        .map(|map| (format!("{}{}.png", cook.uri_prefix, map.stem), &map.decoded))
-        .chain(made.picture_images)
-        .collect();
-    if let Some(text) = report.take(validate(
-        (&source.file, name),
-        &fragment,
-        &cook.uri_prefix,
-        meshes,
-        &images,
-    )) {
-        push_meshes(report, meshes);
-        for map in made.cooked.iter().flat_map(|material| &material.maps) {
-            report
-                .files
-                .push((format!("{}.png", map.stem), map.png.clone()));
-        }
-        report
-            .files
-            .push((format!("{name}.fragment.json"), text.into_bytes()));
-    }
 }
 
 fn write_variants(
@@ -614,17 +572,17 @@ fn write_variants(
     made: &Made<'_>,
     (textures, exact_alpha): (&[TextureVariant], &[String]),
 ) {
-    let (cooked, scene, pictures, picture_images) = (
+    let (cooked, scene, pictures, picture_files) = (
         &made.cooked,
         &made.scene,
         &made.pictures,
-        &made.picture_images,
+        &made.picture_files,
     );
     let mut variants = Vec::new();
-    let mut written = Vec::new();
+    let mut written: Vec<(String, Vec<u8>)> = Vec::new();
     for variant in textures {
         let ending = format!(".{}.ktx2", variant.name);
-        let mut images = Vec::new();
+        let first = written.len();
         let mut rows = Vec::new();
         let (mut file_bytes, mut gpu_bytes, mut seconds) = (0, 0, 0.0);
         for map in cooked.iter().flat_map(|material| &material.maps) {
@@ -667,10 +625,6 @@ fn write_variants(
             seconds += encoded.seconds;
             rows.push(json!({"map": map.stem, "encoding": encoding.name(), "levels": chain.len(), "file_bytes": encoded.file.len(), "gpu_bytes": encoded.gpu_bytes, "encode_seconds": encoded.seconds, "quality": encoded.quality}));
             written.push((format!("{}{ending}", map.stem), encoded.file));
-            images.push((
-                format!("{}{}{ending}", cook.uri_prefix, map.stem),
-                encoded.level_zero,
-            ));
         }
         if !report.faults.is_empty() {
             return;
@@ -681,14 +635,10 @@ fn write_variants(
             cooked,
             (scene.to_vec(), pictures, made.entities.clone()),
         );
-        let held: Vec<(String, &Image)> = images
+        let held: Vec<(String, &[u8])> = written[first..]
             .iter()
-            .map(|(uri, image)| (uri.clone(), image))
-            .chain(
-                picture_images
-                    .iter()
-                    .map(|(uri, image)| (uri.clone(), *image)),
-            )
+            .map(|(file, bytes)| (format!("{}{file}", cook.uri_prefix), bytes.as_slice()))
+            .chain(picture_files.iter().map(|(uri, file)| (uri.clone(), *file)))
             .collect();
         let Some(text) = report.take(validate(
             (&source.file, name),
@@ -971,8 +921,8 @@ fn baked_pictures(
     cook: &Cook,
     base: &Path,
     map: &MapEntry,
-) -> Result<Vec<(String, String, Image)>, Fault> {
-    let mut pictures: Vec<(String, String, Image)> = Vec::new();
+) -> Result<Vec<(String, String, Vec<u8>)>, Fault> {
+    let mut pictures: Vec<(String, String, Vec<u8>)> = Vec::new();
     for (_, wanted, variant) in map.pictures() {
         if pictures.iter().any(|(id, _, _)| *id == wanted) {
             continue;
@@ -991,15 +941,16 @@ fn baked_pictures(
             })
             .expect("baked_pictures_validated");
         let path = base.join(&picture.source);
-        let file = path.display().to_string();
-        let bytes = std::fs::read(&path)
-            .map_err(|error| Fault::new("PictureUnreadable", &file, "file", error))?;
-        let image = engine_textures::decode_image(&file, &bytes)
-            .map_err(|error| Fault::new("PictureUndecodable", &file, "file", error))?;
+        let image = read(&path, &path.display().to_string())?;
+        let plain = if picture.encodings[variant].srgb() {
+            Encoding::Rgba8Srgb
+        } else {
+            Encoding::Rgba8
+        };
         pictures.push((
             wanted.to_owned(),
             format!("{}{wanted}.{variant}.ktx2", cook.uri_prefix),
-            image,
+            ktx2::write(plain, image.width, image.height, &[image.pixels]),
         ));
     }
     Ok(pictures)

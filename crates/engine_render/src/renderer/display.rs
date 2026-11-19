@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 use super::*;
 use crate::gpu_data::clamped_extent;
-use crate::readback::{Arrival, Keep, Readbacks, Reader};
+use crate::readback::{Arrival, Readbacks, Reader};
 use crate::targets::FrameSize;
 use engine_core::{Expected, FrameId};
 
@@ -339,8 +339,8 @@ impl FrameTimer {
         let recorded = readbacks.record(
             (device, encoder),
             (&self.resolved, 0..FRAME_STAMP_BYTES),
-            (Reader::FrameTimer, written, None),
-            Keep::Ring(slots),
+            (Reader::FrameTimer, written),
+            slots,
         );
         if recorded {
             self.sizes.push((written, size));

@@ -3,7 +3,7 @@ use engine_core::{Error, Texture};
 use engine_settings::{ErrorCode, Expected, valid_uri};
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneFiles, validation::identifier};
+use crate::SceneFiles;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -31,46 +31,16 @@ pub struct SceneTexture {
         )
     )]
     pub uri: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
-    pub provided: Option<String>,
 }
 
 impl SceneTexture {
-    pub fn inline(id: impl Into<String>, width: u32, height: u32, pixels: &[u8]) -> Self {
-        Self {
-            id: id.into(),
-            width: Some(width),
-            height: Some(height),
-            rgba8: Some(STANDARD.encode(pixels)),
-            uri: None,
-            provided: None,
-        }
-    }
-
     pub(crate) fn texture(
         &self,
         path: &str,
         files: Option<&SceneFiles>,
     ) -> Result<(Texture, bool), Error> {
-        match (
-            &self.provided,
-            &self.uri,
-            self.width,
-            self.height,
-            &self.rgba8,
-        ) {
-            (Some(name), None, None, None, None) => {
-                identifier(name, &format!("{path}.provided"))?;
-                Ok((
-                    Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid"),
-                    false,
-                ))
-            }
-            (None, Some(uri), None, None, None) => {
+        match (&self.uri, self.width, self.height, &self.rgba8) {
+            (Some(uri), None, None, None) => {
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;
                 match files {
@@ -78,10 +48,10 @@ impl SceneTexture {
                         Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid"),
                         false,
                     )),
-                    Some(files) => files.texture(uri, &uri_path),
+                    Some(files) => files.texture(uri, &uri_path).map(|texture| (texture, true)),
                 }
             }
-            (None, None, Some(width), Some(height), Some(rgba8)) => {
+            (None, Some(width), Some(height), Some(rgba8)) => {
                 for (field, size) in [("width", width), ("height", height)] {
                     if size == 0 {
                         return Err(Error::new(
@@ -110,22 +80,19 @@ impl SceneTexture {
                     .map(|texture| (texture, false))
                     .map_err(|error| error.coded(ErrorCode::InvalidTexture).within(path))
             }
-            (provided, uri, width, height, rgba8) => {
-                Err(Error::new(ErrorCode::InvalidTexture, path)
-                    .got(
-                        [
-                            ("provided", provided.is_some()),
-                            ("uri", uri.is_some()),
-                            ("width", width.is_some()),
-                            ("height", height.is_some()),
-                            ("rgba8", rgba8.is_some()),
-                        ]
-                        .into_iter()
-                        .filter_map(|(field, given)| given.then_some(field))
-                        .collect::<Vec<_>>(),
-                    )
-                    .variants(["uri", "width,height,rgba8", "provided"]))
-            }
+            (uri, width, height, rgba8) => Err(Error::new(ErrorCode::InvalidTexture, path)
+                .got(
+                    [
+                        ("uri", uri.is_some()),
+                        ("width", width.is_some()),
+                        ("height", height.is_some()),
+                        ("rgba8", rgba8.is_some()),
+                    ]
+                    .into_iter()
+                    .filter_map(|(field, given)| given.then_some(field))
+                    .collect::<Vec<_>>(),
+                )
+                .variants(["uri", "width,height,rgba8"])),
         }
     }
 }

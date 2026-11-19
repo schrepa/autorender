@@ -4,17 +4,11 @@ use serde_json::json;
 use crate::Repository;
 use crate::policy::rust;
 
-const SCRIPTS: [&str; 4] = [".ts", ".mjs", ".js", ".cjs"];
-
-const SHELLS: [&str; 2] = [".ps1", ".sh"];
-
 const MARKS: [&str; 1] = ["optics:"];
 
 pub fn covers(path: &str) -> bool {
-    [".rs", ".wgsl"]
+    [".rs", ".wgsl", ".ts"]
         .iter()
-        .chain(&SCRIPTS)
-        .chain(&SHELLS)
         .any(|extension| path.ends_with(extension))
 }
 
@@ -34,10 +28,8 @@ pub fn check(repository: &Repository) -> Result<(), String> {
             rust_comments(&source)
         } else if path.ends_with(".wgsl") {
             shader_comments(&source)
-        } else if SCRIPTS.iter().any(|extension| path.ends_with(extension)) {
-            script_comments(&source, path.ends_with(".mjs"))
         } else {
-            shell_comments(&source, path.ends_with(".ps1"))
+            script_comments(&source)
         };
         problems.extend(
             lines
@@ -148,7 +140,7 @@ fn shader_comments(source: &str) -> Vec<usize> {
     found
 }
 
-fn script_comments(source: &str, typed: bool) -> Vec<usize> {
+fn script_comments(source: &str) -> Vec<usize> {
     let characters: Vec<char> = source.chars().collect();
     let mut found = Vec::new();
     let mut scanner = Scanner {
@@ -158,84 +150,10 @@ fn script_comments(source: &str, typed: bool) -> Vec<usize> {
         depth: 0,
         last: None,
     };
-    while let Some((start, end, block)) = scanner.next_comment() {
-        let text: String = characters[start..end].iter().collect();
-        let allowed = if block {
-            let inner = text
-                .strip_prefix("/*")
-                .and_then(|inner| inner.strip_suffix("*/"))
-                .unwrap_or_default();
-            inner.trim() == "@vite-ignore"
-                || (typed
-                    && inner
-                        .strip_prefix('*')
-                        .is_some_and(|tags| !tags.starts_with('*') && type_tags(tags)))
-        } else {
-            text.trim_start_matches('/').trim() == "@ts-check"
-        };
-        if !allowed {
-            found.push(line_at(&characters, start));
-        }
+    while let Some(start) = scanner.next_comment() {
+        found.push(line_at(&characters, start));
     }
     found
-}
-
-fn type_tags(inner: &str) -> bool {
-    let text: String = inner
-        .lines()
-        .map(|line| line.trim().trim_start_matches('*'))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let characters: Vec<char> = text.chars().collect();
-    let skip = |mut at: usize| {
-        while at < characters.len() && characters[at].is_whitespace() {
-            at += 1;
-        }
-        at
-    };
-    let mut at = 0;
-    let mut tags = 0;
-    loop {
-        at = skip(at);
-        if at >= characters.len() {
-            return tags > 0;
-        }
-        if characters[at] != '@' {
-            return false;
-        }
-        at += 1;
-        while at < characters.len() && (characters[at].is_alphanumeric() || characters[at] == '-') {
-            at += 1;
-        }
-        tags += 1;
-        at = skip(at);
-        if characters.get(at) == Some(&'{') {
-            let mut depth = 0_usize;
-            while at < characters.len() {
-                match characters[at] {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            at += 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                at += 1;
-            }
-            if depth != 0 {
-                return false;
-            }
-            at = skip(at);
-        }
-        if at < characters.len() && characters[at] != '@' {
-            while at < characters.len() && !characters[at].is_whitespace() {
-                at += 1;
-            }
-        }
-    }
 }
 
 struct Scanner<'a> {
@@ -247,7 +165,7 @@ struct Scanner<'a> {
 }
 
 impl Scanner<'_> {
-    fn next_comment(&mut self) -> Option<(usize, usize, bool)> {
+    fn next_comment(&mut self) -> Option<usize> {
         while self.at < self.characters.len() {
             let character = self.characters[self.at];
             let next = self.characters.get(self.at + 1).copied();
@@ -257,7 +175,7 @@ impl Scanner<'_> {
                     while self.at < self.characters.len() && self.characters[self.at] != '\n' {
                         self.at += 1;
                     }
-                    return Some((start, self.at, false));
+                    return Some(start);
                 }
                 '/' if next == Some('*') => {
                     let start = self.at;
@@ -269,7 +187,7 @@ impl Scanner<'_> {
                         self.at += 1;
                     }
                     self.at = (self.at + 2).min(self.characters.len());
-                    return Some((start, self.at, true));
+                    return Some(start);
                 }
                 '"' | '\'' => self.quoted(character),
                 '`' => {
@@ -390,41 +308,4 @@ impl Scanner<'_> {
         }
         self.last = Some('/');
     }
-}
-
-fn shell_comments(source: &str, powershell: bool) -> Vec<usize> {
-    let mut found = Vec::new();
-    let mut block = false;
-    for (index, line) in source.lines().enumerate() {
-        if block {
-            found.push(index + 1);
-            block = !line.contains("#>");
-            continue;
-        }
-        if index == 0 && line.starts_with("#!") {
-            continue;
-        }
-        let mut quote: Option<char> = None;
-        let mut previous = ' ';
-        for (at, character) in line.char_indices() {
-            match quote {
-                Some(open) if character == open => quote = None,
-                Some(_) => {}
-                None if character == '\'' || character == '"' => quote = Some(character),
-                None if character == '#' && (previous.is_whitespace() || previous == ';') => {
-                    found.push(index + 1);
-                    block = powershell && line[..at].ends_with('<') && !line[at..].contains("#>");
-                    break;
-                }
-                None if character == '<' && powershell && line[at..].starts_with("<#") => {
-                    found.push(index + 1);
-                    block = !line[at..].contains("#>");
-                    break;
-                }
-                None => {}
-            }
-            previous = character;
-        }
-    }
-    found
 }

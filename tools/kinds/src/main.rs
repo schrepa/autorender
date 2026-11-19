@@ -30,7 +30,6 @@ const CLOSED: &[(&str, &[&str])] = &[
         &[
             "engine_math",
             "engine_codec",
-            "engine_lodbuild",
             "engine_sources",
             "engine_command_line",
             "engine_rig",
@@ -40,13 +39,7 @@ const CLOSED: &[(&str, &[&str])] = &[
     ("core-internal", CORE_INTERNAL_CRATES),
     (
         "host",
-        &[
-            "engine",
-            "engine_native",
-            "engine_dev",
-            "engine_worker",
-            "engine_profiler",
-        ],
+        &["engine", "engine_native", "engine_dev", "engine_profiler"],
     ),
 ];
 
@@ -337,11 +330,7 @@ fn implements_brick(line: &str) -> bool {
         && words.next() == Some("for")
 }
 
-fn check_member(
-    member: &Member,
-    folders: &BTreeMap<&Path, &Member>,
-    problems: &mut Vec<String>,
-) {
+fn check_member(member: &Member, folders: &BTreeMap<&Path, &Member>, problems: &mut Vec<String>) {
     let at = member.label();
     let Some(kind) = member.kind.as_deref() else {
         problems.push(format!("{at}: no [package.metadata.engine] kind"));

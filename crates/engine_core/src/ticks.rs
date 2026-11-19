@@ -7,8 +7,6 @@ pub(crate) const STAMP_BLOCK: usize = 16;
 pub(crate) struct ChangeWindow {
     this_run: u32,
     since: u32,
-    #[cfg(debug_assertions)]
-    last_run: Tick,
 }
 
 impl ChangeWindow {
@@ -19,21 +17,12 @@ impl ChangeWindow {
                 .get()
                 .wrapping_sub(last_run.get())
                 .min(MAX_CHANGE_AGE),
-            #[cfg(debug_assertions)]
-            last_run,
         }
     }
 
     #[inline]
     pub(crate) fn contains(self, tick: Tick) -> bool {
-        let changed = self.this_run.wrapping_sub(tick.get()) < self.since;
-        #[cfg(debug_assertions)]
-        assert_eq!(
-            changed,
-            tick.is_newer_than(self.last_run, Tick::new(self.this_run)),
-            "change_window_matches_bevy {tick:?}"
-        );
-        changed
+        self.this_run.wrapping_sub(tick.get()) < self.since
     }
 
     #[inline]
@@ -51,7 +40,7 @@ impl ChangeWindow {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ScanClock {
+pub(crate) struct ScanClock {
     last: Option<Tick>,
 }
 

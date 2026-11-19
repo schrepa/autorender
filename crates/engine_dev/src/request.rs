@@ -174,14 +174,6 @@ pub fn apply(reach: &mut ReachMut<'_>, request: &Request) -> Result<Applied, Err
         }
         Verb::Set => {
             let mut done = entry.set_value(reach, &args).ok_or_else(unsupported)??;
-            if entry.changes_frame.is_some() && engine_profile::recording() {
-                let after = done.get("after").map_or_else(String::new, Value::to_string);
-                engine_profile::event(
-                    "changes_frame",
-                    &entry.name,
-                    &[("after", engine_profile::Fact::Text(&after))],
-                );
-            }
             if let Some(fields) = done.as_object_mut() {
                 fields.insert("lands".to_owned(), json!(entry.lands));
             }

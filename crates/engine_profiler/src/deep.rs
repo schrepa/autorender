@@ -129,7 +129,6 @@ pub fn deep_sizes(world: &World) -> Result<DeepSizes, &'static str> {
 pub struct DeepCapture {
     sampler: Result<Sampler, &'static str>,
     sizes: DeepSizes,
-    recorded: bool,
 }
 
 pub struct DeepFiles {
@@ -160,11 +159,7 @@ impl DeepCapture {
             )
             .ok_or("sampler_unavailable_on_this_host")
         };
-        Self {
-            sampler,
-            sizes,
-            recorded: engine_profile::recording(),
-        }
+        Self { sampler, sizes }
     }
 
     pub fn finish(self, folder: &Path, stem: &str) -> Result<DeepFiles, Error> {
@@ -181,11 +176,7 @@ impl DeepCapture {
         let symbols = Symbols::of(samples.as_ref(), &heap);
         let viewer = firefox_profile(&events, samples.as_ref(), &symbols);
         let mut digest = digest(samples.as_ref(), &symbols, self.sizes);
-        digest["events"] = if self.recorded {
-            json!({ "kept": events.len(), "dropped": events_dropped })
-        } else {
-            json!({ "unavailable": "no_record_running" })
-        };
+        digest["events"] = json!({ "kept": events.len(), "dropped": events_dropped });
         if let Some(reason) = unsampled {
             digest["cpu_samples"] = json!({ "unavailable": reason });
         }
@@ -197,8 +188,7 @@ impl DeepCapture {
             complete: samples.as_ref().is_some_and(|samples| {
                 samples.threads.iter().all(|thread| thread.missed == 0)
             }) && dropped == 0
-                && events_dropped == 0
-                && self.recorded,
+                && events_dropped == 0,
         };
         write(&files.viewer, &viewer)?;
         write(&files.digest, &digest)?;
@@ -320,7 +310,6 @@ fn functions(stack: &[u64], symbols: &Symbols) -> Vec<String> {
 struct SpanMarker {
     name: StringHandle,
     kind: StringHandle,
-    cause: StringHandle,
     category: CategoryHandle,
 }
 
@@ -328,20 +317,12 @@ impl StaticSchemaMarker for SpanMarker {
     const UNIQUE_MARKER_TYPE_NAME: &'static str = "EngineSpan";
     const CHART_LABEL: Option<&'static str> = Some("{marker.name}");
     const TABLE_LABEL: Option<&'static str> = Some("{marker.name} ({marker.data.kind})");
-    const FIELDS: &'static [StaticSchemaMarkerField] = &[
-        StaticSchemaMarkerField {
-            key: "kind",
-            label: "Kind",
-            format: MarkerFieldFormat::String,
-            flags: MarkerFieldFlags::SEARCHABLE,
-        },
-        StaticSchemaMarkerField {
-            key: "cause",
-            label: "Cause",
-            format: MarkerFieldFormat::String,
-            flags: MarkerFieldFlags::SEARCHABLE,
-        },
-    ];
+    const FIELDS: &'static [StaticSchemaMarkerField] = &[StaticSchemaMarkerField {
+        key: "kind",
+        label: "Kind",
+        format: MarkerFieldFormat::String,
+        flags: MarkerFieldFlags::SEARCHABLE,
+    }];
 
     fn name(&self, _: &mut Profile) -> StringHandle {
         self.name
@@ -351,11 +332,8 @@ impl StaticSchemaMarker for SpanMarker {
         self.category
     }
 
-    fn string_field_value(&self, field: u32) -> StringHandle {
-        match field {
-            1 => self.cause,
-            _ => self.kind,
-        }
+    fn string_field_value(&self, _: u32) -> StringHandle {
+        self.kind
     }
 
     fn number_field_value(&self, _: u32) -> f64 {
@@ -371,7 +349,6 @@ struct Spanned<'a> {
     start: f64,
     end: f64,
     depth: u32,
-    cause: u32,
     category: &'static str,
     name: &'a str,
 }
@@ -388,11 +365,10 @@ fn spans(events: &[Event]) -> Vec<Spanned<'_>> {
                 start: event.at_ms,
                 end: event.at_ms + ms,
                 depth,
-                cause: event.cause,
                 category,
                 name: &event.name,
             }),
-            Facts::Counter(_) | Facts::Listed { .. } => None,
+            Facts::Counter(_) => None,
         })
         .collect();
     spans.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -425,14 +401,9 @@ fn markers(
             .iter()
             .find(|(name, _)| *name == span.category)
             .map_or(main, |&(_, handle)| handle);
-        let cause = match span.cause {
-            0 => String::new(),
-            cause => cause.to_string(),
-        };
         let marker = SpanMarker {
             name: profile.intern_string(span.name),
             kind: profile.intern_string(span.category),
-            cause: profile.intern_string(&cause),
             category,
         };
         profile.add_marker(

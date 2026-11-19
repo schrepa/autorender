@@ -1,13 +1,10 @@
-use std::sync::Arc;
-
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
-    BrickList, ComponentKind, Error, JobExchange, Placed, Placement, SceneBuffers, SceneComponents,
-    SceneContext, SceneCx, core_components, scene_components,
+    BrickList, ComponentKind, Error, SceneComponents, SceneCx, core_components, scene_components,
 };
-use engine_registry::{JobList, Registry, SettingsEntry};
-use engine_settings::{ErrorCode, Expected};
+use engine_registry::{Registry, SettingsEntry};
+use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use crate::SceneObject;
@@ -16,7 +13,6 @@ use crate::SceneObject;
 pub struct SceneKinds {
     listed: Vec<ComponentKind>,
     sections: Vec<SettingsEntry>,
-    list: Option<Arc<JobList>>,
 }
 
 impl Default for SceneKinds {
@@ -24,7 +20,6 @@ impl Default for SceneKinds {
         Self {
             listed: core_components().to_vec(),
             sections: Vec::new(),
-            list: None,
         }
     }
 }
@@ -39,35 +34,30 @@ impl SceneKinds {
                 .flat_map(Registry::sections)
                 .copied()
                 .collect(),
-            list: world
-                .get_resource::<JobExchange>()
-                .map(JobExchange::shared_list),
         }
     }
 
-    pub fn listed(bricks: &BrickList) -> Result<Self, Error> {
-        let list = bricks.job_list()?;
-        Ok(Self {
+    pub fn listed(bricks: &BrickList) -> Self {
+        let records: Vec<_> = bricks
+            .listed()
+            .iter()
+            .map(|listed| listed.record())
+            .collect();
+        Self {
             listed: core_components()
                 .iter()
-                .chain(list.members::<SceneComponents>())
+                .chain(
+                    records
+                        .iter()
+                        .flat_map(|record| record.members::<SceneComponents>()),
+                )
                 .cloned()
                 .collect(),
-            sections: bricks
-                .listed()
+            sections: records
                 .iter()
-                .flat_map(|listed| listed.record().settings_entries().to_vec())
+                .flat_map(|record| record.settings_entries().to_vec())
                 .collect(),
-            list: Some(Arc::new(list)),
-        })
-    }
-
-    pub(crate) fn listed_kinds(&self) -> &[ComponentKind] {
-        &self.listed
-    }
-
-    pub(crate) fn job_list(&self) -> Option<Arc<JobList>> {
-        self.list.clone()
+        }
     }
 
     pub(crate) fn section(&self, key: &str) -> Option<SettingsEntry> {
@@ -75,14 +65,6 @@ impl SceneKinds {
             .iter()
             .find(|section| section.key == key)
             .copied()
-    }
-
-    pub(crate) fn cx<'a>(
-        &'a self,
-        scene: Option<&'a SceneContext>,
-        files: Option<&'a SceneBuffers>,
-    ) -> SceneCx<'a> {
-        SceneCx::new(self.list.as_deref(), scene, files)
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &'static str> + '_ {
@@ -123,35 +105,13 @@ impl SceneKinds {
         })
     }
 
-    pub(crate) fn check_placement(&self, object: &SceneObject, path: &str) -> Result<(), Error> {
-        if object.parent.is_none() {
-            return Ok(());
-        }
-        self.each_known(object, path, |kind, _, at| match kind.placement() {
-            Placement::Roots(code) => Err(Error::new(code, at).expected(Expected::Absent)),
-            Placement::Anywhere => Ok(()),
-        })
-    }
-
-    pub(crate) fn check_placed(
-        &self,
-        object: &SceneObject,
-        placed: Placed,
-        path: &str,
-    ) -> Result<(), Error> {
-        self.each_known(object, path, |kind, value, at| {
-            kind.validate_placed(value, placed, at)
-        })
-    }
-
     pub(crate) fn files<'a>(
         &'a self,
         object: &'a SceneObject,
-        cx: &'a SceneCx<'a>,
     ) -> impl Iterator<Item = String> + 'a {
         object
             .authored()
-            .filter_map(|(name, value)| self.find(name).map(|kind| kind.listed_files_in(value, cx)))
+            .filter_map(|(name, value)| self.find(name).map(|kind| kind.listed_files(value)))
             .flatten()
     }
 
@@ -189,10 +149,6 @@ impl SceneKinds {
 }
 
 impl SceneObject {
-    pub fn component(&self, name: &str) -> Option<&Value> {
-        self.components.get(name).filter(|value| !value.is_null())
-    }
-
     pub(crate) fn authored(&self) -> impl Iterator<Item = (&str, &Value)> {
         self.components
             .iter()
@@ -206,26 +162,19 @@ pub(crate) fn component_schemas(
     kinds: &SceneKinds,
     definitions: &mut serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {
-    let cx = kinds.cx(None, None);
     kinds
         .listed
         .iter()
-        .map(|kind| {
-            (
-                kind.key().to_owned(),
-                component_property(kind, &cx, definitions),
-            )
-        })
+        .map(|kind| (kind.key().to_owned(), component_property(kind, definitions)))
         .collect()
 }
 
 #[cfg(feature = "schema")]
 fn component_property(
     kind: &ComponentKind,
-    cx: &SceneCx<'_>,
     definitions: &mut serde_json::Map<String, Value>,
 ) -> Value {
-    let mut schema = kind.json_schema_in(cx);
+    let mut schema = kind.json_schema();
     let Some(fields) = schema.as_object_mut() else {
         return Value::Bool(true);
     };

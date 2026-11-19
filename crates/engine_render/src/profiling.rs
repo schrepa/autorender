@@ -85,11 +85,6 @@ impl GpuProfiler {
     }
 
     #[inline(always)]
-    pub fn span_in(&self, _group: &'static str, _name: &'static str) -> Option<Span<'_>> {
-        None
-    }
-
-    #[inline(always)]
     pub fn busy(&self, _name: &'static str) -> Option<Span<'_>> {
         None
     }
@@ -115,7 +110,7 @@ mod timer {
     use serde_json::{Value, json};
 
     use super::{DrawKey, Span};
-    use crate::readback::{Arrival, Keep, Readbacks, Reader};
+    use crate::readback::{Arrival, Readbacks, Reader};
 
     const BUSY: &str = "busy";
     const STATISTICS: wgpu::PipelineStatisticsTypes =
@@ -319,10 +314,6 @@ mod timer {
             self.recorded(None, name)
         }
 
-        pub fn span_in(&self, group: &'static str, name: &'static str) -> Option<Span<'_>> {
-            self.recorded(Some(group), name)
-        }
-
         pub fn busy(&self, name: &'static str) -> Option<Span<'_>> {
             self.recorded(Some(BUSY), name)
         }
@@ -419,8 +410,8 @@ mod timer {
             let recorded = readbacks.record(
                 (device, encoder),
                 (&slot.resolve, 0..sizes.bytes()),
-                (Reader::Profiler(index as u32), written, None),
-                Keep::Ring(1),
+                (Reader::Profiler(index as u32), written),
+                1,
             );
             if recorded {
                 slot.written = Some(written);
@@ -539,7 +530,7 @@ mod timer {
             (!switched).then(|| {
                 json!({
                     "unavailable": "never_switched_on",
-                    "switched_on_by": { "call": "record", "instruments": instruments },
+                    "switched_on_by": { "verb": "set", "name": "instruments", "args": { "value": instruments } },
                 })
             })
         }

@@ -7,8 +7,9 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, GeometryHandle, MaterialHandle, OperationScene, ProvidedAssets,
-    SceneContext, SceneEntity, TextureHandle, Transform, propagate_transforms, set_parents,
+    AssetLibrary, Error, GeometryHandle, MaterialHandle, OperationScene, SceneBuffers,
+    SceneContext, SceneCx, SceneEntity, TextureHandle, Transform, propagate_transforms,
+    set_parents,
 };
 use engine_registry::SettingsEntry;
 use serde_json::Value;
@@ -25,7 +26,6 @@ pub struct SceneInstance {
     world_id: WorldId,
     entities: Arc<BTreeMap<String, Entity>>,
     assets: Handles,
-    owned: Handles,
     material_ids: Vec<String>,
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
@@ -47,7 +47,6 @@ pub enum MeshOrigin {
     Plane,
     Inline { vertices: usize, indices: usize },
     Buffer { uri: String },
-    Provided { name: String },
 }
 
 impl From<&crate::MeshSource> for MeshOrigin {
@@ -60,7 +59,6 @@ impl From<&crate::MeshSource> for MeshOrigin {
                 indices: indices.len(),
             },
             crate::MeshSource::Buffer { uri } => Self::Buffer { uri: uri.clone() },
-            crate::MeshSource::Provided { name } => Self::Provided { name: name.clone() },
         }
     }
 }
@@ -69,15 +67,13 @@ impl From<&crate::MeshSource> for MeshOrigin {
 pub enum TextureOrigin {
     Inline,
     File { uri: String },
-    Provided { name: String },
 }
 
 impl From<&crate::SceneTexture> for TextureOrigin {
     fn from(texture: &crate::SceneTexture) -> Self {
-        match (&texture.provided, &texture.uri) {
-            (Some(name), _) => Self::Provided { name: name.clone() },
-            (None, Some(uri)) => Self::File { uri: uri.clone() },
-            (None, None) => Self::Inline,
+        match &texture.uri {
+            Some(uri) => Self::File { uri: uri.clone() },
+            None => Self::Inline,
         }
     }
 }
@@ -105,59 +101,23 @@ impl Handles {
 
 fn insert_each<T, H: Copy>(
     items: impl IntoIterator<Item = Option<T>>,
-    provided: Vec<Option<H>>,
-    (handles, owned): (&mut Vec<H>, &mut Vec<H>),
+    handles: &mut Vec<H>,
     field: &str,
     mut insert: impl FnMut(T) -> Result<H, Error>,
 ) -> Result<(), Error> {
-    for (index, (item, provided)) in items.into_iter().zip(provided).enumerate() {
-        let handle = match (provided, item) {
-            (Some(handle), _) => handle,
-            (None, Some(item)) => {
-                let handle = insert(item).map_err(|error| {
-                    error
-                        .coded(ErrorCode::AssetBudgetExceeded)
-                        .at(format!("$.{field}[{index}]"))
-                })?;
-                owned.push(handle);
-                handle
-            }
-            (None, None) => {
-                return Err(Error::new(
-                    ErrorCode::MissingFile,
-                    format!("$.{field}[{index}].source"),
-                )
-                .expected(Expected::File));
-            }
-        };
+    for (index, item) in items.into_iter().enumerate() {
+        let item = item.ok_or_else(|| {
+            Error::new(ErrorCode::MissingFile, format!("$.{field}[{index}].source"))
+                .expected(Expected::File)
+        })?;
+        let handle = insert(item).map_err(|error| {
+            error
+                .coded(ErrorCode::AssetBudgetExceeded)
+                .at(format!("$.{field}[{index}]"))
+        })?;
         handles.push(handle);
     }
     Ok(())
-}
-
-fn provided_each<'a, H, N>(
-    names: impl Iterator<Item = Option<&'a str>>,
-    path: impl Fn(usize) -> String,
-    find: impl Fn(&str) -> Option<H>,
-    known: impl Fn() -> N,
-) -> Result<Vec<Option<H>>, Error>
-where
-    N: IntoIterator,
-    N::Item: Into<String>,
-{
-    names
-        .enumerate()
-        .map(|(index, name)| {
-            name.map(|name| {
-                find(name).ok_or_else(|| {
-                    Error::new(ErrorCode::UnknownReference, path(index))
-                        .got(name)
-                        .variants(known())
-                })
-            })
-            .transpose()
-        })
-        .collect()
 }
 
 impl SceneInstance {
@@ -173,15 +133,6 @@ impl SceneInstance {
         self.entities.get(authored_id).copied()
     }
 
-    pub fn authored_entity(&self, world: &World, id: &str) -> Option<Entity> {
-        self.entity(id).or_else(|| {
-            world
-                .get_resource::<OperationScene>()
-                .filter(|scene| Arc::ptr_eq(&scene.entities, &self.entities))?
-                .entity(id)
-        })
-    }
-
     pub fn entity_count(&self) -> usize {
         self.entities.len()
     }
@@ -194,13 +145,6 @@ impl SceneInstance {
         self.texture_ids
             .iter()
             .zip(&self.assets.textures)
-            .map(|(id, handle)| (id.as_str(), *handle))
-    }
-
-    pub fn meshes(&self) -> impl ExactSizeIterator<Item = (&str, GeometryHandle)> {
-        self.mesh_ids
-            .iter()
-            .zip(&self.assets.meshes)
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
@@ -225,28 +169,6 @@ impl SceneInstance {
         Some((&self.texture_ids[index], &self.origins.textures[index]))
     }
 
-    pub fn entities(&self) -> impl ExactSizeIterator<Item = (&str, Entity)> {
-        self.entities
-            .iter()
-            .map(|(id, entity)| (id.as_str(), *entity))
-    }
-
-    pub fn operation_scene(&self) -> OperationScene {
-        OperationScene::new(self.id.clone(), self.entities.clone())
-    }
-
-    pub fn current_scene(&self, world: &World) -> OperationScene {
-        world
-            .get_resource::<OperationScene>()
-            .filter(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
-            .cloned()
-            .unwrap_or_else(|| self.operation_scene())
-    }
-
-    pub fn belongs_to(&self, world: &World) -> bool {
-        self.world_id == world.id()
-    }
-
     pub fn despawn(self, world: &mut World) {
         assert_eq!(self.world_id, world.id(), "scene_world_matches");
         let installed: Option<Vec<Entity>> = world
@@ -269,31 +191,17 @@ impl SceneInstance {
             let _ = world.try_despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
-            self.owned.remove(&mut assets);
+            self.assets.remove(&mut assets);
         }
     }
 }
 
 impl SceneDocument {
-    pub fn instantiate(&self, world: &mut World) -> Result<SceneInstance, Error> {
-        self.instantiate_with(world, &SceneFiles::default())
-    }
-
     pub fn instantiate_with(
         &self,
         world: &mut World,
         files: &SceneFiles,
     ) -> Result<SceneInstance, Error> {
-        self.instantiate_then(world, files, |_, _| Ok(()))
-            .map(|(instance, ())| instance)
-    }
-
-    pub fn instantiate_then<R>(
-        &self,
-        world: &mut World,
-        files: &SceneFiles,
-        then: impl FnOnce(&mut World, &BTreeMap<String, Entity>) -> Result<R, Error>,
-    ) -> Result<(SceneInstance, R), Error> {
         let kinds = SceneKinds::of(world);
         let mut prepared = self.prepare(Some(files), &kinds)?;
         let skipped = crate::loading::named(self).scope(|| self.admit(world, &kinds))?;
@@ -301,7 +209,7 @@ impl SceneDocument {
             return Err(first.clone());
         }
         let replaced = Replaced::of(world);
-        let (assets, owned) = self.insert_assets(world, &mut prepared)?;
+        let assets = self.insert_assets(world, &mut prepared)?;
         let table = Arc::new(self.table(&assets));
         let spawned = self.spawn(world, &prepared);
         let entities: BTreeMap<String, Entity> = prepared
@@ -311,25 +219,25 @@ impl SceneDocument {
             .map(|(expanded, &entity)| (expanded.source.id.clone(), entity))
             .collect();
         let entities = Arc::new(entities);
-        let context =
-            crate::loading::context(self, table, entities.clone(), &kinds, Some(files.buffers()));
-        let landed = self
-            .land(world, (&prepared, &kinds), &context, &spawned)
-            .and_then(|()| {
-                world.insert_resource(OperationScene::new(self.id.clone(), entities.clone()));
-                then(world, &entities)
-            });
-        let done = match landed {
-            Ok(done) => done,
-            Err(error) => {
-                for &entity in &spawned {
-                    let _ = world.try_despawn(entity);
-                }
-                owned.remove(&mut world.resource_mut::<AssetLibrary>());
-                replaced.restore(world);
-                return Err(error);
-            }
+        let context = SceneContext {
+            assets: table,
+            entities: entities.clone(),
         };
+        let landed = self.land(
+            world,
+            (&prepared, &kinds),
+            (&context, &files.buffers()),
+            &spawned,
+        );
+        if let Err(error) = landed {
+            for &entity in &spawned {
+                let _ = world.try_despawn(entity);
+            }
+            assets.remove(&mut world.resource_mut::<AssetLibrary>());
+            replaced.restore(world);
+            return Err(error);
+        }
+        world.insert_resource(OperationScene::new(self.id.clone(), entities.clone()));
         replaced.retire(world);
         let instance = SceneInstance {
             id: self.id.clone(),
@@ -337,7 +245,6 @@ impl SceneDocument {
             world_id: world.id(),
             entities,
             assets,
-            owned,
             material_ids: self
                 .materials
                 .iter()
@@ -359,17 +266,26 @@ impl SceneDocument {
             },
             skipped,
         };
-        Ok((instance, done))
+        Ok(instance)
     }
 
     fn land(
         &self,
         world: &mut World,
         (prepared, kinds): (&PreparedScene, &SceneKinds),
-        context: &SceneContext,
+        (context, files): (&SceneContext, &SceneBuffers),
         spawned: &[Entity],
     ) -> Result<(), Error> {
-        read(world, prepared, spawned, context, kinds)?;
+        let cx = SceneCx::new(Some(context), Some(files));
+        context.scope(|| {
+            prepared
+                .entities
+                .iter()
+                .zip(spawned)
+                .try_for_each(|(expanded, &entity)| {
+                    kinds.read(world, entity, &expanded.source, &expanded.path, &cx)
+                })
+        })?;
         let entities = &context.entities;
         let parents: Vec<_> = prepared
             .entities
@@ -390,10 +306,7 @@ impl SceneDocument {
                 .within("$.entities")
         })?;
         propagate_transforms(world);
-        world.insert_resource(SceneContext {
-            files: None,
-            ..context.clone()
-        });
+        world.insert_resource(context.clone());
         let empty = crate::SceneEnvironment::default();
         let environment = prepared.environment.as_ref().unwrap_or(&empty);
         context.scope(|| environment.apply_all(world, "$.environment"))?;
@@ -404,48 +317,21 @@ impl SceneDocument {
         &self,
         world: &mut World,
         prepared: &mut PreparedScene,
-    ) -> Result<(Handles, Handles), Error> {
-        let none = ProvidedAssets::default();
-        let provided = world.get_resource::<ProvidedAssets>().unwrap_or(&none);
-        let provided_meshes = provided_each(
-            self.meshes.iter().map(|mesh| mesh.source.provided()),
-            |index| format!("$.meshes[{index}].source.name"),
-            |name| provided.mesh(name),
-            || provided.mesh_names(),
-        )?;
-        let provided_textures = provided_each(
-            self.textures
-                .iter()
-                .map(|texture| texture.provided.as_deref()),
-            |index| format!("$.textures[{index}].provided"),
-            |name| provided.texture(name),
-            || provided.texture_names(),
-        )?;
-        let provided_materials = provided_each(
-            self.materials
-                .iter()
-                .map(|material| material.provided.as_deref()),
-            |index| format!("$.materials[{index}].provided"),
-            |name| provided.material(name),
-            || provided.material_names(),
-        )?;
+    ) -> Result<Handles, Error> {
         let mut handles = Handles::default();
-        let mut owned = Handles::default();
         let mut assets = world
             .get_resource_mut::<AssetLibrary>()
             .ok_or_else(|| Error::new(ErrorCode::MissingAssetLibrary, "$"))?;
         let inserted = (|| {
             insert_each(
                 std::mem::take(&mut prepared.meshes),
-                provided_meshes,
-                (&mut handles.meshes, &mut owned.meshes),
+                &mut handles.meshes,
                 "meshes",
                 |mesh| assets.insert_mesh(mesh),
             )?;
             insert_each(
                 std::mem::take(&mut prepared.textures).into_iter().map(Some),
-                provided_textures,
-                (&mut handles.textures, &mut owned.textures),
+                &mut handles.textures,
                 "textures",
                 |texture| assets.insert_texture(texture),
             )?;
@@ -456,18 +342,19 @@ impl SceneDocument {
                 .map(|(source, handle)| (source.id.as_str(), *handle))
                 .collect();
             insert_each(
-                std::mem::take(&mut prepared.materials).into_iter().map(Some),
-                provided_materials,
-                (&mut handles.materials, &mut owned.materials),
+                std::mem::take(&mut prepared.materials)
+                    .into_iter()
+                    .map(Some),
+                &mut handles.materials,
                 "materials",
                 |material| assets.insert_material(material.material(|id| texture_lookup[id])),
             )
         })();
         if let Err(error) = inserted {
-            owned.remove(&mut assets);
+            handles.remove(&mut assets);
             return Err(error);
         }
-        Ok((handles, owned))
+        Ok(handles)
     }
 
     fn spawn(&self, world: &mut World, prepared: &PreparedScene) -> Vec<Entity> {
@@ -550,25 +437,6 @@ fn put<R: Resource>(world: &mut World, held: Option<R>) {
     }
 }
 
-fn read(
-    world: &mut World,
-    prepared: &PreparedScene,
-    spawned: &[Entity],
-    context: &SceneContext,
-    kinds: &SceneKinds,
-) -> Result<(), Error> {
-    let cx = kinds.cx(Some(context), None);
-    context.scope(|| {
-        prepared
-            .entities
-            .iter()
-            .zip(spawned)
-            .try_for_each(|(expanded, &entity)| {
-                kinds.read(world, entity, &expanded.source, &expanded.path, &cx)
-            })
-    })
-}
-
 pub(crate) fn spawn_entity(
     world: &mut World,
     scene_id: &str,
@@ -589,7 +457,6 @@ pub(crate) fn spawn_entity(
                 prefab_instance: expanded.prefab_instance.clone(),
                 prefab_local_id: expanded.prefab_local_id.clone(),
             },
-            engine_core::caused_now(),
         ))
         .id()
 }

@@ -14,17 +14,6 @@ pub struct SceneEnvironment {
 }
 
 impl SceneEnvironment {
-    pub fn current(world: &World) -> Result<Self, Error> {
-        let context = crate::loading::kept(world);
-        crate::loading::within(context.as_ref(), || {
-            let mut sections = BTreeMap::new();
-            for section in registered(world) {
-                sections.insert(section.key.to_owned(), section.current(world)?);
-            }
-            Ok(Self { sections })
-        })
-    }
-
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.sections
             .iter()
@@ -32,30 +21,8 @@ impl SceneEnvironment {
             .map(|(key, _)| key.as_str())
     }
 
-    pub fn ordered_keys(&self, world: &World) -> Vec<String> {
-        let mut keys: Vec<String> = Vec::new();
-        for section in registered(world) {
-            if self.value(section.key).is_some() {
-                keys.push(section.key.to_owned());
-            }
-        }
-        for key in self.keys() {
-            if !keys.iter().any(|known| known == key) {
-                keys.push(key.to_owned());
-            }
-        }
-        keys
-    }
-
     pub fn value(&self, key: &str) -> Option<&Value> {
         self.sections.get(key).filter(|value| !value.is_null())
-    }
-
-    pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
-        let context = crate::loading::kept(world);
-        crate::loading::within(context.as_ref(), || {
-            self.check_in(world.get_resource::<Registry>(), path)
-        })
     }
 
     pub(crate) fn check_in(&self, registry: Option<&Registry>, path: &str) -> Result<(), Error> {
@@ -78,24 +45,6 @@ impl SceneEnvironment {
                     .variants(registered(world).map(|section| section.key))
             })
             .collect()
-    }
-
-    pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<Vec<Error>, Error> {
-        let context = crate::loading::kept(world);
-        crate::loading::within(context.as_ref(), || {
-            self.check_in(world.get_resource::<Registry>(), path)?;
-            let skipped = self.unlisted(world, path);
-            if let Some(first) = skipped.first() {
-                return Err(first.clone());
-            }
-            for key in self.keys() {
-                let Some(section) = listed(world, key) else {
-                    continue;
-                };
-                section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
-            }
-            Ok(skipped)
-        })
     }
 
     pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), Error> {

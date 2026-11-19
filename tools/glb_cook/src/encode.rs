@@ -1,16 +1,15 @@
 use std::time::Instant;
 
-use engine_assets::{ColorSpace, Texture, TextureFormat};
-use engine_textures::Image;
+use engine_assets::ColorSpace;
 use serde_json::{Value, json};
 
 use crate::config::Encoding;
+use crate::image::Image;
 use crate::maps::MapKind;
 use crate::{bc5, bc7, ktx2};
 
 pub struct Encoded {
     pub file: Vec<u8>,
-    pub level_zero: Image,
     pub gpu_bytes: usize,
     pub seconds: f64,
     pub quality: Value,
@@ -68,13 +67,18 @@ fn rows_in_parallel<T: Send>(rows: usize, make: impl Fn(usize) -> T + Sync) -> V
     })
 }
 
-fn bc5_decoded(width: u32, height: u32, level: &[u8]) -> Vec<u8> {
+fn blocks_decoded(
+    width: u32,
+    height: u32,
+    level: &[u8],
+    decode: fn(&[u8; 16]) -> [[u8; 4]; 16],
+) -> Vec<u8> {
     let (width, height) = (width as usize, height as usize);
     let columns = width.div_ceil(4);
     let mut pixels = vec![0_u8; width * height * 4];
     for (index, block) in level.as_chunks::<16>().0.iter().enumerate() {
         let (column, row) = (index % columns, index / columns);
-        for (texel, color) in bc5::decode_block(block).iter().enumerate() {
+        for (texel, color) in decode(block).iter().enumerate() {
             let (x, y) = (column * 4 + texel % 4, row * 4 + texel / 4);
             if x < width && y < height {
                 let at = (y * width + x) * 4;
@@ -85,16 +89,12 @@ fn bc5_decoded(width: u32, height: u32, level: &[u8]) -> Vec<u8> {
     pixels
 }
 
-fn decoded(encoding: Encoding, width: u32, height: u32, level: &[u8]) -> Result<Vec<u8>, String> {
+fn decoded(encoding: Encoding, width: u32, height: u32, level: &[u8]) -> Vec<u8> {
     match encoding {
-        Encoding::Rgba8 | Encoding::Rgba8Srgb => Ok(level.to_vec()),
-        Encoding::Bc5 => Ok(bc5_decoded(width, height, level)),
+        Encoding::Rgba8 | Encoding::Rgba8Srgb => level.to_vec(),
+        Encoding::Bc5 => blocks_decoded(width, height, level, bc5::decode_block),
         Encoding::Bc7 | Encoding::Bc7Srgb => {
-            let texture =
-                Texture::from_levels(TextureFormat::Bc7, width, height, vec![level.to_vec()])
-                    .map_err(|error| error.to_string())?;
-            let plain = engine_textures::decompress(&texture).map_err(|error| error.to_string())?;
-            Ok(plain.levels()[0].to_vec())
+            blocks_decoded(width, height, level, bc7::decode_block)
         }
     }
 }
@@ -168,20 +168,6 @@ pub fn encode(
     let seconds = started.elapsed().as_secs_f64();
     let (width, height) = (chain[0].width, chain[0].height);
     let file = ktx2::write(encoding, width, height, &levels);
-    let read = ktx2::read(&file)?;
-    let expected: Vec<usize> = chain
-        .iter()
-        .map(|image| ktx2::level_bytes(encoding, image.width, image.height))
-        .collect();
-    let lengths: Vec<usize> = read.levels.iter().map(Vec::len).collect();
-    if read.vk_format != ktx2::layout(encoding).vk_format
-        || (read.width, read.height) != (width, height)
-        || lengths != expected
-        || read.levels != levels
-    {
-        return Err("the written KTX2 file reads back differently".into());
-    }
-    let pixels = decoded(encoding, width, height, &read.levels[0])?;
     let engine =
         engine_textures::decode_texture("ktx2", &file).map_err(|error| error.to_string())?;
     let space = if encoding.srgb() {
@@ -198,6 +184,7 @@ pub fn encode(
     if !same_levels || engine.color_space() != space {
         return Err("the engine's KTX2 reader reads the file differently".into());
     }
+    let pixels = decoded(encoding, width, height, &levels[0]);
     let source = &chain[0].pixels;
     let quality = match kind {
         MapKind::Normal => {
@@ -220,12 +207,7 @@ pub fn encode(
     };
     Ok(Encoded {
         file,
-        level_zero: Image {
-            width,
-            height,
-            pixels,
-        },
-        gpu_bytes: expected.iter().sum(),
+        gpu_bytes: levels.iter().map(Vec::len).sum(),
         seconds,
         quality,
     })

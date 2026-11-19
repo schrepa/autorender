@@ -45,10 +45,10 @@ pub(crate) enum Ty {
 }
 
 impl Ty {
-    pub(crate) fn binding(self, filterable: bool, dynamic: bool) -> wgpu::BindingType {
+    pub(crate) fn binding(self, filterable: bool) -> wgpu::BindingType {
         let buffer = |ty| wgpu::BindingType::Buffer {
             ty,
-            has_dynamic_offset: dynamic,
+            has_dynamic_offset: false,
             min_binding_size: None,
         };
         match self {

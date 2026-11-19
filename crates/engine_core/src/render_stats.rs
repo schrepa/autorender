@@ -19,7 +19,6 @@ pub enum DropReason {
     NoRenderPass,
     PipelineCompiling,
     PipelineRefused,
-    MissingInput,
     MissingBindGroup,
     RowIncomplete,
 }
@@ -37,7 +36,6 @@ impl DropReason {
             | Self::GeometryLacksStreams
             | Self::NoRenderPass
             | Self::PipelineRefused
-            | Self::MissingInput
             | Self::MissingBindGroup => true,
             Self::GeometryWaiting
             | Self::GeometryFailed
@@ -89,20 +87,12 @@ pub struct DrawReports {
 pub struct RenderStats {
     pub draw_calls: u64,
     pub instances: u64,
-    pub indirect_draws: u64,
     pub upload_bytes: u64,
     pub mesh_upload_bytes: u64,
     pub texture_upload_bytes: u64,
     pub pipelines: u32,
     pub pipelines_created: u32,
     pub render_passes: Names,
-    #[serde(skip_serializing_if = "none_overflowed")]
-    #[cfg_attr(feature = "schema", schemars(skip))]
-    pub readback_overflows: u64,
-}
-
-fn none_overflowed(overflows: &u64) -> bool {
-    *overflows == 0
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

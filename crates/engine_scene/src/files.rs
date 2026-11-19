@@ -23,15 +23,9 @@ pub struct SceneFile {
     pub kind: SceneFileKind,
 }
 
-#[derive(Clone, Debug)]
-enum Held {
-    Pixels(u32, u32, Vec<u8>),
-    Stated(Vec<u8>),
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct SceneFiles {
-    images: BTreeMap<String, Held>,
+    images: BTreeMap<String, Vec<u8>>,
     buffers: Arc<SceneBuffers>,
 }
 
@@ -40,14 +34,9 @@ impl SceneFiles {
         Self::default()
     }
 
-    pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
-        self.images
-            .insert(uri.to_owned(), Held::Pixels(width, height, pixels));
-    }
-
     pub fn add_texture_file(&mut self, uri: &str, bytes: Vec<u8>) -> Result<(), Error> {
         engine_core::decode_texture(uri, &bytes)?;
-        self.images.insert(uri.to_owned(), Held::Stated(bytes));
+        self.images.insert(uri.to_owned(), bytes);
         Ok(())
     }
 
@@ -55,28 +44,13 @@ impl SceneFiles {
         Arc::make_mut(&mut self.buffers).insert(uri.to_owned(), bytes.into());
     }
 
-    pub fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], Error> {
-        self.buffers
-            .get(uri)
-            .map(Arc::as_ref)
-            .ok_or_else(|| missing(uri, path))
-    }
-
     pub(crate) fn buffers(&self) -> Arc<SceneBuffers> {
         Arc::clone(&self.buffers)
     }
 
-    pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<(Texture, bool), Error> {
-        match self.images.get(uri).ok_or_else(|| missing(uri, path))? {
-            Held::Pixels(width, height, pixels) => {
-                Texture::from_rgba(*width, *height, pixels.clone())
-                    .map(|texture| (texture, false))
-                    .map_err(|error| error.coded(ErrorCode::InvalidTexture).within(path))
-            }
-            Held::Stated(bytes) => engine_core::decode_texture(uri, bytes)
-                .map(|texture| (texture, true))
-                .map_err(|error| error.within(path)),
-        }
+    pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, Error> {
+        let bytes = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
+        engine_core::decode_texture(uri, bytes).map_err(|error| error.within(path))
     }
 
     pub(crate) fn mesh(&self, uri: &str, path: &str) -> Result<MeshBuffer, Error> {

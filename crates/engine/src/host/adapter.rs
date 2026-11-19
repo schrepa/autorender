@@ -1,5 +1,4 @@
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AdapterStatus {
     pub name: String,
     pub vendor: String,
@@ -27,7 +26,7 @@ impl AdapterStatus {
     }
 }
 
-pub fn vendor(adapter: &crate::AdapterInfo) -> &'static str {
+fn vendor(adapter: &crate::AdapterInfo) -> &'static str {
     match adapter.vendor {
         0x10de => "nvidia",
         0x1002 | 0x1022 => "amd",

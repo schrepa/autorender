@@ -15,7 +15,7 @@ impl CameraUniform {
     }
 }
 
-pub fn mip_levels(width: u32, height: u32) -> u32 {
+pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
     u32::BITS - width.max(height).max(1).leading_zeros()
 }
 
@@ -43,12 +43,6 @@ pub(crate) fn level_copy(
             depth_or_array_layers: 1,
         },
     )
-}
-
-pub fn mip_chain_bytes(width: u32, height: u32) -> u64 {
-    (1..mip_levels(width, height))
-        .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
-        .sum()
 }
 
 pub fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {

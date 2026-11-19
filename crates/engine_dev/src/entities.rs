@@ -257,16 +257,14 @@ fn drawn_mesh(reach: &Reach<'_>, entity: Entity) -> Option<Value> {
         .map(|(_, map)| {
             let origin = scene.and_then(|scene| scene.texture_origin(map.texture));
             let texture = assets.texture(map.texture);
-            let (uri, provided) = match origin.map(|(_, source)| source) {
-                Some(TextureOrigin::File { uri }) => (Some(uri.clone()), None),
-                Some(TextureOrigin::Provided { name }) => (None, Some(name.clone())),
-                Some(TextureOrigin::Inline) | None => (None, None),
+            let uri = match origin.map(|(_, source)| source) {
+                Some(TextureOrigin::File { uri }) => Some(uri),
+                Some(TextureOrigin::Inline) | None => None,
             };
             json!({
                 "id": origin.map(|(id, _)| id),
                 "uri": uri,
                 "inline": matches!(origin, Some((_, TextureOrigin::Inline))),
-                "provided": provided,
                 "loaded": texture.is_some(),
                 "width": texture.map(|texture| texture.width()),
                 "height": texture.map(|texture| texture.height()),

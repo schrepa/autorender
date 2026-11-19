@@ -13,7 +13,6 @@ use winit::window::WindowId;
 
 use crate::host_error;
 use crate::input::Input;
-use crate::jobs::JobPool;
 use crate::options::{HostOptions, StartScene};
 
 #[derive(Clone, Debug)]
@@ -65,7 +64,6 @@ struct Running<G: Game> {
     host: Box<GameHost<G>>,
     size: (u32, u32),
     title: Title,
-    jobs: JobPool,
     speaker: crate::sound::Speaker,
     #[cfg(feature = "dev")]
     session: crate::dev::Session,
@@ -107,20 +105,14 @@ impl<'a, G: Game> App<'a, G> {
         host.offer_close();
         crate::open_scene(&mut host, &self.options.scene)?;
         options.settings.apply(&mut host)?;
-        let mut jobs = options.jobs.pool(false);
-        jobs.attach(&mut host);
         #[cfg(feature = "dev")]
-        let session = {
-            let pack = crate::options::pack_header(&jobs);
-            options.session(&mut host, size, &self.options.scene, ("window", pack))?
-        };
+        let session = options.session(&mut host, size)?;
         self.input.connect_pads();
         Ok(Running {
             window,
             host,
             size,
             title: Title::new(&self.options.title),
-            jobs,
             speaker: crate::sound::Speaker::default(),
             #[cfg(feature = "dev")]
             session,
@@ -268,10 +260,8 @@ impl<G: Game> Running<G> {
         crate::dev::follow_source(&mut self.host);
         let timestamp = engine::host::now_ms();
         let (width, height) = self.size;
-        self.exchange_jobs();
         let phase = self.host.animation_frame(timestamp, width, height)?;
         self.speaker.exchange(&mut self.host);
-        self.exchange_jobs();
         #[cfg(feature = "dev")]
         self.session.after(&mut self.host)?;
         match phase {
@@ -282,10 +272,6 @@ impl<G: Game> Running<G> {
             FramePhase::Started | FramePhase::Idle | FramePhase::Paused => {}
         }
         Ok(phase)
-    }
-
-    fn exchange_jobs(&mut self) {
-        self.jobs.exchange(&mut self.host);
     }
 }
 

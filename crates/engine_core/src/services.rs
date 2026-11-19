@@ -11,77 +11,61 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, ResMut};
 use bevy_ecs::world::World;
 use engine_place::{OperationScene, SceneEntity};
-use engine_registry::JobList;
-use glam::Mat4;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{Error, ErrorCode, Expected, List};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Placed {
-    pub world: Mat4,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Placement {
-    #[default]
-    Anywhere,
-    Roots(ErrorCode),
-}
-
 pub type SceneBuffers = BTreeMap<String, Arc<[u8]>>;
 
 pub struct SceneCx<'a> {
-    list: Option<&'a JobList>,
     scene: Option<&'a SceneContext>,
     files: Option<&'a SceneBuffers>,
+    built: bool,
 }
 
 impl<'a> SceneCx<'a> {
     #[doc(hidden)]
-    pub fn new(
-        list: Option<&'a JobList>,
-        scene: Option<&'a SceneContext>,
-        files: Option<&'a SceneBuffers>,
-    ) -> Self {
-        Self { list, scene, files }
+    pub fn new(scene: Option<&'a SceneContext>, files: Option<&'a SceneBuffers>) -> Self {
+        Self {
+            scene,
+            files,
+            built: false,
+        }
     }
 
     #[doc(hidden)]
-    pub fn of(world: &'a World) -> Self {
+    pub fn built(scene: Option<&'a SceneContext>) -> Self {
         Self {
-            list: world
-                .get_resource::<crate::JobExchange>()
-                .map(crate::JobExchange::list),
-            scene: world.get_resource::<SceneContext>(),
+            scene,
             files: None,
+            built: true,
         }
     }
 }
 
 impl SceneCx<'_> {
-    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        self.list.into_iter().flat_map(JobList::members::<L>)
-    }
-
     pub fn scene(&self) -> Option<&SceneContext> {
         self.scene
     }
 
     pub fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, Error> {
-        let files = self
-            .files
-            .or_else(|| self.scene.and_then(|scene| scene.files.as_deref()));
-        files
-            .map(|files| {
-                files.get(uri).cloned().ok_or_else(|| {
-                    Error::new(ErrorCode::MissingFile, path)
-                        .expected(Expected::File)
-                        .got(uri)
-                })
-            })
-            .transpose()
+        let missing = |got: String| {
+            Error::new(ErrorCode::MissingFile, path)
+                .expected(Expected::File)
+                .got(got)
+        };
+        match self.files {
+            Some(files) => files
+                .get(uri)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| missing(uri.to_owned())),
+            None if self.built => Err(missing(format!(
+                "{uri}: files are not held after the scene is built"
+            ))),
+            None => Ok(None),
+        }
     }
 }
 
@@ -90,30 +74,23 @@ pub struct Prepared(Box<dyn Any + Send + Sync>);
 
 type Held = dyn Any + Send + Sync;
 type CheckHook = Arc<dyn Fn(&Held, &str) -> Result<(), Error> + Send + Sync>;
-type PlacedHook = Arc<dyn Fn(&Held, Placed, &str) -> Result<(), Error> + Send + Sync>;
-type FilesHook = Arc<dyn Fn(&Value, &SceneCx<'_>) -> Vec<String> + Send + Sync>;
-type SchemaHook = Arc<dyn Fn(&SceneCx<'_>) -> Value + Send + Sync>;
+type FilesHook = Arc<dyn Fn(&Value) -> Vec<String> + Send + Sync>;
 type PrepareHook = Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<Prepared, Error> + Send + Sync>;
-type ViewHook = Arc<dyn Fn(&World, Entity) -> Option<Value> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ComponentKind {
     key: &'static str,
     register: fn(&mut World) -> ComponentId,
-    scene: engine_registry::SceneRead,
+    read: fn(&mut World, Entity, &Value) -> Result<(), Error>,
     parse: fn(&Value, &str) -> Result<(), Error>,
     value: fn(&World, Entity) -> Option<Value>,
     prepared: fn(&Value, &str) -> Result<Prepared, Error>,
     held: fn(&World, Entity) -> Option<Prepared>,
     insert: fn(&mut World, Entity, Prepared) -> Result<(), Error>,
-    placement: Placement,
     check: Option<CheckHook>,
-    placed: Option<PlacedHook>,
     files: Option<FilesHook>,
-    schema: Option<SchemaHook>,
+    schema: Option<fn() -> Value>,
     prepare: Option<PrepareHook>,
-    view: Option<ViewHook>,
-    view_schema: Option<fn() -> Value>,
 }
 
 #[must_use]
@@ -140,20 +117,16 @@ impl ComponentKind {
             kind: Self {
                 key,
                 register: World::register_component::<F::Component>,
-                scene: engine_registry::SceneRead(read_form::<F>),
+                read: read_form::<F>,
                 parse: parse_component::<F>,
                 value: form_value::<F>,
                 prepared: prepared_component::<F>,
                 held: held_form::<F>,
                 insert: insert_form::<F>,
-                placement: Placement::Anywhere,
                 check: None,
-                placed: None,
                 files: None,
                 schema: None,
                 prepare: None,
-                view: None,
-                view_schema: None,
             },
             component: PhantomData,
         }
@@ -166,20 +139,16 @@ impl ComponentKind {
             kind: Self {
                 key,
                 register: World::register_component::<C>,
-                scene: engine_registry::SceneRead(read_component::<C>),
+                read: read_component::<C>,
                 parse: parse_component::<C>,
                 value: component_value::<C>,
                 prepared: prepared_component::<C>,
                 held: held_component::<C>,
                 insert: insert_component::<C>,
-                placement: Placement::Anywhere,
                 check: None,
-                placed: None,
                 files: None,
                 schema: None,
                 prepare: None,
-                view: None,
-                view_schema: None,
             },
             component: PhantomData,
         }
@@ -196,29 +165,12 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn scene(&self) -> engine_registry::SceneRead {
-        self.scene
-    }
-
-    #[doc(hidden)]
-    pub fn placement(&self) -> Placement {
-        self.placement
-    }
-
-    #[doc(hidden)]
     pub fn read(&self, world: &mut World, entity: Entity, value: &Value) -> Result<(), Error> {
         if self.prepare.is_none() {
-            return (self.scene.0)(world, entity, value);
+            return (self.read)(world, entity, value);
         }
-        let list = world
-            .get_resource::<crate::JobExchange>()
-            .map(crate::JobExchange::shared_list);
         let scene = world.get_resource::<SceneContext>().cloned();
-        let prepared = self.prepare_value(
-            value,
-            &SceneCx::new(list.as_deref(), scene.as_ref(), None),
-            "$",
-        )?;
+        let prepared = self.prepare_value(value, &SceneCx::built(scene.as_ref()), "$")?;
         (self.insert)(world, entity, prepared)
     }
 
@@ -259,10 +211,7 @@ impl ComponentKind {
 
     #[doc(hidden)]
     pub fn value(&self, world: &World, entity: Entity) -> Option<Value> {
-        match &self.view {
-            Some(view) => view(world, entity),
-            None => (self.value)(world, entity),
-        }
+        (self.value)(world, entity)
     }
 
     #[doc(hidden)]
@@ -274,60 +223,28 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn validate_placed(&self, value: &Value, placed: Placed, path: &str) -> Result<(), Error> {
-        match &self.placed {
-            Some(check) => check((self.prepared)(value, path)?.0.as_ref(), placed, path),
-            None => Ok(()),
-        }
-    }
-
-    #[doc(hidden)]
     pub fn admits(&self) -> bool {
         self.check.is_some()
-            || self.placed.is_some()
-            || matches!(self.placement, Placement::Roots(_))
     }
 
     #[doc(hidden)]
-    pub fn admit_held(
-        &self,
-        world: &World,
-        entity: Entity,
-        (parented, placed): (bool, Option<Placed>),
-        path: &str,
-    ) -> Result<(), Error> {
-        let Some(held) = (self.held)(world, entity) else {
-            return Ok(());
-        };
-        if let (Placement::Roots(code), true) = (self.placement, parented) {
-            return Err(Error::new(code, path).expected(Expected::Absent));
+    pub fn admit_held(&self, world: &World, entity: Entity, path: &str) -> Result<(), Error> {
+        match (&self.check, (self.held)(world, entity)) {
+            (Some(check), Some(held)) => check(held.0.as_ref(), path),
+            (None, _) | (_, None) => Ok(()),
         }
-        if let Some(check) = &self.check {
-            check(held.0.as_ref(), path)?;
-        }
-        if let (Some(check), Some(placed)) = (&self.placed, placed) {
-            check(held.0.as_ref(), placed, path)?;
-        }
-        Ok(())
     }
 
     #[doc(hidden)]
-    pub fn listed_files_in(&self, value: &Value, cx: &SceneCx<'_>) -> Vec<String> {
+    pub fn listed_files(&self, value: &Value) -> Vec<String> {
         self.files
             .as_ref()
-            .map_or_else(Vec::new, |files| files(value, cx))
+            .map_or_else(Vec::new, |files| files(value))
     }
 
     #[doc(hidden)]
-    pub fn json_schema_in(&self, cx: &SceneCx<'_>) -> Value {
-        self.schema
-            .as_ref()
-            .map_or(Value::Null, |schema| schema(cx))
-    }
-
-    #[doc(hidden)]
-    pub fn view_schema(&self) -> Option<Value> {
-        self.view_schema.map(|schema| schema())
+    pub fn json_schema(&self) -> Value {
+        self.schema.map_or(Value::Null, |schema| schema())
     }
 }
 
@@ -340,40 +257,15 @@ impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentK
         self
     }
 
-    pub fn check_placed(mut self, check: fn(&C, Placed, &str) -> Result<(), Error>) -> Self {
-        self.kind.placed = Some(Arc::new(move |held: &Held, placed: Placed, path: &str| {
-            held.downcast_ref::<C>()
-                .map_or(Ok(()), |component| check(component, placed, path))
-        }));
-        self
-    }
-
-    pub fn placement(mut self, placement: Placement) -> Self {
-        self.kind.placement = placement;
-        self
-    }
-
     pub fn files(mut self, files: fn(&C) -> Vec<String>) -> Self {
-        self.kind.files = Some(Arc::new(move |value: &Value, _: &SceneCx<'_>| {
+        self.kind.files = Some(Arc::new(move |value: &Value| {
             parsed::<C>(value, "$").map_or_else(|_| Vec::new(), |component| files(&component))
         }));
         self
     }
 
-    pub fn files_in(mut self, files: fn(&C, &SceneCx<'_>) -> Vec<String>) -> Self {
-        self.kind.files = Some(Arc::new(move |value: &Value, cx: &SceneCx<'_>| {
-            parsed::<C>(value, "$").map_or_else(|_| Vec::new(), |component| files(&component, cx))
-        }));
-        self
-    }
-
     pub fn schema(mut self, schema: fn() -> Value) -> Self {
-        self.kind.schema = Some(Arc::new(move |_: &SceneCx<'_>| schema()));
-        self
-    }
-
-    pub fn schema_in(mut self, schema: fn(&SceneCx<'_>) -> Value) -> Self {
-        self.kind.schema = Some(Arc::new(schema));
+        self.kind.schema = Some(schema);
         self
     }
 
@@ -388,32 +280,10 @@ impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentK
     }
 }
 
-impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
-    pub fn view<A: Component, V: Serialize + schemars::JsonSchema + 'static>(
-        mut self,
-        view: fn(&C, Option<&A>) -> V,
-    ) -> Self {
-        self.kind.view_schema = Some(view_schema_of::<V>);
-        self.kind.view = Some(Arc::new(move |world: &World, entity: Entity| {
-            let component = world.get::<C>(entity)?;
-            let write = || serde_json::to_value(view(component, world.get::<A>(entity))).ok();
-            match world.get_resource::<SceneContext>() {
-                Some(context) => context.scope(write),
-                None => write(),
-            }
-        }));
-        self
-    }
-}
-
 impl<C> From<ComponentKindOf<C>> for ComponentKind {
     fn from(of: ComponentKindOf<C>) -> Self {
         of.kind
     }
-}
-
-fn view_schema_of<V: schemars::JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(V)).unwrap_or(Value::Null)
 }
 
 fn parsed<C: DeserializeOwned>(value: &Value, path: &str) -> Result<C, Error> {
@@ -553,28 +423,11 @@ pub(crate) fn scene_entity_discarded(
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Authored {
-    pub id: String,
-    pub name: String,
-    pub tags: Vec<String>,
-    pub parent: Option<String>,
-    pub prefab_id: Option<String>,
-    pub prefab_instance: Option<String>,
-    pub prefab_local_id: Option<String>,
-}
-
 #[derive(Resource, Clone)]
 #[component(immutable)]
 pub struct SceneContext {
-    pub id: String,
     pub assets: Arc<engine_assets::SceneAssets>,
-    pub prefabs: Arc<BTreeMap<String, (usize, Value)>>,
-    pub components: Arc<BTreeMap<String, BTreeMap<String, Value>>>,
     pub entities: Arc<BTreeMap<String, Entity>>,
-    pub kinds: Arc<[ComponentKind]>,
-    pub list: Option<Arc<JobList>>,
-    pub files: Option<Arc<SceneBuffers>>,
 }
 
 impl SceneContext {
@@ -585,44 +438,10 @@ impl SceneContext {
     pub fn entity(&self, id: &str) -> Option<Entity> {
         self.entities.get(id).copied()
     }
-
-    pub fn prefab(&self, id: &str) -> Option<&(usize, Value)> {
-        self.prefabs.get(id)
-    }
-
-    pub fn component(&self, entity: &str, key: &str) -> Option<&Value> {
-        self.components.get(entity)?.get(key)
-    }
-
-    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        self.list
-            .as_deref()
-            .into_iter()
-            .flat_map(JobList::members::<L>)
-    }
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 #[component(immutable)]
 pub struct DeviceLimits {
-    pub cores: u32,
     pub storage_room: u64,
-    pub texture_layers: u32,
-    pub max_texture_dimension_2d: u32,
-    pub max_compute_workgroups_per_dimension: u32,
-    pub indirect_first_instance: bool,
-}
-
-impl DeviceLimits {
-    #[doc(hidden)]
-    pub fn without_device(cores: u32) -> Self {
-        Self {
-            cores,
-            storage_room: 0,
-            texture_layers: 0,
-            max_texture_dimension_2d: 0,
-            max_compute_workgroups_per_dimension: 0,
-            indirect_first_instance: false,
-        }
-    }
 }

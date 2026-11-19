@@ -9,8 +9,6 @@ use gltf::material::AlphaMode;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use serde::Serialize;
 
-use engine_textures::Image;
-
 use crate::config::MaterialNames;
 use crate::fault::Fault;
 use crate::geometry::Built;
@@ -161,7 +159,6 @@ pub fn material(
     )]);
     Ok(SceneMaterial {
         id: cooked.stem.clone(),
-        provided: None,
         color: Some([red, green, blue, 1.0]),
         surface: None,
         opacity: None,
@@ -199,7 +196,6 @@ pub fn assemble(
         height: None,
         rgba8: None,
         uri: Some(uri),
-        provided: None,
     };
     Fragment {
         textures: materials
@@ -227,7 +223,7 @@ pub fn validate(
     fragment: &Fragment,
     prefix: &str,
     meshes: &[Built],
-    images: &[(String, &Image)],
+    textures: &[(String, &[u8])],
 ) -> Result<String, Fault> {
     let fault = |detail: &dyn std::fmt::Display| {
         Fault::new("FragmentInvalid", file, format!("{name} fragment"), detail)
@@ -244,8 +240,10 @@ pub fn validate(
     for mesh in meshes {
         files.add_buffer(&format!("{prefix}{}.emb", mesh.stem), mesh.bytes.clone());
     }
-    for (uri, image) in images {
-        files.add_image(uri, image.width, image.height, image.pixels.clone());
+    for (uri, bytes) in textures {
+        files
+            .add_texture_file(uri, bytes.to_vec())
+            .map_err(|error| fault(&error))?;
     }
     document
         .validate_with(&SceneKinds::default(), &files)

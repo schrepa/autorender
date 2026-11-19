@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_profile", "crates/engine_sources", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "tools/xtask", "tools/xtask_engine", "tools/lodbuild", "crates/engine_checks", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_codec", "tools/kinds", "crates/engine/examples/app_template", "crates/engine/examples/bare_game", "crates/engine_gpu_bits", "tools/command_line", "crates/engine_rig", "tools/glb_cook", "crates/engine/examples/fruit_fps"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_profile", "crates/engine_sources", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "tools/xtask", "tools/xtask_engine", "crates/engine_checks", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_codec", "tools/kinds", "crates/engine_gpu_bits", "tools/command_line", "crates/engine_rig", "tools/glb_cook", "crates/engine/examples/fruit_fps"]
 resolver = "3"
 exclude = ["vendor", "archive"]
 
@@ -25,9 +25,7 @@ engine_scene = { path = "crates/engine_scene" }
 engine_dev = { path = "crates/engine_dev" }
 engine_native = { path = "crates/engine_native" }
 engine_profiler = { path = "crates/engine_profiler" }
-engine_worker = { path = "crates/engine_worker" }
 engine_panic = { path = "crates/engine_panic" }
-engine_lodbuild = { path = "tools/lodbuild" }
 engine_command_line = { path = "tools/command_line" }
 xtask = { path = "tools/xtask" }
 engine_checks = { path = "crates/engine_checks" }
@@ -40,10 +38,7 @@ engine_rig = { path = "crates/engine_rig" }
 base64 = "=0.22.1"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"
-tiff = { version = "=0.11.3", default-features = false, features = ["deflate", "lzw"] }
 sha2 = "=0.10.9"
-ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
-zstd = { version = "=0.14.3", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
 serde_path_to_error = "=0.1.20"
@@ -53,13 +48,9 @@ bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 glam = { version = "=0.30.9", features = ["serde"] }
 libm = { version = "=0.2.16", default-features = false }
 foldhash = { version = "=0.2.0", default-features = false }
-indexmap = { version = "=2.14.2", default-features = false }
-bevy_platform = { version = "=0.19.1", default-features = false }
 bytemuck = { version = "=1.25.2", features = ["derive", "min_const_generics"] }
-zip = { version = "=9.2.2", default-features = false, features = ["deflate-flate2"] }
 gilrs = "=0.11.2"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
-wgpu-types = { version = "=30.0.1", default-features = false, features = ["serde"] }
 wasm-bindgen = "=0.2.127"
 js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"

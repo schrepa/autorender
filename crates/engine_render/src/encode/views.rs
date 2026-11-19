@@ -14,11 +14,6 @@ impl Run {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            engine_profile::event(
-                "rebuilt",
-                "engine/cameras",
-                &[("why", engine_profile::Fact::Text("views"))],
-            );
             self.touch(Held::Cameras);
         }
         let mut staged = std::mem::take(&mut self.spare.cameras);
@@ -39,18 +34,6 @@ impl Run {
             0,
             bytemuck::bytes_of(&self.uniforms.post),
         );
-    }
-
-    pub(crate) fn read_back(&mut self, asked: Asked) -> bool {
-        let reader = Reader::Part {
-            part: asked.part,
-            tag: asked.tag,
-        };
-        let free = asked.once || self.reading.list.room(reader, self.reading.slots);
-        if free {
-            self.queued.asked.push(asked);
-        }
-        free
     }
 
     pub(crate) fn fill(&mut self, pipeline: u32, textures: &[TextureHandle]) -> u32 {
@@ -91,39 +74,6 @@ impl Run {
         }
     }
 
-    pub(crate) fn texture_view(&mut self, bound: &Bound, ty: Ty) -> Option<wgpu::TextureView> {
-        let dimension = match ty {
-            Ty::Texture { view, .. } | Ty::StorageTexture { view, .. } => Some(view),
-            Ty::Uniform | Ty::Storage { .. } | Ty::Sampler | Ty::Comparison => None,
-        };
-        match bound {
-            Bound::Texture(texture) | Bound::Slice { texture, .. } => {
-                let made = self
-                    .texture_tables_mut(*texture)
-                    .textures
-                    .get_mut(*texture as usize)?
-                    .as_mut()?;
-                let (mips, layers) = match bound {
-                    Bound::Slice { mips, layers, .. } => (mips.clone(), layers.clone()),
-                    Bound::Texture(_)
-                    | Bound::Buffer(_)
-                    | Bound::Window { .. }
-                    | Bound::Sampler(_)
-                    | Bound::Target(_)
-                    | Bound::Asset => (0..made.mips, 0..made.layers()),
-                };
-                made.slice(&mips, &layers, dimension).cloned()
-            }
-            Bound::Target(name) => self
-                .machine
-                .declared
-                .target_of(*name)
-                .and_then(|target| self.view_of(target))
-                .cloned(),
-            Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Asset => None,
-        }
-    }
-
     pub(super) fn placeholder(&mut self, key: (Ty, u64)) {
         if !self
             .bindings
@@ -142,20 +92,16 @@ impl Run {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
                 None => Resolved::Placeholder(ty),
             },
-            Bound::Window { buffer, size } => match self.buffer_held(*buffer) {
-                Some((made, bytes)) if *bytes >= *size => Resolved::Dynamic(made.clone(), *size),
-                Some(_) | None => Resolved::Placeholder(ty),
-            },
             Bound::Sampler(sampler) => match self.bindings.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),
                 None => Resolved::Placeholder(ty),
             },
-            Bound::Texture(_) | Bound::Slice { .. } | Bound::Target(_) => {
-                match self.texture_view(bound, ty) {
-                    Some(view) => Resolved::View(view),
-                    None => Resolved::Placeholder(ty),
-                }
-            }
+            Bound::Target(name) => match (self.machine.declared.target_of(*name))
+                .and_then(|target| self.view_of(target))
+            {
+                Some(view) => Resolved::View(view.clone()),
+                None => Resolved::Placeholder(ty),
+            },
             Bound::Asset => Resolved::Placeholder(ty),
         }
     }
@@ -376,7 +322,6 @@ impl Run {
                 label,
                 format,
                 usage,
-                dimension: wgpu::TextureDimension::D2,
                 samples,
             };
             Allocated::new(&device, &made, size, 1)
@@ -391,11 +336,6 @@ impl Run {
         let set = self.set_mut();
         set.shared = shared;
         set.canvas = canvas;
-        engine_profile::event(
-            "rebuilt",
-            "engine/view-targets",
-            &[("why", engine_profile::Fact::Text("size"))],
-        );
         self.touch(Held::Targets);
     }
 
@@ -424,14 +364,7 @@ impl Run {
         {
             set.view = main.view;
         }
-        let machine = &self.machine;
-        self.sets.list.retain_mut(|set| {
-            let kept = shown(set.view);
-            if !kept {
-                set.release(machine, None);
-            }
-            kept
-        });
+        self.sets.list.retain(|set| shown(set.view));
         for facts in listed {
             if !self.sets.list.iter().any(|set| set.view == facts.view) {
                 let set = ViewSet::new(&self.device, &self.machine, facts.view, &self.sets.holders);
@@ -518,13 +451,6 @@ impl Run {
             }
         }
         sets.counted.plans[why] += 1;
-        if engine_profile::recording() {
-            engine_profile::event(
-                "plan",
-                &set.slot.to_string(),
-                &[("why", engine_profile::Fact::Text(PLAN_WHY[why]))],
-            );
-        }
         Ok(plan)
     }
 
@@ -632,8 +558,6 @@ impl Tables {
     }
 }
 
-const PLAN_WHY: [&str; 4] = ["first", "runs", "outputs", "ready"];
-
 pub(crate) struct PlanKey {
     runs: Bits,
     outputs: Bits,
@@ -647,7 +571,6 @@ pub(crate) struct ViewSet {
     pub(crate) slot: u32,
     pub(crate) shared: Vec<Allocated>,
     pub(crate) canvas: Option<Allocated>,
-    pub(crate) tables: Tables,
     pub(crate) post_buffer: wgpu::Buffer,
     pub(crate) groups: Vec<Option<(Holder, HeldGroups)>>,
     pub(crate) stale: std::collections::BTreeSet<Holder>,
@@ -668,7 +591,6 @@ impl ViewSet {
             slot: 0,
             shared: Vec::new(),
             canvas: None,
-            tables: Tables::of(machine),
             post_buffer: uniform_buffer(
                 device,
                 "engine/post-uniform",
@@ -703,23 +625,6 @@ impl ViewSet {
     pub(crate) fn target(&self, target: Target) -> Option<&wgpu::TextureView> {
         self.allocated(target).map(|made| &made.view)
     }
-
-    pub(crate) fn release(&mut self, machine: &Machine, part: Option<u32>) {
-        let owned = |owner: u32| part.is_none_or(|part| owner == part);
-        for (texture, made) in self.tables.textures.iter_mut().enumerate() {
-            if owned(machine.declared.textures[texture].part) {
-                *made = None;
-                self.tables.sizes[texture] = None;
-            }
-        }
-        for (buffer, made) in self.tables.buffers.iter_mut().enumerate() {
-            if owned(machine.declared.buffers[buffer].part) {
-                *made = None;
-            }
-        }
-        self.stale
-            .extend(self.groups.iter().flatten().map(|(holder, _)| *holder));
-    }
 }
 
 pub(crate) struct Fixed {
@@ -748,8 +653,6 @@ pub(crate) struct Counted {
     pub(crate) plans: [u64; 4],
     pub(crate) opened: Vec<u64>,
     pub(crate) merged: Vec<u64>,
-    pub(crate) why: Vec<Option<&'static str>>,
-    pub(crate) shared_open: bool,
 }
 
 pub(crate) struct Sets {
@@ -804,7 +707,7 @@ impl Sets {
             if viewed && pass.views == engine_core::PassViews::Main {
                 main_views.insert(index);
             }
-            let name = pass.group.unwrap_or(pass.name);
+            let name = pass.name;
             let at = match seen.iter().position(|known| *known == name) {
                 Some(at) => at,
                 None => {
@@ -850,32 +753,11 @@ impl Sets {
             counted: Counted {
                 opened: vec![0; count],
                 merged: vec![0; count],
-                why: vec![None; count],
                 ..Counted::default()
             },
             settled: None,
         }
     }
-}
-
-fn view_resources(machine: &Machine) -> (Vec<u32>, Vec<u32>) {
-    let textures = machine
-        .declared
-        .textures
-        .iter()
-        .enumerate()
-        .filter(|(_, texture)| texture.per_view)
-        .map(|(index, _)| index as u32)
-        .collect();
-    let buffers = machine
-        .declared
-        .buffers
-        .iter()
-        .enumerate()
-        .filter(|(_, buffer)| buffer.per_view)
-        .map(|(index, _)| index as u32)
-        .collect();
-    (textures, buffers)
 }
 
 fn view_passes(machine: &Machine) -> (Bits, Bits) {
@@ -887,19 +769,7 @@ fn view_passes(machine: &Machine) -> (Bits, Bits) {
             passes.insert(index);
         }
     }
-    let mut varying = graph.view_resources();
-    let (textures, buffers) = view_resources(machine);
-    for texture in textures {
-        if let Some(id) = machine.ids.textures.get(texture as usize) {
-            varying.insert(id.index());
-        }
-    }
-    for buffer in buffers {
-        if let Some(id) = machine.ids.buffers.get(buffer as usize) {
-            varying.insert(id.index());
-        }
-    }
-    let spread = graph.spread(passes.clone(), varying);
+    let spread = graph.spread(passes.clone(), graph.view_resources());
     let mut main = Bits::of(graph.passes());
     for pass in spread.iter().filter(|&pass| !passes.contains(pass)) {
         main.insert(pass);

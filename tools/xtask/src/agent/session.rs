@@ -64,7 +64,6 @@ pub struct Run {
     pub folder: PathBuf,
     script: File,
     host: File,
-    record: Option<File>,
     replies: u32,
 }
 
@@ -78,12 +77,9 @@ pub fn plain(name: &str) -> bool {
 
 impl Run {
     pub fn create(folder: PathBuf) -> Result<Self, String> {
-        if let Some(kept) = ["record.jsonl", "session.json"]
-            .into_iter()
-            .find(|file| folder.join(file).exists())
-        {
+        if folder.join("session.json").exists() {
             return Err(format!(
-                "run {} holds {kept}; runs are kept until deleted, so pick another --run",
+                "run {} holds session.json; runs are kept until deleted, so pick another --run",
                 folder.display()
             ));
         }
@@ -96,48 +92,16 @@ impl Run {
         Ok(Self {
             script: file("script.jsonl")?,
             host: file("host.jsonl")?,
-            record: None,
             replies: 0,
             folder,
         })
     }
 
-    fn folder_of(&self, run: Option<&str>) -> Result<PathBuf, String> {
-        match run {
-            None => Ok(self.folder.clone()),
-            Some(run) if plain(run) => {
-                let folder = self.folder.with_file_name(run);
-                fs::create_dir_all(&folder)
-                    .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-                Ok(folder)
-            }
-            Some(run) => Err(format!("{run:?} is not a plain run name")),
-        }
-    }
-
-    pub fn record(&mut self, line: &str) -> Result<(), String> {
-        let header: Value = serde_json::from_str(line)
-            .map_err(|error| format!("a record line is not JSON: {error}"))?;
-        if header.get("machine").is_some() {
-            let path = self.folder_of(header["name"].as_str())?.join("record.jsonl");
-            self.record = Some(
-                File::create(&path)
-                    .map_err(|error| format!("cannot create {}: {error}", path.display()))?,
-            );
-        }
-        let record = self
-            .record
-            .as_mut()
-            .ok_or("a record entry came before its header")?;
-        writeln!(record, "{}", line.trim_end())
-            .map_err(|error| format!("cannot write record.jsonl: {error}"))
-    }
-
-    pub fn file(&self, run: Option<&str>, name: &str, bytes: &[u8]) -> Result<(), String> {
+    pub fn file(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
         if !plain(name) {
             return Err(format!("{name:?} is not a plain file name"));
         }
-        let path = self.folder_of(run)?.join(name);
+        let path = self.folder.join(name);
         fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
     }
 

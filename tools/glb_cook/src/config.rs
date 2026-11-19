@@ -559,6 +559,50 @@ fn size_faults(file: &str, entry: &Entry, faults: &mut Vec<Fault>) {
     }
 }
 
+fn variant_faults(file: &str, entry: &Entry, faults: &mut Vec<Fault>) {
+    let item = format!("entries.{}.textures", entry.name());
+    let cooked: Vec<&str> = match entry.maps() {
+        Some(maps) => maps.iter().map(String::as_str).collect(),
+        None => MAP_NAMES.to_vec(),
+    };
+    let variants = entry.textures();
+    if entry.map_sizes().is_some() && variants.is_empty() {
+        faults.push(Fault::new(
+            "TextureVariants",
+            file,
+            item.clone(),
+            "name at least one texture variant: scenes load only KTX2 textures",
+        ));
+    }
+    for (index, variant) in variants.iter().enumerate() {
+        if !identifier(&variant.name)
+            || variants[..index]
+                .iter()
+                .any(|held| held.name == variant.name)
+        {
+            faults.push(Fault::new(
+                "TextureVariantName",
+                file,
+                item.clone(),
+                format!(
+                    "`{}` is not a lowercase identifier or is named twice",
+                    variant.name
+                ),
+            ));
+        }
+        for map in MAP_NAMES {
+            if cooked.contains(&map) != variant.encoding(map).is_some() {
+                faults.push(Fault::new(
+                    "TextureVariantMaps",
+                    file,
+                    item.clone(),
+                    format!("variant `{}` must name an encoding for exactly the cooked maps; `{map}` differs", variant.name),
+                ));
+            }
+        }
+    }
+}
+
 fn entry_faults(file: &str, entry: &Entry, faults: &mut Vec<Fault>) {
     let name = entry.name();
     let item = |field: &str| format!("entries.{name}.{field}");
@@ -593,38 +637,7 @@ fn entry_faults(file: &str, entry: &Entry, faults: &mut Vec<Fault>) {
             ));
         }
     }
-    let variants = entry.textures();
-    for (index, variant) in variants.iter().enumerate() {
-        if !identifier(&variant.name)
-            || variants[..index]
-                .iter()
-                .any(|held| held.name == variant.name)
-        {
-            faults.push(Fault::new(
-                "TextureVariantName",
-                file,
-                item("textures"),
-                format!(
-                    "`{}` is not a lowercase identifier or is named twice",
-                    variant.name
-                ),
-            ));
-        }
-        let cooked: Vec<&str> = match entry.maps() {
-            Some(maps) => maps.iter().map(String::as_str).collect(),
-            None => MAP_NAMES.to_vec(),
-        };
-        for map in MAP_NAMES {
-            if cooked.contains(&map) != variant.encoding(map).is_some() {
-                faults.push(Fault::new(
-                    "TextureVariantMaps",
-                    file,
-                    item("textures"),
-                    format!("variant `{}` must name an encoding for exactly the cooked maps; `{map}` differs", variant.name),
-                ));
-            }
-        }
-    }
+    variant_faults(file, entry, faults);
     size_faults(file, entry, faults);
     let maps = entry.maps().unwrap_or_default();
     for (index, map) in maps.iter().enumerate() {

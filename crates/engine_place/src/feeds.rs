@@ -59,13 +59,6 @@ impl<T> Ring<T> {
 pub struct Cursor {
     store: StoreId,
     seen: u64,
-    missed: u64,
-}
-
-impl Cursor {
-    pub fn missed(&self) -> u64 {
-        self.missed
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,7 +137,6 @@ impl<T> Feed<T> {
         }
         if cursor.seen < self.log.first {
             let missed = self.log.first - cursor.seen;
-            cursor.missed += missed;
             cursor.seen = self.log.first;
             return Events::Missed(missed);
         }

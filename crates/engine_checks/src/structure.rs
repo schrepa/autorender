@@ -11,15 +11,8 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
     let mut problems = Vec::new();
     let mut long = Vec::new();
     let mut wide = Vec::new();
-    let games: Vec<String> = repository
-        .projects()
-        .filter_map(|project| project.path.as_deref())
-        .filter(|folder| !folder.is_empty() && !folder.starts_with("crates/"))
-        .map(|folder| format!("{folder}/"))
-        .collect();
     for path in crate::files::sources(root)? {
-        let game = games.iter().any(|folder| path.starts_with(folder.as_str()));
-        if game || !repository.ruled(&path) {
+        if !repository.ruled(&path) {
             continue;
         }
         let text = std::fs::read_to_string(root.join(&path))

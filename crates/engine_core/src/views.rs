@@ -3,8 +3,8 @@ use bevy_ecs::prelude::{Mut, QueryState, Resource, World};
 use glam::{Mat4, UVec2, Vec3};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, DrawnPoses, Error, ErrorCode, FrameFacts, FrameId,
-    FrameTime, GlobalTransforms, Layers, Target, View, ViewCut, ViewHistory, take_asks,
+    AssetLibrary, Camera, Clear, ColorSpace, DrawnPoses, Error, ErrorCode, FrameFacts,
+    GlobalTransforms, Layers, Target, View,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -22,10 +22,6 @@ pub struct ViewFacts {
     pub eye: Vec3,
     pub forward: Vec3,
     pub view_projection: Mat4,
-    pub previous_view_projection: Mat4,
-    pub previous_eye: Vec3,
-    pub history: ViewHistory,
-    pub frame: FrameId,
 }
 
 impl ViewFacts {
@@ -42,29 +38,10 @@ impl ViewFacts {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-struct Key {
-    target: Target,
-    pixels: [u32; 4],
-    camera: Entity,
-    cut: Option<u64>,
-}
-
-#[derive(Clone, Copy)]
-struct Held {
-    view: Entity,
-    key: Key,
-    started: FrameId,
-    view_projection: Mat4,
-    eye: Vec3,
-}
-
 #[derive(Resource, Default)]
 pub struct Views {
     listed: Vec<ViewFacts>,
     refused: Vec<(Entity, Error)>,
-    held: Vec<Held>,
-    before: Vec<Held>,
     found: Vec<(Entity, View)>,
     slotted: Vec<Option<Entity>>,
     query: Option<QueryState<(Entity, &'static View)>>,
@@ -124,24 +101,6 @@ fn eye_of(pose: Mat4) -> Option<(Vec3, Vec3, Vec3)> {
     let forward = pose.transform_vector3(Vec3::NEG_Z).try_normalize()?;
     let up = pose.transform_vector3(Vec3::Y).try_normalize()?;
     eye.is_finite().then_some((eye, forward, up))
-}
-
-fn history_of(
-    before: Option<&Held>,
-    reset: bool,
-    (frame, view_projection, eye): (FrameId, Mat4, Vec3),
-) -> (FrameId, Mat4, Vec3, ViewHistory) {
-    match before {
-        Some(held) if !reset => (
-            held.started,
-            held.view_projection,
-            held.eye,
-            ViewHistory::Valid {
-                since: held.started,
-            },
-        ),
-        Some(_) | None => (frame, view_projection, eye, ViewHistory::Fresh),
-    }
 }
 
 impl Views {
@@ -218,15 +177,6 @@ fn placed(world: &World, entity: Entity, view: &View, facts: FrameFacts) -> Resu
 }
 
 pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
-    let cuts: Vec<Entity> = take_asks::<ViewCut>(world)
-        .into_iter()
-        .map(|cut| cut.view)
-        .collect();
-    let frame = FrameId(
-        world
-            .get_resource::<FrameTime>()
-            .map_or(0, |time| time.frame),
-    );
     world.resource_scope(|world, mut views: Mut<Views>| {
         let views = &mut *views;
         if views.query.is_none() {
@@ -235,15 +185,9 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
         let world: &World = world;
         views.find(world);
         views.slot_views();
-        std::mem::swap(&mut views.held, &mut views.before);
-        views.held.clear();
         views.listed.clear();
         views.refused.clear();
         views.frame = facts;
-        let (globals, poses) = (
-            world.get_resource::<GlobalTransforms>(),
-            world.get_resource::<DrawnPoses>(),
-        );
         for at in 0..views.found.len() {
             let (entity, view) = views.found[at];
             let (lens, (eye, forward, up), size) = match placed(world, entity, &view, facts) {
@@ -262,26 +206,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
                     .push((entity, refuse(entity, "camera", ErrorCode::InvalidCamera)));
                 continue;
             }
-            let cut = globals
-                .zip(poses)
-                .and_then(|(globals, poses)| poses.fresh_at(globals, view.camera));
-            let key = Key {
-                target: view.target,
-                pixels,
-                camera: view.camera,
-                cut,
-            };
-            let before = views.before.iter().find(|held| held.view == entity);
-            let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
-            let (started, previous, previous_eye, history) =
-                history_of(before, reset, (frame, view_projection, eye));
-            views.held.push(Held {
-                view: entity,
-                key,
-                started,
-                view_projection,
-                eye,
-            });
             let slot = views.slot_of(entity);
             views.listed.push(ViewFacts {
                 view: entity,
@@ -297,10 +221,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
                 eye,
                 forward,
                 view_projection,
-                previous_view_projection: previous,
-                previous_eye,
-                history,
-                frame,
             });
         }
     });

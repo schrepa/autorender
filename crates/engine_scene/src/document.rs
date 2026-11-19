@@ -115,23 +115,9 @@ pub enum MeshSource {
         )]
         uri: String,
     },
-    Provided {
-        #[cfg_attr(
-            feature = "schema",
-            schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-        )]
-        name: String,
-    },
 }
 
 impl MeshSource {
-    pub(crate) fn provided(&self) -> Option<&str> {
-        match self {
-            Self::Provided { name } => Some(name),
-            Self::Cube {} | Self::Plane {} | Self::Inline { .. } | Self::Buffer { .. } => None,
-        }
-    }
-
     pub(crate) fn mesh(
         &self,
         path: &str,
@@ -140,10 +126,6 @@ impl MeshSource {
         match self {
             Self::Cube {} => Ok(Some(Mesh::cube())),
             Self::Plane {} => Ok(Some(Mesh::plane())),
-            Self::Provided { name } => {
-                crate::validation::identifier(name, &format!("{path}.name"))?;
-                Ok(None)
-            }
             Self::Buffer { uri } => {
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;
@@ -182,7 +164,6 @@ impl MeshSource {
                             .collect()
                     }),
                     named: Vec::new(),
-                    lods: None,
                 }
                 .mesh(path)
                 .map(Some)

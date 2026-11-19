@@ -19,7 +19,7 @@ pub const PRESENTATION_WGSL: &str = include_str!("presentation.wgsl");
 const SPARSE_SHARE: usize = 3;
 
 #[inline]
-pub fn pose_rows(model: Mat4) -> PoseRows {
+pub(crate) fn pose_rows(model: Mat4) -> PoseRows {
     let rows = model.transpose();
     [
         rows.x_axis.to_array(),
@@ -173,18 +173,11 @@ pub(crate) fn check_alpha(alpha: f32) -> Result<(), engine_settings::Error> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Presented {
-    #[default]
     Tick,
-    Between {
-        alpha: f32,
-    },
-    Paced {
-        alpha: f32,
-    },
+    Between { alpha: f32 },
+    Paced { alpha: f32 },
 }
 
 impl Presented {
@@ -193,57 +186,6 @@ impl Presented {
             Self::Tick => 1.0,
             Self::Between { alpha } | Self::Paced { alpha } => alpha,
         }
-    }
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct PresentationState {
-    presented: Presented,
-    frame: Option<u64>,
-    tick: Option<u64>,
-    nodes: usize,
-    moving: usize,
-    fresh: usize,
-    composed: usize,
-    blended_nodes: usize,
-    largest_blend_distance: f32,
-    bytes: usize,
-}
-
-impl PresentationState {
-    pub fn presented(&self) -> Presented {
-        self.presented
-    }
-    pub fn alpha(&self) -> f32 {
-        self.presented.alpha()
-    }
-    pub fn frame(&self) -> Option<u64> {
-        self.frame
-    }
-    pub fn tick(&self) -> Option<u64> {
-        self.tick
-    }
-    pub fn nodes(&self) -> usize {
-        self.nodes
-    }
-    pub fn moving(&self) -> usize {
-        self.moving
-    }
-    pub fn fresh(&self) -> usize {
-        self.fresh
-    }
-    pub fn composed(&self) -> usize {
-        self.composed
-    }
-    pub fn blended_nodes(&self) -> usize {
-        self.blended_nodes
-    }
-    pub fn largest_blend_distance(&self) -> f32 {
-        self.largest_blend_distance
-    }
-    pub fn bytes(&self) -> usize {
-        self.bytes
     }
 }
 
@@ -296,7 +238,7 @@ pub struct DrawnPoses {
     node_changes: Changes,
     alpha: f32,
     presented: Presented,
-    blended: (usize, f32),
+    blended: usize,
     frame: u64,
 }
 
@@ -330,7 +272,7 @@ impl Default for DrawnPoses {
             node_changes: Changes::new(1),
             alpha: 1.0,
             presented: Presented::Tick,
-            blended: (0, 0.0),
+            blended: 0,
             frame: 0,
         }
     }
@@ -371,11 +313,6 @@ impl DrawnPoses {
         self.index_of(globals, node).map(|index| self.spans[index])
     }
 
-    pub fn fresh_at(&self, globals: &GlobalTransforms, node: Entity) -> Option<u64> {
-        self.index_of(globals, node)
-            .and_then(|index| self.fresh_at.get(index).copied())
-    }
-
     pub fn blends(&self, globals: &GlobalTransforms, node: Entity) -> bool {
         matches!(self.span(globals, node), Some(Span::Moving { .. }))
     }
@@ -399,7 +336,7 @@ impl DrawnPoses {
             authority: &globals.global_rows()[..nodes],
             parents: if aligned { &self.parents } else { &[] },
             levels: if aligned { &self.levels } else { &[] },
-            blended: if aligned { self.blended.0 } else { 0 },
+            blended: if aligned { self.blended } else { 0 },
         }
     }
 
@@ -407,7 +344,7 @@ impl DrawnPoses {
         &self.node_changes
     }
 
-    pub fn capacity_bytes(&self) -> usize {
+    fn capacity_bytes(&self) -> usize {
         (self.ticked.capacity() + self.previous.capacity()) * size_of::<NodePose>()
             + self.info.capacity() * size_of::<NodeInfo>()
             + self.spans.capacity() * size_of::<Span>()
@@ -792,24 +729,15 @@ impl DrawnPoses {
 
     fn order_parents(&mut self, globals: &GlobalTransforms) {
         let links = globals.links();
-        let locals = globals.locals();
         self.sorted.clear();
-        self.blended = (0, 0.0);
+        self.blended = 0;
         for &index in &self.composed {
             let node = index as usize;
             if links[node].has_children() {
                 self.sorted.push((links[node].depth(), index));
             }
             if self.words[node].blend {
-                let (current, previous) = (&locals[node], &self.previous[node]);
-                let distance = Vec3::new(
-                    current[0] - previous[0],
-                    current[1] - previous[1],
-                    current[2] - previous[2],
-                )
-                .length();
-                self.blended.0 += 1;
-                self.blended.1 = max(self.blended.1, distance);
+                self.blended += 1;
             }
         }
         self.sorted.sort_unstable();
@@ -827,15 +755,6 @@ impl DrawnPoses {
             }
             self.levels.push(self.parents.len() as u32);
         }
-    }
-
-    fn counted(&self, state: &mut PresentationState) {
-        state.nodes = self.spans.len();
-        state.moving = self.moving.len();
-        state.fresh = self.fresh.len();
-        state.composed = self.composed.len();
-        (state.blended_nodes, state.largest_blend_distance) = self.blended;
-        state.bytes = self.capacity_bytes();
     }
 }
 
@@ -859,7 +778,7 @@ impl Poses<'_> {
     }
 }
 
-pub fn make_fresh(world: &mut World, nodes: &[Entity]) {
+pub(crate) fn make_fresh(world: &mut World, nodes: &[Entity]) {
     if let Some(mut poses) = world.get_resource_mut::<DrawnPoses>() {
         for &node in nodes {
             poses.fresh(node);
@@ -885,25 +804,18 @@ pub(crate) fn capture(world: &mut World) {
 
 pub(crate) fn present(world: &mut World, presented: Presented) {
     let frame = world.get_resource::<FrameTime>().map(|time| time.frame);
-    let tick = world.get_resource::<FixedTime>().map(|time| time.tick);
     world.resource_scope(|world, mut poses: Mut<DrawnPoses>| {
         poses.presented = presented;
         poses.alpha = presented.alpha();
         if let Some(frame) = frame {
             poses.frame = frame;
         }
-        {
-            let world: &World = &*world;
-            if let Some(globals) = world.get_resource::<GlobalTransforms>() {
-                poses.index(globals);
-                poses.age_fresh(world);
-                poses.apply_fresh(globals);
-            }
+        let world: &World = world;
+        if let Some(globals) = world.get_resource::<GlobalTransforms>() {
+            poses.index(globals);
+            poses.age_fresh(world);
+            poses.apply_fresh(globals);
         }
-        let mut state = world.resource_mut::<PresentationState>();
-        state.presented = presented;
-        state.frame = frame;
-        state.tick = tick;
     });
 }
 
@@ -915,7 +827,6 @@ pub(crate) fn gather(world: &mut World) {
         }
         engine_profile::counter("presentation.composed", poses.composed.len() as f64);
         engine_profile::counter("memory.presentation_bytes", poses.capacity_bytes() as f64);
-        poses.counted(&mut world.resource_mut::<PresentationState>());
     });
 }
 

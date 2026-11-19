@@ -115,23 +115,18 @@ impl Writes {
 pub(crate) struct Count {
     pub(crate) draws: u64,
     pub(crate) instances: u64,
-    pub(crate) indirect: u64,
 }
 
 impl Count {
-    fn add(&mut self, instances: Option<u32>) {
+    fn add(&mut self, instances: u32) {
         self.draws += 1;
-        match instances {
-            Some(instances) => self.instances += u64::from(instances),
-            None => self.indirect += 1,
-        }
+        self.instances += u64::from(instances);
     }
 
     pub(crate) fn since(self, earlier: Self) -> Self {
         Self {
             draws: self.draws - earlier.draws,
             instances: self.instances - earlier.instances,
-            indirect: self.indirect - earlier.indirect,
         }
     }
 }
@@ -152,7 +147,7 @@ impl Drawn {
         }
     }
 
-    pub(crate) fn add(&mut self, (pass, part): (u32, u32), instances: Option<u32>) {
+    pub(crate) fn add(&mut self, (pass, part): (u32, u32), instances: u32) {
         self.total.add(instances);
         if let Some(count) = self.passes.get_mut(pass as usize) {
             count.add(instances);
@@ -183,8 +178,8 @@ pub fn unchanged_writes(
 #[derive(Clone, Copy)]
 enum Owner {
     Engine,
-    Buffer(u32, &'static str),
-    Texture(u32, &'static str),
+    Buffer(u32),
+    Texture(u32),
 }
 
 fn slot(slots: &mut Vec<Written>, at: u32) -> &mut Written {
@@ -232,12 +227,12 @@ impl Queue {
 
     pub fn write_declared_buffer(
         &self,
-        (declared, label): (u32, &'static str),
+        declared: u32,
         buffer: &wgpu::Buffer,
         offset: u64,
         data: &[u8],
     ) {
-        self.write_buffer_of(Owner::Buffer(declared, label), buffer, offset, data);
+        self.write_buffer_of(Owner::Buffer(declared), buffer, offset, data);
     }
 
     pub fn write_texture(
@@ -252,13 +247,13 @@ impl Queue {
 
     pub fn write_declared_texture(
         &self,
-        (declared, label): (u32, &'static str),
+        declared: u32,
         texture: wgpu::TexelCopyTextureInfo<'_>,
         data: &[u8],
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        self.write_texture_of(Owner::Texture(declared, label), texture, data, layout, size);
+        self.write_texture_of(Owner::Texture(declared), texture, data, layout, size);
     }
 
     #[expect(clippy::disallowed_methods, reason = "the renderer's one buffer write")]
@@ -308,26 +303,10 @@ impl Queue {
             None => 0,
         };
         writes.total.add(bytes, unchanged);
-        let label = match owner {
-            Owner::Engine => {
-                writes.engine.add(bytes, unchanged);
-                "engine"
-            }
-            Owner::Buffer(at, label) => {
-                slot(&mut writes.buffers, at).add(bytes, unchanged);
-                label
-            }
-            Owner::Texture(at, label) => {
-                slot(&mut writes.textures, at).add(bytes, unchanged);
-                label
-            }
-        };
-        if engine_profile::tracing() && engine_profile::cause().0 != 0 {
-            engine_profile::event(
-                "write",
-                label,
-                &[("bytes", engine_profile::Fact::Count(bytes))],
-            );
+        match owner {
+            Owner::Engine => writes.engine.add(bytes, unchanged),
+            Owner::Buffer(at) => slot(&mut writes.buffers, at).add(bytes, unchanged),
+            Owner::Texture(at) => slot(&mut writes.textures, at).add(bytes, unchanged),
         }
     }
 

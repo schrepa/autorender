@@ -3,19 +3,14 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod cook;
 #[cfg(feature = "dev")]
 mod dev;
 pub mod files;
 mod input;
-mod job_cache;
-mod jobs;
 mod mixer;
 mod offscreen;
 mod options;
 mod output;
-#[cfg(feature = "dev")]
-mod pure;
 mod sound;
 mod window;
 
@@ -23,11 +18,11 @@ use std::process::ExitCode;
 
 pub use engine::GpuPreference;
 pub use engine_profiler as profiler;
-pub use job_cache::JobStore;
-pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
 pub use offscreen::Offscreen;
 pub use options::{Argument, Arguments, HostOptions, StartScene, open_scene, options};
 pub use window::{Window, run};
+
+const PIPELINE_CACHE_MIB: u64 = 256;
 
 pub fn main<G: engine::Game>(
     game: engine::GameEntry<G>,
@@ -55,6 +50,15 @@ pub fn exit(outcome: engine::Result<()>) -> ExitCode {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn keep_pipeline_cache() {
+    let folder = std::env::current_exe()
+        .ok()
+        .and_then(|program| Some(program.parent()?.join("engine-pipeline-cache")));
+    if let Some(folder) = folder {
+        engine::keep_pipeline_cache_in(folder, PIPELINE_CACHE_MIB * 1024 * 1024);
     }
 }
 

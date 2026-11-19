@@ -124,19 +124,11 @@ impl GlobalTransforms {
         Some(self.words[index])
     }
 
-    pub fn word_at(&self, index: usize) -> Option<NodeWord> {
-        self.words.get(index).copied()
-    }
-
     pub fn active(&self, entity: Entity) -> bool {
         self.word(entity).is_none_or(|word| word.active)
     }
 
     pub fn drawn(&self, entity: Entity) -> bool {
         self.word(entity).is_none_or(NodeWord::drawn)
-    }
-
-    pub fn mobility(&self, entity: Entity) -> Option<Mobility> {
-        self.word(entity).map(|word| word.mobility)
     }
 }

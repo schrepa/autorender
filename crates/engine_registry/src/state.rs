@@ -1,3 +1,6 @@
+use std::any::TypeId;
+
+use bevy_ecs::change_detection::DetectChangesMut;
 use bevy_ecs::component::ComponentId;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
@@ -98,12 +101,12 @@ fn turn_on(world: &mut World, brick: BrickId) {
     };
     let (package, resources, settings) = (record.package, record.dropped(), record.kept());
     Board::owned_by(package, || {
-        for (insert, _) in &resources {
-            insert(world);
+        for owned in &resources {
+            owned.init(world);
         }
     });
-    for touch in &settings {
-        touch(world);
+    for &type_id in &settings {
+        touch(world, type_id);
     }
     if let Some(mut states) = world.get_resource_mut::<BrickStates>() {
         states.set(brick, true);
@@ -118,18 +121,30 @@ fn turn_off(world: &mut World, brick: BrickId) {
         return;
     };
     let (spawned, despawn, resources) = (record.spawned, registry.despawn, record.dropped());
-    let joins: Vec<Left> = record.joins().iter().map(|joined| joined.left).collect();
+    let joins: Vec<Left> = record.joins.iter().map(|joined| joined.left).collect();
     if let Some(mut states) = world.get_resource_mut::<BrickStates>() {
         states.set(brick, false);
     }
     let id = spawned(world);
     let owned = holders(world, id);
     despawn.unwrap_or(despawn_all)(world, &owned);
-    for (_, remove) in &resources {
-        remove(world);
+    for owned in &resources {
+        remove(world, owned.type_id);
     }
     for left in &joins {
         left(world, brick);
+    }
+}
+
+fn remove(world: &mut World, type_id: TypeId) {
+    if let Some(id) = world.components().get_id(type_id) {
+        world.remove_resource_by_id(id);
+    }
+}
+
+fn touch(world: &mut World, type_id: TypeId) {
+    if let Some(id) = world.components().get_id(type_id) {
+        let _ = world.modify_resource_by_id(id, |mut value| value.set_changed());
     }
 }
 

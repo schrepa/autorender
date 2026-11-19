@@ -82,7 +82,7 @@ pub fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
     out
 }
 
-pub fn decode_block(block: &[u8]) -> [[u8; 4]; 16] {
+pub fn decode_block(block: &[u8; 16]) -> [[u8; 4]; 16] {
     let red = decode_channel(&block[..8]);
     let green = decode_channel(&block[8..16]);
     std::array::from_fn(|index| {

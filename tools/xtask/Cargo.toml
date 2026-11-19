@@ -9,11 +9,7 @@ publish.workspace = true
 base64.workspace = true
 engine_command_line.workspace = true
 engine_panic.workspace = true
-engine_scene.workspace = true
-engine_worker.workspace = true
-png.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 toml_edit.workspace = true
 
 [target.'cfg(windows)'.dependencies]

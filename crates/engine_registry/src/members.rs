@@ -1,19 +1,16 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{Mut, World};
 use engine_place::{Error, ErrorCode, List};
 
 use crate::BrickId;
-use crate::state::BrickStates;
 
 #[derive(Resource)]
 pub struct MembersOf<L: List> {
     members: Vec<L::Member>,
     ids: Vec<BrickId>,
     owners: Vec<&'static str>,
-    bricks: Vec<TypeId>,
-    locals: Vec<u32>,
 }
 
 impl<L: List> Default for MembersOf<L> {
@@ -22,55 +19,17 @@ impl<L: List> Default for MembersOf<L> {
             members: Vec::new(),
             ids: Vec::new(),
             owners: Vec::new(),
-            bricks: Vec::new(),
-            locals: Vec::new(),
         }
     }
 }
 
 impl<L: List> MembersOf<L> {
-    pub fn live<'a>(&'a self, states: &'a BrickStates) -> impl Iterator<Item = &'a L::Member> + 'a {
-        self.members
-            .iter()
-            .zip(&self.ids)
-            .filter(|(_, brick)| states.on(**brick))
-            .map(|(member, _)| member)
-    }
-
-    pub fn owned<'a>(
-        &'a self,
-        states: &'a BrickStates,
-    ) -> impl Iterator<Item = (TypeId, u32, &'a L::Member)> + 'a {
-        self.members
-            .iter()
-            .zip(&self.ids)
-            .zip(self.bricks.iter().zip(&self.locals))
-            .filter(|((_, brick), _)| states.on(**brick))
-            .map(|((member, _), (&brick, &local))| (brick, local, member))
-    }
-
     pub fn all(&self) -> &[L::Member] {
         &self.members
     }
 
-    pub fn every(&self) -> impl Iterator<Item = (TypeId, u32, &L::Member)> + '_ {
-        self.members
-            .iter()
-            .zip(self.bricks.iter().zip(&self.locals))
-            .map(|(member, (&brick, &local))| (brick, local, member))
-    }
-
     pub fn owners(&self) -> &[&'static str] {
         &self.owners
-    }
-
-    pub fn push(&mut self, member: L::Member, id: BrickId, owner: &'static str, brick: TypeId) {
-        let local = self.bricks.iter().filter(|&&known| known == brick).count() as u32;
-        self.members.push(member);
-        self.ids.push(id);
-        self.owners.push(owner);
-        self.bricks.push(brick);
-        self.locals.push(local);
     }
 
     pub fn names_twice(&self, name: fn(&L::Member) -> &str) -> Vec<Error> {
@@ -97,12 +56,13 @@ pub(crate) fn add_member<L: List>(
     world: &mut World,
     member: Box<dyn Any + Send + Sync>,
     id: BrickId,
-    (owner, brick): (&'static str, TypeId),
+    owner: &'static str,
 ) {
     if let Ok(member) = member.downcast::<L::Member>() {
-        world
-            .get_resource_or_init::<MembersOf<L>>()
-            .push(*member, id, owner, brick);
+        let mut members = world.get_resource_or_init::<MembersOf<L>>();
+        members.members.push(*member);
+        members.ids.push(id);
+        members.owners.push(owner);
     }
 }
 

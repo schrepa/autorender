@@ -2,7 +2,7 @@ use super::super::making::Finished;
 use super::super::run::{CountedAsk, Live, Swap, Work};
 use super::*;
 use crate::linker::counting::{self, Counter, Counting};
-use crate::readback::{Keep, Reader};
+use crate::readback::Reader;
 
 fn counted_key(plain: (u64, u64), generation: u64) -> (u64, u64) {
     let mut hasher = DefaultHasher::new();
@@ -138,7 +138,7 @@ impl Compiler<'_> {
         let pass = self.machine.pass_name(pipeline);
         self.pipelines.making.submit(
             (prepared.counted, true),
-            (pass, None, Vec::new()),
+            (pass, Vec::new()),
             move || job.make(),
         );
     }
@@ -173,7 +173,7 @@ impl Compiler<'_> {
         let pass = self.machine.pass_name(pipeline);
         self.pipelines.making.submit(
             (prepared.counted, true),
-            (pass, None, Vec::new()),
+            (pass, Vec::new()),
             move || job.make(),
         );
     }
@@ -210,16 +210,7 @@ impl Compiler<'_> {
             (Ok(Created::Compute(counted)), Some(swap)) if current => {
                 computed_by_program(pipelines, program, key).map(|plain| swap.compute.push((plain, counted, pad)))
             }
-            (Err(error), _) => {
-                let error = error.to_string();
-                engine_profile::event(
-                    "pipeline",
-                    finished.pass,
-                    &[
-                        ("state", engine_profile::Fact::Text("counted_refused")),
-                        ("error", engine_profile::Fact::Text(&error)),
-                    ],
-                );
+            (Err(_), _) => {
                 if current && let Some(built) = pipelines.get(pipeline as usize) {
                     work.counter.twin(&built.stages, Err("twin_refused"));
                 }
@@ -332,8 +323,8 @@ impl Run {
         self.reading.list.record(
             (&device, encoder),
             (&buffer, 0..buffer.size()),
-            (Reader::Work, written, None),
-            Keep::Ring(1),
+            (Reader::Work, written),
+            1,
         );
     }
 }

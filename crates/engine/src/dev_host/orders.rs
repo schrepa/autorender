@@ -2,7 +2,6 @@ use std::any::Any;
 
 use bevy_ecs::world::World;
 use engine_core::{Error, ErrorCode, Expected};
-use engine_dev::record::MarkPicture;
 use engine_registry::{Answer, NameEntry, register, unavailable};
 use engine_render::{DeviceHealth, Picture};
 use serde::Deserialize;
@@ -17,7 +16,6 @@ use crate::{Game, GameHost};
 pub(super) struct Running {
     pub(super) ticket: u32,
     pub(super) id: Option<Value>,
-    pub(super) cause: engine_profile::Cause,
     pub(super) order: Order,
 }
 
@@ -37,16 +35,10 @@ impl Order {
             Ok(shoot) => return Some(Self::Shoot(*shoot)),
             Err(order) => order,
         };
-        let order = match order.downcast::<Reload>() {
-            Ok(reload) => return Some(Self::Reload(*reload)),
-            Err(order) => order,
-        };
-        let mark = order.downcast::<MarkPicture>().ok()?;
-        Some(Self::Shoot(Shoot {
-            size: (mark.size[0], mark.size[1]),
-            mark: Some(*mark),
-            frame: None,
-        }))
+        order
+            .downcast::<Reload>()
+            .ok()
+            .map(|reload| Self::Reload(*reload))
     }
 }
 
@@ -115,7 +107,6 @@ struct CaptureArgs {
 
 pub(super) struct Shoot {
     size: (u32, u32),
-    mark: Option<MarkPicture>,
     frame: Option<u64>,
 }
 
@@ -163,16 +154,20 @@ pub(super) fn install(world: &mut World) {
             let CaptureArgs { width, height } = parsed(args)?;
             for (path, value) in [("$.args.width", width), ("$.args.height", height)] {
                 if value == 0 {
-                    return Err(Error::new(ErrorCode::OutOfRange, path).at_least(1).got(value));
+                    return Err(Error::new(ErrorCode::OutOfRange, path)
+                        .at_least(1)
+                        .got(value));
                 }
             }
             Ok(Answer::Loop(Box::new(Shoot {
                 size: (width, height),
-                mark: None,
                 frame: None,
             })))
         })
-        .args(shape::<CaptureArgs>(), json!({"width": 1280, "height": 720})),
+        .args(
+            shape::<CaptureArgs>(),
+            json!({"width": 1280, "height": 720}),
+        ),
     );
     register(
         world,
@@ -190,18 +185,31 @@ impl Step {
     fn of(args: StepArgs) -> Result<Self, Error> {
         let at_least_one = |path: &str, value: u64| {
             if value == 0 {
-                Err(Error::new(ErrorCode::OutOfRange, path).at_least(1).got(value))
+                Err(Error::new(ErrorCode::OutOfRange, path)
+                    .at_least(1)
+                    .got(value))
             } else {
                 Ok(())
             }
         };
         let (named, allowed): (&str, &[&str]) = match (args.until, args.ticks, args.frames) {
-            (Some(Until::Settled), ..) => ("settled", &["until", "frames", "ticks_per_frame", "alpha"]),
+            (Some(Until::Settled), ..) => {
+                ("settled", &["until", "frames", "ticks_per_frame", "alpha"])
+            }
             (Some(Until::Stable), ..) => (
                 "stable",
-                &["until", "frames", "apart", "tolerance", "ticks_per_frame", "alpha"],
+                &[
+                    "until",
+                    "frames",
+                    "apart",
+                    "tolerance",
+                    "ticks_per_frame",
+                    "alpha",
+                ],
             ),
-            (Some(Until::Multiple), ..) => ("multiple", &["until", "of", "ticks_per_frame", "alpha"]),
+            (Some(Until::Multiple), ..) => {
+                ("multiple", &["until", "of", "ticks_per_frame", "alpha"])
+            }
             (None, Some(_), _) => ("ticks", &["ticks"]),
             (None, None, Some(_)) => ("frames", &["frames", "ticks_per_frame", "alpha"]),
             (None, None, None) if args.wall_ms.is_some() => ("wall_ms", &["wall_ms"]),
@@ -235,7 +243,8 @@ impl Step {
             return Err(with(field, ErrorCode::UnknownField, Expected::Absent));
         }
         let required = |value: Option<u32>, field: &str| {
-            let value = value.ok_or_else(|| with(field, ErrorCode::MissingField, Expected::Present))?;
+            let value =
+                value.ok_or_else(|| with(field, ErrorCode::MissingField, Expected::Present))?;
             at_least_one(&format!("$.args.{field}"), u64::from(value))?;
             Ok::<u32, Error>(value)
         };
@@ -251,9 +260,9 @@ impl Step {
             (Some(Until::Stable), _) => Form::Stable {
                 limit: required(args.frames, "frames")?,
                 apart: required(args.apart, "apart")?,
-                tolerance: args.tolerance.ok_or_else(|| {
-                    with("tolerance", ErrorCode::MissingField, Expected::Present)
-                })?,
+                tolerance: args
+                    .tolerance
+                    .ok_or_else(|| with("tolerance", ErrorCode::MissingField, Expected::Present))?,
                 asked: None,
                 last: None,
             },
@@ -346,11 +355,11 @@ impl<G: Game> GameHost<G> {
             self.framed(Advance::Clock(timestamp), size, Picture::Shown)?;
             return Ok(FramePhase::Playing);
         };
-        let played = engine_profile::caused(running.cause, || match &mut running.order {
+        let played = match &mut running.order {
             Order::Step(step) => self.step(step, timestamp, size),
             Order::Shoot(shoot) => self.shoot(shoot, timestamp, size, held),
             Order::Reload(reload) => self.wait_reload(reload, timestamp, size, held),
-        });
+        };
         match played {
             Ok((phase, None)) => {
                 self.development.running = Some(running);
@@ -387,7 +396,9 @@ impl<G: Game> GameHost<G> {
                 }
                 Advance::Clock(timestamp)
             }
-            Form::Stable { apart, asked, last, .. } => {
+            Form::Stable {
+                apart, asked, last, ..
+            } => {
                 let due = last
                     .as_ref()
                     .is_none_or(|(at, _)| step.drawn - at >= *apart);
@@ -415,9 +426,8 @@ impl<G: Game> GameHost<G> {
             Form::Ticks(_) => Some(None),
             Form::Frames(frames) => (step.drawn >= *frames).then_some(None),
             Form::Settled(limit) => {
-                let (readiness, _) = self.progress();
-                let settled =
-                    readiness.settled() && !crate::host::in_flight(self, &readiness);
+                let readiness = self.progress();
+                let settled = readiness.settled() && !crate::host::in_flight(self, &readiness);
                 (settled || step.drawn >= *limit).then_some(Some(settled))
             }
             Form::Stable {
@@ -484,12 +494,9 @@ impl<G: Game> GameHost<G> {
                 };
                 let drawn = self.framed(advance, shoot.size, Picture::Shown)?;
                 shoot.frame = Some(self.frame_times().frame);
-                if let Some(mark) = &shoot.mark {
-                    self.reach(|reach| engine_dev::record::marked(reach, mark));
-                }
                 if !drawn {
                     let picture = unavailable("frame_not_acquired");
-                    return Ok((FramePhase::Playing, Some(Ok(self.pictured(shoot, picture)))));
+                    return Ok((FramePhase::Playing, Some(Ok(picture))));
                 }
                 FramePhase::Playing
             }
@@ -501,15 +508,12 @@ impl<G: Game> GameHost<G> {
                 DeviceHealth::Failed => "device_failed",
                 DeviceHealth::Lost | DeviceHealth::Recovering => "device_lost",
             };
-            return Ok((phase, Some(Ok(self.pictured(shoot, unavailable(reason))))));
+            return Ok((phase, Some(Ok(unavailable(reason)))));
         };
         let picture = match read {
             Ok((width, height, rgba)) => {
                 let frame = shoot.frame.unwrap_or_default();
-                let file = shoot.mark.as_ref().map_or_else(
-                    || format!("{frame}.png"),
-                    |mark| format!("{frame}-{}.png", mark.name),
-                );
+                let file = format!("{frame}.png");
                 let picture = json!({
                     "path": file,
                     "frame": frame,
@@ -518,7 +522,6 @@ impl<G: Game> GameHost<G> {
                     "sha256": hex(&rgba),
                 });
                 self.development.out.pictures.push(Shot {
-                    run: shoot.mark.as_ref().map(|mark| mark.run.clone()),
                     file,
                     width,
                     height,
@@ -528,16 +531,7 @@ impl<G: Game> GameHost<G> {
             }
             Err(error) => refused(&error),
         };
-        Ok((phase, Some(Ok(self.pictured(shoot, picture)))))
-    }
-
-    fn pictured(&mut self, shoot: &Shoot, picture: Value) -> Value {
-        match &shoot.mark {
-            Some(mark) => {
-                engine_dev::record::pictured(self.app.engine_mut().app.world_mut(), mark, picture)
-            }
-            None => picture,
-        }
+        Ok((phase, Some(Ok(picture))))
     }
 
     fn wait_reload(

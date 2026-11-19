@@ -21,10 +21,6 @@ impl Files {
         self.root = root.into();
     }
 
-    pub fn root(&self) -> &str {
-        &self.root
-    }
-
     pub fn read<T>(
         &mut self,
         path: &str,
@@ -43,10 +39,6 @@ impl Files {
 impl Delivers<String> for Files {
     fn landed(&self, held: &Interest<String>) -> Option<Result<Arc<[u8]>, Error>> {
         self.requests.landed(held)
-    }
-
-    fn cause(&self, held: &Interest<String>) -> engine_profile::Cause {
-        self.requests.cause(held.key())
     }
 }
 

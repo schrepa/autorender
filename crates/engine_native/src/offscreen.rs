@@ -3,12 +3,9 @@ use std::time::Instant;
 use engine::host::FramePhase;
 use engine::{BrickList, Engine, Game, GameHost, GpuPreference, RenderTarget};
 
-use crate::jobs::JobPool;
-
 pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
     size: (u32, u32),
-    jobs: JobPool,
     speaker: crate::sound::Speaker,
 }
 
@@ -16,21 +13,18 @@ impl<G: Game> Offscreen<G> {
     pub fn launch<E: Into<engine::Error>>(
         size: (u32, u32),
         gpu: GpuPreference,
-        mut jobs: JobPool,
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<Self> {
         #[cfg(feature = "profiling")]
         engine_profiler::sampler::listen_for_threads();
         let target = RenderTarget::Offscreen { size, gpu };
-        let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
+        let host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, bricks, build,
         )))?);
-        jobs.attach(&mut host);
         Ok(Self {
             host,
             size,
-            jobs,
             speaker: crate::sound::Speaker::silent(),
         })
     }
@@ -43,16 +37,10 @@ impl<G: Game> Offscreen<G> {
         &mut self.host
     }
 
-    pub fn jobs_mut(&mut self) -> &mut JobPool {
-        &mut self.jobs
-    }
-
-    pub fn turn(&mut self, timestamp: f64) -> engine::Result<FramePhase> {
+    fn turn(&mut self, timestamp: f64) -> engine::Result<FramePhase> {
         let (width, height) = self.size;
-        self.jobs.exchange(&mut self.host);
         let phase = self.host.animation_frame(timestamp, width, height)?;
         self.speaker.exchange(&mut self.host);
-        self.jobs.exchange(&mut self.host);
         self.host.wait_for_gpu()?;
         Ok(phase)
     }

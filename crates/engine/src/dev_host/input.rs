@@ -51,14 +51,19 @@ fn held(reach: &Reach<'_>) -> Value {
 fn checked(asked: &Held) -> Result<(), Error> {
     for (at, key) in asked.keys.iter().enumerate() {
         if !engine_core::is_id(key) {
-            return Err(Error::new(ErrorCode::InvalidInput, format!("$.args.keys[{at}]"))
-                .expected(Expected::Id)
-                .got(key.as_str()));
+            return Err(
+                Error::new(ErrorCode::InvalidInput, format!("$.args.keys[{at}]"))
+                    .expected(Expected::Id)
+                    .got(key.as_str()),
+            );
         }
     }
     let pointer = &asked.pointer;
     let finite = [
-        ("$.args.pointer.position_pixels", pointer.position_pixels.unwrap_or_default()),
+        (
+            "$.args.pointer.position_pixels",
+            pointer.position_pixels.unwrap_or_default(),
+        ),
         ("$.args.pointer.motion_pixels", pointer.motion_pixels),
         ("$.args.pointer.wheel_notches", pointer.wheel_notches),
     ]
@@ -119,9 +124,9 @@ pub(super) fn entry() -> NameEntry {
             let asked: Held = engine_settings::parse_value_at(args.clone(), "$.args")?;
             checked(&asked)?;
             let before = reach.read(held);
-            let agent = reach.part::<DeviceGatherer>().ok_or_else(|| {
-                Error::new(ErrorCode::MissingResource, "$").got("agent_input")
-            })?;
+            let agent = reach
+                .part::<DeviceGatherer>()
+                .ok_or_else(|| Error::new(ErrorCode::MissingResource, "$").got("agent_input"))?;
             hold(agent, &asked);
             Ok(json!({"before": before, "after": reach.read(held)}))
         })

@@ -36,19 +36,6 @@ impl Transform {
     }
 
     #[must_use]
-    pub const fn from_xyz(x: f32, y: f32, z: f32) -> Self {
-        Self::from_translation(Vec3::new(x, y, z))
-    }
-
-    #[must_use]
-    pub const fn from_rotation(rotation: Quat) -> Self {
-        Self {
-            rotation,
-            ..Self::IDENTITY
-        }
-    }
-
-    #[must_use]
     pub const fn from_scale(scale: Vec3) -> Self {
         Self {
             scale,
@@ -57,20 +44,8 @@ impl Transform {
     }
 
     #[must_use]
-    pub const fn with_translation(mut self, translation: Vec3) -> Self {
-        self.translation = translation;
-        self
-    }
-
-    #[must_use]
     pub const fn with_rotation(mut self, rotation: Quat) -> Self {
         self.rotation = rotation;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_scale(mut self, scale: Vec3) -> Self {
-        self.scale = scale;
         self
     }
 
@@ -132,22 +107,6 @@ pub enum Projection {
     Fitted { clip: [[f32; 4]; 4] },
 }
 
-impl Default for Camera {
-    fn default() -> Self {
-        Self {
-            near: 0.1,
-            far: 500.0,
-            projection: Projection::Perspective {
-                vertical_fov_radians: default_fov(),
-            },
-        }
-    }
-}
-
-fn default_fov() -> f32 {
-    55.0_f32.to_radians()
-}
-
 fn within(value: f32, min: f32, max: f32) -> bool {
     (min..=max).contains(&value)
 }
@@ -196,15 +155,6 @@ impl Camera {
         Ok(())
     }
 
-    pub fn vertical_fov(&self) -> Option<f32> {
-        match self.projection {
-            Projection::Perspective {
-                vertical_fov_radians,
-            } => Some(vertical_fov_radians),
-            Projection::Orthographic { .. } | Projection::Fitted { .. } => None,
-        }
-    }
-
     pub fn clip(&self, aspect: f32) -> Mat4 {
         let aspect = if aspect.is_finite() && aspect > 0.0 {
             aspect
@@ -228,25 +178,6 @@ impl Camera {
             }
             Projection::Fitted { clip } => Mat4::from_cols_array_2d(&clip),
         }
-    }
-
-    pub fn fitted(clip: Mat4, origin: Vec3) -> Self {
-        Self {
-            projection: Projection::Fitted {
-                clip: (clip * Mat4::from_translation(origin)).to_cols_array_2d(),
-            },
-            ..Self::default()
-        }
-    }
-
-    pub fn view_projection(&self, eye: Vec3, forward: Vec3, aspect: f32) -> Mat4 {
-        let direction = forward.try_normalize().unwrap_or(Vec3::NEG_Z);
-        let up = if direction.dot(Vec3::Y).abs() > 0.999 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
-        self.clip(aspect) * Mat4::look_to_rh(eye, direction, up)
     }
 }
 

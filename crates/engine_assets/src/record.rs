@@ -7,7 +7,7 @@
 use engine_codec::{Error, ErrorCode, Expected};
 use serde::Serialize;
 
-use crate::{AttributeFormat, Mesh, MeshLods, MeshVertex, NamedStream};
+use crate::{AttributeFormat, Mesh, MeshVertex, NamedStream};
 
 pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
 pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
@@ -15,15 +15,13 @@ pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
 const COLORS: u32 = 1;
 const UV1: u32 = 2;
 const NAMED: u32 = 4;
-const LODS: u32 = 8;
-const FLAGS: u32 = COLORS | UV1 | NAMED | LODS;
+const FLAGS: u32 = COLORS | UV1 | NAMED;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshStreams<'a> {
     pub colors: Option<&'a [[f32; 4]]>,
     pub uv1: Option<&'a [[f32; 2]]>,
     pub named: &'a [NamedStream],
-    pub lods: Option<&'a MeshLods>,
 }
 
 fn count(length: usize) -> [u8; 4] {
@@ -45,16 +43,9 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     indices: &[u32],
     streams: MeshStreams<'_>,
 ) -> Vec<u8> {
-    let MeshStreams {
-        colors,
-        uv1,
-        named,
-        lods,
-    } = streams;
-    let flags = flag(colors.is_some(), COLORS)
-        | flag(uv1.is_some(), UV1)
-        | flag(!named.is_empty(), NAMED)
-        | flag(lods.is_some(), LODS);
+    let MeshStreams { colors, uv1, named } = streams;
+    let flags =
+        flag(colors.is_some(), COLORS) | flag(uv1.is_some(), UV1) | flag(!named.is_empty(), NAMED);
     let extras = flags != 0;
     let named_bytes: usize = named.iter().map(|stream| stream.bytes().len()).sum();
     let mut bytes = Vec::with_capacity(
@@ -105,26 +96,10 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
-    if let Some(lods) = lods {
-        bytes.extend_from_slice(&lods.to_bytes());
-    }
     bytes
 }
 
 impl Mesh {
-    pub fn to_record(&self) -> Vec<u8> {
-        encode_mesh_buffer_with(
-            self.vertices(),
-            self.indices(),
-            MeshStreams {
-                colors: self.colors(),
-                uv1: self.uv1(),
-                named: self.streams(),
-                lods: self.lods().map(AsRef::as_ref),
-            },
-        )
-    }
-
     pub fn from_record(bytes: &[u8]) -> Result<Self, Error> {
         MeshBuffer::parse(bytes, "$")?.mesh("$")
     }
@@ -142,7 +117,6 @@ pub struct MeshBuffer {
     pub colors: Option<Vec<[f32; 4]>>,
     pub uv1: Option<Vec<[f32; 2]>>,
     pub named: Vec<NamedStream>,
-    pub lods: Option<MeshLods>,
 }
 
 struct Layout {
@@ -166,12 +140,7 @@ impl MeshBuffer {
         for stream in self.named {
             mesh = mesh.with_stream(stream).map_err(invalid)?;
         }
-        match self.lods {
-            Some(lods) => mesh
-                .with_lods(lods)
-                .map_err(|error| error.coded(ErrorCode::InvalidMesh).within(path)),
-            None => Ok(mesh),
-        }
+        Ok(mesh)
     }
 
     fn named_table(
@@ -260,13 +229,9 @@ impl MeshBuffer {
             .checked_mul(floats * 4 + named_width)
             .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
             .and_then(|payload| payload.checked_add(header));
-        let fits = expected.is_some_and(|expected| {
-            expected == bytes.len() || (flags & LODS != 0 && expected < bytes.len())
-        });
-        if !fits {
+        if expected != Some(bytes.len()) {
             let failure = invalid().got(bytes.len());
             return Err(match expected.map(u64::try_from) {
-                Some(Ok(expected)) if flags & LODS != 0 => failure.at_least(expected),
                 Some(Ok(expected)) => failure.range(expected as f64, expected as f64),
                 Some(Err(_)) | None => failure,
             });
@@ -348,19 +313,12 @@ impl MeshBuffer {
                 )
             })
             .collect();
-        let lods = (flags & LODS != 0)
-            .then(|| {
-                MeshLods::from_bytes(&bytes[offset + index_count * 4..])
-                    .map_err(|error| error.coded(ErrorCode::InvalidMesh).within(path))
-            })
-            .transpose()?;
         Ok(Self {
             vertices,
             indices,
             colors,
             uv1,
             named,
-            lods,
         })
     }
 }

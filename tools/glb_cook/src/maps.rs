@@ -1,8 +1,9 @@
-use engine_textures::{Image, decode_image};
 use gltf::image::Source as ImageSource;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
 use crate::fault::Fault;
+use crate::image::{self, Image};
+use crate::mips::{byte, linear_to_srgb, srgb_to_linear};
 use crate::source::Source;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,7 +38,6 @@ pub struct Map {
     pub kind: MapKind,
     pub material: String,
     pub stem: String,
-    pub png: Vec<u8>,
     pub decoded: Image,
     pub sampling: Sampling,
 }
@@ -58,37 +58,8 @@ pub fn image_bytes<'s>(source: &'s Source, image: &gltf::Image<'_>) -> Result<&'
 
 pub fn decode(source: &Source, image: &gltf::Image<'_>) -> Result<Image, Fault> {
     let item = format!("images[{}]", image.index());
-    decode_image(&item, image_bytes(source, image)?)
+    image::decode(image_bytes(source, image)?)
         .map_err(|error| source.fault("ImageDecode", item, error))
-}
-
-fn srgb_to_linear(value: u8) -> f32 {
-    let value = f32::from(value) / 255.0;
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-fn linear_to_srgb(value: f32) -> u8 {
-    let encoded = if value <= 0.003_130_8 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    };
-    byte(encoded)
-}
-
-fn byte(value: f32) -> u8 {
-    let scaled = (value * 255.0).round();
-    if scaled <= 0.0 {
-        0
-    } else if scaled >= 255.0 {
-        255
-    } else {
-        scaled as u8
-    }
 }
 
 fn block<const N: usize>(
@@ -121,8 +92,7 @@ fn filtered(
     factors: [f32; 2],
 ) -> Result<Vec<u8>, (usize, usize)> {
     let factor = image.width as usize / size;
-    let channels = if kind == MapKind::Normal { 3 } else { 4 };
-    let mut out = Vec::with_capacity(size * size * channels);
+    let mut out = Vec::with_capacity(size * size * 4);
     let srgb: Vec<f32> = (0..=255u8).map(srgb_to_linear).collect();
     for y in 0..size {
         for x in 0..size {
@@ -151,7 +121,8 @@ fn filtered(
                     if length == 0.0 || !length.is_finite() {
                         return Err((x, y));
                     }
-                    out.extend(mean.map(|value| byte((value / length) * 0.5 + 0.5)));
+                    let [red, green, blue] = mean.map(|value| byte((value / length) * 0.5 + 0.5));
+                    out.extend_from_slice(&[red, green, blue, 255]);
                 }
                 MapKind::Orm => {
                     let [roughness, metallic, alpha] =
@@ -168,23 +139,6 @@ fn filtered(
         }
     }
     Ok(out)
-}
-
-fn encode_png(pixels: &[u8], size: u32, channels: usize) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut bytes, size, size);
-    encoder.set_color(if channels == 4 {
-        png::ColorType::Rgba
-    } else {
-        png::ColorType::Rgb
-    });
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
-    writer
-        .write_image_data(pixels)
-        .map_err(|error| error.to_string())?;
-    writer.finish().map_err(|error| error.to_string())?;
-    Ok(bytes)
 }
 
 pub fn texture_of<'a>(
@@ -283,17 +237,15 @@ pub fn map(
             format!("normals average to zero at {x},{y}"),
         )
     })?;
-    let channels = if kind == MapKind::Normal { 3 } else { 4 };
-    let png = encode_png(&pixels, size, channels)
-        .map_err(|error| source.fault("PngEncode", item.clone(), error))?;
-    let written = decode_image(&item, &png)
-        .map_err(|error| source.fault("PngReadBack", item.clone(), error))?;
     Ok(Map {
         kind,
         material: material.name().unwrap_or_default().to_owned(),
         stem: format!("{stem}_{}", kind.name()),
-        png,
-        decoded: written,
+        decoded: Image {
+            width: size,
+            height: size,
+            pixels,
+        },
         sampling: sampling(&texture, tex_coord),
     })
 }

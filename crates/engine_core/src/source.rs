@@ -2,7 +2,6 @@
 pub struct Source {
     package: &'static str,
     game: bool,
-    hash: [u8; 32],
     modules: &'static [ShaderText],
 }
 
@@ -11,13 +10,11 @@ impl Source {
     pub const fn generated(
         package: &'static str,
         game: bool,
-        hash: [u8; 32],
         modules: &'static [ShaderText],
     ) -> Self {
         Self {
             package,
             game,
-            hash,
             modules,
         }
     }
@@ -30,11 +27,6 @@ impl Source {
     #[doc(hidden)]
     pub const fn game(&self) -> bool {
         self.game
-    }
-
-    #[doc(hidden)]
-    pub const fn hash(&self) -> [u8; 32] {
-        self.hash
     }
 
     #[doc(hidden)]

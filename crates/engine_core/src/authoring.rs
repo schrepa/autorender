@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
-    GeometryHandle, InstanceValues, Layers, List, MaterialHandle, Mover, Node, PassMask, Rect,
-    Rule, SceneComponents, SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target,
-    TextureHandle, View,
+    Camera, Clear, ComponentKind, Drawn, DrawnTable, Error, ErrorCode, GeometryHandle,
+    InstanceValues, Layers, List, MaterialHandle, Mover, Node, PassMask, Rect, Rule,
+    SceneComponents, SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target, TextureHandle,
+    View,
 };
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
@@ -42,7 +42,7 @@ static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-pub struct DrawnForm {
+pub(crate) struct DrawnForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,8 +55,6 @@ pub struct DrawnForm {
     pub layers: Layers,
     #[serde(default)]
     pub order: i16,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub projection: Option<DrawnProjection>,
     #[serde(default)]
     pub values: InstanceValues,
 }
@@ -130,7 +128,6 @@ impl SceneForm for DrawnForm {
             passes,
             layers: self.layers,
             order: self.order,
-            projection: self.projection,
             values: self.values,
         });
         Ok(())
@@ -150,7 +147,6 @@ impl SceneForm for DrawnForm {
             passes,
             layers: drawn.layers,
             order: drawn.order,
-            projection: drawn.projection,
             values: drawn.values.clone(),
         })
     }
@@ -169,7 +165,7 @@ fn switched(listed: &ScenePasses, mask: PassMask, base: PassMask) -> BTreeMap<St
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-pub struct ViewForm {
+pub(crate) struct ViewForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,8 +180,6 @@ pub struct ViewForm {
     pub clear_color: [f32; 4],
     #[serde(default)]
     pub order: i32,
-    #[serde(default)]
-    pub steady: bool,
     #[serde(skip)]
     found: Option<Entity>,
 }
@@ -237,7 +231,6 @@ impl SceneForm for ViewForm {
             clear: self.clear,
             clear_color: self.clear_color,
             order: self.order,
-            steady: self.steady,
         });
         Ok(())
     }
@@ -273,7 +266,6 @@ impl ViewForm {
             clear: view.clear,
             clear_color: view.clear_color,
             order: view.order,
-            steady: view.steady,
             found: None,
         }
     }

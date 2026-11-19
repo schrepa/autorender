@@ -40,7 +40,7 @@ pub(crate) fn names(world: &mut bevy_ecs::world::World) {
                         || {
                             serde_json::json!({
                                 "unavailable": "never_switched_on",
-                                "switched_on_by": { "call": "record", "instruments": [INSTRUMENT] },
+                                "switched_on_by": { "verb": "set", "name": "instruments", "args": { "value": [INSTRUMENT] } },
                             })
                         },
                         |counter| counter.read(name),
@@ -289,7 +289,7 @@ impl Counting {
         wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-            ty: Ty::Storage { write: true }.binding(false, false),
+            ty: Ty::Storage { write: true }.binding(false),
             count: None,
         }
     }

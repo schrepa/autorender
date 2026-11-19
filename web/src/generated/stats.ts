@@ -5,14 +5,10 @@ export interface FrameStats {
   extraction_ms: number;
   fixed_steps: number;
   frame: number;
-  indirect_draws: number;
   instances: number;
-  jobs: JobStats;
   mesh_upload_bytes: number;
   pipelines: number;
   pipelines_created: number;
-  pipelines_listed: number;
-  pipelines_unlisted: number;
   preparation_ms: number;
   readiness: Readiness;
   refused_views: number;
@@ -27,8 +23,6 @@ export interface FrameStats {
 
 export type Allowed = { kind: "range"; max: number; min: number } | { kind: "at_most"; max: number } | { kind: "at_least"; min: number } | { kind: "variants"; values: string[] };
 
-export type Awaits = "work" | "view" | "finished" | "frames";
-
 export interface Error {
   allowed: Allowed | null;
   code: ErrorCode;
@@ -40,27 +34,9 @@ export interface Error {
 
 export type ErrorCode = string;
 
-export type Expected = "number" | "integer" | "string" | "boolean" | "object" | "array" | "id" | "path" | "file" | "entity" | "unique" | "present" | "absent" | "finite" | "normalized" | "sorted" | "nonzero" | "above" | "power_of_two" | "multiple" | "json" | "utf8" | "uri" | "base64" | "image" | "paused" | "running" | "gpu" | "live" | "non_empty" | "readable" | "writable" | "matching" | "supported" | "acyclic" | "opaque" | "triangles" | "invertible";
+export type Expected = "number" | "integer" | "string" | "boolean" | "object" | "array" | "id" | "file" | "entity" | "unique" | "present" | "absent" | "finite" | "sorted" | "nonzero" | "above" | "multiple" | "json" | "utf8" | "uri" | "base64" | "image" | "gpu" | "live" | "non_empty" | "readable" | "writable" | "matching" | "supported" | "acyclic" | "opaque" | "triangles" | "invertible";
 
 export type GpuTime = number | { unavailable: string };
-
-export interface JobStats {
-  cache_bytes: number;
-  cache_mismatches: number;
-  cache_misses: number;
-  cancelled: number;
-  completed: number;
-  failed: number;
-  held: number;
-  in_place: number;
-  pack_hits: number;
-  running: number;
-  shared_bytes: number;
-  shares: number;
-  store_hits: number;
-  submitted: number;
-  workers: number;
-}
 
 export interface Progress {
   done: number;
@@ -69,9 +45,7 @@ export interface Progress {
 
 export interface Readiness {
   compiling: number;
-  drawing: number;
   failed: [string, Error][];
-  finishing: number;
   loading: Progress;
   settling: number;
   unsettled: Unsettled[];
@@ -85,7 +59,6 @@ export interface ResolutionStats {
 }
 
 export interface Unsettled {
-  awaits: Awaits;
   brick: string;
   left: number;
 }

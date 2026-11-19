@@ -18,11 +18,12 @@ use serde_json::{Value, json};
 
 use crate::process::{Client, Project, clients, native_folders};
 use crate::serve::free_listener;
-use crate::{Failure, pipeline, runs};
+use crate::pipeline;
 use session::{Event, Host, Run, Session, Settings};
 
 const DEADLINE_MS: u64 = 15_000;
 const REPLY_LIMIT: usize = 65_536;
+const RUNS: &str = "artifacts/runs";
 
 pub fn commands() -> Vec<Command> {
     let run = || CommandOption::taking("--run", "NAME");
@@ -36,7 +37,6 @@ pub fn commands() -> Vec<Command> {
                 CommandOption::flag("--window"),
                 CommandOption::taking("--size", "WxH").in_unit("px"),
                 CommandOption::taking("--run", "NAME").defaults_to("<game>-<host>-<utc time>"),
-                CommandOption::taking("--record", "ARGS_JSON"),
                 CommandOption::taking("--script", "FILE"),
                 CommandOption::taking("--chrome", "PATH"),
                 CommandOption::taking("--deadline-ms", "MS")
@@ -54,7 +54,7 @@ pub fn commands() -> Vec<Command> {
     ]
 }
 
-pub fn agent(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
+pub fn agent(root: &Path, arguments: &[String]) -> Result<u8, String> {
     let (command, rest) = arguments.split_first().map_or(("help", &[][..]), |(command, rest)| (command.as_str(), rest));
     match command {
         "start" => start(root, rest),
@@ -74,7 +74,7 @@ pub fn agent(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
             println!("names: cargo xtask agent send '{{\"verb\":\"describe\"}}'");
             Ok(0)
         }
-        other => Err(format!("unknown agent command {other:?}; run `cargo xtask agent help`").into()),
+        other => Err(format!("unknown agent command {other:?}; run `cargo xtask agent help`")),
     }
 }
 
@@ -85,7 +85,6 @@ struct Start {
     window: bool,
     size: Option<(u32, u32)>,
     run: Option<String>,
-    record: Option<String>,
     script: Option<PathBuf>,
     chrome: Option<PathBuf>,
     deadline: Duration,
@@ -101,7 +100,6 @@ fn options(arguments: &[String]) -> Result<Start, String> {
         window: false,
         size: None,
         run: None,
-        record: None,
         script: None,
         chrome: None,
         deadline: Duration::from_millis(DEADLINE_MS),
@@ -137,7 +135,6 @@ fn options(arguments: &[String]) -> Result<Start, String> {
                 }
             }
             "--run" => start.run = Some(value),
-            "--record" => start.record = Some(value),
             "--script" => start.script = Some(value.into()),
             "--chrome" => start.chrome = Some(value.into()),
             "--deadline-ms" => start.deadline = Duration::from_millis(number("milliseconds")?),
@@ -154,7 +151,7 @@ fn options(arguments: &[String]) -> Result<Start, String> {
     Ok(start)
 }
 
-fn start(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
+fn start(root: &Path, arguments: &[String]) -> Result<u8, String> {
     let start = options(arguments)?;
     #[cfg(windows)]
     job::contain()?;
@@ -163,14 +160,12 @@ fn start(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
         [Some(&project.package), Some(&project.native), game.as_ref()].contains(&Some(&start.game))
     });
     let page = clients().iter().find(|client| {
-        client.page.is_some()
-            && [client.game.as_ref(), Some(&client.package), client.native.as_ref()]
-                .contains(&Some(&start.game))
+        [Some(&client.game), Some(&client.package), client.native.as_ref()].contains(&Some(&start.game))
     });
     let startable: Vec<&str> = if start.host == "native" {
         natives.iter().map(|(project, _)| project.package.as_str()).collect()
     } else {
-        clients().iter().filter_map(|client| client.game.as_deref()).collect()
+        clients().iter().map(|client| client.game.as_str()).collect()
     };
     match (start.host.as_str(), native, page) {
         ("native", None, _) | ("browser", None, None) => {
@@ -179,15 +174,13 @@ fn start(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
                 start.game,
                 start.host,
                 startable.join(", ")
-            )
-            .into());
+            ));
         }
         ("browser", Some((project, _)), None) => {
             return Err(format!(
                 "--game {} ({}) declares no page in [package.metadata.engine], so it starts on the native host only",
                 start.game, project.package
-            )
-            .into());
+            ));
         }
         _ => {}
     }
@@ -195,7 +188,7 @@ fn start(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
         let [year, month, day, hour, minute, second] = calendar(SystemTime::now());
         format!("{}-{}-{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}", start.game, start.host)
     });
-    let folder = runs::folder(root, &name)?;
+    let folder = run_folder(root, &name)?;
     let run = Run::create(folder.clone())?;
     let settings = Settings {
         deadline: start.deadline,
@@ -271,7 +264,7 @@ fn native_projects(root: &Path) -> Result<Vec<(Project, Option<String>)>, String
             let game = clients()
                 .iter()
                 .find(|client| client.folder == folder)
-                .and_then(|client| client.game.clone());
+                .map(|client| client.game.clone());
             Ok((Project::read(root, &folder)?, game))
         })
         .collect()
@@ -300,9 +293,6 @@ fn native_session(
     if let Some((width, height)) = start.size {
         arguments.extend(["--size".to_owned(), format!("{width}x{height}")]);
     }
-    if let Some(record) = &start.record {
-        arguments.extend(["--record".to_owned(), record.clone()]);
-    }
     let channel = channel();
     let started = Instant::now();
     let (child, stdin) = native::spawn(root, &program, &arguments, &channel.0)?;
@@ -315,13 +305,7 @@ fn native_session(
 }
 
 fn browser_session(root: &Path, client: &Client, start: &Start, run: Run, settings: Settings) -> Result<Session, String> {
-    let (Some(game), Some(page)) = (&client.game, &client.page) else {
-        return Err(format!("{} has no page to load in the browser", client.package));
-    };
     let mut query = String::new();
-    if let Some(record) = &start.record {
-        query.push_str(&format!("&record={}", encoded(record)));
-    }
     let mut given = start.arguments.iter();
     while let Some(option) = given.next() {
         match (option.strip_prefix("--"), given.next()) {
@@ -334,8 +318,8 @@ fn browser_session(root: &Path, client: &Client, start: &Start, run: Run, settin
     browser::start(
         browser::Page {
             root,
-            game,
-            page,
+            game: &client.game,
+            page: &client.page,
             query,
             profiling: start.profiling,
             window: start.window,
@@ -390,7 +374,7 @@ fn script(file: &Path) -> Result<Vec<(usize, String)>, String> {
         .collect())
 }
 
-fn send(root: &Path, run: Option<&str>, lines: impl IntoIterator<Item = (usize, String)>) -> Result<u8, Failure> {
+fn send(root: &Path, run: Option<&str>, lines: impl IntoIterator<Item = (usize, String)>) -> Result<u8, String> {
     let file = session_file(root, run)?;
     let session: Value = fs::read_to_string(&file)
         .ok()
@@ -422,11 +406,18 @@ fn lines_over(stream: TcpStream, lines: Vec<(usize, String)>) -> Result<(), Stri
     Ok(())
 }
 
-fn session_file(root: &Path, run: Option<&str>) -> Result<PathBuf, Failure> {
-    if let Some(run) = run {
-        return Ok(runs::folder(root, run)?.join("session.json"));
+fn run_folder(root: &Path, name: &str) -> Result<PathBuf, String> {
+    if !session::plain(name) {
+        return Err(format!("{name:?} is not a plain run name"));
     }
-    let folder = root.join("artifacts/runs");
+    Ok(root.join(RUNS).join(name))
+}
+
+fn session_file(root: &Path, run: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(run) = run {
+        return Ok(run_folder(root, run)?.join("session.json"));
+    }
+    let folder = root.join(RUNS);
     let open: Vec<PathBuf> = fs::read_dir(&folder)
         .map(|entries| {
             entries
@@ -438,7 +429,7 @@ fn session_file(root: &Path, run: Option<&str>) -> Result<PathBuf, Failure> {
         .unwrap_or_default();
     match open.as_slice() {
         [file] => Ok(file.clone()),
-        [] => Err(format!("no session is open under {}; start one with `cargo xtask agent start`", folder.display()).into()),
+        [] => Err(format!("no session is open under {}; start one with `cargo xtask agent start`", folder.display())),
         several => Err(format!(
             "{} sessions are open; pick one with --run: {}",
             several.len(),
@@ -448,8 +439,7 @@ fn session_file(root: &Path, run: Option<&str>) -> Result<PathBuf, Failure> {
                 .map(|name| name.to_string_lossy())
                 .collect::<Vec<_>>()
                 .join(", ")
-        )
-        .into()),
+        )),
     }
 }
 

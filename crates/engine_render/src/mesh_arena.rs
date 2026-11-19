@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bevy_ecs::world::World;
 use engine_core::{
     ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, ClassStream, Cursor,
-    GeometryClass, GeometryHandle, GeometryStream, Mesh, MeshLods, MeshPlacement, MeshResidence,
+    GeometryClass, GeometryHandle, GeometryStream, Mesh, MeshPlacement, MeshResidence,
     ResidentMesh, Since, math::clamp,
 };
 
@@ -330,16 +330,6 @@ impl GpuMesh {
     }
 }
 
-fn with_levels(mesh: &Mesh, lods: Option<&MeshLods>) -> Vec<u32> {
-    let mut indices =
-        Vec::with_capacity(mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len()));
-    indices.extend_from_slice(mesh.indices());
-    if let Some(lods) = lods {
-        indices.extend_from_slice(&lods.indices);
-    }
-    indices
-}
-
 pub struct GpuMeshes {
     meshes: BTreeMap<GeometryHandle, GpuMesh>,
     arena: MeshArena,
@@ -436,8 +426,7 @@ impl GpuMeshes {
             let Some(class) = residency.class(resident.class()) else {
                 continue;
             };
-            let lods = source.lods().map(|lods| &**lods);
-            bytes += self.upload(device, queue, (handle, resident, class), source, lods);
+            bytes += self.upload(device, queue, (handle, resident, class), source);
         }
         bytes
     }
@@ -448,7 +437,6 @@ impl GpuMeshes {
         queue: &Queue,
         (handle, resident, class): (GeometryHandle, &ResidentMesh, &GeometryClass),
         source: &Mesh,
-        lods: Option<&MeshLods>,
     ) -> u64 {
         let streams = &class.streams;
         self.staging
@@ -457,11 +445,11 @@ impl GpuMeshes {
             stream_bytes(source, stream, bytes);
         }
         let staged = &self.staging[..streams.len()];
-        let indices = with_levels(source, lods);
+        let indices = source.indices();
         let placement = resident.placement();
         let own = match placement {
             MeshResidence::Arena(placement) => {
-                self.arena.write(queue, placement, staged, &indices);
+                self.arena.write(queue, placement, staged, indices);
                 None
             }
             MeshResidence::Own => {
@@ -481,7 +469,7 @@ impl GpuMeshes {
                         .collect(),
                     indices: buffer(
                         "engine/mesh-indices",
-                        bytemuck::cast_slice(&indices),
+                        bytemuck::cast_slice(indices),
                         wgpu::BufferUsages::INDEX,
                     ),
                 })

@@ -89,10 +89,6 @@ impl Bound {
         self.skipped
     }
 
-    pub fn hip_height(&self) -> Option<f32> {
-        self.root.map(|(_, height)| height)
-    }
-
     pub fn root_joint(&self) -> Option<usize> {
         self.root.map(|(joint, _)| joint)
     }

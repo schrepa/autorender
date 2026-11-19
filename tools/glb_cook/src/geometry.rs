@@ -366,7 +366,6 @@ fn encode(source: &Source, item: &str, parts: &[Part], ordered: bool) -> Result<
             colors: None,
             uv1: (with_uv1 != 0).then_some(uv1.as_slice()),
             named: &named,
-            lods: None,
         },
     );
     read_back(

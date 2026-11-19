@@ -179,25 +179,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "app_template"
-version = "0.1.0"
-dependencies = [
- "engine",
- "engine_core",
- "engine_ecs",
- "engine_native",
- "engine_render",
- "engine_sources",
- "glam 0.30.9",
- "schemars",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,6 +189,9 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -272,21 +256,6 @@ dependencies = [
  "object",
  "rustc-demangle",
  "windows-link",
-]
-
-[[package]]
-name = "bare_game"
-version = "0.1.0"
-dependencies = [
- "engine",
- "engine_core",
- "engine_ecs",
- "engine_native",
- "engine_render",
- "engine_sources",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]
@@ -966,7 +935,6 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "engine_settings",
- "engine_worker",
  "glam 0.30.9",
  "js-sys",
  "schemars",
@@ -976,7 +944,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "wgpu",
 ]
 
 [[package]]
@@ -985,10 +952,8 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine_codec",
- "engine_lodbuild",
  "engine_settings",
  "glam 0.30.9",
- "libm",
  "schemars",
  "serde",
 ]
@@ -1043,7 +1008,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -1055,7 +1019,6 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine_core",
- "engine_profile",
  "engine_registry",
  "engine_scene",
  "engine_settings",
@@ -1081,16 +1044,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine_lodbuild"
-version = "0.1.0"
-dependencies = [
- "engine_codec",
- "engine_math",
- "engine_sources",
- "glam 0.30.9",
-]
-
-[[package]]
 name = "engine_math"
 version = "0.1.0"
 dependencies = [
@@ -1102,22 +1055,18 @@ dependencies = [
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
- "base64",
  "cpal",
  "engine",
  "engine_core",
  "engine_profile",
  "engine_profiler",
  "engine_registry",
- "engine_worker",
  "gilrs",
  "lewton",
  "png",
  "pollster",
  "serde_json",
- "sha2",
  "winit",
- "zstd",
 ]
 
 [[package]]
@@ -1136,10 +1085,8 @@ dependencies = [
  "bevy_ecs",
  "bytemuck",
  "engine_assets",
- "engine_codec",
  "engine_gpu_bits",
  "engine_math",
- "engine_profile",
  "engine_settings",
  "schemars",
  "serde",
@@ -1149,9 +1096,6 @@ dependencies = [
 [[package]]
 name = "engine_profile"
 version = "0.1.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "engine_profiler"
@@ -1173,17 +1117,13 @@ name = "engine_registry"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
- "bevy_platform",
- "engine_math",
  "engine_place",
  "engine_profile",
  "engine_settings",
  "glam 0.30.9",
- "indexmap",
  "schemars",
  "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -1198,7 +1138,6 @@ dependencies = [
  "engine_registry",
  "glam 0.30.9",
  "js-sys",
- "libm",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -1206,7 +1145,6 @@ dependencies = [
  "web-sys",
  "wesl",
  "wgpu",
- "wgpu-types 30.0.1",
 ]
 
 [[package]]
@@ -1259,24 +1197,7 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_codec",
- "png",
  "serde_json",
- "zune-jpeg",
-]
-
-[[package]]
-name = "engine_worker"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_math",
- "engine_panic",
- "engine_registry",
- "engine_settings",
- "js-sys",
- "ruzstd",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -1495,10 +1416,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "r-efi 6.0.0",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1572,6 +1491,7 @@ dependencies = [
  "png",
  "serde",
  "serde_json",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1671,6 +1591,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -2041,6 +1963,22 @@ name = "mach2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
+
+[[package]]
+name = "macro_rules_attribute"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3ae8f6d608c795738406608304d30a2dfbdc8e58e44f7ba43236da5208ded3c"
+dependencies = [
+ "macro_rules_attribute-proc_macro",
+ "pastey",
+]
+
+[[package]]
+name = "macro_rules_attribute-proc_macro"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc04a4c58212d57930a24bf47d3fa87485264a3a054e9c10e042eb373573ad3c"
 
 [[package]]
 name = "memchr"
@@ -2636,6 +2574,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2756,12 +2700,6 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
-
-[[package]]
-name = "quick-error"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quick-xml"
@@ -2945,12 +2883,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "ruzstd"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
 
 [[package]]
 name = "same-file"
@@ -3150,6 +3082,9 @@ name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smithay-client-toolkit"
@@ -3302,18 +3237,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tiff"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
-dependencies = [
- "flate2",
- "half",
- "quick-error",
- "weezl",
-]
-
-[[package]]
 name = "tiny-skia"
 version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3416,12 +3339,6 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
-
-[[package]]
-name = "typed-path"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
 
 [[package]]
 name = "typeid"
@@ -3716,12 +3633,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "weezl"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
-
-[[package]]
 name = "wesl"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3804,6 +3715,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
  "log",
+ "macro_rules_attribute",
  "naga",
  "naga-types",
  "once_cell",
@@ -3812,6 +3724,7 @@ dependencies = [
  "profiling",
  "raw-window-handle",
  "rustc-hash 1.1.0",
+ "serde",
  "smallvec",
  "thiserror 2.0.21",
  "wgpu-core-deps-apple",
@@ -4294,11 +4207,7 @@ dependencies = [
  "base64",
  "engine_command_line",
  "engine_panic",
- "engine_scene",
- "engine_worker",
- "png",
  "serde_json",
- "sha2",
  "toml_edit",
  "windows-sys 0.61.2",
 ]
@@ -4307,26 +4216,17 @@ dependencies = [
 name = "xtask_engine"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine",
  "engine_checks",
  "engine_command_line",
  "engine_core",
  "engine_dev",
- "engine_lodbuild",
- "engine_native",
  "engine_registry",
  "engine_scene",
- "engine_sources",
- "gltf",
  "naga",
- "png",
  "serde_json",
  "sha2",
- "tiff",
- "toml_edit",
  "xtask",
- "zip",
 ]
 
 [[package]]
@@ -4350,23 +4250,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zip"
-version = "9.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e408c6cc4699dd017d53dc080cd51c2cea2b5354af57a1479bd265ed42911487"
-dependencies = [
- "crc32fast",
- "flate2",
- "getrandom 0.4.3",
- "indexmap",
- "libc",
- "memchr",
- "nix",
- "typed-path",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4377,34 +4260,6 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "zstd"
-version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
-dependencies = [
- "zstd-safe",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "8.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b"
-dependencies = [
- "zstd-sys",
-]
-
-[[package]]
-name = "zstd-sys"
-version = "2.1.2+zstd.1.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
-dependencies = [
- "cc",
- "pkg-config",
-]
 
 [[package]]
 name = "zune-core"

@@ -7,5 +7,4 @@
 /web/dist-profile/
 /artifacts/
 *.log
-/web/public/cooked/
 zz-*

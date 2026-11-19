@@ -3,198 +3,75 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-#[doc(hidden)]
-pub mod bc7;
-mod image;
-
-pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, decode_texture, image_format};
-
-use engine_assets::{ColorSpace, Texture, TextureFormat, TextureSummary};
+use engine_assets::{ColorSpace, Texture, TextureFormat};
 use engine_codec::{Error, ErrorCode, Expected};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Usage {
-    Color,
-    Data,
-    Normal,
+const KTX2_IDENTIFIER: [u8; 12] = [
+    0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
+];
+
+const KTX2_FORMATS: [(u32, TextureFormat, ColorSpace); 5] = [
+    (37, TextureFormat::Rgba8, ColorSpace::Linear),
+    (43, TextureFormat::Rgba8, ColorSpace::Srgb),
+    (141, TextureFormat::Bc5, ColorSpace::Linear),
+    (145, TextureFormat::Bc7, ColorSpace::Linear),
+    (146, TextureFormat::Bc7, ColorSpace::Srgb),
+];
+
+fn word(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four_bytes"))
 }
 
-impl Usage {
-    pub fn space(self) -> ColorSpace {
-        match self {
-            Self::Color => ColorSpace::Srgb,
-            Self::Data | Self::Normal => ColorSpace::Linear,
-        }
+pub fn decode_texture(uri: &str, bytes: &[u8]) -> Result<Texture, Error> {
+    let invalid = |expected: Expected, field: &str, got: serde_json::Value| {
+        Error::new(ErrorCode::InvalidTexture, format!("$.{field}"))
+            .expected(expected)
+            .got(serde_json::json!({ "file": uri, "value": got }))
+    };
+    if !bytes.starts_with(&KTX2_IDENTIFIER) {
+        return Err(Error::new(ErrorCode::InvalidTexture, "$")
+            .expected(Expected::Image)
+            .got(uri));
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Family {
-    Bc7,
-    Astc,
-}
-
-impl Family {
-    pub const ALL: [Family; 2] = [Family::Bc7, Family::Astc];
-
-    pub fn format(self) -> TextureFormat {
-        match self {
-            Self::Bc7 => TextureFormat::Bc7,
-            Self::Astc => TextureFormat::Astc4x4,
-        }
+    if bytes.len() < 80 {
+        return Err(invalid(Expected::Image, "header", bytes.len().into()));
     }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Bc7 => "bc7",
-            Self::Astc => "astc",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Source {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
-    pub usage: Usage,
-}
-
-pub fn plain(source: &Source) -> Result<Texture, Error> {
-    let expected = TextureFormat::Rgba8.level_bytes(source.width, source.height);
-    if source.pixels.len() != expected {
-        return Err(Error::new(ErrorCode::InvalidTexture, "$.pixels")
-            .expected(Expected::Matching)
-            .range(expected as f64, expected as f64)
-            .got(source.pixels.len()));
-    }
-    Ok(
-        Texture::from_rgba(source.width, source.height, source.pixels.clone())?
-            .with_summary(TextureSummary::of_rgba8(&source.pixels))
-            .with_color_space(source.usage.space()),
-    )
-}
-
-pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
-    if texture.format() != TextureFormat::Bc7 {
-        return Err(Error::new(ErrorCode::InvalidTexture, "$.format").expected(Expected::Supported));
-    }
-    let levels = texture
-        .levels()
+    let vk_format = word(bytes, 12);
+    let (format, space) = KTX2_FORMATS
         .iter()
-        .enumerate()
-        .map(|(level, blocks)| {
-            let width = (texture.width() >> level).max(1) as usize;
-            let height = (texture.height() >> level).max(1) as usize;
-            let columns = width.div_ceil(4);
-            let mut pixels = vec![0_u8; width * height * 4];
-            for (index, block) in blocks.as_chunks::<16>().0.iter().enumerate() {
-                let (column, row) = (index % columns, index / columns);
-                for (texel, color) in bc7::decode_block(block).iter().enumerate() {
-                    let (x, y) = (column * 4 + texel % 4, row * 4 + texel / 4);
-                    if x < width && y < height {
-                        let at = (y * width + x) * 4;
-                        pixels[at..at + 4].copy_from_slice(color);
-                    }
-                }
-            }
-            pixels
-        })
-        .collect();
-    let decoded = Texture::from_levels(
-        TextureFormat::Rgba8,
-        texture.width(),
-        texture.height(),
-        levels,
-    )?
-    .with_color_space(texture.color_space());
-    Ok(match texture.summary() {
-        Some(summary) => decoded.with_summary(summary),
-        None => decoded,
-    })
-}
-
-const MAGIC: &[u8; 4] = b"ETEX";
-const HEADER: usize = 4 + 3 + 8 + 28;
-
-pub fn record(texture: &Texture) -> Vec<u8> {
-    let summary = texture.summary().unwrap_or(TextureSummary {
-        color: [1.0; 3],
-        mean: [1.0; 4],
-    });
-    let mut out = Vec::with_capacity(HEADER + texture.byte_len());
-    out.extend_from_slice(MAGIC);
-    out.push(match texture.format() {
-        TextureFormat::Rgba8 => 0,
-        TextureFormat::Bc7 => 1,
-        TextureFormat::Etc2Rgba8 => 2,
-        TextureFormat::Astc4x4 => 3,
-        TextureFormat::Bc5 => 4,
-    });
-    out.push(if texture.makes_levels() {
-        0
-    } else {
-        texture.levels().len() as u8
-    });
-    out.push(texture.color_space().tag());
-    out.extend_from_slice(&texture.width().to_le_bytes());
-    out.extend_from_slice(&texture.height().to_le_bytes());
-    for value in summary.color.iter().chain(&summary.mean) {
-        out.extend_from_slice(&value.to_le_bytes());
+        .find(|(known, _, _)| *known == vk_format)
+        .map(|(_, format, space)| (*format, *space))
+        .ok_or_else(|| invalid(Expected::Supported, "vkFormat", vk_format.into()))?;
+    let (width, height) = (word(bytes, 20), word(bytes, 24));
+    for (field, at, most) in [
+        ("pixelDepth", 28, 1),
+        ("layerCount", 32, 1),
+        ("faceCount", 36, 1),
+        ("supercompressionScheme", 44, 0),
+    ] {
+        let value = word(bytes, at);
+        if value > most || (field == "faceCount" && value != 1) {
+            return Err(invalid(Expected::Supported, field, value.into()));
+        }
     }
-    for level in texture.levels() {
-        out.extend_from_slice(level);
+    let count = word(bytes, 40) as usize;
+    let chain = (u32::BITS - width.max(height).max(1).leading_zeros()) as usize;
+    if count == 0 || count > chain || bytes.len() < 80 + 24 * count {
+        return Err(invalid(Expected::Supported, "levelCount", count.into()));
     }
-    out
-}
-
-pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
-    let header = bytes
-        .get(..HEADER)
-        .ok_or("a texture record is shorter than its header")?;
-    if &header[..4] != MAGIC {
-        return Err("not a texture record".into());
-    }
-    let format = match header[4] {
-        0 => TextureFormat::Rgba8,
-        1 => TextureFormat::Bc7,
-        2 => TextureFormat::Etc2Rgba8,
-        3 => TextureFormat::Astc4x4,
-        4 => TextureFormat::Bc5,
-        other => return Err(format!("a texture record names format {other}")),
-    };
-    let stated = usize::from(header[5]);
-    let count = stated.max(1);
-    let space = ColorSpace::of_tag(header[6])
-        .ok_or_else(|| format!("a texture record names colour space {}", header[6]))?;
-    let word = |at: usize| {
-        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
-    };
-    let (width, height) = (word(7), word(11));
-    let value = |index: usize| f32::from_bits(word(15 + 4 * index));
-    let summary = TextureSummary {
-        color: [value(0), value(1), value(2)],
-        mean: [value(3), value(4), value(5), value(6)],
-    };
     let mut levels = Vec::with_capacity(count);
-    let mut at = HEADER;
     for level in 0..count {
-        let length = format.level_bytes((width >> level).max(1), (height >> level).max(1));
-        let level_bytes = bytes
-            .get(at..at + length)
-            .ok_or("a texture record ends within its levels")?;
-        levels.push(level_bytes.to_vec());
-        at += length;
+        let at = 80 + 24 * level;
+        let (offset, length) = (word(bytes, at) as usize, word(bytes, at + 8) as usize);
+        let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
+        let field = format!("levels[{level}]");
+        if word(bytes, at + 4) != 0 || word(bytes, at + 12) != 0 || length != expected {
+            return Err(invalid(Expected::Matching, &field, length.into()));
+        }
+        let held = bytes
+            .get(offset..offset.saturating_add(length))
+            .ok_or_else(|| invalid(Expected::Image, &field, offset.into()))?;
+        levels.push(held.to_vec());
     }
-    if at != bytes.len() {
-        return Err("a texture record holds bytes past its levels".into());
-    }
-    let texture = if stated == 0 {
-        Texture::from_rgba(width, height, levels.concat())
-    } else {
-        Texture::from_levels(format, width, height, levels)
-    };
-    texture
-        .map(|texture| texture.with_summary(summary).with_color_space(space))
-        .map_err(|error| error.to_string())
+    Texture::from_levels(format, width, height, levels).map(|texture| texture.with_color_space(space))
 }

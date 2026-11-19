@@ -1,6 +1,5 @@
 use engine_core::{Error, ShaderText, Source, TargetName};
 
-use crate::install::Work;
 use crate::{GpuPart, Install, Pass, Prepare};
 
 pub(crate) const POST: &str = "post";
@@ -30,7 +29,7 @@ impl GpuPart for ScenePart {
             .collect();
         let mut passes = Vec::with_capacity(listed.len());
         for listed in listed {
-            let pass = cx.core.pass(listed.name, Work::Render);
+            let pass = cx.core.pass(listed.name);
             cx.core.draws_scene(pass, listed.name, listed.pass);
             if listed.pass.writes.contains(TargetName::CANVAS)
                 && let Some(declared) = cx.core.pass_mut(pass)
@@ -49,7 +48,7 @@ impl GpuPart for ScenePart {
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) {
-        cx.render(crate::Attach::Declared).scene(self);
+        cx.render().scene(self);
     }
 }
 

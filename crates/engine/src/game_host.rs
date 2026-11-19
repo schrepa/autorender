@@ -1,8 +1,6 @@
 use crate::app_host::{Advance, AppHost, Focus};
 use crate::game::{Arrival, Game, LoadedScene};
-use crate::host::{
-    DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource, JobId, JobOrder, JobScheduler,
-};
+use crate::host::{DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource};
 use engine_core::{
     BrickList, CursorMode, Devices, Engine, MouseButton, Pause, PauseReason, TouchPhase,
 };
@@ -15,11 +13,8 @@ pub struct GameHost<G: Game> {
     pub(crate) scene: LoadedScene,
     input: DeviceGatherer,
     frames: FrameLoop,
-    jobs: JobScheduler,
     #[cfg(feature = "dev")]
     pub(crate) development: crate::dev_host::DevHost,
-    #[cfg(feature = "dev")]
-    loading: Option<engine_profile::Cause>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     source: Option<std::path::PathBuf>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -35,7 +30,10 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        #[cfg_attr(not(feature = "dev"), expect(unused_mut, reason = "dev installs names"))]
+        #[cfg_attr(
+            not(feature = "dev"),
+            expect(unused_mut, reason = "dev installs names")
+        )]
         let mut app = AppHost::launch(target, bricks, |engine| {
             let game = build(engine).map_err(Into::into)?;
             engine.app.world_mut().insert_resource(game);
@@ -50,11 +48,8 @@ impl<G: Game> GameHost<G> {
             scene: LoadedScene::default(),
             input: DeviceGatherer::default(),
             frames: FrameLoop::default(),
-            jobs: JobScheduler::default(),
             #[cfg(feature = "dev")]
             development: crate::dev_host::DevHost::default(),
-            #[cfg(feature = "dev")]
-            loading: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
             source: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -68,24 +63,8 @@ impl<G: Game> GameHost<G> {
         self.app.engine()
     }
 
-    pub fn cook(&mut self) {
-        self.app.cook();
-    }
-
-    pub fn jobs_held(&self) -> u32 {
-        self.jobs.held()
-    }
-
     pub fn engine_mut(&mut self) -> &mut Engine {
         self.app.engine_mut()
-    }
-
-    pub fn game(&self) -> &G {
-        self.app.engine().app.world().resource::<G>()
-    }
-
-    pub fn scene(&self) -> &LoadedScene {
-        &self.scene
     }
 
     pub(crate) fn framed(
@@ -94,33 +73,11 @@ impl<G: Game> GameHost<G> {
         size: (u32, u32),
         picture: Picture,
     ) -> crate::Result<bool> {
-        #[cfg(feature = "dev")]
-        if let Some(loading) = self.loading {
-            let drawn = engine_profile::caused(loading, || self.frame_once(advance, size, picture));
-            let (readiness, _) = self.progress();
-            if readiness.settled() && !crate::host::in_flight(self, &readiness) {
-                self.loading = None;
-            }
-            return drawn;
-        }
-        self.frame_once(advance, size, picture)
-    }
-
-    fn frame_once(
-        &mut self,
-        advance: Advance,
-        size: (u32, u32),
-        picture: Picture,
-    ) -> crate::Result<bool> {
-        self.prepare_pipelines();
         let source = self.input_source();
         self.app.follow_focus(source);
         let input = self.frame_input(source);
         self.app.accept(input);
-        let drawn = self.app.frame(advance, size, picture)?;
-        #[cfg(feature = "dev")]
-        self.dev_frame_end();
-        Ok(drawn)
+        self.app.frame(advance, size, picture)
     }
 
     pub(crate) fn play(&mut self, timestamp: f64, size: (u32, u32)) -> crate::Result<FramePhase> {
@@ -207,19 +164,6 @@ impl<G: Game> GameHost<G> {
         phase
     }
 
-    pub fn prepare_pipelines(&mut self) -> bool {
-        let scene = &self.scene;
-        self.app
-            .prepare_pipelines(|engine| G::content(engine, scene))
-    }
-
-    pub fn set_preparation(&mut self, enabled: bool) {
-        self.frames.set_preparation(enabled);
-        if !enabled {
-            self.hold_preparation(false);
-        }
-    }
-
     pub(crate) fn hold_preparation(&mut self, held: bool) {
         let engine = self.app.engine_mut();
         if held {
@@ -231,10 +175,6 @@ impl<G: Game> GameHost<G> {
 
     pub(crate) fn set_preparation_ms(&mut self, milliseconds: f64) {
         self.app.set_preparation_ms(milliseconds);
-    }
-
-    pub fn preparing(&self) -> bool {
-        self.frames.preparing()
     }
 
     pub fn key(&mut self, code: &str, down: bool) {
@@ -277,10 +217,6 @@ impl<G: Game> GameHost<G> {
         *self.app.engine().app.world().resource::<CursorMode>()
     }
 
-    pub fn clear_input(&mut self) {
-        self.input.clear();
-    }
-
     pub fn take_sound(&mut self) -> Vec<engine_core::SoundOrder> {
         let world = self.app.engine_mut().app.world_mut();
         world
@@ -300,96 +236,6 @@ impl<G: Game> GameHost<G> {
         if let Some(mut sounds) = world.get_resource_mut::<engine_core::Sounds>() {
             sounds.hear(reply);
         }
-    }
-
-    pub fn set_job_workers(&mut self, workers: u32) -> bool {
-        let set = self.jobs.set_workers(workers);
-        self.app.set_job_workers(self.jobs.working());
-        set
-    }
-
-    pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
-        self.jobs.set_cache(caching, verify);
-        self.app.set_job_verifying(caching && verify);
-    }
-
-    pub fn set_job_sample(&mut self, sample: std::collections::BTreeSet<String>) {
-        self.jobs.set_sample(sample);
-    }
-
-    pub fn take_jobs(&mut self) -> Vec<JobOrder> {
-        let messages = self.app.take_jobs();
-        let mut finished = Vec::new();
-        let mut orders = self.jobs.take(messages, &mut finished);
-        let here = self.jobs.take_here();
-        if !here.is_empty() {
-            for request in here {
-                let output = self.app.run_job_here(&request.kind, &request.input);
-                self.jobs.ran_here(request.id, output, &mut finished);
-            }
-            orders.extend(self.jobs.take(Vec::new(), &mut finished));
-        }
-        self.finish_jobs(finished);
-        orders
-    }
-
-    pub fn complete_job(&mut self, id: JobId, output: std::sync::Arc<[u8]>) {
-        let mut finished = Vec::new();
-        self.jobs.done(id, output, &mut finished);
-        self.finish_jobs(finished);
-    }
-
-    pub fn fail_job(&mut self, id: JobId, error: String) {
-        let mut finished = Vec::new();
-        self.jobs.failed(id, error, &mut finished);
-        self.finish_jobs(finished);
-    }
-
-    pub fn job_kept(
-        &mut self,
-        id: JobId,
-        key: String,
-        kept: Option<(std::sync::Arc<[u8]>, engine_core::JobSource)>,
-    ) {
-        let found = kept.as_ref().map(|(_, source)| *source);
-        engine_core::job_looked(self.app.engine_mut().app.world_mut(), id, found);
-        let mut finished = Vec::new();
-        self.jobs.kept(id, key, kept.map(|(output, _)| output), &mut finished);
-        self.finish_jobs(finished);
-    }
-
-    pub fn lose_job_worker(&mut self, worker: u32, error: &str, replaced: bool) {
-        let mut finished = Vec::new();
-        self.jobs.lost(worker, error, replaced, &mut finished);
-        self.finish_jobs(finished);
-        self.app.set_job_workers(self.jobs.working());
-    }
-
-    pub fn job_task(&mut self) -> Option<u32> {
-        self.jobs.task()
-    }
-
-    pub fn job_task_done(&mut self, worker: u32) {
-        self.jobs.task_done(worker);
-    }
-
-    pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {
-        self.app.job_list()
-    }
-
-    fn finish_jobs(&mut self, finished: Vec<crate::host::Finished>) {
-        for (id, result) in finished {
-            match result {
-                Ok(output) => self.app.complete_job(id, output),
-                Err(error) => self.app.fail_job(id, error),
-            }
-        }
-        self.app.report_jobs_held(self.jobs.held());
-        self.app.take_pipelines();
-    }
-
-    pub fn report_job_cache(&mut self, counts: [u64; 5]) {
-        self.app.report_job_cache(counts);
     }
 
     pub fn suspend(&mut self) {
@@ -459,35 +305,12 @@ impl<G: Game> GameHost<G> {
         files: &SceneFiles,
         arrival: Arrival,
     ) -> crate::Result<()> {
-        let cause = match arrival {
-            Arrival::Opening => engine_profile::open("launch", "scene"),
-            Arrival::Reload => engine_profile::open("reload", &document.id),
-        };
-        #[cfg(feature = "dev")]
-        if cause != engine_profile::Cause::default() {
-            self.loading = Some(cause);
-        }
-        engine_profile::caused(cause, || {
-            let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
-            self.scene
-                .replace(self.app.engine_mut().app.world_mut(), instance);
-            self.app.replay_settings()?;
-            self.app.reloaded();
-            self.suspend();
-            Ok(())
-        })
-    }
-
-    pub fn change_settings<S: engine_core::Section>(
-        &mut self,
-        change: impl FnOnce(&mut S),
-    ) -> crate::Result<()> {
-        let entry = crate::host::changed_section(self.app.engine().app.world(), change)?;
-        self.app.set_settings(&[entry])
-    }
-
-    pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> crate::Result<()> {
-        self.app.set_setting(key, value)
+        let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
+        self.scene
+            .replace(self.app.engine_mut().app.world_mut(), instance);
+        self.app.replay_settings()?;
+        self.suspend();
+        Ok(())
     }
 
     pub fn set_settings(&mut self, entries: &[(String, serde_json::Value)]) -> crate::Result<()> {
@@ -511,7 +334,7 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.wait_for_gpu()
     }
 
-    pub fn progress(&self) -> (engine_core::Readiness, engine_core::JobStats) {
+    pub fn progress(&self) -> engine_core::Readiness {
         self.app.progress()
     }
 
@@ -602,16 +425,15 @@ fn read_scene(
     })?;
     let mut load = crate::host::SceneLoad::new(&source, kinds)?;
     let folder = path.parent().unwrap_or(std::path::Path::new("."));
-    for read in load.take_reads().into_iter().rev() {
+    for read in load.take_reads() {
         let file = folder.join(&read.uri);
         let bytes = std::fs::read(&file).map_err(|error| {
             Error::new(ErrorCode::SourceIo, "$.path").got(format!("{}: {error}", file.display()))
         })?;
-        if let Some(image) = load.read(&read.uri, bytes)? {
-            load.decode(&read.uri, &image)?;
-        }
+        load.read(&read.uri, bytes)?;
     }
-    Ok((source, load.finish()?))
+    let (_, files) = load.opened()?;
+    Ok((source, files))
 }
 
 #[cfg(feature = "dev")]

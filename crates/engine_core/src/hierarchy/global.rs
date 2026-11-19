@@ -6,38 +6,12 @@ static NEXT_VALUE: AtomicU64 = AtomicU64::new(1);
 const BLOCK: u64 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Revision(NonZeroU64);
-
-impl Revision {
-    pub fn get(self) -> u64 {
-        self.0.get()
-    }
-}
+pub(crate) struct Revision(NonZeroU64);
 
 #[derive(Clone, Copy)]
 pub struct GlobalTransform {
     matrix: Mat4,
-    revision: Option<Revision>,
     valid: bool,
-}
-
-impl Default for GlobalTransform {
-    fn default() -> Self {
-        Self {
-            matrix: Mat4::IDENTITY,
-            revision: None,
-            valid: false,
-        }
-    }
-}
-
-impl std::fmt::Debug for GlobalTransform {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_tuple("GlobalTransform")
-            .field(&self.matrix())
-            .finish()
-    }
 }
 
 impl GlobalTransform {
@@ -49,14 +23,9 @@ impl GlobalTransform {
         self.matrix().map(|matrix| matrix.w_axis.truncate())
     }
 
-    pub fn revision(&self) -> Option<Revision> {
-        self.revision
-    }
-
-    pub(crate) fn read_value(matrix: Option<Mat4>, revision: Option<Revision>) -> Self {
+    pub(crate) fn read_value(matrix: Option<Mat4>) -> Self {
         Self {
             matrix: matrix.unwrap_or(Mat4::IDENTITY),
-            revision,
             valid: matrix.is_some(),
         }
     }

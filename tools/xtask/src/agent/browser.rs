@@ -27,7 +27,7 @@ const SHADER_CACHES: [&str; 6] = [
     "GrShaderCache",
     "ShaderCache",
 ];
-const BINDINGS: [&str; 2] = ["__engineRecord", "__engineFile"];
+const BINDING: &str = "__engineFile";
 const READY: &str = r##"new Promise(done => { const look = () => { if (typeof window.__engineDev?.request === "function") done(true); else if (document.querySelector("#status")?.getAttribute("data-state") === "error") done(document.querySelector("#message")?.textContent ?? document.querySelector("#status").textContent); else setTimeout(look, 50); }; look(); })"##;
 const ADAPTER: &str = r#"(async () => { if (!navigator.gpu) return "navigator.gpu is missing"; const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" }); if (!adapter) return "navigator.gpu.requestAdapter() returned null"; const { vendor, architecture, device, description } = adapter.info; return { vendor, architecture, device, description }; })()"#;
 
@@ -208,9 +208,7 @@ impl Session {
         for method in ["Runtime.enable", "Page.enable", "Network.enable", "Inspector.enable"] {
             self.call(method, json!({}), true)?;
         }
-        for name in BINDINGS {
-            self.call("Runtime.addBinding", json!({"name": name}), true)?;
-        }
+        self.call("Runtime.addBinding", json!({"name": BINDING}), true)?;
         let version = self.call("Browser.getVersion", json!({}), false)?;
         self.facts["version"] = version["product"].clone();
         println!("{}", json!({"event": "step", "step": "devtools", "seconds": started.elapsed().as_secs_f64()}));
@@ -388,22 +386,20 @@ impl Session {
     }
 
     fn bound(&mut self, name: Option<&str>, payload: Option<&str>) {
-        let payload = payload.unwrap_or_default();
-        let written = match name {
-            Some("__engineRecord") => self.run.record(payload),
-            Some("__engineFile") => serde_json::from_str::<Value>(payload)
-                .map_err(|error| error.to_string())
-                .and_then(|file| {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(file["base64"].as_str().unwrap_or_default())
-                        .map_err(|error| error.to_string())?;
-                    let name = file["name"].as_str().unwrap_or_default();
-                    self.run.file(file["run"].as_str(), name, &bytes)
-                }),
-            _ => return,
-        };
+        if name != Some(BINDING) {
+            return;
+        }
+        let written = serde_json::from_str::<Value>(payload.unwrap_or_default())
+            .map_err(|error| error.to_string())
+            .and_then(|file| {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(file["base64"].as_str().unwrap_or_default())
+                    .map_err(|error| error.to_string())?;
+                let name = file["name"].as_str().unwrap_or_default();
+                self.run.file(name, &bytes)
+            });
         if let Err(error) = written {
-            self.note(Source::Errors, json!({"driver": name, "text": error}));
+            self.note(Source::Errors, json!({"driver": BINDING, "text": error}));
         }
     }
 }

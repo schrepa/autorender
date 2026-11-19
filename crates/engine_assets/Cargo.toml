@@ -12,8 +12,6 @@ schema = ["engine_settings/schema"]
 [dependencies]
 bevy_ecs.workspace = true
 engine_codec.workspace = true
-engine_lodbuild.workspace = true
-libm.workspace = true
 engine_settings.workspace = true
 schemars.workspace = true
 serde.workspace = true

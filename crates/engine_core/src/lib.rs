@@ -12,22 +12,18 @@ mod background;
 mod bricks;
 mod clock;
 mod closing;
-mod cook;
 mod cursor;
 mod drawn;
 mod entity_indices;
 mod files;
 mod hierarchy;
 mod input;
-mod jobs;
 mod kept;
 pub mod math;
 mod moves;
 pub use engine_math::collections;
 mod presentation;
 pub mod presentation_bounds;
-mod provided;
-mod records;
 mod refusals;
 mod render_stats;
 mod scene;
@@ -37,49 +33,42 @@ mod services;
 mod shared;
 mod sound;
 mod source;
-mod statistics;
 mod ticks;
 mod transform_edits;
 mod views;
 
 pub use admission::admit;
 pub use assets::*;
-pub use authoring::{DrawnForm, ViewForm, core_components};
+pub use authoring::core_components;
 pub use background::{Background, Delivers, Landed, Taken};
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use closing::Closing;
-pub use cook::{Cook, CookAsks, CookList, cook};
 pub use cursor::*;
-pub use drawn::{
-    DRAWN_PART, DrawnBatch, DrawnRecord, DrawnSettings, DrawnState, DrawnTable, drawn_wgsl,
-};
+pub use drawn::{DrawnBatch, DrawnRecord, DrawnSettings, DrawnTable, drawn_wgsl};
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
     BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, FIRST_NAMED_LOCATION,
-    Filter, GeometryStream, InstanceInput, LightingModel, LodLevel, MAPPED, MAPPED_MAPS,
-    MAPPED_SLOTS, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, NamedStream,
-    RenderState, Sampler, StreamShape, SurfaceSlot, Texture, TextureFormat, TextureRef,
-    UvTransform, Wrap, attributes_wgsl,
+    Filter, GeometryStream, InstanceInput, LightingModel, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
+    Material, Mesh, MeshVertex, NORMAL_MAP, NamedStream, RenderState, Sampler, StreamShape,
+    Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
 };
 pub use engine_place::{
-    AuthoredId, Named, OperationScene, SCENE_SCHEMA, SceneEntity, entity_removed, schema_of,
+    AuthoredId, OperationScene, SCENE_SCHEMA, SceneEntity, entity_removed, schema_of,
 };
 pub use engine_place::{
-    Asked, Awaits, Board, Census, Changed, Changes, Clock, Cursor, DrawKind, Drawn, DrawnBounds,
-    DrawnProjection, Error, ErrorCode, Events, Feed, FeedView, GeometryHandle, GpuStruct,
-    InstanceValues, Interest, JobRef, KindCell, KindDecl, KindJoin, Layers, List, MaterialHandle,
-    Mobility, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassEntry, PassMask,
-    PassName, PassViews, Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses,
-    Settling, Since, Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes,
-    gpu_consts,
+    Asked, Board, Census, Changed, Changes, Clock, Cursor, DrawKind, Drawn, Error, ErrorCode,
+    Events, Feed, FeedView, GeometryHandle, GpuStruct, InstanceValues, Interest, KindCell,
+    KindDecl, KindJoin, Layers, List, MaterialHandle, Mobility, Mover, MoverId, Node, NodeId,
+    NodeWord, Pace, Pass, PassBit, PassEntry, PassMask, PassName, PassViews, Progress, Readiness,
+    Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, StoreId, TargetName,
+    TextureHandle, Ticket, Unsettled, Writes,
 };
-pub use engine_place::{
-    BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
-};
-pub use engine_place::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
-pub use engine_registry::{FrameFacts, RecordParity};
+pub use engine_place::{BitValue, FrameId, GpuBits, Readable, Readback, gpu_bits};
+pub use engine_place::{Clear, Rect, Target, View};
+pub use engine_codec::content_hash;
+pub use engine_registry::FrameFacts;
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub use engine_registry::{
     Answer, Kind, Lands, NameEntry, Reach, ReachMut, register, unavailable,
@@ -88,29 +77,22 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use engine_textures::{
-    IMAGE_FORMATS, Image, ImageFormat, decode_image, decode_texture, image_format,
-};
+pub use engine_textures::decode_texture;
 pub use files::Files;
 pub use kept::Kept;
 pub use glam;
 pub use hierarchy::*;
 pub use input::*;
-pub use jobs::*;
-pub use moves::{Moves, Teleport, mover_of, send_ask, take_asks};
+pub use moves::{Moves, Teleport, send_ask};
 pub use presentation::*;
-pub use provided::*;
-pub use records::*;
 pub use refusals::{Refusals, Refused};
 pub use render_stats::DrawReports;
 pub use render_stats::{DropReason, DroppedDraws, KindPass, KindPassState, Names, RenderStats};
 pub use scene::*;
-pub use schedules::{RunPace, RunPoint};
-pub use section::{Cut, Section, Switch};
+pub use section::{Section, Switch};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, DeviceLimits, Placed, Placement, Prepared,
-    SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, scene_component,
-    scene_components,
+    ComponentKind, ComponentKindOf, DeviceLimits, Prepared, SceneBuffers, SceneComponents,
+    SceneContext, SceneCx, SceneForm, scene_component, scene_components,
 };
 pub use shared::FeedSettings;
 pub use sound::{
@@ -118,16 +100,8 @@ pub use sound::{
     SoundReply, SoundReport, Sounds, Tune, VoiceCounts, VoiceId,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
-pub use statistics::{Distribution, median};
-pub use ticks::ScanClock;
 pub(crate) use transform_edits::edit_transform;
 pub use views::{ViewFacts, Views, main_camera};
-
-#[doc(hidden)]
-pub mod textures {
-    pub use engine_assets::srgb_decoded;
-    pub use engine_textures::{bc7, decode, decompress, plain, record};
-}
 
 #[doc(hidden)]
 pub mod __private {
@@ -144,8 +118,6 @@ macro_rules! gpu_struct {
     };
 }
 
-use std::sync::Arc;
-
 use bevy_ecs::component::Immutable;
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::lifecycle::Add;
@@ -154,11 +126,11 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, SingleThreadedExecutor};
 use bevy_ecs::world::World;
 use clock::{Advanced, FixedClock, Interval};
-use engine_registry::{JobList, JobListed, MembersOf, Registry, RegistryBuilder, Switches};
+use engine_registry::{MembersOf, Registry, RegistryBuilder, Switches};
 use schedules::{FixedSimulation, FrameStart, Presentation, TransformPropagation};
 
 #[cfg(feature = "dev")]
-pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
+fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
     if ticks >= 1 {
         Ok(())
     } else {
@@ -294,22 +266,11 @@ fn stages_time(world: &World) -> serde_json::Value {
 #[cfg(any(feature = "dev", feature = "profiling"))]
 fn core_names(world: &mut World) {
     world.init_resource::<StageTimes>();
-    let named = |name: &'static str, kind: Kind, read: fn(&World) -> serde_json::Value| {
-        NameEntry::read(name, kind, move |reach, _| Ok(read(reach.world)))
-    };
-    for entry in [
-        named("stages.time", Kind::Time, stages_time).unit("ns"),
-        named("jobs.asked", Kind::Count, jobs::jobs_asked),
-        named("jobs.landed", Kind::Count, jobs::jobs_landed),
-        named("jobs.failed", Kind::Count, jobs::jobs_failed),
-        named("jobs.cancelled", Kind::Count, jobs::jobs_cancelled),
-        named("jobs.time", Kind::Time, jobs::jobs_time).unit("ns"),
-        named("jobs.exchange", Kind::Count, jobs::jobs_exchange),
-        named("jobs.bytes", Kind::Bytes, jobs::jobs_bytes).unit("bytes"),
-        named("jobs.state", Kind::State, jobs::jobs_state),
-    ] {
-        register(world, entry);
-    }
+    register(
+        world,
+        NameEntry::read("stages.time", Kind::Time, |reach, _| Ok(stages_time(reach.world)))
+            .unit("ns"),
+    );
 }
 
 fn refused(problems: &[Error]) -> Result<(), Error> {
@@ -329,10 +290,6 @@ impl Engine {
     fn on_board(config: EngineConfig, board: Board) -> Self {
         let clock = FixedClock::new(config);
         let assets = AssetLibrary::new(config.asset_budget);
-        let exchange = JobExchange::default();
-        let listed = JobListed::of(exchange.list());
-        let cores = std::thread::available_parallelism()
-            .map_or(1, |cores| u32::try_from(cores.get()).unwrap_or(u32::MAX));
         let mut app = App::empty();
         app.world_mut()
             .resource_mut::<Schedules>()
@@ -357,30 +314,21 @@ impl Engine {
             })
             .init_resource::<FrameTime>()
             .init_resource::<Pause>()
-            .init_resource::<TimeScale>()
             .init_resource::<FrameLimits>()
             .init_resource::<Readiness>()
             .init_resource::<Refusals>()
             .init_resource::<Views>()
             .init_resource::<FeedSettings>()
             .init_resource::<DrawnSettings>()
-            .insert_resource(exchange)
-            .insert_resource(listed)
-            .init_resource::<engine_registry::JobQueue>()
-            .init_resource::<Records>()
             .init_resource::<Files>()
             .init_resource::<Kept>()
             .init_resource::<Closing>()
-            .init_resource::<RecordExchange>()
-            .insert_resource(DeviceLimits::without_device(cores))
+            .init_resource::<DeviceLimits>()
             .init_resource::<Devices>()
             .init_resource::<CursorMode>()
             .init_resource::<Sounds>()
-            .init_resource::<ProvidedAssets>()
-            .init_resource::<PresentationState>()
             .init_resource::<DrawnPoses>()
             .init_resource::<Asked<Teleport>>()
-            .init_resource::<Asked<ViewCut>>()
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
@@ -411,27 +359,20 @@ impl Engine {
     }
 
     fn install(&mut self, list: &BrickList) -> Result<(), Error> {
-        let jobs = list.job_list()?;
         let mut registry = RegistryBuilder::default();
         core_entries(&mut registry);
         for listed in list.listed() {
             registry.add(listed.record());
         }
         let world = self.app.world_mut();
-        world.insert_resource(JobListed::of(&jobs));
-        world.resource_mut::<JobExchange>().set_list(jobs);
         world.register_component::<Camera>();
         world.register_component::<Drawn>();
         world.register_component::<View>();
         let labels: [InternedScheduleLabel; 3] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
-        for default in list.defaults() {
-            default(world);
-        }
         moves::install_kinds(world);
         drawn::install_kinds(world);
         install_passes(world);
-        records::install_jobs(world);
         let mut twice = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.names_twice(|kind| kind.key()))
@@ -464,25 +405,9 @@ impl Engine {
         self
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    pub fn name(&mut self, entry: NameEntry) -> &mut Self {
-        register(self.app.world_mut(), entry);
-        self
-    }
-
     #[doc(hidden)]
     pub fn set_frame(&mut self, facts: FrameFacts) {
         self.facts = Some(facts);
-    }
-
-    #[doc(hidden)]
-    pub fn land_job(&mut self, id: JobId, output: Result<Arc<[u8]>, String>) {
-        jobs::land_job(self.app.world_mut(), id, output);
-    }
-
-    #[doc(hidden)]
-    pub fn job_list(&self) -> Arc<JobList> {
-        self.app.world().resource::<JobExchange>().shared_list()
     }
 
     pub fn readiness(&self) -> &Readiness {
@@ -592,7 +517,11 @@ impl Engine {
 
     fn time_rate(&self) -> f64 {
         let world = self.app.world();
-        clock::game_rate(world.resource::<Pause>(), *world.resource::<TimeScale>())
+        if world.resource::<Pause>().paused() {
+            0.0
+        } else {
+            1.0
+        }
     }
 
     #[cfg(feature = "dev")]
@@ -729,12 +658,8 @@ impl Engine {
         });
     }
 
-    pub fn refresh_transforms(&mut self) {
+    fn refresh_transforms(&mut self) {
         self.app.world_mut().run_schedule(TransformPropagation);
-    }
-
-    pub fn presentation(&self) -> &PresentationState {
-        self.app.world().resource::<PresentationState>()
     }
 
     pub fn extract_frame(&mut self) -> Result<RenderFrame<'_>, Error> {
@@ -758,10 +683,8 @@ impl Engine {
 
     fn exchange_now(&mut self) {
         let world = self.app.world_mut();
-        records::exchange(world);
         files::read_files(world);
         kept::exchange_kept(world);
-        jobs::exchange_orders(world);
     }
 
     fn sync_view(&mut self) {

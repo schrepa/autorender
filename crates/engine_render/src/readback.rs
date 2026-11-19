@@ -2,31 +2,10 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use bevy_ecs::world::World;
-use engine_core::{FrameId, Readable, Readback};
-
-pub(crate) type Deliver = fn(&mut World, u32, Readback<Option<&[u8]>>);
-
-pub(crate) fn delivered<R: Readable>(world: &mut World, tag: u32, read: Readback<Option<&[u8]>>) {
-    let mut readable = world.get_resource_or_init::<R>();
-    match read.value {
-        Some(value) => readable.arrived(
-            tag,
-            Readback {
-                value,
-                written: read.written,
-            },
-        ),
-        None => readable.lost(tag),
-    }
-}
+use engine_core::FrameId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reader {
-    Part {
-        part: u32,
-        tag: u32,
-    },
     FrameTimer,
     #[cfg_attr(
         not(any(feature = "dev", feature = "profiling")),
@@ -38,12 +17,6 @@ pub(crate) enum Reader {
         expect(dead_code, reason = "only dev and profiling builds count shader work")
     )]
     Work,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Keep {
-    Ring(usize),
-    Once,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,115 +37,69 @@ pub(crate) enum Arrival<'a> {
 struct Asked {
     written: FrameId,
     bytes: u64,
-    deliver: Option<Deliver>,
 }
 
 struct Slot {
     buffer: wgpu::Buffer,
     capacity: u64,
     reader: Reader,
-    once: bool,
     phase: Rc<Cell<Phase>>,
     asked: Option<Asked>,
 }
 
 impl Slot {
     fn reusable(&self, reader: Reader) -> bool {
-        self.reader == reader && !self.once && self.phase.get() == Phase::Idle
+        self.reader == reader && self.phase.get() == Phase::Idle
     }
 }
 
 #[derive(Default)]
 pub(crate) struct Readbacks {
     slots: Vec<Slot>,
-    overflows: u64,
 }
 
 impl Readbacks {
-    pub(crate) fn overflows(&self) -> u64 {
-        self.overflows
-    }
-
-    pub(crate) fn overflowed(&mut self) {
-        self.overflows += 1;
-    }
-
-    pub(crate) fn room(&self, reader: Reader, most: usize) -> bool {
-        let held = self
-            .slots
-            .iter()
-            .filter(|slot| slot.reader == reader && !slot.once)
-            .count();
-        held < most.max(1) || self.slots.iter().any(|slot| slot.reusable(reader))
-    }
-
     pub(crate) fn record(
         &mut self,
-        recording: (&wgpu::Device, &mut wgpu::CommandEncoder),
+        (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
         (source, range): (&wgpu::Buffer, Range<u64>),
-        asked: (Reader, FrameId, Option<Deliver>),
-        keep: Keep,
+        (reader, written): (Reader, FrameId),
+        most: usize,
     ) -> bool {
         let bytes = range.end.saturating_sub(range.start).next_multiple_of(4);
-        self.record_with(recording, bytes, asked, keep, |encoder, slot| {
-            encoder.copy_buffer_to_buffer(source, range.start, slot, 0, bytes);
-        })
-    }
-
-    pub(crate) fn record_with(
-        &mut self,
-        (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
-        bytes: u64,
-        (reader, written, deliver): (Reader, FrameId, Option<Deliver>),
-        keep: Keep,
-        copy: impl FnOnce(&mut wgpu::CommandEncoder, &wgpu::Buffer),
-    ) -> bool {
-        let found = match keep {
-            Keep::Once => None,
-            Keep::Ring(most) => {
-                let found = self
-                    .slots
-                    .iter()
-                    .position(|slot| slot.reusable(reader) && slot.capacity >= bytes);
-                if found.is_none() {
-                    self.slots.retain(|slot| !(slot.reusable(reader) && slot.capacity < bytes));
-                    let held = self
-                        .slots
-                        .iter()
-                        .filter(|slot| slot.reader == reader && !slot.once)
-                        .count();
-                    if held >= most.max(1) {
-                        return false;
-                    }
+        let found = self
+            .slots
+            .iter()
+            .position(|slot| slot.reusable(reader) && slot.capacity >= bytes);
+        let at = match found {
+            Some(at) => at,
+            None => {
+                self.slots
+                    .retain(|slot| !(slot.reusable(reader) && slot.capacity < bytes));
+                let held = self.slots.iter().filter(|slot| slot.reader == reader).count();
+                if held >= most.max(1) {
+                    return false;
                 }
-                found
+                let capacity = bytes.max(4);
+                self.slots.push(Slot {
+                    buffer: crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
+                        label: Some("engine/readback"),
+                        size: capacity,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }),
+                    capacity,
+                    reader,
+                    phase: Rc::new(Cell::new(Phase::Idle)),
+                    asked: None,
+                });
+                self.slots.len() - 1
             }
         };
-        let at = found.unwrap_or_else(|| {
-            let capacity = bytes.max(4);
-            self.slots.push(Slot {
-                buffer: crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
-                    label: Some("engine/readback"),
-                    size: capacity,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
-                capacity,
-                reader,
-                once: keep == Keep::Once,
-                phase: Rc::new(Cell::new(Phase::Idle)),
-                asked: None,
-            });
-            self.slots.len() - 1
-        });
         let slot = &mut self.slots[at];
-        copy(encoder, &slot.buffer);
+        encoder.copy_buffer_to_buffer(source, range.start, &slot.buffer, 0, bytes);
         slot.phase.set(Phase::Recorded);
-        slot.asked = Some(Asked {
-            written,
-            bytes,
-            deliver,
-        });
+        slot.asked = Some(Asked { written, bytes });
         true
     }
 
@@ -196,10 +123,7 @@ impl Readbacks {
         }
     }
 
-    pub(crate) fn take(
-        &mut self,
-        mut each: impl FnMut(Reader, FrameId, Option<Deliver>, Arrival<'_>),
-    ) {
+    pub(crate) fn take(&mut self, mut each: impl FnMut(Reader, FrameId, Arrival<'_>)) {
         for slot in &mut self.slots {
             let phase = slot.phase.get();
             match phase {
@@ -215,14 +139,9 @@ impl Readbacks {
                         let end = usize::try_from(asked.bytes)
                             .unwrap_or(usize::MAX)
                             .min(view.len());
-                        each(
-                            slot.reader,
-                            asked.written,
-                            asked.deliver,
-                            Arrival::Read(&view[..end]),
-                        );
+                        each(slot.reader, asked.written, Arrival::Read(&view[..end]));
                     }
-                    None => each(slot.reader, asked.written, asked.deliver, Arrival::Failed),
+                    None => each(slot.reader, asked.written, Arrival::Failed),
                 }
                 drop(mapped);
             }
@@ -231,6 +150,5 @@ impl Readbacks {
             }
             slot.phase.set(Phase::Idle);
         }
-        self.slots.retain(|slot| !(slot.once && slot.phase.get() == Phase::Idle));
     }
 }

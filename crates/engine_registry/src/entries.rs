@@ -13,17 +13,11 @@ use crate::members::{add_member, drop_members, init_members};
 use crate::registry::BrickId;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Kept {
-    Dropped(fn(&mut World)),
-    Survives(fn(&mut World)),
-}
-
-#[derive(Clone, Copy, Debug)]
 pub struct Owned {
     pub type_id: TypeId,
     pub name: &'static str,
     pub(crate) init: fn(&mut World),
-    pub(crate) kept: Kept,
+    pub(crate) survives: bool,
 }
 
 impl Owned {
@@ -32,7 +26,7 @@ impl Owned {
             type_id: TypeId::of::<T>(),
             name: std::any::type_name::<T>(),
             init: init_of::<T>,
-            kept: Kept::Dropped(remove_of::<T>),
+            survives: false,
         }
     }
 
@@ -41,11 +35,10 @@ impl Owned {
     }
 }
 
-type MemberAdd = fn(&mut World, Box<dyn Any + Send + Sync>, BrickId, (&'static str, TypeId));
+type MemberAdd = fn(&mut World, Box<dyn Any + Send + Sync>, BrickId, &'static str);
 
-pub struct JoinEntry {
-    pub name: &'static str,
-    pub list: TypeId,
+pub(crate) struct JoinEntry {
+    pub(crate) list: TypeId,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
@@ -55,21 +48,12 @@ pub struct JoinEntry {
 impl JoinEntry {
     pub(crate) fn of<L: List>(member: L::Member) -> Self {
         Self {
-            name: L::NAME,
             list: TypeId::of::<L>(),
             member: Some(Box::new(member)),
             add: add_member::<L>,
             init: init_members::<L>,
             left: drop_members::<L>,
         }
-    }
-
-    pub fn member<M: 'static>(&self) -> Option<&M> {
-        self.member.as_deref()?.downcast_ref::<M>()
-    }
-
-    pub fn take_member(&mut self) -> Option<Box<dyn Any + Send + Sync>> {
-        self.member.take()
     }
 }
 
@@ -84,10 +68,8 @@ pub struct SettingsEntry {
     check: fn(&Value, &str) -> Result<(), Error>,
     set: fn(&mut World, &Value, &str) -> Result<(), Error>,
     reset: fn(&mut World),
-    touch: fn(&mut World),
     current: fn(&World) -> Result<Value, Error>,
     default: fn() -> Value,
-    present: fn(&World) -> bool,
     schema: fn() -> schemars::Schema,
     scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>,
 }
@@ -98,6 +80,7 @@ impl SettingsEntry {
         key: &'static str,
         check: fn(&Value, &str) -> Result<(), Error>,
         set: fn(&mut World, &Value, &str) -> Result<(), Error>,
+        scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>,
         schema: fn() -> schemars::Schema,
     ) -> Self
     where
@@ -113,19 +96,11 @@ impl SettingsEntry {
             check,
             set,
             reset: reset_of::<T>,
-            touch: touch_of::<T>,
             current: written_of::<T>,
             default: default_of::<T>,
-            present: present_of::<T>,
             schema,
-            scene: no_scene_check,
+            scene,
         }
-    }
-
-    #[must_use]
-    pub fn scene_check(mut self, scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>) -> Self {
-        self.scene = scene;
-        self
     }
 
     pub fn owned(&self) -> Owned {
@@ -133,7 +108,7 @@ impl SettingsEntry {
             type_id: self.type_id,
             name: self.type_name,
             init: self.init,
-            kept: Kept::Survives(self.touch),
+            survives: true,
         }
     }
 
@@ -165,10 +140,6 @@ impl SettingsEntry {
         (self.default)()
     }
 
-    pub fn present(&self, world: &World) -> bool {
-        (self.present)(world)
-    }
-
     pub fn schema(&self) -> schemars::Schema {
         (self.schema)()
     }
@@ -182,7 +153,6 @@ pub struct StatsEntry {
     pub type_name: &'static str,
     pub at: &'static Location<'static>,
     init: fn(&mut World),
-    remove: fn(&mut World),
     read: fn(&World) -> Value,
     schema: fn() -> schemars::Schema,
 }
@@ -200,7 +170,6 @@ impl StatsEntry {
             type_name: std::any::type_name::<T>(),
             at: Location::caller(),
             init: init_of::<T>,
-            remove: remove_of::<T>,
             read: current_of::<T>,
             schema,
         }
@@ -211,7 +180,7 @@ impl StatsEntry {
             type_id: self.type_id,
             name: self.type_name,
             init: self.init,
-            kept: Kept::Dropped(self.remove),
+            survives: false,
         }
     }
 
@@ -222,10 +191,6 @@ impl StatsEntry {
     pub fn schema(&self) -> schemars::Schema {
         (self.schema)()
     }
-}
-
-fn no_scene_check(_: &Value, _: &str, _: &dyn Any) -> Result<(), Error> {
-    Ok(())
 }
 
 pub fn parse_section<T: DeserializeOwned>(
@@ -246,14 +211,6 @@ pub(crate) fn init_of<T: Resource + Default>(world: &mut World) {
 
 fn reset_of<T: Resource + Default>(world: &mut World) {
     world.insert_resource(T::default());
-}
-
-fn remove_of<T: Resource>(world: &mut World) {
-    world.remove_resource::<T>();
-}
-
-fn touch_of<T: Resource>(world: &mut World) {
-    let _ = world.modify_resource::<T, ()>(|_| {});
 }
 
 fn current_of<T: Resource + Default + Serialize>(world: &World) -> Value {
@@ -278,10 +235,6 @@ fn written_of<T: Resource + Default + Serialize>(world: &World) -> Result<Value,
 
 fn default_of<T: Default + Serialize>() -> Value {
     to_json(&T::default())
-}
-
-fn present_of<T: Resource>(world: &World) -> bool {
-    world.contains_resource::<T>()
 }
 
 fn to_json(value: &impl Serialize) -> Value {
@@ -482,11 +435,19 @@ pub mod names {
             self.read.as_ref().map(|read| read(reach, args))
         }
 
-        pub fn set_value(&self, reach: &mut ReachMut<'_>, args: &Value) -> Option<Result<Value, Error>> {
+        pub fn set_value(
+            &self,
+            reach: &mut ReachMut<'_>,
+            args: &Value,
+        ) -> Option<Result<Value, Error>> {
             self.set.as_ref().map(|set| set(reach, args))
         }
 
-        pub fn call_with(&self, reach: &mut ReachMut<'_>, args: &Value) -> Option<Result<Answer, Error>> {
+        pub fn call_with(
+            &self,
+            reach: &mut ReachMut<'_>,
+            args: &Value,
+        ) -> Option<Result<Answer, Error>> {
             self.call.as_ref().map(|call| call(reach, args))
         }
     }

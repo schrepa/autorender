@@ -5,24 +5,8 @@ impl Renderer {
         &self.core.adapter
     }
 
-    pub fn limits(&self) -> wgpu::Limits {
-        self.core.device.limits()
-    }
-
     pub fn features(&self) -> wgpu::Features {
         self.core.device.features()
-    }
-
-    pub fn texture_sampling(&self) -> engine_core::TextureSampling {
-        use engine_core::{TextureFamily, TextureSampling};
-        let features = self.core.device.features();
-        if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
-            TextureSampling::Family(TextureFamily::Bc7)
-        } else if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
-            TextureSampling::Family(TextureFamily::Astc)
-        } else {
-            TextureSampling::Decompressed
-        }
     }
 
     pub fn view_size(&self) -> Option<(u32, u32)> {
@@ -55,7 +39,7 @@ impl Renderer {
     }
 
     #[cfg(any(feature = "dev", feature = "profiling"))]
-    pub fn timer_names(world: &mut bevy_ecs::world::World) {
+    pub(super) fn timer_names(world: &mut bevy_ecs::world::World) {
         use engine_registry::{Kind, NameEntry, register, unavailable};
         let names = [
             ("gpu.passes.time", Kind::Time, Some("ns")),
@@ -109,10 +93,7 @@ impl Renderer {
                     )
             }),
             "gpu.pipelines.counts" => {
-                let mut counts = pipelines
-                    .making
-                    .book
-                    .counts((pipelines.up_front, pipelines.unlisted));
+                let mut counts = pipelines.making.book.counts();
                 if let Some(counts) = counts.as_object_mut() {
                     counts.insert("warming".to_owned(), pipelines.warming_left().into());
                     counts.insert("warmed".to_owned(), pipelines.warming.made().into());
@@ -138,11 +119,6 @@ impl Renderer {
     #[cfg(all(any(feature = "dev", feature = "profiling"), target_arch = "wasm32"))]
     fn cache_facts(&self) -> serde_json::Value {
         engine_registry::unavailable("wasm")
-    }
-
-    pub fn is_texture_resident(&self, handle: engine_core::TextureHandle) -> bool {
-        self.held_assets()
-            .is_some_and(|assets| assets.textures.is_texture_resident(handle))
     }
 
     pub fn pipelines_compiling(&mut self) -> u32 {
@@ -190,45 +166,7 @@ impl Renderer {
         &[]
     }
 
-    pub fn pipelines_per_pass(&self) -> Vec<(&'static str, [u32; 2])> {
-        self.run
-            .as_ref()
-            .map(|run| run.pipelines.per_pass.clone())
-            .unwrap_or_default()
-    }
-
     pub fn compiled_per_pass(&self) -> Vec<(&'static str, u32)> {
         self.core.ledger.per_pass().to_vec()
-    }
-
-    pub fn pipeline_list(&self) -> Vec<u8> {
-        self.run.as_ref().map(Run::listing).unwrap_or_default()
-    }
-
-    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<(), Error> {
-        let Some(run) = self.run.as_mut() else {
-            return Ok(());
-        };
-        let cause = engine_profile::open("launch", "pipeline_list");
-        if run.reached.generation.is_some() {
-            return engine_profile::caused(cause, || run.create_listed(record));
-        }
-        let scope = crate::gpu_calls::validation_scope(&self.core.device);
-        let created = engine_profile::caused(cause, || run.create_listed(record));
-        validate_also(&mut self.installing, Box::pin(scope.pop()));
-        created
-    }
-
-    pub fn pipelines_listed(&self) -> (u32, u32) {
-        self.run.as_ref().map_or((0, 0), |run| {
-            (run.pipelines.up_front, run.pipelines.unlisted)
-        })
-    }
-
-    fn held_assets(&self) -> Option<&crate::encode::Assets> {
-        self.run
-            .as_ref()
-            .map(|run| &run.assets)
-            .or(self.assets.as_ref())
     }
 }

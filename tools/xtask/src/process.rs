@@ -3,8 +3,6 @@ use std::{
     process::Command,
 };
 
-use sha2::{Digest, Sha256};
-
 pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 #[cfg(windows)]
@@ -24,8 +22,8 @@ pub struct Client {
     pub package: String,
     pub folder: String,
     pub wasm: String,
-    pub game: Option<String>,
-    pub page: Option<String>,
+    pub game: String,
+    pub page: String,
     pub native: Option<String>,
 }
 
@@ -87,7 +85,7 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
     for (package, folder) in engine_packages()? {
         let folder = folder.clone();
         let engine = &package["metadata"]["engine"];
-        if engine["game"].is_null() && engine["page"].is_null() && engine["worker"] != true {
+        if engine["game"].is_null() && engine["page"].is_null() {
             continue;
         }
         let name = package["name"].as_str().unwrap_or_default();
@@ -105,12 +103,12 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
                 format!("{name} declares [package.metadata.engine] but builds no cdylib")
             })?;
         let field = |key: &str| engine[key].as_str().map(str::to_owned);
-        let (game, page, native) = (field("game"), field("page"), field("native"));
-        if game.is_some() != page.is_some() || (game.is_none() && engine["worker"] != true) {
+        let (Some(game), Some(page)) = (field("game"), field("page")) else {
             return Err(format!(
-                "{name}'s [package.metadata.engine] declares a game's `page` and `game`, or `worker = true`"
+                "{name}'s [package.metadata.engine] declares a game's `page` and `game` together"
             ));
-        }
+        };
+        let native = field("native");
         clients.push(Client {
             package: name.to_owned(),
             folder,
@@ -141,14 +139,6 @@ pub fn clients_json() -> serde_json::Value {
         .collect()
 }
 
-pub fn hash(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .take(8)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 pub fn slashed(path: &Path) -> String {
     path.components()
         .map(|part| part.as_os_str().to_string_lossy())
@@ -159,14 +149,13 @@ pub fn slashed(path: &Path) -> String {
 pub struct Project {
     pub package: String,
     pub native: String,
-    pub scenes: Vec<String>,
 }
 
 impl Project {
     pub fn read(root: &Path, folder: &str) -> Result<Self, String> {
         let manifest = format!("{folder}/Cargo.toml");
         let text = std::fs::read_to_string(root.join(&manifest))
-            .map_err(|error| format!("--project {folder}: cannot read {manifest}: {error}"))?;
+            .map_err(|error| format!("cannot read {manifest}: {error}"))?;
         Self::parse(&manifest, text)
     }
 
@@ -185,27 +174,9 @@ impl Project {
             .and_then(|engine| engine.get("native"))
             .and_then(toml_edit::Item::as_str)
             .ok_or_else(|| format!("{manifest}: [package.metadata.engine] declares no native"))?;
-        let scenes = match engine.and_then(|engine| engine.get("scenes")) {
-            None => Vec::new(),
-            Some(listed) => listed
-                .as_array()
-                .and_then(|scenes| {
-                    scenes
-                        .iter()
-                        .map(|scene| scene.as_str().map(str::to_owned))
-                        .collect::<Option<Vec<_>>>()
-                })
-                .ok_or_else(|| {
-                    format!(
-                        "{manifest}: [package.metadata.engine] scenes lists scene files by \
-                         paths relative to the project's folder"
-                    )
-                })?,
-        };
         Ok(Self {
             package: name.to_owned(),
             native: native.to_owned(),
-            scenes,
         })
     }
 
@@ -214,29 +185,10 @@ impl Project {
     }
 }
 
-pub fn project_option(arguments: &[String]) -> Result<(Option<String>, Vec<String>), String> {
-    let mut project = None;
-    let mut rest = Vec::new();
-    let mut given = arguments.iter();
-    while let Some(argument) = given.next() {
-        if argument == "--project" {
-            let folder = given
-                .next()
-                .ok_or("--project takes a game crate's folder")?;
-            if project.replace(folder.replace('\\', "/")).is_some() {
-                return Err("--project is given once".into());
-            }
-        } else {
-            rest.push(argument.clone());
-        }
-    }
-    Ok((project, rest))
-}
-
 pub fn game_names() -> String {
     clients()
         .iter()
-        .filter_map(|client| client.game.as_deref())
+        .map(|client| client.game.as_str())
         .collect::<Vec<_>>()
         .join("|")
 }

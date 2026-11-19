@@ -2,23 +2,11 @@ import clients from "../generated/clients.json";
 import { warmAdapter } from "./adapter";
 import { type GameBindings, loadGame } from "./bindings";
 import { type Runtime, startGame } from "./host";
-import type { JobWorkerClass } from "./jobs";
-import { loadSceneFiles, loadSceneSource } from "./source";
+import { type SceneFileBindings, loadSceneFiles, loadSceneSource } from "./source";
 
 const SCENE_SUFFIX = ".scene.json";
 
-interface SceneLoader {
-  take_reads(): { uri: string }[];
-  read(uri: string, bytes: Uint8Array): boolean;
-  image(uri: string, width: number, height: number, pixels: Uint8Array): void;
-  decode(uri: string, bytes: Uint8Array): void;
-  finish(): unknown;
-  free(): void;
-}
-
-export interface PlayedBindings extends GameBindings {
-  SceneLoad: new (source: string) => SceneLoader;
-}
+type PlayedBindings = GameBindings & SceneFileBindings;
 
 export interface Playable<T extends Runtime> {
   create(canvas: HTMLCanvasElement, scene?: string, files?: unknown): Promise<T>;
@@ -28,7 +16,6 @@ export interface PlayedGame<T extends Runtime, B extends PlayedBindings> {
   wasm: string;
   scene?: string;
   load(): Promise<B>;
-  worker: JobWorkerClass;
   game(bindings: B): Playable<T>;
 }
 
@@ -47,7 +34,7 @@ function settled<T>(promise: Promise<T>): Promise<T> {
 
 export function playGame<T extends Runtime, B extends PlayedBindings>(game: PlayedGame<T, B>) {
   warmAdapter();
-  const loading = settled(loadGame(game.load, game.worker));
+  const loading = settled(loadGame(game.load));
   const bindings = () => loading;
   const client = clients.find(client => client.wasm === game.wasm);
   const declared = game.scene && client ? import.meta.env.DEV ? `/_engine/source/${client.folder}/${game.scene}` : `${client.game}/${game.scene}` : undefined;

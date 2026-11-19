@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    AlphaMode, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED,
-    MAPPED_MAPS, MAPPED_SLOTS, Material, Sampler, TextureHandle,
-    TextureRef, UvTransform, Wrap,
+    AlphaMode, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED, MAPPED_MAPS,
+    MAPPED_SLOTS, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
 
-use crate::validation::{identifier, moved};
+use crate::validation::moved;
 
 const SURFACE_EMISSION: &str = "emission";
 
@@ -25,12 +24,6 @@ pub struct SceneMaterial {
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
-    pub provided: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,12 +120,6 @@ impl SceneSlot {
     }
 }
 
-impl From<&str> for SceneSlot {
-    fn from(module: &str) -> Self {
-        Self::Module(module.to_owned())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
@@ -147,12 +134,6 @@ impl SceneMap {
             Self::Id(id) => id,
             Self::Map(map) => &map.id,
         }
-    }
-}
-
-impl From<&str> for SceneMap {
-    fn from(id: &str) -> Self {
-        Self::Id(id.to_owned())
     }
 }
 
@@ -300,7 +281,6 @@ impl SceneMaterial {
         };
         Self {
             id: id.into(),
-            provided: None,
             color: Some([red, green, blue, 1.0]),
             surface: Some(surface),
             opacity: Some(opacity),
@@ -364,42 +344,11 @@ impl SceneMaterial {
     }
 
     pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, Error> {
-        match (&self.provided, self.color) {
-            (Some(name), _) => self.prepare_provided(name, path),
-            (None, Some(color)) => self.prepare_authored(color, path),
-            (None, None) => Err(Error::new(ErrorCode::MissingField, format!("{path}.color"))
+        match self.color {
+            Some(color) => self.prepare_authored(color, path),
+            None => Err(Error::new(ErrorCode::MissingField, format!("{path}.color"))
                 .expected(Expected::Present)),
         }
-    }
-
-    fn prepare_provided(&self, name: &str, path: &str) -> Result<PreparedMaterial, Error> {
-        identifier(name, &format!("{path}.provided"))?;
-        let given = [
-            ("color", self.color.is_some()),
-            ("surface", self.surface.is_some()),
-            ("opacity", self.opacity.is_some()),
-            ("normal_scale", self.normal_scale.is_some()),
-            ("emissive", self.emissive.is_some()),
-            ("alpha_mode", self.alpha_mode.is_some()),
-            ("alpha_cutoff", self.alpha_cutoff.is_some()),
-            ("cull", self.cull.is_some()),
-            ("depth_test", self.depth_test.is_some()),
-            ("depth_write", self.depth_write.is_some()),
-            ("depth_bias", self.depth_bias.is_some()),
-            ("slots", self.slots.is_some()),
-            ("values", self.values.is_some()),
-            ("lighting", self.lighting.is_some()),
-        ];
-        if let Some((field, _)) = given.into_iter().find(|&(_, given)| given) {
-            return Err(
-                Error::new(ErrorCode::InvalidMaterial, format!("{path}.{field}"))
-                    .expected(Expected::Absent),
-            );
-        }
-        Ok(PreparedMaterial {
-            material: Material::new([1.0; 4]).expect("white_material_valid"),
-            maps: Vec::new(),
-        })
     }
 
     #[expect(

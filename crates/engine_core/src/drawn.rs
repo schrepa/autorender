@@ -18,7 +18,7 @@ use crate::{
     PassMask, Refusals, Request, Transform, gpu_struct, settings,
 };
 
-pub const DRAWN_PART: &str = "drawn";
+pub(crate) const DRAWN_PART: &str = "drawn";
 
 settings! {
     #[section("drawn")]
@@ -68,7 +68,7 @@ fn stride_of(floats: u32) -> usize {
 }
 
 #[derive(Clone, Debug)]
-pub enum DrawnState {
+pub(crate) enum DrawnState {
     Drawn { slot: u32 },
     Hidden,
     Unplaced,
@@ -85,8 +85,6 @@ pub struct DrawnBatch {
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub instances: Range<u32>,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    pub cause: u32,
 }
 
 type BatchKey = (
@@ -186,11 +184,6 @@ impl DrawnTable {
 
     fn kind_at(&self, kind: DrawKind) -> Option<usize> {
         self.kinds.iter().position(|decl| decl.kind == kind)
-    }
-
-
-    pub fn state(&self, entity: Entity) -> Option<&DrawnState> {
-        self.held.get(&entity).map(|held| &held.state)
     }
 
     pub fn slots(&self) -> usize {
@@ -297,7 +290,7 @@ impl DrawnTable {
         };
         for &entity in &touched {
             match world.get::<Drawn>(entity) {
-                Some(drawn) => under(world, entity, || self.refresh(entity, drawn, &cx)),
+                Some(drawn) => self.refresh(entity, drawn, &cx),
                 None => self.forget(entity),
             }
         }
@@ -406,17 +399,6 @@ impl DrawnTable {
                 Error::new(ErrorCode::OutOfRange, "$.drawn.values.floats")
                     .at_most(cx.floats as u64)
                     .got(drawn.values.floats.len()),
-            ));
-        }
-        if let Some(own) = drawn.projection
-            && !(own.vertical_fov > 0.0
-                && own.vertical_fov < std::f32::consts::PI
-                && own.depth_scale > 0.0
-                && own.depth_scale <= 1.0)
-        {
-            return Some(DrawnState::Refused(
-                Error::new(ErrorCode::OutOfRange, "$.drawn.projection")
-                    .got([own.vertical_fov, own.depth_scale]),
             ));
         }
         if drawn.geometry.is_none()
@@ -621,8 +603,6 @@ impl DrawnTable {
             passes: passes.map(PassMask),
             layers: Layers(layers),
             instances: start..start,
-            #[cfg(any(feature = "dev", feature = "profiling"))]
-            cause: engine_profile::cause().0,
         };
         let batch = match self.spare_batches.pop() {
             Some(batch) => {
@@ -704,17 +684,6 @@ fn stale(drawn: &Drawn, library: &AssetLibrary, before: u64) -> bool {
                         .any(|texture| moved(library.revision_of(texture)))
                 })
         })
-}
-
-#[cfg(any(feature = "dev", feature = "profiling"))]
-fn under<R>(world: &World, entity: Entity, work: impl FnOnce() -> R) -> R {
-    let cause = world.get::<crate::Caused>(entity).map_or(0, |caused| caused.0);
-    engine_profile::caused(engine_profile::Cause(cause), work)
-}
-
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
-fn under<R>(_: &World, _: Entity, work: impl FnOnce() -> R) -> R {
-    work()
 }
 
 fn refused_of(state: &DrawnState) -> Option<&Error> {
@@ -799,7 +768,7 @@ pub(crate) fn ask(world: &mut World) {
         let touched = std::mem::take(&mut table.touched);
         for &entity in &touched {
             if let Some(drawn) = world.get::<Drawn>(entity) {
-                let kept = under(world, entity, || table.take_held(entity, drawn, residency));
+                let kept = table.take_held(entity, drawn, residency);
                 table.held.insert(entity, kept);
             }
         }
@@ -898,7 +867,6 @@ impl DrawnTable {
                         "layers": made.layers.0,
                         "instances": [made.instances.start, made.instances.end],
                         "room": self.rooms[batch as usize],
-                        "cause": made.cause,
                     })
                 })
                 .collect();

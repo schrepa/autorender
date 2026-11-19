@@ -1,12 +1,9 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bevy_ecs::entity::Entity;
-use bevy_ecs::world::World;
 use engine_assets::SceneAssets;
-use engine_core::{SceneBuffers, SceneContext};
+use engine_core::SceneContext;
 
-use crate::{SceneDocument, SceneKinds};
+use crate::SceneDocument;
 
 pub(crate) fn named(document: &SceneDocument) -> Arc<SceneAssets> {
     Arc::new(SceneAssets {
@@ -26,51 +23,6 @@ pub(crate) fn named(document: &SceneDocument) -> Arc<SceneAssets> {
             .map(|texture| (texture.id.clone(), Default::default()))
             .collect(),
     })
-}
-
-pub(crate) fn context(
-    document: &SceneDocument,
-    assets: Arc<SceneAssets>,
-    entities: Arc<BTreeMap<String, Entity>>,
-    kinds: &SceneKinds,
-    files: Option<Arc<SceneBuffers>>,
-) -> SceneContext {
-    SceneContext {
-        id: document.id.clone(),
-        assets,
-        prefabs: Arc::new(
-            document
-                .prefabs
-                .iter()
-                .enumerate()
-                .map(|(index, prefab)| {
-                    let value = serde_json::to_value(prefab).expect("prefab_serializes");
-                    (prefab.id.clone(), (index, value))
-                })
-                .collect(),
-        ),
-        components: Arc::new(
-            document
-                .entities
-                .iter()
-                .map(|entity| {
-                    let authored = entity
-                        .authored()
-                        .map(|(key, value)| (key.to_owned(), value.clone()))
-                        .collect();
-                    (entity.id.clone(), authored)
-                })
-                .collect(),
-        ),
-        entities,
-        kinds: kinds.listed_kinds().into(),
-        list: kinds.job_list(),
-        files,
-    }
-}
-
-pub(crate) fn kept(world: &World) -> Option<SceneContext> {
-    world.get_resource::<SceneContext>().cloned()
 }
 
 pub(crate) fn within<R>(context: Option<&SceneContext>, run: impl FnOnce() -> R) -> R {

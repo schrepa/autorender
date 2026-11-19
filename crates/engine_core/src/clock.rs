@@ -4,7 +4,7 @@ use bevy_ecs::prelude::Resource;
 use bevy_ecs::world::World;
 use serde::Serialize;
 
-use crate::{AssetBudget, Clock, List, settings};
+use crate::{AssetBudget, List, settings};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
@@ -49,20 +49,10 @@ pub struct FrameTime {
     pub cut_seconds: f64,
 }
 
-impl FrameTime {
-    pub fn seconds_on(&self, clock: Clock) -> f64 {
-        match clock {
-            Clock::Game => self.seconds,
-            Clock::Real => self.real_seconds,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PauseReason {
-    Game,
     Focus,
     Hidden,
     Suspended,
@@ -75,7 +65,7 @@ impl PauseReason {
     pub fn stops_frames(self) -> bool {
         match self {
             Self::Hidden | Self::Suspended => true,
-            Self::Game | Self::Focus | Self::Preparing | Self::Brick(_) => false,
+            Self::Focus | Self::Preparing | Self::Brick(_) => false,
         }
     }
 }
@@ -119,24 +109,6 @@ impl Pause {
 
     pub fn reasons(&self) -> impl Iterator<Item = PauseReason> + '_ {
         self.reasons.iter().copied()
-    }
-}
-
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct TimeScale(pub f32);
-
-impl Default for TimeScale {
-    fn default() -> Self {
-        Self(1.0)
-    }
-}
-
-pub(crate) fn game_rate(pause: &Pause, scale: TimeScale) -> f64 {
-    if pause.paused() || !(scale.0.is_finite() && scale.0 >= 0.0) {
-        0.0
-    } else {
-        f64::from(scale.0)
     }
 }
 

@@ -7,11 +7,8 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["dep:serde"]
+dev = []
 profiling = ["dev"]
-
-[dependencies]
-serde = { workspace = true, optional = true }
 
 [lints.rust]
 unsafe_code = "deny"

@@ -1,10 +1,10 @@
 #[derive(Clone, Copy, Default)]
-pub struct UploadRange {
-    pub start: usize,
-    pub end: usize,
+pub(crate) struct UploadRange {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
-pub fn listed_ranges(
+pub(crate) fn listed_ranges(
     nodes: &[u32],
     len: usize,
     bits: &mut Vec<u64>,

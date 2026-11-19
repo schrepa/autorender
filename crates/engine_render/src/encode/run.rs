@@ -10,9 +10,7 @@ pub(crate) struct Run {
     pub(crate) pass: u32,
     pub(crate) point: Option<PassBit>,
     pub(crate) recording: Recording,
-    pub(crate) timed: Timed,
-    pub(crate) queued: Queued,
-    pub(crate) owed_mips: Vec<(u32, Range<u32>)>,
+    pub(crate) refused: Option<Error>,
     pub(crate) sets: views::Sets,
     pub(crate) tables: views::Tables,
     pub(crate) spare: Spare,
@@ -28,21 +26,15 @@ pub(crate) struct Run {
     pub(crate) tallies: Tallies,
     pub(crate) reading: Reading,
     pub(crate) bound: Bound,
-    pub(crate) arena: Arena,
 }
 
 #[derive(Default)]
 pub(crate) struct Bound {
-    vertex: Vec<Option<(wgpu::Buffer, u64)>>,
+    vertex: Vec<Option<wgpu::Buffer>>,
     index: Option<wgpu::Buffer>,
-    groups: Vec<Option<(wgpu::BindGroup, usize)>>,
-    offsets: Vec<u32>,
-    pub(crate) zeros: Vec<u32>,
-    pub(crate) given: Vec<u32>,
+    groups: Vec<Option<(wgpu::BindGroup, Option<u32>)>>,
     render: Option<wgpu::RenderPipeline>,
     compute: Option<wgpu::ComputePipeline>,
-    viewport: Option<[u32; 4]>,
-    scissor: Option<[u32; 4]>,
     #[cfg(any(feature = "dev", feature = "profiling"))]
     pub(crate) swap: Option<Swap>,
 }
@@ -92,9 +84,6 @@ impl Bound {
     pub(crate) fn of(limits: crate::machine::Limits) -> Self {
         Self {
             groups: vec![None; limits.groups],
-            offsets: vec![0; limits.groups * limits.offsets],
-            zeros: vec![0; limits.offsets],
-            given: vec![0; limits.offsets],
             ..Self::default()
         }
     }
@@ -105,34 +94,18 @@ impl Bound {
         self.groups.fill(None);
         self.render = None;
         self.compute = None;
-        self.viewport = None;
-        self.scissor = None;
     }
 
-    fn held_offsets(&self, index: u32, count: usize) -> Option<&[u32]> {
-        let start = index as usize * self.zeros.len();
-        self.offsets.get(start..start + count)
-    }
-
-    fn holds(&self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) -> bool {
+    fn holds(&self, index: u32, group: &wgpu::BindGroup, offset: Option<u32>) -> bool {
         self.groups
             .get(index as usize)
             .and_then(Option::as_ref)
-            .is_some_and(|(held, count)| {
-                held == group && self.held_offsets(index, *count) == Some(offsets)
-            })
+            .is_some_and(|(held, at)| held == group && *at == offset)
     }
 
-    fn hold(&mut self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) {
-        let start = index as usize * self.zeros.len();
-        let kept = offsets.len() <= self.zeros.len()
-            && self
-                .offsets
-                .get_mut(start..start + offsets.len())
-                .map(|held| held.copy_from_slice(offsets))
-                .is_some();
+    fn hold(&mut self, index: u32, group: &wgpu::BindGroup, offset: Option<u32>) {
         if let Some(slot) = self.groups.get_mut(index as usize) {
-            *slot = kept.then(|| (group.clone(), offsets.len()));
+            *slot = Some((group.clone(), offset));
         }
     }
 
@@ -141,13 +114,13 @@ impl Bound {
         render: &mut wgpu::RenderPass<'static>,
         index: u32,
         group: &wgpu::BindGroup,
-        offsets: &[u32],
+        offset: Option<u32>,
     ) {
-        if self.holds(index, group, offsets) {
+        if self.holds(index, group, offset) {
             return;
         }
-        render.set_bind_group(index, group, offsets);
-        self.hold(index, group, offsets);
+        render.set_bind_group(index, group, offset.as_slice());
+        self.hold(index, group, offset);
     }
 
     pub(crate) fn dispatch_group(
@@ -155,13 +128,13 @@ impl Bound {
         pass: &mut wgpu::ComputePass<'static>,
         index: u32,
         group: &wgpu::BindGroup,
-        offsets: &[u32],
+        offset: Option<u32>,
     ) {
-        if self.holds(index, group, offsets) {
+        if self.holds(index, group, offset) {
             return;
         }
-        pass.set_bind_group(index, group, offsets);
-        self.hold(index, group, offsets);
+        pass.set_bind_group(index, group, offset.as_slice());
+        self.hold(index, group, offset);
     }
 
     pub(crate) fn draw_pipeline(
@@ -179,7 +152,7 @@ impl Bound {
             if let Some((_, counted, from)) = found {
                 render.set_pipeline(counted);
                 for (index, group) in swap.groups(*from) {
-                    self.draw_group(render, index, group, &[]);
+                    self.draw_group(render, index, group, None);
                 }
             }
             let counted = found.is_some();
@@ -206,7 +179,7 @@ impl Bound {
             if let Some((_, counted, from)) = found {
                 pass.set_pipeline(counted);
                 for (index, group) in swap.groups(*from) {
-                    self.dispatch_group(pass, index, group, &[]);
+                    self.dispatch_group(pass, index, group, None);
                 }
             }
             let counted = found.is_some();
@@ -218,49 +191,21 @@ impl Bound {
         pass.set_pipeline(pipeline);
     }
 
-    pub(crate) fn viewport(&mut self, render: &mut wgpu::RenderPass<'static>, rect: [u32; 4]) {
-        if self.viewport == Some(rect) {
-            return;
-        }
-        let [x, y, width, height] = rect.map(|value| value as f32);
-        render.set_viewport(x, y, width, height, 0.0, 1.0);
-        self.viewport = Some(rect);
-    }
-
-    pub(crate) fn scissor(&mut self, render: &mut wgpu::RenderPass<'static>, rect: [u32; 4]) {
-        if self.scissor == Some(rect) {
-            return;
-        }
-        render.set_scissor_rect(rect[0], rect[1], rect[2], rect[3]);
-        self.scissor = Some(rect);
-    }
-
     pub(crate) fn vertex_buffer(
         &mut self,
         render: &mut wgpu::RenderPass<'static>,
         slot: u32,
         buffer: &wgpu::Buffer,
-        start: u64,
     ) {
         let at = slot as usize;
-        let held = self.vertex.get(at).and_then(Option::as_ref);
-        if held.is_some_and(|(held, offset)| held == buffer && *offset == start) {
+        if self.vertex.get(at).and_then(Option::as_ref) == Some(buffer) {
             return;
         }
-        render.set_vertex_buffer(slot, buffer.slice(start..));
+        render.set_vertex_buffer(slot, buffer.slice(..));
         if self.vertex.len() <= at {
             self.vertex.resize(at + 1, None);
         }
-        self.vertex[at] = Some((buffer.clone(), start));
-    }
-
-    pub(crate) fn within(
-        &mut self,
-        render: &mut wgpu::RenderPass<'static>,
-        (width, height): (u32, u32),
-    ) {
-        self.viewport(render, [0, 0, width, height]);
-        self.scissor(render, [0, 0, width, height]);
+        self.vertex[at] = Some(buffer.clone());
     }
 
     pub(crate) fn index_buffer(
@@ -282,24 +227,20 @@ pub(crate) struct Installs {
     pub(crate) reinstalls: Vec<Reinstall>,
     pub(crate) draw_entries: Vec<KindMember>,
     pub(crate) members: Vec<Vec<u32>>,
-    pub(crate) installed: Vec<FrameId>,
     pub(crate) gates: Vec<Option<engine_registry::BrickId>>,
     pub(crate) pass_gates: Vec<(u32, engine_registry::BrickId)>,
-    pub(crate) features: wgpu::Features,
 }
 
 impl Installs {
-    fn of(count: usize, features: wgpu::Features) -> Self {
+    fn of(count: usize) -> Self {
         Self {
             turned: vec![Some(0); count],
             faults: Vec::new(),
             reinstalls: Vec::new(),
             draw_entries: Vec::new(),
             members: Vec::new(),
-            installed: vec![FrameId::default(); count],
             gates: Vec::new(),
             pass_gates: Vec::new(),
-            features,
         }
     }
 
@@ -335,7 +276,6 @@ pub(crate) struct Bindings {
     pub(crate) own_groups: Vec<Vec<Groups>>,
     pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
     pub(crate) wanted_textures: Vec<TextureHandle>,
-    pub(crate) dimensions: Vec<wgpu::TextureDimension>,
     pub(crate) samplers: Vec<wgpu::Sampler>,
 }
 
@@ -360,14 +300,8 @@ pub(crate) struct Uniforms {
 
 #[derive(Default)]
 pub(crate) struct Pipelines {
-    pub(crate) compiled: Vec<Compiled>,
-    pub(crate) listed: Option<Vec<Compiled>>,
-    pub(crate) up_front: u32,
-    pub(crate) unlisted: u32,
-    pub(crate) listing: bool,
     pub(crate) making: super::making::Making,
     pub(crate) refused: Vec<(&'static str, u64, String)>,
-    pub(crate) per_pass: Vec<(&'static str, [u32; 2])>,
     pub(crate) cache: Option<wgpu::PipelineCache>,
     pub(crate) warming: super::warming::Warming,
     pub(crate) settled: bool,
@@ -398,17 +332,6 @@ impl Pipelines {
 
     pub(crate) fn warming_left(&self) -> u32 {
         self.warming.left().saturating_add(self.making.later_left())
-    }
-
-    pub(crate) fn made_in(&mut self, pass: &'static str, computed: bool) {
-        let at = match self.per_pass.iter().position(|(known, _)| *known == pass) {
-            Some(at) => at,
-            None => {
-                self.per_pass.push((pass, [0, 0]));
-                self.per_pass.len() - 1
-            }
-        };
-        self.per_pass[at].1[usize::from(computed)] += 1;
     }
 
     pub(crate) fn stood_in(&self) -> u32 {
@@ -599,9 +522,7 @@ impl KindTallies {
 #[derive(Default)]
 pub(crate) struct Reading {
     pub(crate) list: Readbacks,
-    pub(crate) arrived: Vec<Arrived>,
     pub(crate) slots: usize,
-    pub(crate) slot_bytes: Option<u64>,
 }
 
 fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
@@ -654,15 +575,11 @@ impl Run {
             .map(|desc| crate::textures::gpu_sampler(&device, "engine/part-sampler", *desc))
             .collect();
         let count = parts.len();
-        let features = device.features();
-        let dimensions = (0..machine.declared.textures.len())
-            .map(|texture| texture_dimension(&machine, texture as u32))
-            .collect();
         let tables = views::Tables::of(&machine);
         let runs = Bits::of(machine.graph.passes());
         let (frame_groups, own_groups) = fresh_groups(&machine);
         let holders = Holders::of(&machine);
-        let view_holders = holders.of_view(&machine);
+        let view_holders = holders.of_view();
         let mut stale = stale_holders(&machine);
         stale.retain(|holder| !view_holders.contains(holder));
         let sets = views::Sets::of(&device, &machine, view_holders);
@@ -685,15 +602,13 @@ impl Run {
             pass: 0,
             point: None,
             recording: Recording::Idle,
-            timed: Timed::default(),
-            queued: Queued::default(),
-            owed_mips: Vec::new(),
+            refused: None,
             sets,
             tables,
             spare: Spare::default(),
             reached: Reached::default(),
             filled: Vec::new(),
-            installs: Installs::of(count, features),
+            installs: Installs::of(count),
             frames: Frames::default(),
             bindings: Bindings {
                 holders,
@@ -702,7 +617,6 @@ impl Run {
                 own_groups,
                 placeholders: Vec::new(),
                 wanted_textures: Vec::new(),
-                dimensions,
                 samplers,
             },
             canvas: Canvas::fresh(),
@@ -732,11 +646,9 @@ impl Run {
                 ..Reading::default()
             },
             bound,
-            arena: Arena::default(),
         }
     }
 }
-
 
 impl Canvas {
     fn fresh() -> Self {

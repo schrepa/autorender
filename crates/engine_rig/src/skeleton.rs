@@ -21,12 +21,6 @@ pub struct Posed {
     pub position: Vec3,
 }
 
-impl Posed {
-    pub fn matrix(self) -> Mat4 {
-        Mat4::from_rotation_translation(self.rotation, self.position)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skeleton {
     joints: Vec<Joint>,

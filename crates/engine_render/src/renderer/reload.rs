@@ -53,29 +53,21 @@ impl Renderer {
         if changed.is_empty() {
             return;
         }
-        let what = if engine_profile::tracing() {
-            changed.iter().map(|(path, _)| *path).collect::<Vec<_>>().join(" ")
-        } else {
-            String::new()
-        };
-        engine_profile::caused(engine_profile::open("reload", &what), || {
-            for (path, file) in changed {
-                match std::fs::read_to_string(file) {
-                    Ok(text) => {
-                        self.watched.edited.insert(path.to_owned(), text);
-                    }
-                    Err(error) => {
-                        self.watched.errors =
-                            vec![failed_with(&format!("$.shaders.{path}"), error)];
-                        return;
-                    }
+        for (path, file) in changed {
+            match std::fs::read_to_string(file) {
+                Ok(text) => {
+                    self.watched.edited.insert(path.to_owned(), text);
+                }
+                Err(error) => {
+                    self.watched.errors = vec![failed_with(&format!("$.shaders.{path}"), error)];
+                    return;
                 }
             }
-            self.watched.errors = match self.reinstall_edited(world) {
-                Ok(()) => Vec::new(),
-                Err(errors) => errors,
-            };
-        });
+        }
+        self.watched.errors = match self.reinstall_edited(world) {
+            Ok(()) => Vec::new(),
+            Err(errors) => errors,
+        };
     }
 
     fn reinstall_edited(&mut self, world: &mut World) -> Result<(), Vec<Error>> {

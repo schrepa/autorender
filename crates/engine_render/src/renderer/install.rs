@@ -42,7 +42,7 @@ fn stage_texts(machine: &Machine) -> Vec<(&'static str, Vec<&'static str>, Strin
                 .declared
                 .passes
                 .get(pass as usize)
-                .map_or("", |declared| declared.group.unwrap_or(declared.name)),
+                .map_or("", |declared| declared.name),
         };
         for stage in &built.stages {
             let at = *seen.entry(stage.text_key()).or_insert_with(|| {
@@ -134,20 +134,11 @@ fn pass_gates(registry: &Registry, passes: &[crate::install::PassDecl]) -> Vec<(
         .collect()
 }
 
-pub fn device_limits(
-    limits: &wgpu::Limits,
-    features: wgpu::Features,
-    cores: u32,
-) -> engine_core::DeviceLimits {
+pub fn device_limits(limits: &wgpu::Limits) -> engine_core::DeviceLimits {
     engine_core::DeviceLimits {
-        cores,
         storage_room: limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size),
-        texture_layers: limits.max_texture_array_layers,
-        max_texture_dimension_2d: limits.max_texture_dimension_2d,
-        max_compute_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
-        indirect_first_instance: features.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
     }
 }
 
@@ -255,11 +246,6 @@ fn install_with(
             package: CORE_PACKAGE,
             brick: None,
         },
-        Listed {
-            record: core_part::<crate::mipmaps::Mipmaps>(),
-            package: CORE_PACKAGE,
-            brick: None,
-        },
     ];
     let mut draws: Vec<&KindDraw> = Vec::new();
     for (brick, record) in registry.iter() {
@@ -341,9 +327,8 @@ fn install_with(
     problems.extend(linker.check());
     let mut passes: Vec<&'static str> = Vec::new();
     for pass in &declared.passes {
-        let name = pass.group.unwrap_or(pass.name);
-        if !passes.contains(&name) {
-            passes.push(name);
+        if !passes.contains(&pass.name) {
+            passes.push(pass.name);
         }
     }
     let composing = crate::machine::compose(linker, declared, &mut problems);
@@ -473,7 +458,7 @@ impl Renderer {
             .passes
             .iter()
             .map(|pass| {
-                let name = pass.group.unwrap_or(pass.name);
+                let name = pass.name;
                 match stages.iter().find(|(known, _)| *known == name) {
                     Some(&(_, stage)) => stage,
                     None => {
@@ -498,10 +483,6 @@ impl Renderer {
         #[cfg(any(feature = "dev", feature = "profiling"))]
         crate::whatif::install(world, &run.machine);
         self.run = Some(run);
-    }
-
-    pub fn check(world: &mut World) -> Result<(), Vec<Error>> {
-        install_noop(world).map(drop)
     }
 }
 
@@ -543,10 +524,8 @@ struct Kept {
     declared: crate::install::Declared,
     parts: Vec<Option<Box<dyn Installed>>>,
     tables: crate::encode::Tables,
-    view: crate::encode::Tables,
     filled: Vec<crate::encode::Filled>,
     frames: (u64, u64),
-    installed: Vec<engine_core::FrameId>,
     readbacks: crate::readback::Readbacks,
     shaders: std::collections::BTreeMap<u64, wgpu::ShaderModule>,
     made: Vec<crate::machine::BuiltPipeline>,
@@ -559,29 +538,18 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         machine,
         parts,
         tables,
-        sets,
         filled,
         frames,
-        installs,
         reading,
         pipelines,
         ..
     } = run;
-    let at = sets.at;
-    let view = sets
-        .list
-        .into_iter()
-        .nth(at)
-        .map(|set| set.tables)
-        .unwrap_or_default();
     let kept = Kept {
         declared: machine.declared,
         parts,
         tables,
-        view,
         filled,
         frames: (frames.current, frames.asked),
-        installed: installs.installed,
         readbacks: reading.list,
         shaders: machine.shaders,
         made: machine.pipelines,
@@ -633,13 +601,6 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
             .map(|pipeline| (pipeline.part, pipeline.scope))
             .collect::<Vec<_>>()
     };
-    let inputs = |declared: &crate::install::Declared| {
-        declared
-            .inputs
-            .iter()
-            .map(|input| (input.part, input.scope, input.buffer))
-            .collect::<Vec<_>>()
-    };
     let batch_groups = |declared: &crate::install::Declared| {
         declared
             .batch_groups
@@ -653,7 +614,6 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
         && old.samplers == new.samplers
         && passes(old) == passes(new)
         && pipelines(old) == pipelines(new)
-        && inputs(old) == inputs(new)
         && batch_groups(old) == batch_groups(new)
 }
 
@@ -661,12 +621,9 @@ fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
     (run.frames.current, run.frames.asked) = kept.frames;
     run.reading.list = kept.readbacks;
     run.adopt_made(kept.shaders, kept.made, kept.pipelines);
-    let next = run.written().next();
-    run.installs.installed.fill(next);
     if !same_shape(&kept.declared, &run.machine.declared) {
         return;
     }
-    run.installs.installed = kept.installed;
     for (slot, held) in run.parts.iter_mut().zip(kept.parts) {
         if let Some(mut held) = held {
             held.rebind(world);
@@ -674,7 +631,6 @@ fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
         }
     }
     run.tables = kept.tables;
-    run.set_mut().tables = kept.view;
     run.filled = kept
         .filled
         .into_iter()

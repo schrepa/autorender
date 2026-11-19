@@ -1,6 +1,6 @@
-use engine_textures::Image;
 use gltf::texture::WrappingMode;
 
+use crate::image::Image;
 use crate::maps::MapKind;
 
 const TAPS: [f32; 4] = [0.125, 0.375, 0.375, 0.125];

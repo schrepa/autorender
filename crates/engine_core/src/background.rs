@@ -2,25 +2,10 @@ use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
 
-use engine_profile::Cause;
-
-use crate::{
-    Error, ErrorCode, Interest, MISSING_RECORD, RecordKey, Records, Request, Requests, Settling,
-};
+use crate::{Error, ErrorCode, Expected, Interest, Request, Requests, Settling};
 
 pub trait Delivers<K: Clone> {
     fn landed(&self, held: &Interest<K>) -> Option<Result<Arc<[u8]>, Error>>;
-    fn cause(&self, held: &Interest<K>) -> Cause;
-}
-
-impl Delivers<RecordKey> for Records {
-    fn landed(&self, held: &Interest<RecordKey>) -> Option<Result<Arc<[u8]>, Error>> {
-        self.get(held)
-    }
-
-    fn cause(&self, held: &Interest<RecordKey>) -> Cause {
-        self.requests.cause(held.key())
-    }
 }
 
 impl<K: Clone + Eq + Hash, A> Delivers<K> for Requests<K, Arc<[u8]>, A> {
@@ -30,13 +15,9 @@ impl<K: Clone + Eq + Hash, A> Delivers<K> for Requests<K, Arc<[u8]>, A> {
             Request::Ready(bytes) => Some(Ok(Arc::clone(bytes))),
             Request::Failed(error) => Some(Err(error.clone())),
             Request::Missing => Some(Err(
-                Error::new(ErrorCode::InvalidRecord, "$").got(MISSING_RECORD)
+                Error::new(ErrorCode::MissingResource, "$").expected(Expected::Present)
             )),
         }
-    }
-
-    fn cause(&self, held: &Interest<K>) -> Cause {
-        Requests::cause(self, held.key())
     }
 }
 
@@ -54,14 +35,14 @@ pub enum Landed<'a, T> {
     Failed(&'a Error),
 }
 
-pub enum Taken<T, K: Clone = RecordKey> {
+pub enum Taken<T, K: Clone> {
     Waiting(Background<T, K>),
     Ready(T),
     Failed(Error),
 }
 
 #[must_use]
-pub struct Background<T, K: Clone = RecordKey> {
+pub struct Background<T, K: Clone> {
     stage: Stage<T, K>,
     report: Settling,
 }
@@ -92,9 +73,6 @@ impl<T, K: Clone> Background<T, K> {
         if let Stage::Asked(held, _) = &self.stage
             && let Some(landed) = from.landed(held)
         {
-            if engine_profile::tracing() {
-                engine_profile::adopt(from.cause(held));
-            }
             let placeholder = Stage::Failed(Error::new(ErrorCode::InvalidRecord, "$"));
             if let Stage::Asked(_, decode) = std::mem::replace(&mut self.stage, placeholder) {
                 self.stage = match landed.and_then(decode) {
@@ -128,45 +106,6 @@ impl<T, K: Clone> Background<T, K> {
             Stage::Asked(..) => Landed::Waiting,
             Stage::Ready(value) => Landed::Ready(value),
             Stage::Failed(error) => Landed::Failed(error),
-        }
-    }
-
-    pub fn waiting(&self) -> bool {
-        matches!(self.stage, Stage::Asked(..))
-    }
-
-    pub fn ready(&self) -> Option<&T> {
-        match &self.stage {
-            Stage::Ready(value) => Some(value),
-            Stage::Asked(..) | Stage::Failed(_) => None,
-        }
-    }
-
-    pub fn ready_mut(&mut self) -> Option<&mut T> {
-        match &mut self.stage {
-            Stage::Ready(value) => Some(value),
-            Stage::Asked(..) | Stage::Failed(_) => None,
-        }
-    }
-
-    pub fn failure(&self) -> Option<&Error> {
-        match &self.stage {
-            Stage::Failed(error) => Some(error),
-            Stage::Asked(..) | Stage::Ready(_) => None,
-        }
-    }
-
-    pub fn asked_key(&self) -> Option<&K> {
-        match &self.stage {
-            Stage::Asked(held, _) => Some(held.key()),
-            Stage::Ready(_) | Stage::Failed(_) => None,
-        }
-    }
-
-    pub fn into_ready(self) -> Option<T> {
-        match self.stage {
-            Stage::Ready(value) => Some(value),
-            Stage::Asked(..) | Stage::Failed(_) => None,
         }
     }
 }

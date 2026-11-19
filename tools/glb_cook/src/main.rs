@@ -7,6 +7,7 @@ mod entry;
 mod fault;
 mod fragment;
 mod geometry;
+mod image;
 mod ktx2;
 mod maps;
 mod markers;

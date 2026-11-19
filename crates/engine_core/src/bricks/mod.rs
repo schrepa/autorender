@@ -10,48 +10,17 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::system::{Commands, Query, ReadOnlySystemParam, Res, ScheduleSystem, SystemParam};
 use bevy_ecs::world::World;
-use engine_profile::Carried;
-use engine_registry::{
-    BrickRecord, BrickStates, JobList, MembersOf, Registry, SettingsEntry, SpawnedBy,
-    StatsEntry,
-};
+use engine_registry::{BrickRecord, Registry, SettingsEntry, SpawnedBy, StatsEntry};
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Error, JobKind, KindDecl, List, Mover, MoverId, Pace, Parent, RecordKey, SceneContext, Section,
-    Source, Switch,
+    Error, KindDecl, List, Mover, MoverId, Pace, Parent, SceneContext, Section, Source, Switch,
 };
 
 pub trait Brick: 'static {
     const SOURCE: &'static Source;
-    const JOBS: &'static [&'static JobKind] = &[];
-    const CORPORA: &'static [Corpus] = &[];
     fn register(bricks: &mut Bricks<'_>);
-}
-
-#[derive(Clone, Copy)]
-pub struct Corpus {
-    pub name: &'static str,
-    pub replays: &'static [&'static JobKind],
-    pub run: fn(&mut dyn PureSession) -> Result<(), String>,
-}
-
-pub trait PureSession {
-    fn root(&self) -> &std::path::Path;
-    fn list(&self) -> &JobList;
-    fn record(&mut self, name: &str, value: Value);
-    fn hash(&mut self, name: &str, bytes: &[u8]);
-    fn digest(&self, bytes: &[u8]) -> String;
-    fn check(&mut self, holds: bool, what: &dyn Fn() -> String);
-    fn share(&mut self, bytes: &[u8]) -> RecordKey;
-    fn run(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String>;
-    fn sliced(
-        &mut self,
-        kind: &'static JobKind,
-        input: &[u8],
-        slice: u64,
-    ) -> Result<Vec<u8>, String>;
 }
 
 pub struct Bricks<'r> {
@@ -61,13 +30,6 @@ pub struct Bricks<'r> {
 impl engine_registry::RecordExt for Bricks<'_> {
     fn record(&mut self) -> &mut BrickRecord {
         &mut *self.record
-    }
-}
-
-impl<'r> Bricks<'r> {
-    #[doc(hidden)]
-    pub fn recording(record: &'r mut BrickRecord) -> Self {
-        Self { record }
     }
 }
 
@@ -118,12 +80,6 @@ impl Bricks<'_> {
         self
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    pub fn name(&mut self, entry: engine_registry::NameEntry) -> &mut Self {
-        self.record.entries.push(Box::new(entry));
-        self
-    }
-
     pub fn moves<C: Component>(&mut self, pace: Pace) -> &mut Self {
         let by = if self.record.game() {
             MoverId::Game
@@ -144,7 +100,7 @@ fn switch_on<S: Switch + Resource>(world: &World) -> bool {
 
 #[track_caller]
 pub(crate) fn settings_entry<S: Section>() -> SettingsEntry {
-    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S>, S::schema).scene_check(scene_of::<S>)
+    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S>, scene_of::<S>, S::schema)
 }
 
 fn check_of<S: Section>(value: &Value, path: &str) -> Result<(), Error> {
@@ -178,41 +134,15 @@ fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<()
 pub trait Listing: Sized {
     #[must_use]
     fn with<B: Brick>(self) -> Self;
-    #[must_use]
-    fn settings<S: Section>(self, value: S) -> Self;
 }
-
-pub type ListDefault = Arc<dyn Fn(&mut World) + Send + Sync>;
 
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct Listed {
-    source: &'static Source,
-    jobs: &'static [&'static JobKind],
     record: fn() -> BrickRecord,
 }
 
 impl Listed {
-    fn of<B: Brick>() -> Self {
-        Self {
-            source: B::SOURCE,
-            jobs: B::JOBS,
-            record: record_of::<B>,
-        }
-    }
-
-    pub fn source(&self) -> &'static Source {
-        self.source
-    }
-
-    pub fn package(&self) -> &'static str {
-        self.source.package()
-    }
-
-    pub fn jobs(&self) -> &'static [&'static JobKind] {
-        self.jobs
-    }
-
     pub fn record(&self) -> BrickRecord {
         (self.record)()
     }
@@ -220,17 +150,15 @@ impl Listed {
 
 fn record_of<B: Brick>() -> BrickRecord {
     let source = B::SOURCE;
-    let corpora = B::CORPORA
-        .iter()
-        .map(|corpus| corpus as &'static (dyn Any + Send + Sync))
-        .collect();
-    let mut record = BrickRecord::new::<B>(source.package(), source.hash(), corpora);
+    let mut record = BrickRecord::new::<B>(source.package());
     record.set_game(source.game());
     if let Some(first) = source.modules().first() {
         let path = first.path();
         record.shader_prefix(path.split("::").next().unwrap_or(path));
     }
-    B::register(&mut Bricks::recording(&mut record));
+    B::register(&mut Bricks {
+        record: &mut record,
+    });
     record
 }
 
@@ -238,50 +166,19 @@ fn record_of<B: Brick>() -> BrickRecord {
 #[derive(Clone, Default)]
 pub struct BrickList {
     bricks: Vec<Listed>,
-    defaults: Vec<ListDefault>,
 }
 
 impl BrickList {
     pub fn listed(&self) -> &[Listed] {
         &self.bricks
     }
-
-    pub fn defaults(&self) -> &[ListDefault] {
-        &self.defaults
-    }
-
-    pub fn contains(&self, package: &str) -> bool {
-        self.bricks.iter().any(|listed| listed.package() == package)
-    }
-
-    pub fn jobs(&self) -> Vec<&'static JobKind> {
-        self.bricks
-            .iter()
-            .flat_map(|listed| listed.jobs().iter().copied())
-            .collect()
-    }
-
-    pub fn job_list(&self) -> Result<JobList, Error> {
-        let mut records: Vec<BrickRecord> = self.bricks.iter().map(Listed::record).collect();
-        let members = records
-            .iter_mut()
-            .flat_map(BrickRecord::take_members)
-            .collect();
-        let kinds = self.jobs();
-        crate::job_list_with(&kinds, members)
-    }
 }
 
 impl Listing for BrickList {
     fn with<B: Brick>(mut self) -> Self {
-        self.bricks.push(Listed::of::<B>());
-        self
-    }
-
-    fn settings<S: Section>(mut self, value: S) -> Self {
-        self.defaults.push(Arc::new(move |world: &mut World| {
-            world.insert_resource(value.clone());
-        }));
+        self.bricks.push(Listed {
+            record: record_of::<B>,
+        });
         self
     }
 }
@@ -301,8 +198,6 @@ impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> sealed::Sealed
 {
 }
 impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> Read for Query<'_, '_, D, F> {}
-impl<L: List> sealed::Sealed for Joined<'_, L> {}
-impl<L: List> Read for Joined<'_, L> {}
 
 macro_rules! read_tuples {
     ($($param:ident),*) => {
@@ -334,43 +229,6 @@ read_tuples!(
 );
 
 #[derive(SystemParam)]
-pub struct Joined<'w, L: List> {
-    members: Option<Res<'w, engine_registry::MembersOf<L>>>,
-    states: Option<Res<'w, BrickStates>>,
-}
-
-impl<L: List> Joined<'_, L> {
-    pub fn iter(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        self.members
-            .iter()
-            .zip(self.states.iter())
-            .flat_map(|(members, states)| members.live(states))
-    }
-
-    pub fn owned(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
-        self.members
-            .iter()
-            .zip(self.states.iter())
-            .flat_map(|(members, states)| members.owned(states))
-    }
-
-    pub fn all(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        self.members.iter().flat_map(|members| members.all().iter())
-    }
-
-    pub fn every(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
-        self.members.iter().flat_map(|members| members.every())
-    }
-}
-
-pub fn members_in<L: List>(world: &World) -> &[L::Member] {
-    match world.get_resource::<MembersOf<L>>() {
-        Some(members) => members.all(),
-        None => &[],
-    }
-}
-
-#[derive(SystemParam)]
 pub struct Spawner<'w, 's, B: Brick> {
     commands: Commands<'w, 's>,
     brick: PhantomData<fn() -> B>,
@@ -379,9 +237,8 @@ pub struct Spawner<'w, 's, B: Brick> {
 impl<B: Brick> Spawner<'_, '_, B> {
     pub fn spawn(&mut self, bundle: impl Bundle) -> Entity {
         let entity = self.commands.spawn_empty().id();
-        let cause = engine_profile::carry();
         self.commands
-            .queue(move |world: &mut World| spawned::<B, _>(world, entity, bundle, cause));
+            .queue(move |world: &mut World| spawned::<B, _>(world, entity, bundle));
         entity
     }
 
@@ -414,29 +271,12 @@ impl<B: Brick> Spawner<'_, '_, B> {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Caused(pub u32);
-
-#[cfg(any(feature = "dev", feature = "profiling"))]
-fn stamp(cause: Carried) -> Caused {
-    Caused(cause.cause().0)
-}
-
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
-fn stamp(_: Carried) {}
-
-pub fn caused_now() -> impl Bundle {
-    stamp(engine_profile::carry())
-}
-
-fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T, cause: Carried) {
+fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
     let Ok(mut spawned) = world.get_entity_mut(entity) else {
         return;
     };
-    spawned.insert((bundle, SpawnedBy::<B>::new(), stamp(cause)));
-    let admitted = engine_profile::caused(cause.cause(), || crate::admit(world, entity, None, "$"));
-    if let Err(error) = admitted {
+    spawned.insert((bundle, SpawnedBy::<B>::new()));
+    if let Err(error) = crate::admit(world, entity, None, "$") {
         let _ = world.try_despawn(entity);
         refused::<B>(world, "spawn", error);
     }

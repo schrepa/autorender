@@ -37,12 +37,6 @@ pub struct Length {
     pub channels: u32,
 }
 
-impl Length {
-    pub fn seconds(self) -> f64 {
-        self.frames as f64 / f64::from(self.rate)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Loaded {
     Reading,

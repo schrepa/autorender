@@ -111,10 +111,6 @@ impl Delivers<u64> for Kept {
     fn landed(&self, held: &Interest<u64>) -> Option<Result<Arc<[u8]>, Error>> {
         self.requests.landed(held)
     }
-
-    fn cause(&self, held: &Interest<u64>) -> engine_profile::Cause {
-        self.requests.cause(held.key())
-    }
 }
 
 fn named(name: &str) -> bool {

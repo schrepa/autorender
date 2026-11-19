@@ -26,23 +26,3 @@ pub trait Switch: Section {
 
     fn on(&self) -> bool;
 }
-
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct Cut {
-    pub asked: u32,
-    pub kept: u32,
-    pub cut: u32,
-}
-
-impl Cut {
-    pub fn of(asked: u32, kept: u32) -> Self {
-        let kept = kept.min(asked);
-        Self {
-            asked,
-            kept,
-            cut: asked - kept,
-        }
-    }
-}

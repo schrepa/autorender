@@ -1,44 +1,17 @@
 use std::any::TypeId;
-use std::ops::Range;
 
-use engine_core::{Entry, Error, ErrorCode, PassBit, PassViews, TargetName, Var};
+use engine_core::{Entry, Error, ErrorCode, GeometryStream, PassBit, PassViews, TargetName, Var};
 
-use crate::graph::Clear;
 use crate::linker::Linker;
 use crate::registration::KindMember;
-use crate::{Access, DepthUse, Lifetime, VertexLayout};
+use crate::{Access, DepthUse, Lifetime};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Bound {
-    Texture(u32),
-    Slice {
-        texture: u32,
-        mips: Range<u32>,
-        layers: Range<u32>,
-    },
     Buffer(u32),
-    Window {
-        buffer: u32,
-        size: u64,
-    },
     Sampler(u32),
     Target(TargetName),
     Asset,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Copied {
-    Buffer(u32),
-    Texture(u32),
-    Target(TargetName),
-    Canvas,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Work {
-    Render,
-    Copy { from: Copied, to: Copied },
-    Clear(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -62,7 +35,6 @@ pub(crate) struct TextureDecl {
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
-    pub(crate) per_view: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -71,9 +43,6 @@ pub(crate) struct BufferDecl {
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
     pub(crate) usage: wgpu::BufferUsages,
-    pub(crate) window: Option<u64>,
-    pub(crate) per_view: bool,
-    pub(crate) args: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -81,25 +50,19 @@ pub(crate) struct PassDecl {
     pub(crate) name: &'static str,
     pub(crate) label: Option<&'static str>,
     pub(crate) span: Option<&'static str>,
-    pub(crate) group: Option<&'static str>,
     pub(crate) part: u32,
-    pub(crate) work: Work,
     pub(crate) views: PassViews,
     pub(crate) after: Vec<u32>,
-    pub(crate) colors: Vec<(u32, Access)>,
     pub(crate) targets: Vec<(TargetName, Access)>,
-    pub(crate) depths: Vec<(u32, Access)>,
-    pub(crate) clears: Vec<(u32, Clear)>,
     pub(crate) scene: Option<SceneOf>,
     pub(crate) members: Vec<u32>,
-    pub(crate) makes_records: bool,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct RenderDecl {
     pub(crate) vertex: Entry,
     pub(crate) fragment: Option<Entry>,
-    pub(crate) vertices: Vec<VertexLayout>,
+    pub(crate) vertices: Vec<GeometryStream>,
     pub(crate) primitive: wgpu::PrimitiveState,
     pub(crate) depth: DepthUse,
     pub(crate) stencil: wgpu::StencilState,
@@ -121,25 +84,11 @@ pub(crate) struct PipelineDecl {
     pub(crate) program: Program,
     pub(crate) bound: Vec<(Var, Bound)>,
     pub(crate) constants: Vec<(&'static str, f64)>,
-    pub(crate) speedup_only: bool,
 }
 
 impl PassDecl {
-    pub(crate) fn clear_of(&self, texture: u32) -> Option<Clear> {
-        self.clears
-            .iter()
-            .find(|(known, _)| *known == texture)
-            .map(|(_, clear)| *clear)
-    }
-
     pub(crate) fn per_view(&self) -> bool {
         self.scene.is_some_and(|scene| scene.core) || !self.targets.is_empty()
-    }
-}
-
-impl Bound {
-    pub(crate) fn window(&self) -> bool {
-        matches!(self, Self::Window { .. })
     }
 }
 
@@ -159,13 +108,6 @@ impl PipelineDecl {
             .filter(|(_, bound)| *bound == Bound::Asset)
             .count()
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct DrawInputDecl {
-    pub(crate) part: u32,
-    pub(crate) scope: Scoped,
-    pub(crate) buffer: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -190,7 +132,6 @@ pub(crate) struct Declared {
     pub(crate) targets: Vec<crate::SharedTarget>,
     pub(crate) passes: Vec<PassDecl>,
     pub(crate) pipelines: Vec<PipelineDecl>,
-    pub(crate) inputs: Vec<DrawInputDecl>,
     pub(crate) frame: Vec<FrameBind>,
     pub(crate) batch_groups: Vec<BatchDecl>,
 }
@@ -208,7 +149,6 @@ pub(crate) struct Counts {
     buffers: usize,
     passes: usize,
     pipelines: usize,
-    inputs: usize,
     frame: usize,
     batch_groups: usize,
 }
@@ -228,7 +168,6 @@ impl Declared {
             buffers: self.buffers.len(),
             passes: self.passes.len(),
             pipelines: self.pipelines.len(),
-            inputs: self.inputs.len(),
             frame: self.frame.len(),
             batch_groups: self.batch_groups.len(),
         }
@@ -246,7 +185,6 @@ impl Declared {
             targets: kept(&self.targets, counts.targets),
             passes: kept(&self.passes, counts.passes),
             pipelines: kept(&self.pipelines, counts.pipelines),
-            inputs: kept(&self.inputs, counts.inputs),
             frame: kept(&self.frame, counts.frame),
             batch_groups: kept(&self.batch_groups, counts.batch_groups),
         }
@@ -299,45 +237,25 @@ impl InstallCore {
         &mut self,
         label: &'static str,
         format: wgpu::TextureFormat,
-        (lifetime, per_view): (Lifetime, bool),
+        lifetime: Lifetime,
     ) -> u32 {
         self.declared.textures.push(TextureDecl {
             label,
             format,
             lifetime,
             part: self.part,
-            per_view,
         });
         (self.declared.textures.len() - 1) as u32
     }
 
-    pub(crate) fn buffer(
-        &mut self,
-        label: &'static str,
-        (lifetime, per_view): (Lifetime, bool),
-    ) -> u32 {
+    pub(crate) fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> u32 {
         self.declared.buffers.push(BufferDecl {
             label,
             lifetime,
             part: self.part,
             usage: wgpu::BufferUsages::empty(),
-            window: None,
-            per_view,
-            args: false,
         });
         (self.declared.buffers.len() - 1) as u32
-    }
-
-    pub(crate) fn window(&mut self, buffer: u32, size: u64) {
-        let part = self.part;
-        if let Some(declared) = self
-            .declared
-            .buffers
-            .get_mut(buffer as usize)
-            .filter(|declared| declared.part == part)
-        {
-            declared.window = Some(size);
-        }
     }
 
     pub(crate) fn use_buffer(&mut self, buffer: u32, usage: wgpu::BufferUsages) {
@@ -381,40 +299,19 @@ impl InstallCore {
         Ok(())
     }
 
-    pub(crate) fn pass(&mut self, name: &'static str, work: Work) -> u32 {
+    pub(crate) fn pass(&mut self, name: &'static str) -> u32 {
         self.declared.passes.push(PassDecl {
             name,
             label: None,
             span: None,
-            group: None,
             part: self.part,
-            work,
             views: PassViews::Every,
             after: Vec::new(),
-            colors: Vec::new(),
-            depths: Vec::new(),
-            clears: Vec::new(),
             targets: Vec::new(),
             scene: None,
             members: Vec::new(),
-            makes_records: false,
         });
-        let pass = (self.declared.passes.len() - 1) as u32;
-        match work {
-            Work::Copy { from, to } => {
-                for (copied, usage) in [
-                    (from, wgpu::BufferUsages::COPY_SRC),
-                    (to, wgpu::BufferUsages::COPY_DST),
-                ] {
-                    if let Copied::Buffer(buffer) = copied {
-                        self.use_buffer(buffer, usage);
-                    }
-                }
-            }
-            Work::Clear(buffer) => self.use_buffer(buffer, wgpu::BufferUsages::COPY_DST),
-            Work::Render => {}
-        }
-        pass
+        (self.declared.passes.len() - 1) as u32
     }
 
     pub(crate) fn pass_mut(&mut self, pass: u32) -> Option<&mut PassDecl> {
@@ -441,36 +338,12 @@ impl InstallCore {
         {
             return Err(Error::new(ErrorCode::PassMismatch, path));
         }
-        let bound = bound
-            .into_iter()
-            .map(|(var, bound)| {
-                let window = match &bound {
-                    Bound::Buffer(buffer) => self
-                        .declared
-                        .buffers
-                        .get(*buffer as usize)
-                        .and_then(|declared| declared.window)
-                        .map(|size| (*buffer, size)),
-                    Bound::Texture(_)
-                    | Bound::Slice { .. }
-                    | Bound::Window { .. }
-                    | Bound::Sampler(_)
-                    | Bound::Target(_)
-                    | Bound::Asset => None,
-                };
-                match window {
-                    Some((buffer, size)) => (var, Bound::Window { buffer, size }),
-                    None => (var, bound),
-                }
-            })
-            .collect();
         let decl = PipelineDecl {
             part: self.part,
             scope,
             program,
             bound,
             constants: Vec::new(),
-            speedup_only: false,
         };
         for entry in decl.entries() {
             self.linker.add_source(entry.module().source());
@@ -485,7 +358,7 @@ impl InstallCore {
                     return Err(Error::new(ErrorCode::UnknownVariable, path).got(var.name()));
                 }
             }
-            if let Bound::Buffer(buffer) | Bound::Window { buffer, .. } = bound {
+            if let Bound::Buffer(buffer) = bound {
                 let usage = self.linker.buffer_usage(*var);
                 self.use_buffer(*buffer, usage);
             }
@@ -498,26 +371,6 @@ impl InstallCore {
         self.linker.add_source(entry.module().source());
         self.linker.add_source(var.module().source());
         self.linker.reaches(entry, var)
-    }
-
-    pub(crate) fn draw_input(&mut self, scope: Scoped, buffer: u32) -> u32 {
-        self.use_buffer(
-            buffer,
-            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX | wgpu::BufferUsages::INDIRECT,
-        );
-        self.declared.inputs.push(DrawInputDecl {
-            part: self.part,
-            scope,
-            buffer,
-        });
-        (self.declared.inputs.len() - 1) as u32
-    }
-
-    pub(crate) fn args_input(&mut self, scope: Scoped, buffer: u32) -> u32 {
-        if let Some(declared) = self.declared.buffers.get_mut(buffer as usize) {
-            declared.args = true;
-        }
-        self.draw_input(scope, buffer)
     }
 
     pub(crate) fn draws_scene(&mut self, pass: u32, name: &'static str, listed: engine_core::Pass) {
@@ -666,8 +519,8 @@ impl Declared {
                 },
             );
             let clear = match target.clear {
-                Clear::Color(color) => serde_json::json!({"color": color}),
-                Clear::Depth(depth) => serde_json::json!({"depth": depth}),
+                crate::graph::Clear::Color(color) => serde_json::json!({"color": color}),
+                crate::graph::Clear::Depth(depth) => serde_json::json!({"depth": depth}),
             };
             targets.insert(
                 target.name.name().to_owned(),

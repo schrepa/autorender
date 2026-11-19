@@ -50,13 +50,6 @@ impl Default for Layers {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DrawnProjection {
-    pub vertical_fov: f32,
-    pub depth_scale: f32,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -76,12 +69,6 @@ impl Default for InstanceValues {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct DrawnBounds {
-    pub min: [f32; 3],
-    pub max: [f32; 3],
-}
-
 #[derive(Component, Clone, Debug, PartialEq)]
 #[component(immutable)]
 pub struct Drawn {
@@ -91,7 +78,6 @@ pub struct Drawn {
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub order: i16,
-    pub projection: Option<DrawnProjection>,
     pub values: InstanceValues,
 }
 
@@ -112,7 +98,6 @@ impl Drawn {
             passes: None,
             layers: Layers::FIRST,
             order: 0,
-            projection: None,
             values: InstanceValues::default(),
         }
     }

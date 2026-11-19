@@ -7,25 +7,16 @@ publish.workspace = true
 
 [dependencies]
 xtask.workspace = true
-zip.workspace = true
 engine_command_line.workspace = true
 engine_scene.workspace = true
 engine_dev.workspace = true
-engine_lodbuild.workspace = true
 engine_core.workspace = true
-engine_native = { workspace = true, features = ["dev"] }
-gltf.workspace = true
-png.workspace = true
-tiff.workspace = true
 naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 sha2.workspace = true
 engine = { workspace = true, features = ["dev"] }
 engine_checks.workspace = true
-engine_sources.workspace = true
 engine_registry.workspace = true
-bevy_ecs.workspace = true
 serde_json.workspace = true
-toml_edit.workspace = true
 
 [lints]
 workspace = true

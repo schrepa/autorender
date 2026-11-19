@@ -1,4 +1,3 @@
-use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{
@@ -6,35 +5,7 @@ use engine_assets::{
     TextureHandle,
 };
 
-use crate::{Census, Error, ErrorCode, Expected, Feed, Interest, Request, Requests};
-
-#[derive(Component, Clone, Debug, Default)]
-pub struct AssetUses {
-    assets: Vec<Asset>,
-    _held: Vec<Interest<Asset>>,
-}
-
-impl AssetUses {
-    pub fn new(residency: &AssetResidency, mut assets: Vec<Asset>) -> Self {
-        assets.sort_unstable();
-        assets.dedup();
-        let held = assets.iter().map(|&asset| residency.hold(asset)).collect();
-        Self {
-            assets,
-            _held: held,
-        }
-    }
-
-    pub fn assets(&self) -> &[Asset] {
-        &self.assets
-    }
-}
-
-impl PartialEq for AssetUses {
-    fn eq(&self, other: &Self) -> bool {
-        self.assets == other.assets
-    }
-}
+use crate::{Error, ErrorCode, Expected, Feed, Interest, Request, Requests};
 
 #[doc(hidden)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,10 +55,6 @@ impl GeometryClass {
                 .map(|stream| ClassStream::Named(stream.name().to_owned(), stream.format())),
         );
         Self { streams }
-    }
-
-    pub fn extended(&self) -> bool {
-        self.streams.contains(&ClassStream::Extra)
     }
 
     fn widest(&self) -> u64 {
@@ -252,36 +219,17 @@ pub struct ResidentMesh {
     placement: MeshResidence,
     revision: u64,
     class: u32,
-    extended: bool,
     index_count: u32,
     byte_len: u64,
 }
 
 impl ResidentMesh {
-    pub fn first_index(&self) -> u32 {
-        match self.placement {
-            MeshResidence::Arena(placement) => placement.first_index,
-            MeshResidence::Own => 0,
-        }
-    }
-
-    pub fn base_vertex(&self) -> i32 {
-        match self.placement {
-            MeshResidence::Arena(placement) => placement.base_vertex as i32,
-            MeshResidence::Own => 0,
-        }
-    }
-
     pub fn index_count(&self) -> u32 {
         self.index_count
     }
 
     pub fn revision(&self) -> u64 {
         self.revision
-    }
-
-    pub fn extended(&self) -> bool {
-        self.extended
     }
 
     #[doc(hidden)]
@@ -300,11 +248,8 @@ impl ResidentMesh {
 }
 
 fn resident_mesh(mesh: &Mesh, revision: u64, arena: &mut Arena) -> ResidentMesh {
-    let class = GeometryClass::of(mesh);
-    let extended = class.extended();
-    let class = arena.class_of(class);
-    let total = mesh.indices().len() + mesh.lods().map_or(0, |lods| lods.indices.len());
-    let placement = u32::try_from(total)
+    let class = arena.class_of(GeometryClass::of(mesh));
+    let placement = u32::try_from(mesh.indices().len())
         .ok()
         .and_then(|count| arena.insert(class, mesh.vertices().len() as u32, count))
         .map_or(MeshResidence::Own, MeshResidence::Arena);
@@ -312,7 +257,6 @@ fn resident_mesh(mesh: &Mesh, revision: u64, arena: &mut Arena) -> ResidentMesh 
         placement,
         revision,
         class,
-        extended,
         index_count: mesh.indices().len() as u32,
         byte_len: mesh.byte_len() as u64,
     }
@@ -381,27 +325,6 @@ impl AssetResidency {
             Request::Missing => Some(gone()),
             Request::Asked(_) | Request::Ready(_) => None,
         }
-    }
-
-    pub fn made_material(
-        &self,
-        made: Option<&Result<MaterialHandle, Error>>,
-        path: &str,
-    ) -> Result<Option<MaterialHandle>, Error> {
-        match made {
-            None => Ok(None),
-            Some(Err(error)) => Err(error.clone()),
-            Some(&Ok(handle)) if self.material_resident(handle) => Ok(Some(handle)),
-            Some(&Ok(handle)) => self.refusal(handle, path).map_or(Ok(None), Err),
-        }
-    }
-
-    pub fn census(&self) -> Census {
-        self.wanted.census()
-    }
-
-    pub fn holders(&self, asset: impl Into<Asset>) -> u32 {
-        self.wanted.interests(&asset.into())
     }
 
     pub fn resident(&self, mesh: GeometryHandle) -> bool {
@@ -661,8 +584,7 @@ pub fn configure_assets(world: &mut World, arena: ArenaShape) {
     });
 }
 
-#[doc(hidden)]
-pub fn settle_assets(world: &mut World) {
+pub(crate) fn settle_assets(world: &mut World) {
     {
         let _profile = engine_profile::span("render", "validate_and_retire");
         settle_residency(world);

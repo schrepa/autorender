@@ -1,4 +1,4 @@
-use engine_core::{JobStats, PauseReason, Readiness};
+use engine_core::{PauseReason, Readiness};
 use engine_render::Picture;
 
 use super::now_ms;
@@ -66,24 +66,9 @@ enum Stage {
     Preparing {
         since: f64,
         picture: Picture,
-        before: Option<Sample>,
+        before: Option<Readiness>,
     },
     Playing,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct Sample {
-    readiness: Readiness,
-    landed: u64,
-}
-
-impl Sample {
-    fn of(readiness: &Readiness, jobs: &JobStats) -> Self {
-        Self {
-            readiness: readiness.clone(),
-            landed: jobs.completed + jobs.failed,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -108,21 +93,6 @@ impl Default for FrameLoop {
 }
 
 impl FrameLoop {
-    pub fn set_preparation(&mut self, enabled: bool) {
-        self.stage = if enabled {
-            Stage::Unprepared
-        } else {
-            Stage::Playing
-        };
-    }
-
-    pub fn preparing(&self) -> bool {
-        match self.stage {
-            Stage::Unprepared | Stage::Preparing { .. } => true,
-            Stage::Playing => false,
-        }
-    }
-
     pub fn frame<G: Game>(
         &mut self,
         host: &mut GameHost<G>,
@@ -169,12 +139,11 @@ impl FrameLoop {
         };
         host.set_preparation_ms(now_ms() - since);
         let drawn = host.framed(Advance::Clock(timestamp), (width, height), picture)?;
-        let (readiness, jobs) = host.progress();
+        let readiness = host.progress();
         let render = &host.frame_times().render;
         let created = render.pipelines_created;
         let uploaded = render.mesh_upload_bytes + render.texture_upload_bytes > 0;
-        let listing = host.prepare_pipelines();
-        let busy = listing || created > 0 || in_flight(host, &readiness);
+        let busy = created > 0 || in_flight(host, &readiness);
         let waiting = if readiness.compiling > 0 {
             FramePhase::Compiling
         } else {
@@ -189,12 +158,8 @@ impl FrameLoop {
             if busy {
                 return Ok((preparing(Picture::Hidden, None), waiting));
             }
-            if !readiness.worked() {
-                let sample = Sample::of(&readiness, &jobs);
-                return Ok((preparing(Picture::Hidden, Some(sample)), waiting));
-            }
             if !readiness.settled() {
-                return Ok((preparing(Picture::Shown, None), waiting));
+                return Ok((preparing(Picture::Hidden, Some(readiness)), waiting));
             }
             host.set_preparation_ms(now_ms() - since);
             host.hold_preparation(false);
@@ -204,31 +169,23 @@ impl FrameLoop {
         if !drawn {
             return Ok((preparing(Picture::Hidden, before), waiting));
         }
-        if !busy && readiness.worked() {
+        if !busy && readiness.settled() {
             return Ok((preparing(Picture::Shown, None), waiting));
         }
-        let sample = Sample::of(&readiness, &jobs);
-        let progressed = uploaded || before.as_ref() != Some(&sample);
+        let progressed = uploaded || before.as_ref() != Some(&readiness);
         let phase = if progressed {
             FramePhase::Collecting
         } else {
             waiting
         };
-        Ok((preparing(Picture::Hidden, Some(sample)), phase))
+        Ok((preparing(Picture::Hidden, Some(readiness)), phase))
     }
 }
 
 pub(crate) fn in_flight<G: Game>(host: &GameHost<G>, readiness: &Readiness) -> bool {
     let world = host.engine().app.world();
-    let records = world
-        .get_resource::<engine_core::Records>()
-        .is_some_and(|records| records.census().asked > 0);
     let files = world
         .get_resource::<engine_core::Files>()
         .is_some_and(|files| files.census().asked > 0);
-    readiness.loading.total > 0
-        || readiness.compiling > 0
-        || host.jobs_held() > 0
-        || records
-        || files
+    readiness.loading.total > 0 || readiness.compiling > 0 || files
 }

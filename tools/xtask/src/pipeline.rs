@@ -30,19 +30,15 @@ pub fn build(root: &Path, profiling: bool) -> Result<(), String> {
 }
 
 pub fn build_profiling_wasm(root: &Path) -> Result<(), String> {
-    let games: Vec<_> = clients()
-        .iter()
-        .filter(|client| client.game.is_some())
-        .collect();
     let mut arguments = vec!["build"];
-    for game in &games {
+    for game in clients() {
         arguments.extend(["-p", game.package.as_str()]);
     }
     arguments.extend(["--target", WASM_TARGET]);
     arguments.extend(["--profile", PROFILING, "--features", PROFILING_FEATURES]);
     arguments.push("--locked");
     run(root, "cargo", &arguments)?;
-    for game in &games {
+    for game in clients() {
         run(
             root,
             "wasm-bindgen",
@@ -63,7 +59,7 @@ pub fn build_profiling_wasm(root: &Path) -> Result<(), String> {
 
 pub fn build_dev(root: &Path, game: Option<&str>) -> Result<(), String> {
     match game {
-        Some(game) => build_clients(root, &of_game(game)?, true, false),
+        Some(game) => build_clients(root, &[of_game(game)?], true, false),
         None => build_wasm(root, true),
     }
 }
@@ -108,23 +104,19 @@ fn native(
     Ok(program.to_string_lossy().into_owned())
 }
 
-fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
-    if !clients()
+fn of_game(game: &str) -> Result<&'static Client, String> {
+    clients()
         .iter()
-        .any(|client| client.game.as_deref() == Some(game))
-    {
-        return Err(serde_json::json!({
-            "code": "invalid_name",
-            "path": "--game",
-            "got": game,
-            "expected": game_names(),
+        .find(|client| client.game == game)
+        .ok_or_else(|| {
+            serde_json::json!({
+                "code": "invalid_name",
+                "path": "--game",
+                "got": game,
+                "expected": game_names(),
+            })
+            .to_string()
         })
-        .to_string());
-    }
-    Ok(clients()
-        .iter()
-        .filter(|client| client.game.as_deref().is_none_or(|own| own == game))
-        .collect())
 }
 
 pub fn build_wasm(root: &Path, development: bool) -> Result<(), String> {

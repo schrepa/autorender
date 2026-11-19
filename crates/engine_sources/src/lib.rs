@@ -3,12 +3,12 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use toml_edit::{ArrayOfTables, Document, Item, Table, Value};
+use toml_edit::{Document, Item};
 use wgsl_parse::syntax::TranslationUnit;
 
 const RESERVED: &[&str] = &["engine", "generated"];
@@ -79,27 +79,15 @@ pub fn emit() {
     let root = workspace_root(&manifest);
     let src = manifest.join("src");
     let bricks = src.join("bricks");
-    let hash = digest(&package, &manifest, &root, false, None);
-    let game = read(&manifest.join("Cargo.toml")).is_some_and(|item| kind(&item) == Some("game"));
-    let jobs = src.join("jobs");
-    if jobs.is_dir() {
-        let hash = digest(&package, &manifest, &root, false, Some(&jobs));
-        fs::write(
-            out.join("jobs.rs"),
-            format!(
-                "pub(crate) static SOURCE: ::engine_core::Source = \
-                 ::engine_core::Source::generated({package:?}, {game}, {hash:?}, &[]);\n"
-            ),
-        )
-        .expect("OUT_DIR is writable");
-    }
-
+    let cargo_toml = manifest.join("Cargo.toml");
+    println!("cargo:rerun-if-changed={}", src.display());
+    println!("cargo:rerun-if-changed={}", cargo_toml.display());
+    let game = read(&cargo_toml).is_some_and(|item| kind(&item) == Some("game"));
     let mut code = String::new();
     code.push_str("extern crate engine_ecs as bevy_ecs;\n");
     code.push_str(&source_code(
         &package,
         game,
-        hash,
         &src,
         Some(&bricks),
         "crate::SOURCE",
@@ -129,25 +117,15 @@ pub fn emit() {
     for module in modules {
         let inside = bricks.join(&module);
         let named = format!("{crate_name}_{module}");
-        let hash = digest(&named, &manifest, &root, false, None);
         let code = source_code(
             &named,
             game,
-            hash,
             &inside,
             None,
             &format!("crate::bricks::{module}::SOURCE"),
         );
         fs::write(folder.join(format!("{module}.rs")), code).expect("OUT_DIR is writable");
     }
-}
-
-pub fn parse_folder(folder: &str) {
-    let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
-    let out = PathBuf::from(var("OUT_DIR"));
-    let folder = manifest.join(folder);
-    println!("cargo:rerun-if-changed={}", folder.display());
-    parse_shaders(&workspace_root(&manifest), &out, &shader_files(&folder));
 }
 
 fn shader_files(shaders: &Path) -> Vec<PathBuf> {
@@ -207,7 +185,6 @@ fn line_column(text: &str, at: usize) -> (usize, usize) {
 fn source_code(
     package: &str,
     game: bool,
-    hash: [u8; 32],
     folder: &Path,
     skipped: Option<&Path>,
     source: &str,
@@ -249,7 +226,7 @@ fn source_code(
     let mut code = String::new();
     code.push_str(&format!(
         "pub(crate) static SOURCE: ::engine_core::Source = \
-         ::engine_core::Source::generated({package:?}, {game}, {hash:?}, &[\n{texts}]);\n"
+         ::engine_core::Source::generated({package:?}, {game}, &[\n{texts}]);\n"
     ));
     code.push_str("pub(crate) mod shaders {\n");
     code.push_str(
@@ -259,186 +236,6 @@ fn source_code(
     tree.write(&mut code, 1, source);
     code.push_str("}\n");
     code
-}
-
-pub fn emit_digest() {
-    let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
-    let out = PathBuf::from(var("OUT_DIR"));
-    let package = var("CARGO_PKG_NAME");
-    let hash = digest(&package, &manifest, &workspace_root(&manifest), true, None);
-    fs::write(
-        out.join("digest.rs"),
-        format!("pub const SOURCE_DIGEST: [u8; 32] = {hash:?};\n"),
-    )
-    .expect("OUT_DIR is writable");
-}
-
-fn sources(
-    manifest: &Path,
-    root: &Path,
-    every: bool,
-    folder: Option<&Path>,
-) -> BTreeMap<PathBuf, (Vec<PathBuf>, Vec<PathBuf>)> {
-    let own = normal(manifest);
-    let mut crates = BTreeSet::new();
-    crates.insert(own.clone());
-    reach(manifest, root, &mut crates, every);
-    crates
-        .into_iter()
-        .map(|dir| {
-            let mut files = Vec::new();
-            let found = match folder.filter(|_| dir == own) {
-                Some(folder) => {
-                    list(&normal(folder), &mut files);
-                    included(&files)
-                }
-                None => {
-                    list(&dir.join("src"), &mut files);
-                    Vec::new()
-                }
-            };
-            files.extend_from_slice(&found);
-            files.push(dir.join("Cargo.toml"));
-            files.sort();
-            files.dedup();
-            (dir, (found, files))
-        })
-        .collect()
-}
-
-pub fn job_key_files(manifest: &Path) -> Vec<String> {
-    let root = workspace_root(manifest);
-    let jobs = manifest.join("src").join("jobs");
-    let folder = jobs.is_dir().then_some(jobs.as_path());
-    let crates = sources(manifest, &root, false, folder);
-    let mut files: Vec<String> = crates
-        .values()
-        .flat_map(|(_, files)| files)
-        .map(|file| relative(&root, file))
-        .collect();
-    if !locked_externals(crates.keys(), &root).is_empty() {
-        files.push(relative(&root, &root.join("Cargo.lock")));
-    }
-    files
-}
-
-fn digest(
-    package: &str,
-    manifest: &Path,
-    root: &Path,
-    every: bool,
-    folder: Option<&Path>,
-) -> [u8; 32] {
-    let crates = sources(manifest, root, every, folder);
-    let mut hash = Sha256::new();
-    hash.update(package.as_bytes());
-    hash.update([0]);
-    for (dir, (included, files)) in &crates {
-        for file in included {
-            println!("cargo:rerun-if-changed={}", file.display());
-        }
-        println!("cargo:rerun-if-changed={}", dir.join("src").display());
-        println!(
-            "cargo:rerun-if-changed={}",
-            dir.join("Cargo.toml").display()
-        );
-        for file in files {
-            hash.update(relative(root, file).as_bytes());
-            hash.update([0]);
-            hash.update(hashed(file));
-            hash.update([0]);
-        }
-    }
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("Cargo.lock").display()
-    );
-    for locked in locked_externals(crates.keys(), root) {
-        hash.update(locked.as_bytes());
-        hash.update([0]);
-    }
-    hash.finalize().into()
-}
-
-fn locked_externals<'a>(
-    crates: impl IntoIterator<Item = &'a PathBuf>,
-    root: &Path,
-) -> BTreeSet<String> {
-    let mut found = BTreeSet::new();
-    let Some(lock) = read(&root.join("Cargo.lock")) else {
-        return found;
-    };
-    let Some(packages) = lock.get("package").and_then(Item::as_array_of_tables) else {
-        return found;
-    };
-    let workspace = read(&root.join("Cargo.toml"));
-    let members = workspace
-        .as_ref()
-        .and_then(|item| item.get("workspace")?.get("dependencies"));
-    let mut pending: Vec<(&Table, BTreeSet<String>)> = Vec::new();
-    for dir in crates {
-        let Some(manifest) = read(&dir.join("Cargo.toml")) else {
-            continue;
-        };
-        let name = manifest
-            .get("package")
-            .and_then(|package| package.get("name"))
-            .and_then(Item::as_str);
-        let unused = unused_optional(&manifest);
-        pending.extend(
-            packages
-                .iter()
-                .filter(|package| {
-                    field(package, "source").is_none() && field(package, "name") == name
-                })
-                .map(|package| (package, unused.clone())),
-        );
-    }
-    while let Some((package, unused)) = pending.pop() {
-        let Some(dependencies) = package.get("dependencies").and_then(Item::as_array) else {
-            continue;
-        };
-        for dependency in dependencies.iter().filter_map(Value::as_str) {
-            let Some(entry) = locked_entry(packages, dependency) else {
-                continue;
-            };
-            let name = field(entry, "name").unwrap_or_default();
-            if unused.contains(name) {
-                continue;
-            }
-            let member = members
-                .and_then(|members| members.get(name))
-                .is_some_and(|member| member.get("path").is_some());
-            if member {
-                continue;
-            }
-            let identity = ["name", "version", "source", "checksum"]
-                .map(|key| field(entry, key).unwrap_or_default())
-                .join(" ");
-            if found.insert(identity) {
-                pending.push((entry, BTreeSet::new()));
-            }
-        }
-    }
-    found
-}
-
-fn locked_entry<'a>(packages: &'a ArrayOfTables, dependency: &str) -> Option<&'a Table> {
-    let mut parts = dependency.split(' ');
-    let name = parts.next();
-    let version = parts.next();
-    let source = parts
-        .next()
-        .and_then(|source| source.strip_prefix('(')?.strip_suffix(')'));
-    packages.iter().find(|package| {
-        field(package, "name") == name
-            && (version.is_none() || field(package, "version") == version)
-            && (source.is_none() || field(package, "source") == source)
-    })
-}
-
-fn field<'a>(package: &'a Table, key: &str) -> Option<&'a str> {
-    package.get(key).and_then(Item::as_str)
 }
 
 fn var(name: &str) -> String {
@@ -498,105 +295,6 @@ fn kind(manifest: &Item) -> Option<&str> {
         .as_str()
 }
 
-fn dependency_tables(manifest: &Item) -> Vec<&Item> {
-    let mut tables: Vec<&Item> = manifest.get("dependencies").into_iter().collect();
-    if let Some(targets) = manifest.get("target").and_then(Item::as_table_like) {
-        tables.extend(
-            targets
-                .iter()
-                .filter_map(|(_, target)| target.get("dependencies")),
-        );
-    }
-    tables
-}
-
-fn unused_optional(manifest: &Item) -> BTreeSet<String> {
-    let features = manifest.get("features");
-    let (mut seen, mut enabled) = (BTreeSet::new(), BTreeSet::new());
-    let mut pending = vec!["default".to_owned()];
-    while let Some(feature) = pending.pop() {
-        if !seen.insert(feature.clone()) {
-            continue;
-        }
-        let listed = features
-            .and_then(|features| features.get(feature.as_str()))
-            .and_then(Item::as_array);
-        for item in listed.into_iter().flatten().filter_map(Value::as_str) {
-            let dependency = match item.split_once('/') {
-                Some((dependency, _)) => dependency,
-                None => {
-                    pending.push(item.to_owned());
-                    item.strip_prefix("dep:").unwrap_or(item)
-                }
-            };
-            if !dependency.ends_with('?') {
-                enabled.insert(dependency.to_owned());
-            }
-        }
-    }
-    let mut unused = BTreeSet::new();
-    for table in dependency_tables(manifest) {
-        let Some(dependencies) = table.as_table_like() else {
-            continue;
-        };
-        for (key, entry) in dependencies.iter() {
-            if entry.get("optional").and_then(Item::as_bool) != Some(true) || enabled.contains(key)
-            {
-                continue;
-            }
-            unused.insert(key.to_owned());
-            unused.extend(
-                entry
-                    .get("package")
-                    .and_then(Item::as_str)
-                    .map(str::to_owned),
-            );
-        }
-    }
-    unused
-}
-
-fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>, every: bool) {
-    let Some(manifest) = read(&dir.join("Cargo.toml")) else {
-        return;
-    };
-    let workspace = read(&root.join("Cargo.toml"));
-    let unused = unused_optional(&manifest);
-    for table in dependency_tables(&manifest) {
-        let Some(dependencies) = table.as_table_like() else {
-            continue;
-        };
-        for (key, entry) in dependencies.iter() {
-            if unused.contains(key) {
-                continue;
-            }
-            let inherited = entry.get("workspace").and_then(Item::as_bool) == Some(true);
-            let (source, base) = if inherited {
-                let declared = workspace
-                    .as_ref()
-                    .and_then(|item| item.get("workspace")?.get("dependencies")?.get(key));
-                (declared, root)
-            } else {
-                (Some(entry), dir)
-            };
-            let Some(path) = source
-                .and_then(|item| item.get("path"))
-                .and_then(Item::as_str)
-            else {
-                continue;
-            };
-            let target = normal(&base.join(path));
-            let Some(reached) = read(&target.join("Cargo.toml")) else {
-                continue;
-            };
-            let followed = every || kind(&reached) == Some("support");
-            if followed && found.insert(target.clone()) {
-                reach(&target, root, found, every);
-            }
-        }
-    }
-}
-
 fn normal(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -613,89 +311,12 @@ fn normal(path: &Path) -> PathBuf {
     out
 }
 
-fn text_bytes(file: &Path) -> Vec<u8> {
-    let bytes = fs::read(file).unwrap_or_default();
-    let mut out = Vec::with_capacity(bytes.len());
-    for (at, byte) in bytes.iter().enumerate() {
-        if *byte == b'\r' && bytes.get(at + 1) == Some(&b'\n') {
-            continue;
-        }
-        out.push(*byte);
-    }
-    out
-}
-
-fn hashed(file: &Path) -> Vec<u8> {
-    let bytes = text_bytes(file);
-    if file.extension().is_none_or(|extension| extension != "rs") {
-        return bytes;
-    }
-    let text = String::from_utf8_lossy(&bytes);
-    let mut kept: Vec<&str> = Vec::new();
-    for line in text.split_inclusive('\n') {
-        if test_module(line) {
-            while kept
-                .last()
-                .is_some_and(|above| above.trim_start().starts_with("#["))
-            {
-                kept.pop();
-            }
-        } else {
-            kept.push(line);
-        }
-    }
-    kept.concat().into_bytes()
-}
-
-fn test_module(line: &str) -> bool {
-    without_visibility(line.trim())
-        .strip_prefix("mod ")
-        .and_then(|rest| rest.strip_suffix(';'))
-        .is_some_and(|name| test_code(name.trim()))
-}
-
-fn included(files: &[PathBuf]) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    for file in files {
-        if file.extension().is_none_or(|extension| extension != "rs") {
-            continue;
-        }
-        let Some(folder) = file.parent() else {
-            continue;
-        };
-        let text = String::from_utf8_lossy(&text_bytes(file)).into_owned();
-        for name in ["include_str", "include_bytes"] {
-            for at in words(&text, name) {
-                let named = text[at + name.len()..]
-                    .strip_prefix('!')
-                    .map(str::trim_start)
-                    .and_then(|rest| rest.strip_prefix('('))
-                    .map(str::trim_start)
-                    .and_then(|rest| rest.strip_prefix('"'))
-                    .and_then(|rest| rest.split_once('"'))
-                    .map(|(named, _)| named);
-                if let Some(named) = named {
-                    found.push(normal(&folder.join(named)));
-                }
-            }
-        }
-    }
-    found
-}
-
 fn scratch(name: &str) -> bool {
     name.starts_with('.')
         || name.ends_with('~')
         || [".swp", ".tmp", ".orig", ".rej"]
             .iter()
             .any(|suffix| name.ends_with(suffix))
-}
-
-fn test_code(name: &str) -> bool {
-    let stem = name.strip_suffix(".rs").unwrap_or(name);
-    ["smoke", "smokes", "tests", "pure"].contains(&stem)
-        || stem.ends_with("_smoke")
-        || stem.ends_with("_smokes")
 }
 
 fn list(folder: &Path, files: &mut Vec<PathBuf>) {
@@ -705,7 +326,7 @@ fn list(folder: &Path, files: &mut Vec<PathBuf>) {
     for entry in read.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if scratch(&name) || test_code(&name) {
+        if scratch(&name) {
             continue;
         }
         if path.is_dir() {
@@ -795,27 +416,17 @@ fn generated_wgsl(folder: &Path, skipped: Option<&Path>) -> String {
     let mut wgsl = String::new();
     for file in &files {
         let text = fs::read_to_string(file).expect("a Rust file");
-        let mut found: Vec<(usize, &str)> = ["gpu_struct", "gpu_consts"]
-            .into_iter()
-            .flat_map(|name| words(&text, name).into_iter().map(move |at| (at, name)))
-            .collect();
-        found.sort_unstable();
-        for (at, name) in found {
-            let Some(body) = text[at + name.len()..]
+        for at in words(&text, "gpu_struct") {
+            let Some(body) = text[at + "gpu_struct".len()..]
                 .trim_start()
                 .strip_prefix('!')
                 .and_then(braced)
             else {
                 continue;
             };
-            let declared = if name == "gpu_struct" {
-                struct_wgsl(body)
-            } else {
-                consts_wgsl(body)
-            };
-            wgsl.push_str(&declared.unwrap_or_else(|| {
+            wgsl.push_str(&struct_wgsl(body).unwrap_or_else(|| {
                 panic!(
-                    "{}: the generated module cannot read this {name}!",
+                    "{}: the generated module cannot read this gpu_struct!",
                     file.display()
                 )
             }));
@@ -924,49 +535,3 @@ fn named(ty: &str) -> bool {
         .is_some_and(|first| first.is_alphabetic() || first == '_')
         && ty.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
-
-fn consts_wgsl(body: &str) -> Option<String> {
-    let mut wgsl = String::new();
-    let mut declared: Vec<&str> = Vec::new();
-    for declaration in body.split(';') {
-        let declaration = without_visibility(declaration);
-        if declaration.is_empty() {
-            continue;
-        }
-        let rest = declaration.strip_prefix("const")?;
-        let (name, rest) = rest.split_once(':')?;
-        let (ty, value) = rest.split_once('=')?;
-        let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-        for (rust, written) in LIMITS {
-            value = value.replace(rust, written);
-        }
-        if value.contains("::") {
-            return None;
-        }
-        let known = value
-            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .filter(|word| {
-                word.starts_with(|character: char| {
-                    character.is_ascii_alphabetic() || character == '_'
-                })
-            })
-            .all(|word| declared.contains(&word));
-        if !known {
-            return None;
-        }
-        declared.push(name.trim());
-        wgsl.push_str(&format!(
-            "const {}: {} = {value};\n",
-            name.trim(),
-            ty.trim()
-        ));
-    }
-    Some(wgsl)
-}
-
-const LIMITS: [(&str, &str); 4] = [
-    ("u32::MAX", "4294967295"),
-    ("u32::MIN", "0"),
-    ("i32::MAX", "2147483647"),
-    ("i32::MIN", "(-2147483648)"),
-];

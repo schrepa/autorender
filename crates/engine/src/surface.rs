@@ -15,17 +15,6 @@ macro_rules! __game_surface {
                 fn touch(id: u32, x: f32, y: f32, phase: u32);
                 fn touch_motion(id: u32, dx: f32, dy: f32);
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
-                fn set_preparation(enabled: bool);
-                fn set_job_workers(workers: u32) -> bool;
-                fn set_job_cache(caching: bool, verify: bool);
-                fn take_jobs() -> $crate::__private::js_sys::Array;
-                fn job_kept(id: f64, key: String, pack: bool, output: Option<$crate::__private::js_sys::Uint8Array>);
-                fn lose_job_worker(worker: u32, error: &str, replaced: bool);
-                fn job_task() -> Option<u32>;
-                fn job_task_done(worker: u32);
-                fn complete_job(id: f64, output: $crate::__private::js_sys::Uint8Array);
-                fn fail_job(id: f64, error: String);
-                fn report_job_cache(pack_hits: f64, store_hits: f64, misses: f64, bytes: f64, mismatches: f64);
                 fn suspend();
                 fn pause(reason: u32);
                 fn resume(reason: u32);
@@ -45,7 +34,6 @@ macro_rules! __game_surface {
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn cursor_mode() -> u32;
-                fn job_hash() -> Vec<u8>;
             }
             dev_mut {
                 fn dev_push(line: &str) -> u32;
@@ -53,7 +41,6 @@ macro_rules! __game_surface {
                 fn dev_pixels() -> Vec<u8>;
                 fn dev_reloaded(source: &str, files: Option<SceneFileSet>);
                 fn dev_reload_failed(error: &str);
-                fn dev_packs(packs: &str, records: f64, ms: f64);
             }
         }
     };
@@ -62,8 +49,8 @@ macro_rules! __game_surface {
 #[macro_export]
 macro_rules! game {
     (
-        $vis:vis struct $name:ident($game:ty), $title:literal, $bricks:path
-        $(, build = $build:path)? $(, scene = $scene:literal)? $(,)?
+        $vis:vis struct $name:ident($game:ty), $title:literal, $bricks:path,
+        scene = $scene:literal $(,)?
     ) => {
         include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
@@ -87,11 +74,13 @@ macro_rules! game {
             title: $title,
             folder: env!("CARGO_MANIFEST_DIR"),
             bricks: __game_bricks,
-            build: $crate::__game_build!($game $(, $build)?),
-            scene: $crate::__game_scene!($($scene)?),
+            build: $crate::game::default_build::<$game>,
+            scene: $crate::DefaultScene {
+                name: $scene,
+                path: concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene),
+                text: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene)),
+            },
         };
-
-        $crate::__worker::export_worker!(__game_bricks);
 
         $crate::__game_surface!(__export_game { $vis $name $game });
 
@@ -99,32 +88,6 @@ macro_rules! game {
         pub fn native(arguments: impl Iterator<Item = String>) -> ::std::process::ExitCode {
             ::engine_native::main(GAME, arguments)
         }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __game_build {
-    ($game:ty) => {
-        $crate::game::default_build::<$game>
-    };
-    ($game:ty, $build:path) => {
-        $build
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __game_scene {
-    () => {
-        ::core::option::Option::None
-    };
-    ($scene:literal) => {
-        ::core::option::Option::Some($crate::DefaultScene {
-            name: $scene,
-            path: concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene),
-            text: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene)),
-        })
     };
 }
 
@@ -169,31 +132,8 @@ macro_rules! __export_game {
         dev_mut { $( fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
     ) => {
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
-        #[derive(Default)]
         pub struct SceneFileSet {
             files: $crate::scene::SceneFiles,
-        }
-
-        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
-        impl SceneFileSet {
-            #[wasm_bindgen(constructor)]
-            pub fn new() -> Self {
-                Self::default()
-            }
-
-            pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
-                self.files.add_image(uri, width, height, pixels);
-            }
-
-            pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
-                self.files.add_buffer(uri, bytes);
-            }
-        }
-
-        impl SceneFileSet {
-            pub fn files(&self) -> &$crate::scene::SceneFiles {
-                &self.files
-            }
         }
 
         impl ::core::convert::From<SceneFileSet> for $crate::scene::SceneFiles {
@@ -222,22 +162,8 @@ macro_rules! __export_game {
                 self.load.take_reads()
             }
 
-            pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<bool, $crate::__private::JsValue> {
+            pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<(), $crate::__private::JsValue> {
                 self.load.read(uri, bytes)
-            }
-
-            pub fn image(
-                &mut self,
-                uri: &str,
-                width: u32,
-                height: u32,
-                pixels: Vec<u8>,
-            ) -> Result<(), $crate::__private::JsValue> {
-                self.load.image(uri, width, height, pixels)
-            }
-
-            pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<(), $crate::__private::JsValue> {
-                self.load.decode(uri, bytes)
             }
 
             pub fn finish(&mut self) -> Result<SceneFileSet, $crate::__private::JsValue> {
@@ -283,16 +209,6 @@ macro_rules! __export_game {
                     )
                     .await?,
                 })
-            }
-        }
-
-        impl $name {
-            pub fn host(&self) -> &$crate::GameHost<$game> {
-                &self.host
-            }
-
-            pub fn host_mut(&mut self) -> &mut $crate::GameHost<$game> {
-                &mut self.host
             }
         }
     };
@@ -346,10 +262,9 @@ pub struct SurfaceMethod {
 pub fn typescript(methods: &[SurfaceMethod]) -> String {
     use std::fmt::Write;
     let mut output = String::from(
-        "import type { JobOrder } from \"../engine/jobs\";\n\
-         import type { SoundOrder } from \"../engine/sound\";\n\
+        "import type { SoundOrder } from \"../engine/sound\";\n\
          import type { FrameStats } from \"./stats\";\n\n\
-         export interface DevTake {\n  replies: [number, string][];\n  pictures: { run: string | null; file: string; width: number; height: number }[];\n  reload: boolean;\n}\n\n\
+         export interface DevTake {\n  replies: [number, string][];\n  pictures: { file: string; width: number; height: number }[];\n  reload: boolean;\n}\n\n\
          export type Json<T> = string & { readonly json?: T };\n\n\
          export function parseJson<T>(json: Json<T>): T {\n  \
          return JSON.parse(json) as T;\n\
@@ -383,11 +298,6 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
                 if let Some((ok, _)) = ty.strip_prefix("Result<").and_then(|ty| ty.split_once(','))
                 {
                     typescript_type(ok)
-                } else if let Some(inner) = ty
-                    .strip_prefix("Option<")
-                    .and_then(|ty| ty.strip_suffix('>'))
-                {
-                    format!("{} | undefined", typescript_type(inner))
                 } else {
                     typescript_type(&ty)
                 }
@@ -419,13 +329,11 @@ fn typescript_type(ty: &str) -> String {
     let leaf = ty.rsplit("::").next().unwrap_or(ty);
     match leaf {
         "()" => "void",
-        "f32" | "f64" | "u32" | "i32" => "number",
+        "f32" | "f64" | "u32" => "number",
         "bool" => "boolean",
         "String" | "&str" => "string",
-        "Vec<u8>" | "Uint8Array" => "Uint8Array",
+        "Vec<u8>" => "Uint8Array",
         "Vec<f32>" => "Float32Array",
-        "Vec<u32>" => "Uint32Array",
-        "Array" => "JobOrder[]",
         "SoundOrderList" => "SoundOrder[]",
         "SceneFileSet" => "unknown",
         _ => panic!("surface_typescript_type {ty}"),

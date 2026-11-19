@@ -4,7 +4,7 @@ use std::{
     process::{Command, ExitCode},
 };
 
-use xtask::{Failure, agent, compare, cook, dev, process, runs};
+use xtask::{agent, dev, process};
 
 const ENGINE: &str = "xtask_engine";
 
@@ -12,13 +12,13 @@ fn main() -> ExitCode {
     match execute() {
         Ok(code) => code,
         Err(failure) => {
-            eprintln!("xtask: {}", failure.message);
-            ExitCode::from(failure.code)
+            eprintln!("xtask: {failure}");
+            ExitCode::FAILURE
         }
     }
 }
 
-fn execute() -> Result<ExitCode, Failure> {
+fn execute() -> Result<ExitCode, String> {
     let mut arguments = env::args().skip(1);
     let task = arguments.next().unwrap_or_else(|| "help".to_owned());
     let options: Vec<_> = arguments.collect();
@@ -29,17 +29,14 @@ fn execute() -> Result<ExitCode, Failure> {
     if options.iter().any(|option| option == "--help") {
         return engine(&root, &task, &options);
     }
-    match task.as_str() {
-        "cook" => cook::cook(&root, &options)?,
-        "dev" => dev::dev(&root, &options)?,
-        "compare" => compare::compare(&root, &options)?,
-        "runs" => runs::runs(&root, &options)?,
-        _ => return engine(&root, &task, &options),
+    if task == "dev" {
+        dev::dev(&root, &options)?;
+        return Ok(ExitCode::SUCCESS);
     }
-    Ok(ExitCode::SUCCESS)
+    engine(&root, &task, &options)
 }
 
-fn engine(root: &Path, task: &str, options: &[String]) -> Result<ExitCode, Failure> {
+fn engine(root: &Path, task: &str, options: &[String]) -> Result<ExitCode, String> {
     let status = Command::new("cargo")
         .args(["run", "-p", ENGINE, "--", task])
         .args(options)

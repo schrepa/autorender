@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::World;
-use engine_core::{Engine, Error, ErrorCode, SceneContext, Section};
+use engine_core::{Error, ErrorCode, SceneContext, Section};
 use engine_registry::SettingsEntry;
 use engine_settings::Expected;
 use serde_json::Value;
@@ -97,10 +97,6 @@ pub struct Settings<'w, S> {
 }
 
 impl<S: Section> Settings<'_, S> {
-    pub fn get(&self) -> S {
-        self.world.get_resource::<S>().cloned().unwrap_or_default()
-    }
-
     pub fn set(self, change: impl FnOnce(&mut S)) -> Result<(), Error> {
         let entry = changed_section(self.world, change)?;
         apply_settings(self.world, &[entry])
@@ -120,13 +116,7 @@ impl TypedSettings for World {
     }
 }
 
-impl TypedSettings for Engine {
-    fn section<S: Section>(&mut self) -> Settings<'_, S> {
-        self.app.world_mut().section()
-    }
-}
-
-pub fn changed_section<S: Section>(
+fn changed_section<S: Section>(
     world: &World,
     change: impl FnOnce(&mut S),
 ) -> Result<(String, Value), Error> {
@@ -138,16 +128,7 @@ pub fn changed_section<S: Section>(
     Ok((S::KEY.to_owned(), value))
 }
 
-pub fn has_setting(world: &World, key: &str) -> bool {
-    let (section, _) = split(key);
-    engine_registry::settings(world, section).is_ok()
-}
-
-pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
-    apply_settings(world, &[(key.to_owned(), value.clone())])
-}
-
-pub fn apply_settings(world: &mut World, entries: &[(String, Value)]) -> Result<(), Error> {
+fn apply_settings(world: &mut World, entries: &[(String, Value)]) -> Result<(), Error> {
     if entries.is_empty() {
         return Ok(());
     }
@@ -191,30 +172,4 @@ fn set_one(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
     };
     fields.insert(field.to_owned(), value.clone());
     entry.set(world, &current)
-}
-
-pub fn reset_setting(world: &mut World, key: &str) -> Result<(), Error> {
-    let (section, field) = split(key);
-    let entry = engine_registry::settings(world, section)?;
-    let Some(field) = field else {
-        entry.reset(world);
-        return Ok(());
-    };
-    scoped(world, |world| {
-        let defaults = entry.default_value();
-        let mut current = entry.current(world)?;
-        let Some(fields) = current.as_object_mut() else {
-            return Err(not_object(section));
-        };
-        known_field(&entry, key, field)?;
-        match defaults.get(field) {
-            Some(default) => {
-                fields.insert(field.to_owned(), default.clone());
-            }
-            None => {
-                fields.remove(field);
-            }
-        }
-        entry.set(world, &current)
-    })
 }

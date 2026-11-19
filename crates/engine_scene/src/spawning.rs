@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{Error, ErrorCode, Expected, OperationScene, SceneContext, set_parents};
+use engine_core::{Error, ErrorCode, Expected, OperationScene, SceneContext, SceneCx, set_parents};
 use serde_json::Value;
 
 use crate::hierarchy::{ExpandedObject, validate_object};
@@ -29,7 +29,6 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
     }
     let transform = assets.scope(|| {
         let transform = validate_object(object, "$", &BTreeSet::new(), &kinds)?;
-        kinds.check_placement(object, "$")?;
         let mut skipped = Vec::new();
         kinds.unlisted(object, "$", &mut skipped);
         skipped.into_iter().next().map_or(Ok(transform), Err)
@@ -57,7 +56,7 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
     };
     let entity = spawn_entity(world, &scene_id, &expanded, transform);
     let landed = assets.scope(|| {
-        let cx = kinds.cx(context.as_ref(), None);
+        let cx = SceneCx::built(context.as_ref());
         kinds.read(world, entity, object, "$", &cx)?;
         if let Some(parent) = parent {
             set_parents(world, &[(entity, Some(parent))])?;

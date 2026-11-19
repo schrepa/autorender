@@ -15,7 +15,7 @@ impl BatchEntry {
         wgpu::BindGroupLayoutEntry {
             binding: self.binding,
             visibility: self.stages,
-            ty: self.ty.binding(true, false),
+            ty: self.ty.binding(true),
             count: None,
         }
     }

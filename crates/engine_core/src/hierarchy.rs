@@ -10,15 +10,14 @@ use glam::{Mat4, Vec4};
 use std::convert::Infallible;
 
 mod global;
-#[cfg(debug_assertions)]
-mod invariants;
 mod structure;
 pub(crate) mod tracking;
 mod validation;
 mod views;
 mod words;
 pub(crate) use global::ValueIds;
-pub use global::{GlobalTransform, Revision};
+pub use global::GlobalTransform;
+pub(crate) use global::Revision;
 
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
 pub const MAX_TRANSFORM_NODES: usize = u32::MAX as usize - 1;
@@ -39,7 +38,7 @@ fn node_limit(world: &World) -> usize {
             limit.0.min(MAX_TRANSFORM_NODES)
         })
 }
-pub const MAX_NORMAL_INVERSE_NORM: f32 = 10_000.0;
+pub(crate) const MAX_NORMAL_INVERSE_NORM: f32 = 10_000.0;
 
 #[derive(Component, Debug, Clone, Copy)]
 #[component(immutable,
@@ -776,12 +775,12 @@ impl GlobalTransforms {
         Some(self.value_at(index))
     }
 
-    pub fn pose(&self, entity: Entity) -> Option<glam::Affine3A> {
+    pub(crate) fn pose(&self, entity: Entity) -> Option<glam::Affine3A> {
         let index = *self.indices.get(&entity)?;
         self.global(index).map(glam::Affine3A::from_mat4)
     }
 
-    pub fn entity_at(&self, index: u32) -> Option<Entity> {
+    pub(crate) fn entity_at(&self, index: u32) -> Option<Entity> {
         let index = index as usize;
         self.live(index).then(|| self.entities[index])
     }
@@ -791,22 +790,12 @@ impl GlobalTransforms {
         self.slots.positions.get(index).is_some_and(|&at| at != UNPLACED)
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.links.len() - self.slots.free.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, GlobalTransform)> + '_ {
-        self.slots.order
-            .iter()
-            .map(|&index| (self.entities[index], self.value_at(index)))
-    }
-
     fn value_at(&self, index: usize) -> GlobalTransform {
-        GlobalTransform::read_value(self.global(index), self.revisions[index])
+        GlobalTransform::read_value(self.global(index))
     }
 
     #[inline]
@@ -1286,8 +1275,6 @@ impl GlobalTransforms {
         );
         world.increment_change_tick();
         self.incomplete = false;
-        #[cfg(debug_assertions)]
-        self.check();
         self.report
     }
 }

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
-use engine_core::{ColorSpace, Error, Mesh, Texture, Transform};
+use engine_core::{ColorSpace, Error, Mesh, SceneContext, SceneCx, Texture, Transform};
 
 use crate::{
     MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, SceneKinds,
@@ -56,20 +56,16 @@ impl SceneDocument {
         for mesh in &self.meshes {
             match &mesh.source {
                 MeshSource::Buffer { uri } => add(uri, SceneFileKind::Buffer),
-                MeshSource::Cube { .. }
-                | MeshSource::Plane { .. }
-                | MeshSource::Inline { .. }
-                | MeshSource::Provided { .. } => {}
+                MeshSource::Cube { .. } | MeshSource::Plane { .. } | MeshSource::Inline { .. } => {}
             }
         }
         let entities = self
             .entities
             .iter()
             .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
-        let cx = kinds.cx(None, None);
         crate::loading::named(self).lenient(|| {
             for entity in entities {
-                for uri in kinds.files(entity, &cx) {
+                for uri in kinds.files(entity) {
                     add(&uri, SceneFileKind::Buffer);
                 }
             }
@@ -108,13 +104,10 @@ impl SceneDocument {
             .iter()
             .map(|entity| (entity.source.id.clone(), Entity::PLACEHOLDER))
             .collect();
-        let context = crate::loading::context(
-            self,
-            named,
-            Arc::new(entities),
-            kinds,
-            files.map(SceneFiles::buffers),
-        );
+        let context = SceneContext {
+            assets: named,
+            entities: Arc::new(entities),
+        };
         if let Some(environment) = &self.environment {
             for key in environment.keys() {
                 if let Some(section) = kinds.section(key) {
@@ -126,7 +119,8 @@ impl SceneDocument {
                 }
             }
         }
-        let cx = kinds.cx(Some(&context), None);
+        let buffers = files.map(SceneFiles::buffers);
+        let cx = SceneCx::new(Some(&context), buffers.as_deref());
         context.scope(|| {
             expanded
                 .entities

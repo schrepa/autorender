@@ -27,7 +27,6 @@ pub(super) struct WarmShape {
 pub(super) struct Warm {
     pub(super) pipeline: u32,
     pub(super) shape: Option<WarmShape>,
-    pub(super) listed: bool,
 }
 
 impl Warm {
@@ -104,10 +103,9 @@ impl Run {
     }
 
     pub(super) fn make_warm(&mut self, warm: Warm, asked: Asked) {
-        self.pipelines.listing = warm.listed;
         match warm.shape {
             Some(shape) => {
-                let _ = self.split().0.compile_with(
+                let _ = self.compiler().compile_with(
                     warm.pipeline,
                     (&shape.formats, shape.depth),
                     shape.shown,
@@ -119,7 +117,6 @@ impl Run {
                 let _ = self.compute_with(warm.pipeline, asked);
             }
         }
-        self.pipelines.listing = false;
     }
 
     fn part_reached(&self, part: u32) -> bool {
@@ -157,8 +154,6 @@ impl Run {
         for built in &mut self.machine.pipelines {
             built.ready.clear();
         }
-        self.compile_first();
-        self.compile_listed();
         self.queue_reached();
     }
 
@@ -188,39 +183,20 @@ impl Run {
         passes.is_empty() || passes.iter().any(|&pass| self.pass_reached(pass))
     }
 
-    fn pass_warms(&self, pipeline: usize, pass: u32) -> Vec<Warm> {
-        let warm = |shape| Warm {
-            pipeline: pipeline as u32,
-            shape,
-            listed: false,
-        };
-        let (formats, depth, shown) = self.pass_formats(pass);
+    fn pass_warm(&self, pipeline: usize, pass: u32) -> Option<Warm> {
         if self.mesh_drawn(pipeline) {
-            return Vec::new();
+            return None;
         }
-        let mut warms = Vec::new();
-        for layered in self.layered_formats(pipeline, pass, formats.len()) {
-            if self.writes_fit(pipeline, &layered) {
-                warms.push(warm(Some(WarmShape {
-                    formats: layered,
-                    depth: None,
-                    shown,
-                    variant: None,
-                })));
-            }
-        }
-        if warms.is_empty() && self.writes_fit(pipeline, &formats) {
-            warms.insert(
-                0,
-                warm(Some(WarmShape {
-                    formats,
-                    depth,
-                    shown,
-                    variant: None,
-                })),
-            );
-        }
-        warms
+        let (formats, depth, shown) = self.pass_formats(pass);
+        self.writes_fit(pipeline, &formats).then_some(Warm {
+            pipeline: pipeline as u32,
+            shape: Some(WarmShape {
+                formats,
+                depth,
+                shown,
+                variant: None,
+            }),
+        })
     }
 
     fn mesh_drawn(&self, pipeline: usize) -> bool {
@@ -246,13 +222,12 @@ impl Run {
                 warms.push(Warm {
                     pipeline: pipeline as u32,
                     shape: None,
-                    listed: false,
                 });
                 continue;
             }
             for pass in self.scope_passes(pipeline) {
                 if self.pass_reached(pass) {
-                    warms.extend(self.pass_warms(pipeline, pass));
+                    warms.extend(self.pass_warm(pipeline, pass));
                 }
             }
         }
@@ -287,92 +262,20 @@ impl Run {
                 if built.decl.scope != Scoped::Pass(pass as u32) {
                     continue;
                 }
-                let warms = match &built.decl.program {
-                    Program::Compute(_) => vec![Warm {
+                let warm = match &built.decl.program {
+                    Program::Compute(_) => Some(Warm {
                         pipeline: pipeline as u32,
                         shape: None,
-                        listed: false,
-                    }],
+                    }),
                     Program::Render(desc) if !desc.per_batch.cull && !desc.per_batch.fragment => {
-                        self.pass_warms(pipeline, pass as u32)
+                        self.pass_warm(pipeline, pass as u32)
                     }
-                    Program::Render(_) => Vec::new(),
+                    Program::Render(_) => None,
                 };
-                for warm in warms {
+                if let Some(warm) = warm {
                     self.make_warm(warm, Asked::Drawn);
                 }
             }
-        }
-    }
-
-    pub(super) fn compile_first(&mut self) {
-        if self.pipelines.settled {
-            return;
-        }
-        let Some(keys) = self.pipelines.listed.take() else {
-            return;
-        };
-        let mut first: Vec<(bool, usize, Warm)> = keys
-            .iter()
-            .filter_map(|key| {
-                if key.needed != Needed::First {
-                    return None;
-                }
-                let pipeline = self
-                    .machine
-                    .pipelines
-                    .iter()
-                    .position(|built| built.program_key == key.program)?;
-                let built = &self.machine.pipelines[pipeline];
-                let text = built
-                    .stages
-                    .iter()
-                    .map(|stage| stage.composed.text.len())
-                    .sum();
-                let warm = self.listed_warm(pipeline, key);
-                Some((built.decl.speedup_only, text, warm))
-            })
-            .collect();
-        first.sort_by_key(|&(later, text, _)| (later, std::cmp::Reverse(text)));
-        for (_, _, warm) in first {
-            self.make_warm(warm, Asked::Drawn);
-        }
-        self.pipelines.listed = Some(keys);
-    }
-
-    pub(super) fn compile_listed(&mut self) {
-        let Some(keys) = self.pipelines.listed.take() else {
-            return;
-        };
-        for key in &keys {
-            let found = self
-                .machine
-                .pipelines
-                .iter()
-                .position(|built| built.program_key == key.program)
-                .filter(|&at| self.pipeline_reached(at));
-            if let Some(pipeline) = found {
-                let warm = self.listed_warm(pipeline, key);
-                self.pipelines.warming.queue.push_back(warm);
-            }
-        }
-        self.pipelines.listed = Some(keys);
-    }
-
-    fn listed_warm(&self, pipeline: usize, key: &Compiled) -> Warm {
-        let compute = matches!(
-            self.machine.pipelines[pipeline].decl.program,
-            Program::Compute(_)
-        );
-        Warm {
-            pipeline: pipeline as u32,
-            shape: (!compute).then(|| WarmShape {
-                formats: key.formats.clone(),
-                depth: key.depth,
-                shown: (key.plain, key.main),
-                variant: key.variant.clone(),
-            }),
-            listed: true,
         }
     }
 

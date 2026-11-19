@@ -3,13 +3,9 @@ use std::sync::OnceLock;
 
 use engine_checks::{Errors, Exceptions, Repository, Rules};
 
-use crate::scaffold::TEMPLATE_CRATE;
-
 pub const RULES: Rules = Rules {
     exceptions: Exceptions {
-        long_files: &[
-            ("tools/lodbuild/src/simplify.rs", 2009),
-        ],
+        long_files: &[],
         wide_structs: &[],
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",
@@ -38,6 +34,6 @@ pub fn warnings_allowed(root: &Path) -> Result<Vec<&'static str>, String> {
     Ok(repository
         .own()
         .map(|package| package.name.as_str())
-        .filter(|name| *name != TEMPLATE_CRATE && repository.free(name))
+        .filter(|name| repository.free(name))
         .collect())
 }

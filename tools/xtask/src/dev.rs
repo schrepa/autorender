@@ -37,9 +37,8 @@ pub fn dev(root: &Path, arguments: &[String]) -> Result<(), String> {
     let server = Server::vite(root, port, &root.join(LOG), &[])?;
     let pages: Vec<_> = clients()
         .iter()
-        .filter(|client| game.is_none_or(|game| client.game.as_deref() == Some(game)))
-        .filter_map(|client| client.page.as_ref())
-        .map(|page| format!("{}/{page}", server.url))
+        .filter(|client| game.is_none_or(|game| client.game == game))
+        .map(|client| format!("{}/{}", server.url, client.page))
         .collect();
     println!(
         "{}",
