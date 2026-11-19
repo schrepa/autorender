@@ -1,4 +1,5 @@
 import { engineFailure } from "../generated/errors";
+import type { Fetched } from "./host";
 
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(url, { cache: "no-cache", signal });
@@ -43,11 +44,21 @@ export interface SceneFileBindings<Files = unknown> {
   SceneLoad: new (source: string) => SceneLoad<Files>;
 }
 
-export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal): Promise<Files> {
+export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal, fetched?: (fetched: Fetched) => void): Promise<Files> {
   const load = new bindings.SceneLoad(source);
   const base = new URL(sceneUrl, location.href);
   try {
-    await Promise.all(load.take_reads().map(async ({ uri }) => load.read(uri, await fetchBytes(new URL(uri, base).href, signal))));
+    const reads = load.take_reads();
+    const files = { done: 0, total: reads.length };
+    let bytes = 0;
+    fetched?.({ files: { ...files }, bytes });
+    await Promise.all(reads.map(async ({ uri }) => {
+      const read = await fetchBytes(new URL(uri, base).href, signal);
+      load.read(uri, read);
+      files.done++;
+      bytes += read.byteLength;
+      fetched?.({ files: { ...files }, bytes });
+    }));
     return load.finish();
   } finally {
     load.free();

@@ -121,7 +121,7 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
     Ok(clients)
 }
 
-pub const DEV_FEATURES: &str = "engine/dev";
+pub const DEV_FEATURES: &str = "dev";
 
 pub fn clients_json() -> serde_json::Value {
     clients()

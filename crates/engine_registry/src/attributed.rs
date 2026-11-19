@@ -11,7 +11,7 @@ use bevy_ecs::system::{
 use engine_place::Board;
 use engine_profile::Runs;
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "dev")]
 pub(crate) use read::*;
 
 struct Attributed {
@@ -37,7 +37,7 @@ impl Adapt<SystemWithAccess> for Attributed {
     }
 }
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "dev")]
 struct Wrapped {
     name: &'static str,
     brick: &'static str,
@@ -48,13 +48,13 @@ struct Wrapped {
 
 #[derive(Resource)]
 pub struct Systems {
-    #[cfg(feature = "profiling")]
+    #[cfg(feature = "dev")]
     schedules: Vec<InternedScheduleLabel>,
-    #[cfg(feature = "profiling")]
+    #[cfg(feature = "dev")]
     wrapped: Vec<Wrapped>,
 }
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "dev")]
 impl Systems {
     pub fn new(schedules: &[InternedScheduleLabel]) -> Self {
         Self {
@@ -94,7 +94,7 @@ impl Systems {
     }
 }
 
-#[cfg(not(feature = "profiling"))]
+#[cfg(not(feature = "dev"))]
 impl Systems {
     pub fn new(_: &[InternedScheduleLabel]) -> Self {
         Self {}
@@ -151,7 +151,7 @@ pub(crate) fn wrap(
     }
 }
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "dev")]
 mod read {
     use std::any::TypeId;
 

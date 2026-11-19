@@ -1,4 +1,4 @@
-use bevy_ecs::prelude::World;
+use bevy_ecs::prelude::{Resource, World};
 use engine_core::{Error, ErrorCode, SceneContext, Section};
 use engine_registry::SettingsEntry;
 use engine_settings::Expected;
@@ -56,8 +56,8 @@ fn not_object(section: &str) -> Error {
 }
 
 fn known_field(entry: &SettingsEntry, key: &str, field: &str) -> Result<(), Error> {
-    let schema = entry.schema();
-    let fields = schema.get("properties").and_then(Value::as_object);
+    let defaults = entry.default_value();
+    let fields = defaults.as_object();
     if fields.is_some_and(|fields| fields.contains_key(field)) {
         return Ok(());
     }
@@ -96,7 +96,7 @@ pub struct Settings<'w, S> {
     section: std::marker::PhantomData<fn() -> S>,
 }
 
-impl<S: Section> Settings<'_, S> {
+impl<S: Section + Resource> Settings<'_, S> {
     pub fn set(self, change: impl FnOnce(&mut S)) -> Result<(), Error> {
         let entry = changed_section(self.world, change)?;
         apply_settings(self.world, &[entry])
@@ -104,11 +104,11 @@ impl<S: Section> Settings<'_, S> {
 }
 
 pub trait TypedSettings {
-    fn section<S: Section>(&mut self) -> Settings<'_, S>;
+    fn section<S: Section + Resource>(&mut self) -> Settings<'_, S>;
 }
 
 impl TypedSettings for World {
-    fn section<S: Section>(&mut self) -> Settings<'_, S> {
+    fn section<S: Section + Resource>(&mut self) -> Settings<'_, S> {
         Settings {
             world: self,
             section: std::marker::PhantomData,
@@ -116,7 +116,7 @@ impl TypedSettings for World {
     }
 }
 
-fn changed_section<S: Section>(
+fn changed_section<S: Section + Resource>(
     world: &World,
     change: impl FnOnce(&mut S),
 ) -> Result<(String, Value), Error> {

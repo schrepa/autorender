@@ -15,7 +15,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[doc(hidden)]
 pub mod surface;
-pub use game::{Arrival, DefaultScene, Game, GameEntry, LoadedScene, engine};
+pub use game::{Arrival, DefaultScene, Game, GameEntry, LoadedScene, Start};
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,13 +27,13 @@ pub use engine_core::collections;
 mod games {
     pub use engine_core::{
         AlphaMode, AssetLibrary, Attribute, Attributes, Brick, BrickList, Bricks, Camera, Clear,
-        Clock, Compare, ComponentKind, Cull, CursorMode, DepthBias, Devices, DrawKind, Drawn,
-        DrawnTable, Engine, Filter, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
-        InstanceValues, KindDecl, Layers, LightingModel, Listing, Material, MaterialHandle, Mesh,
-        Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, PauseReason, Projection,
-        Rect, RenderState, Sampler, SceneComponents, Schedule, Source, Spawner, Target, Teleport,
-        Texture, TextureHandle, TextureRef, TouchPhase, Transform, UvTransform, View, ViewFacts,
-        Views, math, set_parent,
+        Clock, Compare, ComponentKind, Cull, CursorMode, DepthBias, DevSetting, Devices, DrawKind,
+        Drawn, DrawnTable, Engine, Filter, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
+        Host, InstanceValues, KindDecl, Layers, LightingModel, Listing, Material, MaterialHandle,
+        Mesh, Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, Poses, Present,
+        Projection, Rect, RenderState, Sampler, SceneComponents, Schedule, Show, Source, Spawner,
+        Stats, Target, Teleport, Texture, TextureHandle, TextureRef, TouchPhase, Transform,
+        UvTransform, View, ViewFacts, ViewSkip, Views, math, set_parent,
     };
 }
 pub use games::*;
@@ -46,7 +46,7 @@ pub mod bricks {
 }
 
 pub mod stats {
-    #[cfg(feature = "schema")]
+    #[cfg(feature = "dev")]
     pub use crate::frame_stats::frame_stats_schema;
     pub use crate::frame_stats::{FrameStats, GpuTime};
     pub use engine_core::RenderStats;
@@ -62,9 +62,9 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-pub use engine_render::{AdapterInfo, RenderTarget};
+pub use engine_render::{AdapterInfo, GpuAsk, GpuRequest, RenderTarget, SurfaceForm};
 #[cfg(not(target_arch = "wasm32"))]
-pub use engine_render::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
+pub use engine_render::{NativeWindow, keep_pipeline_cache_in};
 pub use game_host::GameHost;
 
 #[cfg(target_arch = "wasm32")]

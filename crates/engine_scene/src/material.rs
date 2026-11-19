@@ -13,14 +13,14 @@ const SURFACE_EMISSION: &str = "emission";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
-    feature = "schema",
+    feature = "dev",
     derive(schemars::JsonSchema),
     schemars(transform = state_material_rules)
 )]
 #[serde(deny_unknown_fields)]
 pub struct SceneMaterial {
     #[cfg_attr(
-        feature = "schema",
+        feature = "dev",
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
@@ -54,7 +54,7 @@ pub struct SceneMaterial {
     pub lighting: Option<String>,
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 fn state_material_rules(schema: &mut schemars::Schema) {
     for (field, rule) in [
         ("color", Material::COLOR),
@@ -68,7 +68,7 @@ fn state_material_rules(schema: &mut schemars::Schema) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SceneCull {
     Back,
@@ -77,7 +77,7 @@ pub enum SceneCull {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDepthBias {
     pub constant: i32,
@@ -85,7 +85,7 @@ pub struct SceneDepthBias {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum SceneSlot {
     Module(String),
@@ -93,7 +93,7 @@ pub enum SceneSlot {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneSlotFill {
     pub module: String,
@@ -121,7 +121,7 @@ impl SceneSlot {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum SceneMap {
     Id(String),
@@ -138,11 +138,11 @@ impl SceneMap {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTextureMap {
     #[cfg_attr(
-        feature = "schema",
+        feature = "dev",
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
@@ -167,7 +167,7 @@ pub struct SceneTextureMap {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SceneWrap {
     Repeat,
@@ -176,7 +176,7 @@ pub enum SceneWrap {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SceneFilter {
     Nearest,
@@ -184,7 +184,7 @@ pub enum SceneFilter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SceneMipmapFilter {
     None,
@@ -193,7 +193,7 @@ pub enum SceneMipmapFilter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SceneAlphaMode {
     Opaque,

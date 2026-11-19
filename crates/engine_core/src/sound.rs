@@ -416,7 +416,7 @@ impl Sounds {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn names(world: &mut bevy_ecs::world::World) {
     let entry = crate::NameEntry::read("sound.state", crate::Kind::State, |reach, _| {
         Ok(reach.world.get_resource::<Sounds>().map_or_else(

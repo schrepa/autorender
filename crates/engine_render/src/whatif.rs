@@ -131,7 +131,7 @@ pub(crate) fn changed(world: &World, seen: &mut Vec<(usize, NonZeroU64)>) -> boo
 }
 
 fn set(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {
-    let asked: BTreeMap<String, Every> = engine_core::parse_value_at(given.clone(), "$.args")?;
+    let asked: BTreeMap<String, Every> = engine_core::parse_value_at(given, "$.args")?;
     let mut changes = Vec::with_capacity(asked.len());
     for (name, Every { every }) in asked {
         let Some(every) = NonZeroU64::new(u64::from(every)) else {
@@ -171,7 +171,7 @@ fn set(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {
 
 pub(crate) fn names(world: &mut World) {
     let entry = NameEntry::read("gpu.whatif", Kind::Setting, |reach, given| {
-        let NoArgs {} = engine_core::parse_value_at(given.clone(), "$.args")?;
+        let NoArgs {} = engine_core::parse_value_at(given, "$.args")?;
         Ok(reach
             .world
             .get_resource::<WhatIf>()

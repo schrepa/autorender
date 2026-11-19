@@ -1,11 +1,25 @@
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 
-use crate::{Background, Delivers, Error, ErrorCode, Interest, Requests, Ticket};
+use crate::{Background, Delivers, Error, ErrorCode, Interest, Kept, Requests, Ticket};
 
-type Landing = Arc<Mutex<Vec<(String, Ticket, Result<Vec<u8>, String>)>>>;
+pub enum IoAct {
+    Read(String),
+    Load(String, String),
+    Store(String, String, Vec<u8>),
+}
+
+pub struct IoOrder {
+    pub id: Ticket,
+    pub act: IoAct,
+}
+
+pub struct IoReply {
+    pub id: Ticket,
+    pub done: Result<Option<Vec<u8>>, String>,
+}
 
 struct Reading;
 
@@ -13,7 +27,6 @@ struct Reading;
 pub struct Files {
     requests: Requests<String, Arc<[u8]>, Reading>,
     root: String,
-    landing: Landing,
 }
 
 impl Files {
@@ -34,6 +47,38 @@ impl Files {
     pub fn census(&self) -> crate::Census {
         self.requests.census()
     }
+
+    fn orders(&mut self, now: f64, orders: &mut Vec<IoOrder>) {
+        self.requests.settle(now);
+        let fresh: Vec<(String, Ticket)> = self
+            .requests
+            .asked()
+            .filter(|(path, _)| self.requests.work(path).is_none())
+            .map(|(path, ticket)| (path.clone(), ticket))
+            .collect();
+        for (path, id) in fresh {
+            self.requests.set_work(&path, Reading);
+            orders.push(IoOrder {
+                id,
+                act: IoAct::Read(joined(&self.root, &path)),
+            });
+        }
+    }
+
+    fn land(&mut self, reply: IoReply) {
+        let Some(path) = self.requests.key_of(reply.id).cloned() else {
+            return;
+        };
+        match reply.done.and_then(|read| read.ok_or_else(|| path.clone())) {
+            Ok(bytes) => {
+                self.requests.ready(&path, reply.id, Arc::from(bytes));
+            }
+            Err(error) => {
+                let missing = Error::new(ErrorCode::MissingFile, "$.files").got(error);
+                self.requests.fail(&path, reply.id, missing);
+            }
+        }
+    }
 }
 
 impl Delivers<String> for Files {
@@ -42,41 +87,30 @@ impl Delivers<String> for Files {
     }
 }
 
-fn lock<T>(held: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    held.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-pub(crate) fn read_files(world: &mut World) {
+pub(crate) fn take_io(world: &mut World) -> Vec<IoOrder> {
     let now = world
         .get_resource::<crate::FrameTime>()
         .map_or(0.0, |time| time.real_elapsed);
-    let Some(mut files) = world.get_resource_mut::<Files>() else {
-        return;
-    };
-    let files = &mut *files;
-    files.requests.settle(now);
-    let landed = std::mem::take(&mut *lock(&files.landing));
-    for (path, ticket, read) in landed {
-        match read {
-            Ok(bytes) => {
-                files.requests.ready(&path, ticket, Arc::from(bytes));
-            }
-            Err(error) => {
-                let error = Error::new(ErrorCode::MissingFile, "$.files").got(error);
-                files.requests.fail(&path, ticket, error);
-            }
-        }
+    let mut orders = Vec::new();
+    if let Some(mut kept) = world.get_resource_mut::<Kept>() {
+        kept.orders(now, &mut orders);
     }
-    let fresh: Vec<(String, Ticket)> = files
-        .requests
-        .asked()
-        .filter(|(path, _)| files.requests.work(path).is_none())
-        .map(|(path, ticket)| (path.clone(), ticket))
-        .collect();
-    for (path, ticket) in fresh {
-        files.requests.set_work(&path, Reading);
-        let at = joined(&files.root, &path);
-        start(at, (path, ticket), Arc::clone(&files.landing));
+    if let Some(mut files) = world.get_resource_mut::<Files>() {
+        files.orders(now, &mut orders);
+    }
+    orders
+}
+
+pub(crate) fn land_io(world: &mut World, reply: IoReply) {
+    let reply = match world.get_resource_mut::<Kept>() {
+        Some(mut kept) => match kept.land(reply) {
+            Some(theirs) => theirs,
+            None => return,
+        },
+        None => reply,
+    };
+    if let Some(mut files) = world.get_resource_mut::<Files>() {
+        files.land(reply);
     }
 }
 
@@ -86,50 +120,4 @@ fn joined(root: &str, path: &str) -> String {
     } else {
         format!("{root}/{path}")
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn start(at: String, (path, ticket): (String, Ticket), landing: Landing) {
-    let spawned = std::thread::Builder::new()
-        .name("engine_file_read".to_owned())
-        .spawn({
-            let landing = Arc::clone(&landing);
-            let path = path.clone();
-            move || {
-                let read = std::fs::read(&at).map_err(|error| format!("{at}: {error}"));
-                lock(&landing).push((path, ticket, read));
-            }
-        });
-    if let Err(error) = spawned {
-        lock(&landing).push((path, ticket, Err(error.to_string())));
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn start(at: String, (path, ticket): (String, Ticket), landing: Landing) {
-    wasm_bindgen_futures::spawn_local(async move {
-        let read = fetched(&at).await.map_err(|error| format!("{at}: {error}"));
-        lock(&landing).push((path, ticket, read));
-    });
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn fetched(at: &str) -> Result<Vec<u8>, String> {
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen_futures::JsFuture;
-    let window = web_sys::window().ok_or("no window")?;
-    let response = JsFuture::from(window.fetch_with_str(at))
-        .await
-        .map_err(|error| format!("{error:?}"))?;
-    let response: web_sys::Response = response.dyn_into().map_err(|error| format!("{error:?}"))?;
-    if !response.ok() {
-        return Err(format!("status {}", response.status()));
-    }
-    let buffer = response
-        .array_buffer()
-        .map_err(|error| format!("{error:?}"))?;
-    let buffer = JsFuture::from(buffer)
-        .await
-        .map_err(|error| format!("{error:?}"))?;
-    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }

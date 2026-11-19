@@ -1,16 +1,10 @@
-use engine_core::glam::Mat4;
-
-pub use crate::CameraUniform;
+use crate::CameraUniform;
 
 impl CameraUniform {
-    pub fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
+    pub(crate) fn of(facts: &engine_core::ViewFacts, seconds: f32) -> Self {
         Self {
-            view_projection: view_projection.to_cols_array_2d(),
-            position: position.extend(seconds).to_array(),
-            mip_bias: 0.0,
-            pad_0: 0,
-            pad_1: 0,
-            pad_2: 0,
+            view_projection: facts.view_projection.to_cols_array_2d(),
+            position: facts.eye.extend(seconds).to_array(),
         }
     }
 }
@@ -45,7 +39,7 @@ pub(crate) fn level_copy(
     )
 }
 
-pub fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {
+pub(crate) fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {
     if width == 0 || height == 0 || limit == 0 {
         return None;
     }

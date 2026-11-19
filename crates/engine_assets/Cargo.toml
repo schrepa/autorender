@@ -5,10 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-schema = ["engine_settings/schema"]
-
 [dependencies]
 bevy_ecs.workspace = true
 engine_codec.workspace = true

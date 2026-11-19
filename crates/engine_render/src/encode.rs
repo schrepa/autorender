@@ -171,11 +171,11 @@ pub(crate) struct Made {
 }
 
 impl Allocated {
-    fn new(device: &wgpu::Device, made: &Made, size: wgpu::Extent3d, mips: u32) -> Self {
+    fn new(device: &wgpu::Device, made: &Made, size: wgpu::Extent3d) -> Self {
         let texture = crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
             label: Some(made.label),
             size,
-            mip_level_count: mips.max(1),
+            mip_level_count: 1,
             sample_count: made.samples,
             dimension: wgpu::TextureDimension::D2,
             format: made.format,
@@ -240,6 +240,7 @@ pub(crate) struct Reached {
     pub(crate) parts: Vec<bool>,
 }
 
+#[derive(Clone)]
 pub(crate) enum Placeholder {
     Texture(wgpu::TextureView),
     Sampler(wgpu::Sampler),
@@ -250,6 +251,7 @@ pub(crate) struct Spare {
     colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)>,
     attachments: Vec<u64>,
     cameras: Vec<u8>,
+    pub(crate) shapes: Vec<(u32, crate::Shape)>,
 }
 
 fn fault(path: String, code: ErrorCode) -> Error {
@@ -385,12 +387,12 @@ impl Run {
         }
     }
 
-    pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) -> Allocation {
+    pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d) -> Allocation {
         let Some(decl) = self.machine.declared.textures.get(texture as usize) else {
             return Allocation::Fresh;
         };
         let at = texture as usize;
-        if self.tables.sizes[at] == Some((size, mips)) {
+        if self.tables.textures[at].as_ref().is_some_and(|made| made.size == size) {
             return Allocation::Kept;
         }
         let made = Made {
@@ -399,15 +401,13 @@ impl Run {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             samples: 1,
         };
-        self.tables.textures[at] = Some(Allocated::new(&self.device, &made, size, mips));
-        self.tables.sizes[at] = Some((size, mips));
+        self.tables.textures[at] = Some(Allocated::new(&self.device, &made, size));
         Allocation::Fresh
     }
 
     pub(crate) fn release(&mut self, texture: u32) {
-        let at = texture as usize;
-        if self.tables.textures.get_mut(at).and_then(Option::take).is_some() {
-            self.tables.sizes[at] = None;
+        if let Some(held) = self.tables.textures.get_mut(texture as usize) {
+            *held = None;
         }
     }
 
@@ -454,7 +454,7 @@ impl Run {
         let bytes = bytes.max(16).next_multiple_of(4);
         if self
             .buffer_held(buffer)
-            .is_some_and(|(_, known)| *known == bytes)
+            .is_some_and(|(_, known)| *known >= bytes)
         {
             return Allocation::Kept;
         }
@@ -516,5 +516,5 @@ pub(crate) enum Resolved {
     Dynamic(wgpu::Buffer, u64),
     View(wgpu::TextureView),
     Sampler(wgpu::Sampler),
-    Placeholder(Ty),
+    Missing,
 }

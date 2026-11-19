@@ -9,7 +9,7 @@ autoexamples = false
 [features]
 default = []
 dev = ["engine/dev", "dep:engine_profile", "dep:engine_registry", "dep:png"]
-profiling = ["engine/profiling", "engine_profiler/profiling"]
+profiling = ["dev", "engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
 cpal.workspace = true

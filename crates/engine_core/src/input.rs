@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use bevy_ecs::prelude::{Resource, World};
+use bevy_ecs::prelude::Resource;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -91,7 +91,6 @@ impl PadButton {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Buttons<B: Ord> {
     pub held: BTreeSet<B>,
     pub pressed: BTreeSet<B>,
@@ -123,27 +122,26 @@ impl<B: Ord + Clone> Buttons<B> {
         self.pressed.clear();
         self.released.clear();
     }
+
+    fn carry(&mut self, older: &Self) {
+        self.pressed.extend(older.pressed.iter().cloned());
+        self.released.extend(older.released.iter().cloned());
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Mouse {
     pub buttons: Buttons<MouseButton>,
-    #[cfg_attr(feature = "schema", schemars(with = "Option<[f32; 2]>"))]
     pub position_pixels: Option<Vec2>,
     pub inside: bool,
-    #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
     pub motion_pixels: Vec2,
-    #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
     pub wheel_notches: Vec2,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Pad {
     pub index: u32,
     pub buttons: Buttons<PadButton>,
-    #[cfg_attr(feature = "schema", schemars(with = "[[f32; 2]; 2]"))]
     pub sticks: [Vec2; 2],
     pub triggers: [f32; 2],
 }
@@ -172,18 +170,14 @@ impl TouchPhase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Touch {
     pub id: u32,
-    #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
     pub position_pixels: Vec2,
-    #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
     pub motion_pixels: Vec2,
     pub phase: TouchPhase,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct Devices {
     pub keyboard: Buttons<String>,
@@ -211,16 +205,79 @@ impl Devices {
         }
         held
     }
+
+    fn carry(&mut self, older: &Self) {
+        self.keyboard.carry(&older.keyboard);
+        self.mouse.buttons.carry(&older.mouse.buttons);
+        self.mouse.motion_pixels += older.mouse.motion_pixels;
+        self.mouse.wheel_notches += older.mouse.wheel_notches;
+        for pad in &mut self.pads {
+            if let Some(old) = older.pads.iter().find(|old| old.index == pad.index) {
+                pad.buttons.carry(&old.buttons);
+            }
+        }
+        for touch in &mut self.touches {
+            if let Some(old) = older.touches.iter().find(|old| old.id == touch.id) {
+                touch.motion_pixels += old.motion_pixels;
+                if old.phase == TouchPhase::Began && touch.phase == TouchPhase::Moved {
+                    touch.phase = TouchPhase::Began;
+                }
+            }
+        }
+        let ended: Vec<Touch> = older
+            .touches
+            .iter()
+            .filter(|old| matches!(old.phase, TouchPhase::Ended | TouchPhase::Cancelled))
+            .filter(|old| self.touches.iter().all(|touch| touch.id != old.id))
+            .copied()
+            .collect();
+        self.touches.extend(ended);
+    }
 }
 
-#[doc(hidden)]
-pub fn accept_input(world: &mut World, devices: Devices) {
-    world.insert_resource(devices);
-}
+impl crate::Engine {
+    pub fn accept_input(&mut self, devices: Devices) {
+        let mut ticked = devices.clone();
+        ticked.carry(&self.ticked);
+        self.ticked = ticked;
+        self.app.world_mut().insert_resource(devices);
+    }
 
-#[doc(hidden)]
-pub fn hold_input(world: &mut World) {
-    if let Some(held) = world.get_resource::<Devices>().map(Devices::held) {
+    pub fn drop_marks(&mut self) {
+        self.drop_tick_marks();
+        let world = self.app.world_mut();
+        let held = world.resource::<Devices>().held();
         world.insert_resource(held);
+    }
+
+    pub(crate) fn drop_tick_marks(&mut self) {
+        self.ticked = self.ticked.held();
+    }
+
+    pub(crate) fn run_ticks(&mut self, ticks: u32) {
+        if ticks == 0 {
+            return;
+        }
+        let held = self.ticked.held();
+        let marked = std::mem::replace(&mut self.ticked, held);
+        let frame = self.swap_input(marked);
+        for tick in 0..ticks {
+            if tick == 1 {
+                let held = std::mem::take(&mut self.ticked);
+                self.swap_input(held);
+            }
+            self.run_fixed_tick();
+        }
+        let held = self.swap_input(frame);
+        if ticks > 1 {
+            self.ticked = held;
+        }
+    }
+
+    fn swap_input(&mut self, devices: Devices) -> Devices {
+        let world = self.app.world_mut();
+        let before = world.remove_resource::<Devices>().unwrap_or_default();
+        world.insert_resource(devices);
+        before
     }
 }

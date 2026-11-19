@@ -211,7 +211,7 @@ impl<P: GpuPart> Installed for Held<P> {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn kind_passes(
     declared: &crate::install::Declared,
     members: &[KindMember],

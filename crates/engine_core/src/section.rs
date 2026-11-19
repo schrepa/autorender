@@ -1,10 +1,17 @@
-use bevy_ecs::resource::Resource;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{Error, SceneContext};
 
 pub trait Section:
-    Resource + Clone + Default + PartialEq + Serialize + DeserializeOwned + schemars::JsonSchema
+    Clone
+    + Default
+    + PartialEq
+    + Serialize
+    + DeserializeOwned
+    + schemars::JsonSchema
+    + Send
+    + Sync
+    + 'static
 {
     const KEY: &'static str;
 
@@ -14,10 +21,6 @@ pub trait Section:
 
     fn check_scene(&self, _: &SceneContext) -> Result<(), Error> {
         Ok(())
-    }
-
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
     }
 }
 

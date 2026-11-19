@@ -1,10 +1,10 @@
-use std::any::Any;
+use std::any::TypeId;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{Mut, World};
 use engine_place::{Error, ErrorCode, List};
 
-use crate::BrickId;
+use crate::{BrickId, BrickRecord};
 
 #[derive(Resource)]
 pub struct MembersOf<L: List> {
@@ -24,6 +24,25 @@ impl<L: List> Default for MembersOf<L> {
 }
 
 impl<L: List> MembersOf<L> {
+    pub fn taken(records: &mut [BrickRecord]) -> Self {
+        let mut taken = Self::default();
+        let list = TypeId::of::<L>();
+        for (index, record) in records.iter_mut().enumerate() {
+            for joined in record.joins.iter_mut().filter(|joined| joined.list == list) {
+                if let Some(Ok(member)) = joined
+                    .member
+                    .take()
+                    .map(|member| member.downcast::<L::Member>())
+                {
+                    taken.members.push(*member);
+                    taken.ids.push(BrickId(index as u32));
+                    taken.owners.push(record.package);
+                }
+            }
+        }
+        taken
+    }
+
     pub fn all(&self) -> &[L::Member] {
         &self.members
     }
@@ -52,22 +71,10 @@ impl<L: List> MembersOf<L> {
     }
 }
 
-pub(crate) fn add_member<L: List>(
-    world: &mut World,
-    member: Box<dyn Any + Send + Sync>,
-    id: BrickId,
-    owner: &'static str,
-) {
-    if let Ok(member) = member.downcast::<L::Member>() {
-        let mut members = world.get_resource_or_init::<MembersOf<L>>();
-        members.members.push(*member);
-        members.ids.push(id);
-        members.owners.push(owner);
+pub(crate) fn fill_members<L: List>(world: &mut World, records: &mut [BrickRecord]) {
+    if !world.contains_resource::<MembersOf<L>>() {
+        world.insert_resource(MembersOf::<L>::taken(records));
     }
-}
-
-pub(crate) fn init_members<L: List>(world: &mut World) {
-    world.init_resource::<MembersOf<L>>();
 }
 
 pub(crate) fn drop_members<L: List>(world: &mut World, brick: BrickId) {

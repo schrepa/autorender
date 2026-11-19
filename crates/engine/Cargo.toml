@@ -8,9 +8,8 @@ autoexamples = false
 
 [features]
 default = []
-dev = ["dep:engine_dev", "dep:sha2", "engine_core/dev", "engine_render/dev", "engine_profile/dev", "schema"]
-profiling = ["engine_profile/profiling", "engine_core/profiling", "engine_render/profiling"]
-schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "dep:schemars"]
+dev = ["dep:engine_dev", "dep:sha2", "dep:schemars", "engine_core/dev", "engine_render/dev", "engine_profile/dev", "engine_settings/dev", "engine_panic/dev", "engine_scene/dev"]
+profiling = ["dev", "engine_profile/profiling", "engine_core/profiling", "engine_render/profiling"]
 
 [dependencies]
 engine_command_line.workspace = true
@@ -33,7 +32,7 @@ schemars = { workspace = true, optional = true }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
-web-sys.workspace = true
+web-sys = { workspace = true, features = ["Storage"] }
 
 [lints]
 workspace = true

@@ -4,28 +4,20 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-#[derive(Clone, Copy, Debug)]
-pub struct StageLimits {
-    pub bind_groups: u32,
-    pub uniform_buffers: u32,
-    pub storage_buffers: u32,
-    pub sampled_textures: u32,
-    pub samplers: u32,
-    pub storage_textures: u32,
-    pub dynamic_uniform_buffers: u32,
-    pub dynamic_storage_buffers: u32,
+pub(crate) fn floor() -> wgpu::Limits {
+    wgpu::Limits {
+        max_bind_groups: 4,
+        max_uniform_buffers_per_shader_stage: 12,
+        max_storage_buffers_per_shader_stage: 8,
+        max_sampled_textures_per_shader_stage: 16,
+        max_samplers_per_shader_stage: 16,
+        max_storage_textures_per_shader_stage: 4,
+        max_dynamic_uniform_buffers_per_pipeline_layout: 8,
+        max_dynamic_storage_buffers_per_pipeline_layout: 4,
+        max_uniform_buffer_binding_size: engine_place::UNIFORM_BINDING_BYTES,
+        ..wgpu::Limits::downlevel_defaults()
+    }
 }
-
-pub const REQUIRED_LIMITS: StageLimits = StageLimits {
-    bind_groups: 4,
-    uniform_buffers: 12,
-    storage_buffers: 8,
-    sampled_textures: 16,
-    samplers: 16,
-    storage_textures: 4,
-    dynamic_uniform_buffers: 8,
-    dynamic_storage_buffers: 4,
-};
 
 thread_local! {
     static CREATED: RefCell<Vec<(&'static str, u32)>> = const { RefCell::new(Vec::new()) };
@@ -103,8 +95,8 @@ pub(crate) fn bind_group(
 }
 
 #[cfg_attr(
-    not(any(feature = "dev", feature = "profiling")),
-    expect(dead_code, reason = "only dev and profiling builds read it")
+    not(feature = "dev"),
+    expect(dead_code, reason = "only dev builds read it")
 )]
 #[derive(Clone, Copy)]
 pub(crate) struct Asker {
@@ -115,11 +107,11 @@ pub(crate) struct Asker {
     pub(crate) by: &'static str,
 }
 
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
+#[cfg(not(feature = "dev"))]
 #[derive(Default)]
 pub(crate) struct Book;
 
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
+#[cfg(not(feature = "dev"))]
 impl Book {
     #[inline(always)]
     pub(crate) fn asked(&mut self, _made: (u64, u64), _frame: u64, _asker: impl FnOnce() -> Asker) {}
@@ -134,10 +126,10 @@ impl Book {
     pub(crate) fn used(&mut self, _made: (u64, u64), _frame: u64) {}
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) use book::Book;
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 mod book {
     use serde_json::{Map, Value, json};
 

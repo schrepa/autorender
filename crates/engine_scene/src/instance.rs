@@ -40,7 +40,7 @@ struct Origins {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MeshOrigin {
     Cube,
@@ -110,11 +110,7 @@ fn insert_each<T, H: Copy>(
             Error::new(ErrorCode::MissingFile, format!("$.{field}[{index}].source"))
                 .expected(Expected::File)
         })?;
-        let handle = insert(item).map_err(|error| {
-            error
-                .coded(ErrorCode::AssetBudgetExceeded)
-                .at(format!("$.{field}[{index}]"))
-        })?;
+        let handle = insert(item).map_err(|error| error.at(format!("$.{field}[{index}]")))?;
         handles.push(handle);
     }
     Ok(())
@@ -327,13 +323,13 @@ impl SceneDocument {
                 std::mem::take(&mut prepared.meshes),
                 &mut handles.meshes,
                 "meshes",
-                |mesh| assets.insert_mesh(mesh),
+                |mesh| Ok(assets.insert_mesh(mesh)),
             )?;
             insert_each(
                 std::mem::take(&mut prepared.textures).into_iter().map(Some),
                 &mut handles.textures,
                 "textures",
-                |texture| assets.insert_texture(texture),
+                |texture| Ok(assets.insert_texture(texture)),
             )?;
             let texture_lookup: BTreeMap<_, _> = self
                 .textures

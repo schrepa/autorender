@@ -121,7 +121,7 @@ fn hold(agent: &mut DeviceGatherer, asked: &Held) {
 pub(super) fn entry() -> NameEntry {
     NameEntry::read("input", Kind::State, |reach, _| Ok(held(reach)))
         .set(Lands::NextFrame, |reach, args| {
-            let asked: Held = engine_settings::parse_value_at(args.clone(), "$.args")?;
+            let asked: Held = engine_settings::parse_value_at(args, "$.args")?;
             checked(&asked)?;
             let before = reach.read(held);
             let agent = reach

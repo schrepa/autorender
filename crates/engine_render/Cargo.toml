@@ -7,8 +7,8 @@ publish.workspace = true
 description = "Owned WebGPU resources and instanced 3D rendering for the browser engine"
 
 [features]
-dev = ["engine_profile/dev", "engine_registry/profiling", "engine_core/dev", "wgpu/serde"]
-profiling = ["engine_profile/profiling", "engine_core/profiling", "wgpu/serde"]
+dev = ["engine_profile/dev", "engine_registry/dev", "engine_core/dev", "wgpu/serde"]
+profiling = ["dev", "engine_profile/profiling", "engine_core/profiling"]
 
 [dependencies]
 engine_core.workspace = true

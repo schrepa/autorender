@@ -13,7 +13,7 @@ profiling = [
     "dep:engine_profile",
     "engine_profile/profiling",
     "dep:engine_registry",
-    "engine_registry/profiling",
+    "engine_registry/dev",
     "dep:bevy_ecs",
     "dep:serde",
     "dep:serde_json",

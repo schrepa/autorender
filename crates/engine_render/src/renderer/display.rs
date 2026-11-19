@@ -2,9 +2,10 @@ use std::cell::Cell;
 
 use super::*;
 use crate::gpu_data::clamped_extent;
+use crate::platform::SurfaceForm;
 use crate::readback::{Arrival, Readbacks, Reader};
 use crate::targets::FrameSize;
-use engine_core::{Expected, FrameId};
+use engine_core::{ErrorCode, Expected, FrameId, Present};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SurfaceState {
@@ -41,9 +42,19 @@ pub struct Display {
     offscreen: Option<wgpu::Texture>,
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
+    present: Present,
+    modes: Vec<wgpu::PresentMode>,
     pub(crate) max_dimension: u32,
     state: SurfaceState,
     timer: Option<FrameTimer>,
+}
+
+fn shrunk(asked: (u32, u32), fitted: Option<(u32, u32)>, limit: u32) -> Option<Error> {
+    fitted.filter(|&fitted| fitted != asked).map(|_| {
+        Error::new(ErrorCode::OutOfRange, "$.surface.size")
+            .range(1.0, f64::from(limit))
+            .got([asked.0, asked.1])
+    })
 }
 
 impl Display {
@@ -53,10 +64,15 @@ impl Display {
         target: RenderTarget,
         adapter: &wgpu::Adapter,
         max_dimension: u32,
-    ) -> Result<Self, Error> {
-        let (width, height) = target.size();
-        let extent = clamped_extent(width, height, max_dimension);
+        (form, present): (SurfaceForm, Present),
+    ) -> Result<(Self, Option<Error>), Error> {
+        let asked = target.size();
+        let extent = clamped_extent(asked.0, asked.1, max_dimension);
+        let shrunk = shrunk(asked, extent, max_dimension);
         let (width, height) = extent.unwrap_or((1, 1));
+        let capabilities = surface
+            .as_ref()
+            .map(|surface| surface.get_capabilities(adapter));
         let mut configuration = match &surface {
             Some(surface) => surface
                 .get_default_config(adapter, width, height)
@@ -75,26 +91,35 @@ impl Display {
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         };
-        if let Some(surface) = &surface {
-            configuration.usage |= surface.get_capabilities(adapter).usages
+        if let Some(capabilities) = &capabilities {
+            configuration.usage |= capabilities.usages
                 & (wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST);
         }
-        #[cfg(all(
-            target_arch = "wasm32",
-            any(feature = "dev", feature = "profiling")
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "dev"))]
         {
             configuration.usage |= wgpu::TextureUsages::COPY_SRC;
         }
-        configuration.present_mode = target.present_mode();
-        configuration.format = configuration.format.remove_srgb_suffix();
-        configuration.desired_maximum_frame_latency = 2;
-        Ok(Self {
+        configuration.format = if form.srgb {
+            configuration.format.add_srgb_suffix()
+        } else {
+            configuration.format.remove_srgb_suffix()
+        };
+        if form.srgb
+            && let Some(capabilities) = &capabilities
+            && !capabilities.formats.contains(&configuration.format)
+        {
+            return Err(Error::new(ErrorCode::UnsupportedFeature, "$.surface.srgb").got(true));
+        }
+        let mut display = Self {
             instance,
             surface,
             offscreen: None,
             target,
             configuration,
+            present,
+            modes: capabilities
+                .map(|capabilities| capabilities.present_modes)
+                .unwrap_or_default(),
             max_dimension,
             state: if extent.is_some() {
                 SurfaceState::Stale
@@ -102,7 +127,32 @@ impl Display {
                 SurfaceState::Suspended
             },
             timer: None,
-        })
+        };
+        let refused = display.apply_present();
+        Ok((display, shrunk.or(refused)))
+    }
+
+    fn apply_present(&mut self) -> Option<Error> {
+        let Present { vsync, latency } = self.present;
+        self.configuration.present_mode = if vsync {
+            wgpu::PresentMode::Fifo
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        self.configuration.desired_maximum_frame_latency = latency;
+        let free = [wgpu::PresentMode::Immediate, wgpu::PresentMode::Mailbox];
+        let honoured =
+            vsync || self.surface.is_none() || free.iter().any(|mode| self.modes.contains(mode));
+        (!honoured).then(|| Error::new(ErrorCode::UnsupportedFeature, "$.present.vsync").got(vsync))
+    }
+
+    pub(crate) fn set_present(&mut self, present: Present) -> Option<Error> {
+        if self.present == present {
+            return None;
+        }
+        self.present = present;
+        self.state = self.state.after(SurfaceChange::Outdated);
+        self.apply_present()
     }
 
     pub(crate) fn configure(&mut self, device: &wgpu::Device, period: f32) {
@@ -120,10 +170,6 @@ impl Display {
 
     pub(crate) fn instance(&self) -> wgpu::Instance {
         self.instance.clone()
-    }
-
-    pub(crate) fn power_preference(&self) -> wgpu::PowerPreference {
-        self.target.power_preference()
     }
 
     pub(crate) fn supports(&self, adapter: &wgpu::Adapter) -> bool {
@@ -188,21 +234,23 @@ impl Display {
         }
     }
 
-    pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        let Some((width, height)) = clamped_extent(width, height, self.max_dimension) else {
+    pub(crate) fn resize(&mut self, width: u32, height: u32) -> Option<Error> {
+        let extent = clamped_extent(width, height, self.max_dimension);
+        let Some((fitted_width, fitted_height)) = extent else {
             self.state = self.state.after(SurfaceChange::Hidden);
-            return;
+            return None;
         };
         if !self.suspended()
-            && self.configuration.width == width
-            && self.configuration.height == height
+            && self.configuration.width == fitted_width
+            && self.configuration.height == fitted_height
         {
-            return;
+            return None;
         }
-        self.configuration.width = width;
-        self.configuration.height = height;
-        self.target.set_size((width, height));
+        self.configuration.width = fitted_width;
+        self.configuration.height = fitted_height;
+        self.target.set_size((fitted_width, fitted_height));
         self.state = self.state.after(SurfaceChange::Sized);
+        shrunk((width, height), extent, self.max_dimension)
     }
 
     pub(crate) fn acquire(&mut self, device: &wgpu::Device) -> Result<Option<DisplayFrame>, Error> {

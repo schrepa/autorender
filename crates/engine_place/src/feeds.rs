@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct StoreId(u64);
 
 impl StoreId {
@@ -55,7 +55,7 @@ impl<T> Ring<T> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct Cursor {
     store: StoreId,
     seen: u64,
@@ -75,7 +75,7 @@ pub enum Events<'a, T> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct FeedView {
     pub store: StoreId,
     pub first: u64,
@@ -261,7 +261,7 @@ impl<T> Serialize for Feed<T> {
     }
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 impl<T> schemars::JsonSchema for Feed<T> {
     fn inline_schema() -> bool {
         true

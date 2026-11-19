@@ -1,9 +1,6 @@
-use std::fmt::Write;
-
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_json::error::Category;
-use serde_path_to_error::Segment;
 
 use crate::{Error, ErrorCode, Expected};
 
@@ -25,51 +22,80 @@ pub fn js_error(error: Error) -> js_sys::wasm_bindgen::JsValue {
 }
 
 pub fn parse_json<T: DeserializeOwned>(source: &str) -> Result<T, Error> {
-    let mut deserializer = serde_json::Deserializer::from_str(source);
-    let value = serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
-        let found = serde_json::from_str::<Value>(source).ok();
-        failure_at(&error, found.as_ref())
-    })?;
-    deserializer
-        .end()
-        .map_err(|error| failure_of(&error, "$".to_owned(), None))?;
-    Ok(value)
+    serde_json::from_str(source).map_err(|error| {
+        #[cfg(feature = "dev")]
+        if error.is_data()
+            && let Some(traced) = traced::json::<T>(source)
+        {
+            return traced;
+        }
+        failure_of(&error, String::from("$"), None)
+    })
 }
 
-pub fn parse_value<T: DeserializeOwned>(value: Value) -> Result<T, Error> {
-    serde_path_to_error::deserialize(&value).map_err(|error| failure_at(&error, Some(&value)))
+pub fn parse_value<T: DeserializeOwned>(value: &Value) -> Result<T, Error> {
+    T::deserialize(value).map_err(|error| {
+        #[cfg(feature = "dev")]
+        if let Some(traced) = traced::value::<T>(value) {
+            return traced;
+        }
+        failure_of(&error, String::from("$"), None)
+    })
 }
 
-pub fn parse_value_at<T: DeserializeOwned>(value: Value, path: &str) -> Result<T, Error> {
+pub fn parse_value_at<T: DeserializeOwned>(value: &Value, path: &str) -> Result<T, Error> {
     parse_value(value).map_err(|error| error.within(path))
 }
 
-fn failure_at(
-    error: &serde_path_to_error::Error<serde_json::Error>,
-    source: Option<&Value>,
-) -> Error {
-    let mut path = String::from("$");
-    for segment in error.path() {
-        match segment {
-            Segment::Seq { index } => write!(path, "[{index}]"),
-            Segment::Map { key } => write!(path, ".{key}"),
-            Segment::Enum { variant } => write!(path, ".{variant}"),
-            Segment::Unknown => write!(path, ".?"),
-        }
-        .expect("strings_write");
+#[cfg(feature = "dev")]
+mod traced {
+    use std::fmt::Write;
+
+    use serde::de::DeserializeOwned;
+    use serde_json::Value;
+    use serde_path_to_error::Segment;
+
+    use crate::Error;
+
+    pub(super) fn json<T: DeserializeOwned>(source: &str) -> Option<Error> {
+        let mut deserializer = serde_json::Deserializer::from_str(source);
+        let error = serde_path_to_error::deserialize::<_, T>(&mut deserializer).err()?;
+        let found = serde_json::from_str::<Value>(source).ok();
+        Some(failure_at(&error, found.as_ref()))
     }
-    let found = source.and_then(|source| {
-        error
-            .path()
-            .iter()
-            .try_fold(source, |value, segment| match segment {
-                Segment::Seq { index } => value.get(*index),
-                Segment::Map { key } => value.get(key.as_str()),
-                Segment::Enum { variant } => value.get(variant.as_str()),
-                Segment::Unknown => None,
-            })
-    });
-    failure_of(error.inner(), path, found)
+
+    pub(super) fn value<T: DeserializeOwned>(value: &Value) -> Option<Error> {
+        let error = serde_path_to_error::deserialize::<_, T>(value).err()?;
+        Some(failure_at(&error, Some(value)))
+    }
+
+    fn failure_at(
+        error: &serde_path_to_error::Error<serde_json::Error>,
+        source: Option<&Value>,
+    ) -> Error {
+        let mut path = String::from("$");
+        for segment in error.path() {
+            match segment {
+                Segment::Seq { index } => write!(path, "[{index}]"),
+                Segment::Map { key } => write!(path, ".{key}"),
+                Segment::Enum { variant } => write!(path, ".{variant}"),
+                Segment::Unknown => write!(path, ".?"),
+            }
+            .expect("strings_write");
+        }
+        let found = source.and_then(|source| {
+            error
+                .path()
+                .iter()
+                .try_fold(source, |value, segment| match segment {
+                    Segment::Seq { index } => value.get(*index),
+                    Segment::Map { key } => value.get(key.as_str()),
+                    Segment::Enum { variant } => value.get(variant.as_str()),
+                    Segment::Unknown => None,
+                })
+        });
+        super::failure_of(error.inner(), path, found)
+    }
 }
 
 fn failure_of(error: &serde_json::Error, mut path: String, found: Option<&Value>) -> Error {

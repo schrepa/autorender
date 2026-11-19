@@ -74,100 +74,103 @@ impl Run {
         }
     }
 
-    pub(super) fn placeholder(&mut self, key: (Ty, u64)) {
-        if !self
-            .bindings
-            .placeholders
-            .iter()
-            .any(|(known, _)| *known == key)
-            && let Some(made) = placeholder(&self.device, key.0)
-        {
-            self.bindings.placeholders.push((key, made));
+    fn stand_in(&mut self, ty: Ty) -> Option<Placeholder> {
+        let known = self.bindings.placeholders.iter().find(|(known, _)| *known == ty);
+        if let Some((_, made)) = known {
+            return Some(made.clone());
+        }
+        let made = placeholder(&self.device, ty)?;
+        self.bindings.placeholders.push((ty, made.clone()));
+        Some(made)
+    }
+
+    fn standing(&mut self, ty: Ty) -> Resolved {
+        match self.stand_in(ty) {
+            Some(Placeholder::Texture(view)) => Resolved::View(view),
+            Some(Placeholder::Sampler(sampler)) => Resolved::Sampler(sampler),
+            None => Resolved::Missing,
         }
     }
 
-    pub(super) fn resource(&mut self, bound: &Bound, ty: Ty) -> Resolved {
+    pub(super) fn reported_stand_in(
+        &mut self,
+        part: Option<u32>,
+        ty: Ty,
+        (group, binding): (u32, u32),
+    ) -> Resolved {
+        let resolved = self.standing(ty);
+        let key = (part.unwrap_or(u32::MAX), group, binding);
+        let reported = &mut self.bindings.reported_stand_ins;
+        if !matches!(resolved, Resolved::Missing) && !reported.contains(&key) {
+            reported.push(key);
+            let place = format!("bindings.{group}.{binding}");
+            let declared = &self.machine.declared.parts;
+            let path = match part.and_then(|part| declared.get(part as usize)) {
+                Some(info) => format!("$.parts.{}.{place}", info.name),
+                None => format!("$.frame.{place}"),
+            };
+            let error = Error::new(ErrorCode::PlaceNotFilled, path)
+                .expected(engine_core::Expected::Present);
+            self.fault(error);
+        }
+        resolved
+    }
+
+    pub(super) fn resource(
+        &mut self,
+        (bound, ty): (&Bound, Ty),
+        (part, place): (Option<u32>, (u32, u32)),
+    ) -> Resolved {
         match bound {
             Bound::Buffer(buffer) => match self.buffer_held(*buffer) {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
-                None => Resolved::Placeholder(ty),
+                None => Resolved::Missing,
             },
             Bound::Sampler(sampler) => match self.bindings.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),
-                None => Resolved::Placeholder(ty),
+                None => self.reported_stand_in(part, ty, place),
             },
             Bound::Target(name) => match (self.machine.declared.target_of(*name))
                 .and_then(|target| self.view_of(target))
             {
                 Some(view) => Resolved::View(view.clone()),
-                None => Resolved::Placeholder(ty),
+                None => self.standing(ty),
             },
-            Bound::Asset => Resolved::Placeholder(ty),
+            Bound::Asset => self.standing(ty),
         }
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the machine binds groups by the linked declarations"
-    )]
     pub(super) fn bind_group(
-        &mut self,
+        &self,
         layout: &wgpu::BindGroupLayout,
         entries: Vec<(u32, Resolved)>,
     ) -> Option<wgpu::BindGroup> {
-        let mut keys: Vec<Option<(Ty, u64)>> = Vec::with_capacity(entries.len());
-        for (_, resolved) in &entries {
-            let key = match resolved {
-                Resolved::Placeholder(Ty::Uniform | Ty::Storage { .. }) => return None,
-                Resolved::Placeholder(ty) => Some((*ty, 0)),
-                Resolved::Buffer(_)
-                | Resolved::Dynamic(..)
-                | Resolved::View(_)
-                | Resolved::Sampler(_) => None,
+        let mut resources = Vec::with_capacity(entries.len());
+        for (binding, resolved) in &entries {
+            let resource = match resolved {
+                Resolved::Buffer(buffer) => buffer.as_entire_binding(),
+                Resolved::Dynamic(buffer, size) => {
+                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(*size),
+                    })
+                }
+                Resolved::View(view) => wgpu::BindingResource::TextureView(view),
+                Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
+                Resolved::Missing => return None,
             };
-            if let Some(key) = key {
-                self.placeholder(key);
-            }
-            keys.push(key);
-        }
-        let resources: Vec<wgpu::BindGroupEntry<'_>> = entries
-            .iter()
-            .zip(&keys)
-            .map(|((binding, resolved), key)| wgpu::BindGroupEntry {
+            resources.push(wgpu::BindGroupEntry {
                 binding: *binding,
-                resource: match resolved {
-                    Resolved::Buffer(buffer) => buffer.as_entire_binding(),
-                    Resolved::Dynamic(buffer, size) => {
-                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(*size),
-                        })
-                    }
-                    Resolved::View(view) => wgpu::BindingResource::TextureView(view),
-                    Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
-                    Resolved::Placeholder(_) => match key.and_then(|key| {
-                        self.bindings
-                            .placeholders
-                            .iter()
-                            .find(|(known, _)| *known == key)
-                    }) {
-                        Some((_, Placeholder::Texture(view))) => {
-                            wgpu::BindingResource::TextureView(view)
-                        }
-                        Some((_, Placeholder::Sampler(sampler))) => {
-                            wgpu::BindingResource::Sampler(sampler)
-                        }
-                        None => self.uniforms.camera.as_entire_binding(),
-                    },
-                },
-            })
-            .collect();
-        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/bound-group"),
+                resource,
+            });
+        }
+        Some(crate::pipelines::bind_group(
+            &self.device,
+            "engine/bound-group",
             layout,
-            entries: &resources,
-        }))
+            &resources,
+        ))
     }
 
     pub(crate) fn refresh_groups(&mut self) {
@@ -207,7 +210,7 @@ impl Run {
                         size_of::<CameraUniform>() as u64,
                     ),
                     _ => match self.machine.frame_bound.get(&binding).cloned() {
-                        Some(bound) => self.resource(&bound, ty),
+                        Some(bound) => self.resource((&bound, ty), (None, (0, binding))),
                         None => self.core_frame(binding, ty),
                     },
                 };
@@ -240,6 +243,8 @@ impl Run {
 
     fn rebuild_own(&mut self, pipeline: usize, group: usize) {
         self.pass = self.machine.pipelines[pipeline].home;
+        let part = self.machine.pipelines[pipeline].decl.part;
+        let index = self.machine.pipelines[pipeline].groups[group].index;
         for parity in 0..2 {
             self.frames.parity = parity;
             let entries = self.machine.pipelines[pipeline].groups[group]
@@ -247,7 +252,7 @@ impl Run {
                 .clone();
             let mut resolved = Vec::with_capacity(entries.len());
             for (binding, bound, ty) in entries {
-                let found = self.resource(&bound, ty);
+                let found = self.resource((&bound, ty), (Some(part), (index, binding)));
                 resolved.push((binding, found));
             }
             let layout = self.machine.pipelines[pipeline].groups[group]
@@ -286,7 +291,7 @@ impl Run {
         if post {
             Resolved::Buffer(self.set().post_buffer.clone())
         } else {
-            Resolved::Placeholder(ty)
+            self.reported_stand_in(None, ty, (0, binding))
         }
     }
 
@@ -324,7 +329,7 @@ impl Run {
                 usage,
                 samples,
             };
-            Allocated::new(&device, &made, size, 1)
+            Allocated::new(&device, &made, size)
         };
         let shared: Vec<Allocated> = (self.machine.declared.targets.iter())
             .map(|shared| {
@@ -544,7 +549,6 @@ impl Run {
 #[derive(Default)]
 pub(crate) struct Tables {
     pub(crate) textures: Vec<Option<Allocated>>,
-    pub(crate) sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
     pub(crate) buffers: Vec<Option<(wgpu::Buffer, u64)>>,
 }
 
@@ -552,7 +556,6 @@ impl Tables {
     pub(crate) fn of(machine: &Machine) -> Self {
         Self {
             textures: machine.declared.textures.iter().map(|_| None).collect(),
-            sizes: machine.declared.textures.iter().map(|_| None).collect(),
             buffers: machine.declared.buffers.iter().map(|_| None).collect(),
         }
     }
@@ -644,7 +647,7 @@ pub(crate) struct Scratch {
     pub(crate) order: Vec<usize>,
     pub(crate) drawn_on: Vec<(engine_core::Target, usize)>,
     pub(crate) skips: u64,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) seen: Vec<(usize, std::num::NonZeroU64)>,
 }
 
@@ -747,7 +750,7 @@ impl Sets {
                 order: Vec::new(),
                 drawn_on: Vec::new(),
                 skips: 0,
-                #[cfg(any(feature = "dev", feature = "profiling"))]
+                #[cfg(feature = "dev")]
                 seen: Vec::new(),
             },
             counted: Counted {

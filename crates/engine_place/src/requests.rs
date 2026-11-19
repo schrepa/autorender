@@ -12,7 +12,7 @@ use crate::readiness::CORE_ROW;
 use crate::{Error, Readiness};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct Ticket(u64);
 
 static TICKETS: AtomicU64 = AtomicU64::new(0);
@@ -262,7 +262,7 @@ struct Held<V, A> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct Census {
     pub asked: u32,
     pub ready: u32,
@@ -410,6 +410,10 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         self.get(key).and_then(Request::asked)
     }
 
+    pub fn key_of(&self, ticket: Ticket) -> Option<&K> {
+        self.asked.get(&ticket)
+    }
+
     pub fn interests(&self, key: &K) -> u32 {
         self.entries.get(key).map_or(0, |held| held.interests)
     }
@@ -511,7 +515,7 @@ impl<K: Clone + Eq + Hash, V, A> Serialize for Requests<K, V, A> {
     }
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 impl<K: Clone, V, A> schemars::JsonSchema for Requests<K, V, A> {
     fn inline_schema() -> bool {
         true
@@ -532,7 +536,7 @@ impl<K: Clone + Serialize> Serialize for Interest<K> {
     }
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 impl<K: Clone + schemars::JsonSchema> schemars::JsonSchema for Interest<K> {
     fn inline_schema() -> bool {
         true

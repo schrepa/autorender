@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["engine_core/schema", "engine_settings/schema"]
+dev = ["engine_core/dev", "engine_registry/dev", "engine_settings/dev"]
 
 [dependencies]
 bevy_ecs.workspace = true

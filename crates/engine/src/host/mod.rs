@@ -1,23 +1,24 @@
 mod adapter;
 mod frame_loop;
 mod input;
-pub mod policy;
 mod scene_load;
 mod settings;
 
 pub use crate::app_host::now_ms;
 #[cfg(feature = "dev")]
-pub use crate::dev_host::{DevTake, Shot, instrument, instruments};
+pub use crate::dev_host::{DevTake, Shot, instrument, instruments, kept_entry};
 pub use adapter::AdapterStatus;
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 #[cfg(feature = "dev")]
 pub(crate) use frame_loop::in_flight;
-pub use frame_loop::{FrameLoop, FramePhase, HostPause};
+pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{DeviceGatherer, InputSource};
 pub use scene_load::{FileRead, SceneLoad};
 pub use settings::{HostSettings, OVERLAY, Settings, SettingsLog, TypedSettings};
 
-#[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
+pub const WHEEL_PIXELS: f32 = 100.0;
+
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {
     use crate::tooling::{constant, declarations};
     let schema =
@@ -31,19 +32,12 @@ pub fn typescript() -> String {
     ] {
         output.push_str(&constant(name, &value.into()));
     }
-    for (name, value) in policy::constants() {
-        output.push_str(&constant(name, &value));
-    }
+    output.push_str(&constant("WHEEL_PIXELS", &serde_json::json!(WHEEL_PIXELS)));
     let phases: serde_json::Map<String, serde_json::Value> = FramePhase::ALL
         .iter()
         .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
         .collect();
     output.push_str(&constant("FRAME_PHASES", &phases.into()));
-    let pauses: serde_json::Map<String, serde_json::Value> = HostPause::ALL
-        .iter()
-        .map(|&(pause, name)| (name.to_owned(), (pause as u32).into()))
-        .collect();
-    output.push_str(&constant("HOST_PAUSES", &pauses.into()));
     let cursors: serde_json::Map<String, serde_json::Value> = engine_core::CursorMode::ALL
         .iter()
         .map(|&(mode, name)| (name.to_owned(), (mode as u32).into()))

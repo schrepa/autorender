@@ -352,7 +352,7 @@ impl GpuMeshes {
     }
 
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
+        not(feature = "dev"),
         expect(dead_code, reason = "read by the gpu.assets names")
     )]
     pub fn contains(&self, handle: GeometryHandle) -> bool {
@@ -364,7 +364,7 @@ impl GpuMeshes {
     }
 
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
+        not(feature = "dev"),
         expect(dead_code, reason = "read by the gpu.assets names")
     )]
     pub fn len(&self) -> usize {

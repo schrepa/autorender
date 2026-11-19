@@ -4,6 +4,7 @@
 /web/pkg/
 /web/pkg-dev/
 /web/pkg-profile/
+/web/pkg-ship/
 /web/dist-profile/
 /artifacts/
 *.log

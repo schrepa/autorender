@@ -1,27 +1,9 @@
 use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::Resource;
-use bevy_ecs::world::World;
 use serde::Serialize;
 
-use crate::{AssetBudget, List, settings};
-
-#[derive(Debug, Clone, Copy)]
-pub struct EngineConfig {
-    pub fixed_hz: f64,
-    pub asset_budget: AssetBudget,
-    pub max_transform_nodes: usize,
-}
-
-impl Default for EngineConfig {
-    fn default() -> Self {
-        Self {
-            fixed_hz: 60.0,
-            asset_budget: AssetBudget::default(),
-            max_transform_nodes: crate::MAX_TRANSFORM_NODES,
-        }
-    }
-}
+use crate::{Error, ErrorCode, settings};
 
 settings! {
     #[section("frame_limits")]
@@ -35,7 +17,6 @@ settings! {
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct FrameTime {
     pub frame: u64,
@@ -49,83 +30,40 @@ pub struct FrameTime {
     pub cut_seconds: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum PauseReason {
-    Focus,
-    Hidden,
-    Suspended,
-    Preparing,
-    #[serde(untagged)]
-    Brick(&'static str),
-}
-
-impl PauseReason {
-    pub fn stops_frames(self) -> bool {
-        match self {
-            Self::Hidden | Self::Suspended => true,
-            Self::Focus | Self::Preparing | Self::Brick(_) => false,
-        }
-    }
-}
-
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Pause {
-    reasons: BTreeSet<PauseReason>,
-}
-
-impl List for Pause {
-    const NAME: &'static str = "pause";
-    type Member = PauseReason;
-
-    fn dropped(world: &mut World, member: &PauseReason) {
-        if world
-            .get_resource::<Self>()
-            .is_some_and(|pause| pause.holds(*member))
-        {
-            world.resource_mut::<Self>().remove(*member);
-        }
-    }
+    reasons: BTreeSet<&'static str>,
 }
 
 impl Pause {
-    pub fn add(&mut self, reason: PauseReason) -> bool {
+    pub fn add(&mut self, reason: &'static str) -> bool {
         self.reasons.insert(reason)
     }
 
-    pub fn remove(&mut self, reason: PauseReason) -> bool {
-        self.reasons.remove(&reason)
+    pub fn remove(&mut self, reason: &'static str) -> bool {
+        self.reasons.remove(reason)
     }
 
-    pub fn holds(&self, reason: PauseReason) -> bool {
-        self.reasons.contains(&reason)
+    pub fn holds(&self, reason: &'static str) -> bool {
+        self.reasons.contains(reason)
     }
 
     pub fn paused(&self) -> bool {
         !self.reasons.is_empty()
     }
 
-    pub fn reasons(&self) -> impl Iterator<Item = PauseReason> + '_ {
+    pub fn reasons(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.reasons.iter().copied()
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default)]
+#[derive(Resource, Clone, Copy, Debug)]
 #[component(immutable)]
 pub struct FixedTime {
     pub delta_seconds: f32,
     pub elapsed_seconds: f64,
     pub tick: u64,
-}
-
-pub(crate) fn sanitize_delta(delta_seconds: f64) -> f64 {
-    if delta_seconds.is_finite() && delta_seconds > 0.0 {
-        delta_seconds
-    } else {
-        0.0
-    }
+    pub rate: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -135,11 +73,18 @@ pub(crate) enum Interval {
 }
 
 impl Interval {
-    pub(crate) fn next(self, timestamp: Option<f64>) -> (Self, f64) {
-        match (self, timestamp) {
-            (Self::Fresh, Some(now)) => (Self::Since(now), 0.0),
-            (Self::Since(last), Some(now)) => (Self::Since(now), sanitize_delta(now - last)),
-            (Self::Fresh | Self::Since(_), None) => (Self::Fresh, 0.0),
+    pub(crate) fn next(self, now: f64) -> (Self, f64) {
+        match self {
+            Self::Fresh => (Self::Since(now), 0.0),
+            Self::Since(last) => {
+                let delta = now - last;
+                let delta = if delta.is_finite() && delta > 0.0 {
+                    delta
+                } else {
+                    0.0
+                };
+                (Self::Since(now), delta)
+            }
         }
     }
 }
@@ -157,16 +102,16 @@ pub(crate) struct FixedClock {
 }
 
 impl FixedClock {
-    pub(crate) fn new(config: EngineConfig) -> Self {
-        let hz = if config.fixed_hz.is_finite() && config.fixed_hz > 0.0 {
-            config.fixed_hz.clamp(1.0, 1000.0)
-        } else {
-            EngineConfig::default().fixed_hz
-        };
-        Self {
-            step_seconds: 1.0 / hz,
-            accumulator_seconds: 0.0,
+    pub(crate) fn new(ticks_per_second: u32) -> Result<Self, Error> {
+        if ticks_per_second == 0 {
+            return Err(Error::new(ErrorCode::OutOfRange, "$.ticks_per_second")
+                .at_least(1)
+                .got(ticks_per_second));
         }
+        Ok(Self {
+            step_seconds: 1.0 / f64::from(ticks_per_second),
+            accumulator_seconds: 0.0,
+        })
     }
 
     pub(crate) fn step_seconds(&self) -> f64 {

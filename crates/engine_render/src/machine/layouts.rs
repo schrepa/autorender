@@ -1,6 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -60,7 +60,7 @@ impl Layouts {
         (layout, key)
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn facts(&self) -> Value {
         let groups: Vec<Value> = (self.groups.iter().enumerate())
             .map(|(at, (entries, _))| {
@@ -78,7 +78,7 @@ impl Layouts {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn layout_names(world: &mut bevy_ecs::world::World) {
     use engine_registry::{Kind, NameEntry, register, unavailable};
     register(

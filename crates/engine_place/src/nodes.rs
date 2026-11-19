@@ -7,7 +7,7 @@ use crate::gpu_bits;
 
 #[gpu_bits(crate = crate)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Clock {
     #[default]
@@ -17,7 +17,7 @@ pub enum Clock {
 
 #[gpu_bits(crate = crate)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Mobility {
     #[default]
@@ -27,7 +27,7 @@ pub enum Mobility {
 
 #[gpu_bits(crate = crate)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Pace {
     #[default]
@@ -36,7 +36,7 @@ pub enum Pace {
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[component(immutable)]
 #[serde(default, deny_unknown_fields)]
 pub struct Node {
@@ -59,7 +59,7 @@ impl Default for Node {
 
 #[gpu_bits(crate = crate)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct NodeWord {
     pub active: bool,
     pub visible: bool,
@@ -138,7 +138,6 @@ fn named(name: &str) -> &'static str {
     held
 }
 
-#[cfg(feature = "schema")]
 impl schemars::JsonSchema for MoverId {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "MoverId".into()
@@ -150,7 +149,7 @@ impl schemars::JsonSchema for MoverId {
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[component(immutable)]
 #[serde(deny_unknown_fields)]
 pub struct Mover {

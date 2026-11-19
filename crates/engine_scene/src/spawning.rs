@@ -106,5 +106,5 @@ pub fn described(world: &World, mut described: Value) -> Result<SceneObject, Err
     if !fields.contains_key("id") {
         fields.insert("id".to_owned(), Value::String(unused_id(world)));
     }
-    engine_settings::parse_value(described)
+    engine_settings::parse_value(&described)
 }

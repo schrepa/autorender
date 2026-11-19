@@ -268,11 +268,11 @@ pub struct StaticGraph {
     batches: Vec<u8>,
     starved: Bits,
     empty: Bits,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     after: Vec<Vec<PassId>>,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     unmet: Vec<Bits>,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     unread: Bits,
 }
 
@@ -588,7 +588,7 @@ impl StaticGraph {
         let unmet = unmet_of(&resources, &nodes, &reach);
         let starved = starved_of(&resources, &nodes, &unmet);
         let batches = batches_of(&nodes, &order, &views);
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         let unread = facts::unread_of(&resources, &nodes, &order);
         Ok(Self {
             resources,
@@ -597,11 +597,11 @@ impl StaticGraph {
             batches,
             starved,
             empty: Bits::default(),
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             after,
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             unmet,
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             unread,
         })
     }
@@ -774,7 +774,7 @@ fn load_op(access: Access, written: bool) -> Load {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 mod facts {
     use serde_json::{Map, Value, json};
 
@@ -950,5 +950,5 @@ mod facts {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use facts::keyed;

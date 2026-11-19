@@ -23,10 +23,7 @@ pub use document::{
     SceneTransform, SceneVertex,
 };
 pub use engine_core::SceneEntity;
-pub use engine_settings::{parse_json, parse_value};
 pub use environment::SceneEnvironment;
-#[cfg(feature = "schema")]
-pub use environment::section_schemas;
 pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
 pub use material::{

@@ -1,10 +1,11 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::{Mut, QueryState, Resource, World};
+use bevy_ecs::system::SystemState;
 use glam::{Mat4, UVec2, Vec3};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, DrawnPoses, Error, ErrorCode, FrameFacts,
-    GlobalTransforms, Layers, Target, View,
+    AssetLibrary, Camera, Clear, ColorSpace, Error, ErrorCode, FrameFacts, Layers, Poses, Target,
+    View,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,6 +46,7 @@ pub struct Views {
     found: Vec<(Entity, View)>,
     slotted: Vec<Option<Entity>>,
     query: Option<QueryState<(Entity, &'static View)>>,
+    poses: Option<SystemState<Poses<'static>>>,
     frame: FrameFacts,
 }
 
@@ -150,7 +152,12 @@ impl Views {
 
 type Placed = (Camera, (Vec3, Vec3, Vec3), UVec2);
 
-fn placed(world: &World, entity: Entity, view: &View, facts: FrameFacts) -> Result<Placed, Error> {
+fn placed(
+    (world, poses): (&World, Option<&Poses<'_>>),
+    entity: Entity,
+    view: &View,
+    facts: FrameFacts,
+) -> Result<Placed, Error> {
     let lens = world
         .get::<Camera>(view.camera)
         .copied()
@@ -160,11 +167,8 @@ fn placed(world: &World, entity: Entity, view: &View, facts: FrameFacts) -> Resu
     view.viewport
         .check("$")
         .map_err(|error| error.within(&format!("$.views.{}.viewport", entity.to_bits())))?;
-    let pose = world
-        .get_resource::<GlobalTransforms>()
-        .zip(world.get_resource::<DrawnPoses>())
-        .and_then(|(globals, poses)| poses.drawn_pose(globals, view.camera));
-    let placed = pose
+    let placed = poses
+        .and_then(|poses| poses.drawn_pose(view.camera))
         .and_then(eye_of)
         .ok_or_else(|| refuse(entity, "camera", ErrorCode::InvalidCamera))?;
     let size = target_size(
@@ -182,7 +186,9 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
         if views.query.is_none() {
             views.query = Some(world.query());
         }
+        let mut state = views.poses.take().unwrap_or_else(|| SystemState::new(world));
         let world: &World = world;
+        let poses = state.get(world).ok();
         views.find(world);
         views.slot_views();
         views.listed.clear();
@@ -190,13 +196,14 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
         views.frame = facts;
         for at in 0..views.found.len() {
             let (entity, view) = views.found[at];
-            let (lens, (eye, forward, up), size) = match placed(world, entity, &view, facts) {
-                Ok(placed) => placed,
-                Err(error) => {
-                    views.refused.push((entity, error));
-                    continue;
-                }
-            };
+            let (lens, (eye, forward, up), size) =
+                match placed((world, poses.as_ref()), entity, &view, facts) {
+                    Ok(placed) => placed,
+                    Err(error) => {
+                        views.refused.push((entity, error));
+                        continue;
+                    }
+                };
             let pixels = view.viewport.pixels((size.x, size.y));
             let aspect = pixels[2].max(1) as f32 / pixels[3].max(1) as f32;
             let view_projection = lens.clip(aspect) * Mat4::look_to_rh(eye, forward, up);
@@ -223,5 +230,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
                 view_projection,
             });
         }
+        views.poses = Some(state);
     });
 }

@@ -1,39 +1,39 @@
-use std::time::Instant;
-
 use engine::host::FramePhase;
-use engine::{BrickList, Engine, Game, GameHost, GpuPreference, RenderTarget};
+use engine::{BrickList, Game, GameHost, RenderTarget, Start};
 
-pub struct Offscreen<G: Game> {
+pub(crate) struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
     size: (u32, u32),
     speaker: crate::sound::Speaker,
+    io: crate::io::Io,
 }
 
 impl<G: Game> Offscreen<G> {
-    pub fn launch<E: Into<engine::Error>>(
+    pub(crate) fn launch(
         size: (u32, u32),
-        gpu: GpuPreference,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        start: Start,
+        bricks: BrickList,
     ) -> engine::Result<Self> {
         #[cfg(feature = "profiling")]
         engine_profiler::sampler::listen_for_threads();
-        let target = RenderTarget::Offscreen { size, gpu };
-        let host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
-            target, bricks, build,
+        let target = RenderTarget::Offscreen { size };
+        let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
+            target, start, bricks,
         )))?);
+        host.offer_close();
         Ok(Self {
             host,
             size,
             speaker: crate::sound::Speaker::silent(),
+            io: crate::io::Io::default(),
         })
     }
 
-    pub fn host(&self) -> &GameHost<G> {
+    pub(crate) fn host(&self) -> &GameHost<G> {
         &self.host
     }
 
-    pub fn host_mut(&mut self) -> &mut GameHost<G> {
+    pub(crate) fn host_mut(&mut self) -> &mut GameHost<G> {
         &mut self.host
     }
 
@@ -41,33 +41,30 @@ impl<G: Game> Offscreen<G> {
         let (width, height) = self.size;
         let phase = self.host.animation_frame(timestamp, width, height)?;
         self.speaker.exchange(&mut self.host);
+        self.io.exchange(&mut self.host);
         self.host.wait_for_gpu()?;
         Ok(phase)
     }
 
-    pub fn play(
+    pub(crate) fn play(
         &mut self,
         frames: Option<u32>,
         mut between: impl FnMut(&mut GameHost<G>, FramePhase) -> engine::Result<bool>,
     ) -> engine::Result<u32> {
-        let started = Instant::now();
-        let (mut played, mut playing) = (0_u32, false);
+        let mut played = 0_u32;
         loop {
             let timestamp = match frames {
-                Some(_) if playing => f64::from(played) * self.host.refresh_interval(),
-                Some(_) | None => started.elapsed().as_secs_f64() * 1000.0,
+                Some(_) => f64::from(played) * self.host.refresh_interval(),
+                None => engine::host::now_ms(),
             };
             let phase = self.turn(timestamp)?;
-            match phase {
-                FramePhase::Started => playing = true,
-                FramePhase::Playing => played += 1,
-                FramePhase::Compiling
-                | FramePhase::Preparing
-                | FramePhase::Collecting
-                | FramePhase::Idle
-                | FramePhase::Paused => {}
+            if phase == FramePhase::Playing {
+                played += 1;
             }
-            if !between(&mut self.host, phase)? || frames.is_some_and(|frames| played >= frames) {
+            if !between(&mut self.host, phase)?
+                || frames.is_some_and(|frames| played >= frames)
+                || self.host.close_asked()
+            {
                 return Ok(played);
             }
         }

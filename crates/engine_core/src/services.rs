@@ -89,6 +89,7 @@ pub struct ComponentKind {
     insert: fn(&mut World, Entity, Prepared) -> Result<(), Error>,
     check: Option<CheckHook>,
     files: Option<FilesHook>,
+    #[cfg(feature = "dev")]
     schema: Option<fn() -> Value>,
     prepare: Option<PrepareHook>,
 }
@@ -125,6 +126,7 @@ impl ComponentKind {
                 insert: insert_form::<F>,
                 check: None,
                 files: None,
+                #[cfg(feature = "dev")]
                 schema: None,
                 prepare: None,
             },
@@ -147,6 +149,7 @@ impl ComponentKind {
                 insert: insert_component::<C>,
                 check: None,
                 files: None,
+                #[cfg(feature = "dev")]
                 schema: None,
                 prepare: None,
             },
@@ -243,6 +246,7 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
+    #[cfg(feature = "dev")]
     pub fn json_schema(&self) -> Value {
         self.schema.map_or(Value::Null, |schema| schema())
     }
@@ -264,8 +268,14 @@ impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentK
         self
     }
 
+    #[cfg(feature = "dev")]
     pub fn schema(mut self, schema: fn() -> Value) -> Self {
         self.kind.schema = Some(schema);
+        self
+    }
+
+    #[cfg(not(feature = "dev"))]
+    pub fn schema(self, _: fn() -> Value) -> Self {
         self
     }
 
@@ -287,7 +297,7 @@ impl<C> From<ComponentKindOf<C>> for ComponentKind {
 }
 
 fn parsed<C: DeserializeOwned>(value: &Value, path: &str) -> Result<C, Error> {
-    engine_settings::parse_value_at(value.clone(), path)
+    engine_settings::parse_value_at(value, path)
 }
 
 fn parse_component<C: DeserializeOwned>(value: &Value, path: &str) -> Result<(), Error> {
@@ -308,7 +318,7 @@ fn read_component<C: Component + DeserializeOwned>(
     entity: Entity,
     value: &Value,
 ) -> Result<(), Error> {
-    let component: C = engine_settings::parse_value(value.clone())?;
+    let component: C = engine_settings::parse_value(value)?;
     let mut target = world
         .get_entity_mut(entity)
         .map_err(|_| Error::new(ErrorCode::UnknownEntity, "$").got(entity.to_string()))?;
@@ -349,7 +359,7 @@ fn insert_component<C: Component>(
 }
 
 fn read_form<F: SceneForm>(world: &mut World, entity: Entity, value: &Value) -> Result<(), Error> {
-    let form: F = engine_settings::parse_value(value.clone())?;
+    let form: F = engine_settings::parse_value(value)?;
     if world.get_entity(entity).is_err() {
         return Err(Error::new(ErrorCode::UnknownEntity, "$").got(entity.to_string()));
     }

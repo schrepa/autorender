@@ -27,7 +27,7 @@ pub fn refused(checked: Result<(), InvalidSetting>) -> Result<(), Error> {
 #[macro_export]
 macro_rules! settings {
     (
-        @section $key:literal [$($check:path)?] [$($switch:ident)?]
+        @section $key:literal [$($check:path)?] [$($switch:ident)?] [$(#[$stored:meta])*]
         $(#[$meta:meta])*
         $vis:vis struct $name:ident {
             $(
@@ -41,12 +41,11 @@ macro_rules! settings {
             ::core::clone::Clone,
             ::core::fmt::Debug,
             ::core::cmp::PartialEq,
-            bevy_ecs::resource::Resource,
             ::engine_core::__private::serde::Serialize,
             ::engine_core::__private::serde::Deserialize,
             ::engine_core::__private::schemars::JsonSchema
         )]
-        #[component(immutable)]
+        $(#[$stored])*
         #[serde(crate = "::engine_core::__private::serde", default)]
         #[schemars(
             crate = "::engine_core::__private::schemars",
@@ -107,12 +106,28 @@ macro_rules! settings {
     ) => {
         $crate::settings! {
             @section $key [$($check)?] [$switch]
+            [#[derive(bevy_ecs::resource::Resource)] #[component(immutable)]]
             $(#[$meta])*
             $vis struct $name {
                 pub enabled: bool = $crate::__switch_default!($switch) => any,
                 $($fields)*
             }
         }
+    };
+    (
+        #[dev]
+        #[section($key:literal)]
+        #[check($check:path)]
+        $($rest:tt)*
+    ) => {
+        $crate::settings! { @section $key [$check] [] [] $($rest)* }
+    };
+    (
+        #[dev]
+        #[section($key:literal)]
+        $($rest:tt)*
+    ) => {
+        $crate::settings! { @section $key [] [] [] $($rest)* }
     };
     (
         #[section($key:literal)]
@@ -127,7 +142,11 @@ macro_rules! settings {
         #[check($check:path)]
         $($rest:tt)*
     ) => {
-        $crate::settings! { @section $key [$check] [] $($rest)* }
+        $crate::settings! {
+            @section $key [$check] []
+            [#[derive(bevy_ecs::resource::Resource)] #[component(immutable)]]
+            $($rest)*
+        }
     };
     (
         #[section($key:literal)]
@@ -140,7 +159,11 @@ macro_rules! settings {
         #[section($key:literal)]
         $($rest:tt)*
     ) => {
-        $crate::settings! { @section $key [] [] $($rest)* }
+        $crate::settings! {
+            @section $key [] []
+            [#[derive(bevy_ecs::resource::Resource)] #[component(immutable)]]
+            $($rest)*
+        }
     };
 }
 
@@ -182,7 +205,6 @@ macro_rules! stats {
             ::core::fmt::Debug,
             ::core::default::Default,
             ::core::cmp::PartialEq,
-            bevy_ecs::resource::Resource,
             ::engine_core::__private::serde::Serialize,
             ::engine_core::__private::serde::Deserialize,
             ::engine_core::__private::schemars::JsonSchema

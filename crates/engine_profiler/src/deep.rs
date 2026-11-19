@@ -104,15 +104,10 @@ pub fn deep_setting(world: &mut World) {
         json!({ "value": { "heap_samples": 65_536, "thread_samples": 60_000, "events": 65_536, "rows": 30 } }),
     )
     .set(Lands::ThisFrame, |reach, args| {
-        let sizes: DeepSizes = args
-            .get("value")
-            .cloned()
-            .ok_or_else(|| Error::new(ErrorCode::InvalidArguments, "$.args.value").expected(Expected::Present))
-            .and_then(|value| {
-                serde_json::from_value(value).map_err(|error| {
-                    Error::new(ErrorCode::InvalidArguments, "$.args.value").got(error.to_string())
-                })
-            })?;
+        let value = args.get("value").ok_or_else(|| {
+            Error::new(ErrorCode::MissingField, "$.args.value").expected(Expected::Present)
+        })?;
+        let sizes: DeepSizes = engine::settings::parse_value_at(value, "$.args.value")?;
         reach.world.insert_resource(DeepSetting(Some(sizes)));
         Ok(json!(sizes))
     });

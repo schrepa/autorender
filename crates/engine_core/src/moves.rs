@@ -8,9 +8,49 @@ use bevy_ecs::observer::On;
 use bevy_ecs::prelude::{Commands, Query, Res, Without};
 use bevy_ecs::system::SystemParam;
 use bevy_ecs::world::World;
+use engine_place::DrawnPoses;
 use engine_registry::Registry;
 
-use crate::{Asked, Brick, GlobalTransforms, Mover, MoverId, Pace, Transform, edit_transform};
+use crate::{
+    Asked, Brick, DrawnTable, GlobalTransforms, Mover, MoverId, Pace, Refusals, Transform,
+    edit_transform,
+};
+
+const POSES_PART: &str = "poses";
+
+pub(crate) fn capture(world: &mut World) {
+    let _profile = engine_profile::span("presentation", "capture_tick");
+    world.resource_scope(|world, mut poses: Mut<DrawnPoses>| {
+        let globals = world.resource::<GlobalTransforms>();
+        poses.capture(globals, |node| world.get::<Mover>(node).map(|mover| mover.pace));
+        let mut refusals = world.resource_mut::<Refusals>();
+        for (node, verdict) in poses.take_verdicts() {
+            refusals.judge(node, POSES_PART, verdict);
+        }
+    });
+}
+
+pub(crate) fn present(world: &mut World, alpha: f32) {
+    world.resource_scope(|world, mut poses: Mut<DrawnPoses>| {
+        poses.present(world.resource::<GlobalTransforms>(), alpha);
+    });
+}
+
+pub(crate) fn gather(world: &mut World) {
+    let _profile = engine_profile::span("presentation", "gather");
+    world.resource_scope(|world, mut poses: Mut<DrawnPoses>| {
+        let table = world.resource::<DrawnTable>();
+        poses.gather(world.resource::<GlobalTransforms>(), |node| table.slot_of(node));
+        engine_profile::counter("presentation.composed", poses.entries().len() as f64);
+        engine_profile::counter("memory.presentation_bytes", poses.capacity_bytes() as f64);
+    });
+}
+
+pub(crate) fn fresh_all(world: &mut World) {
+    world.resource_scope(|world, mut poses: Mut<DrawnPoses>| {
+        poses.fresh_all(world.resource::<GlobalTransforms>());
+    });
+}
 
 pub(crate) const fn mover_of<B: Brick>() -> MoverId {
     if B::SOURCE.game() {
@@ -89,9 +129,8 @@ pub(crate) fn end_tick(world: &mut World) {
                 .map(|()| node)
         })
         .collect();
-    if !fresh.is_empty() {
-        crate::presentation::make_fresh(world, &fresh);
-    }
+    let mut poses = world.resource_mut::<DrawnPoses>();
+    fresh.iter().for_each(|&node| poses.fresh(node));
 }
 
 fn tick_paced(mover: Option<&Mover>) -> bool {
@@ -125,7 +164,8 @@ pub(crate) fn start_frame(world: &mut World) -> bool {
             fresh.push(node);
         }
     }
-    crate::presentation::make_fresh(world, &fresh);
+    let mut poses = world.resource_mut::<DrawnPoses>();
+    fresh.iter().for_each(|&node| poses.fresh(node));
     true
 }
 

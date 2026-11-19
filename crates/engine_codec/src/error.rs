@@ -8,7 +8,7 @@ use crate::ErrorCode;
 pub const MAX_GOT_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct Error {
     pub code: ErrorCode,
     pub path: String,
@@ -17,7 +17,7 @@ pub struct Error {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct Detail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<Expected>,
@@ -30,7 +30,7 @@ pub struct Detail {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Expected {
     Number,
@@ -69,7 +69,7 @@ pub enum Expected {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Allowed {
     Range { min: f64, max: f64 },

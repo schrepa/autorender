@@ -17,7 +17,7 @@ impl Renderer {
         self.core.display.take_frame_time()
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub fn gpu_instrument(&mut self, name: &str, on: bool) -> Result<&'static str, &'static str> {
         if name == crate::linker::counting::INSTRUMENT {
             return match self.run.as_mut() {
@@ -28,17 +28,17 @@ impl Renderer {
         self.core.profiler.switch(name, on)
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn counter(&self) -> Option<&crate::linker::counting::Counter> {
         Some(&self.run.as_ref()?.pipelines.work.as_ref()?.counter)
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn layouts(&self) -> Option<&crate::machine::Layouts> {
         Some(&self.run.as_ref()?.machine.layouts)
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(super) fn timer_names(world: &mut bevy_ecs::world::World) {
         use engine_registry::{Kind, NameEntry, register, unavailable};
         let names = [
@@ -74,7 +74,7 @@ impl Renderer {
         crate::machine::layout_names(world);
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     fn timer_read(&self, name: &str) -> serde_json::Value {
         if name == "gpu.pipelines.cache" {
             return self.cache_facts();
@@ -105,10 +105,7 @@ impl Renderer {
         }
     }
 
-    #[cfg(all(
-        any(feature = "dev", feature = "profiling"),
-        not(target_arch = "wasm32")
-    ))]
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     fn cache_facts(&self) -> serde_json::Value {
         self.core.pipeline_cache.as_ref().map_or_else(
             |&reason| engine_registry::unavailable(reason),
@@ -116,7 +113,7 @@ impl Renderer {
         )
     }
 
-    #[cfg(all(any(feature = "dev", feature = "profiling"), target_arch = "wasm32"))]
+    #[cfg(all(feature = "dev", target_arch = "wasm32"))]
     fn cache_facts(&self) -> serde_json::Value {
         engine_registry::unavailable("wasm")
     }

@@ -1,26 +1,31 @@
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
-use bevy_ecs::component::ComponentId;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs};
 use bevy_ecs::system::ScheduleSystem;
-use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, List};
 
 use crate::entries::{JoinEntry, Owned, SettingsEntry, StatsEntry};
-use crate::scene::SpawnedBy;
 use crate::state::SwitchFn;
 
 pub trait RecordExt {
     fn record(&mut self) -> &mut BrickRecord;
 }
 
-type MakeSystems = Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
+#[derive(Default)]
+pub struct BrickSystems {
+    pub(crate) calls: Vec<(InternedScheduleLabel, ScheduleConfigs<ScheduleSystem>)>,
+}
 
-pub(crate) struct SystemsCall {
-    pub(crate) schedule: InternedScheduleLabel,
-    pub(crate) make: MakeSystems,
+impl BrickSystems {
+    pub fn add<M>(
+        &mut self,
+        schedule: InternedScheduleLabel,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) {
+        self.calls.push((schedule, systems.chain()));
+    }
 }
 
 pub struct BrickRecord {
@@ -30,8 +35,6 @@ pub struct BrickRecord {
     pub render: Vec<Arc<dyn Any + Send + Sync>>,
     prefix: Option<&'static str>,
     switch: Option<(&'static str, SwitchFn)>,
-    pub(crate) spawned: fn(&mut World) -> ComponentId,
-    pub(crate) systems: Vec<SystemsCall>,
     pub(crate) joins: Vec<JoinEntry>,
     owned: Vec<Owned>,
     settings: Vec<SettingsEntry>,
@@ -40,7 +43,7 @@ pub struct BrickRecord {
 }
 
 impl BrickRecord {
-    pub fn new<B: 'static>(package: &'static str) -> Self {
+    pub fn new(package: &'static str) -> Self {
         Self {
             package,
             game: false,
@@ -48,8 +51,6 @@ impl BrickRecord {
             render: Vec::new(),
             prefix: None,
             switch: None,
-            spawned: spawned_id::<B>,
-            systems: Vec::new(),
             joins: Vec::new(),
             owned: Vec::new(),
             settings: Vec::new(),
@@ -90,14 +91,6 @@ impl BrickRecord {
         &self.stats
     }
 
-    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        let list = TypeId::of::<L>();
-        self.joins
-            .iter()
-            .filter(move |joined| joined.list == list)
-            .filter_map(|joined| joined.member.as_deref()?.downcast_ref::<L::Member>())
-    }
-
     pub fn entries<T: Any>(&self) -> impl Iterator<Item = &T> + '_ {
         self.entries
             .iter()
@@ -122,17 +115,6 @@ impl BrickRecord {
             return;
         }
         self.switch = Some((key, on));
-    }
-
-    pub fn systems<M: 'static>(
-        &mut self,
-        schedule: InternedScheduleLabel,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
-    ) {
-        self.systems.push(SystemsCall {
-            schedule,
-            make: Box::new(move || systems.chain()),
-        });
     }
 
     pub fn shader_prefix(&mut self, prefix: &'static str) {
@@ -201,8 +183,4 @@ impl BrickRecord {
             self.owned.push(owned);
         }
     }
-}
-
-fn spawned_id<B: 'static>(world: &mut World) -> ComponentId {
-    world.register_component::<SpawnedBy<B>>()
 }

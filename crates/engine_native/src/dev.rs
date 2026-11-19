@@ -12,7 +12,7 @@ use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use engine_registry::ReachMut;
 use serde_json::json;
 
-use crate::{file_error, files};
+use crate::file_error;
 
 const RUNS: &str = "artifacts/runs";
 
@@ -20,6 +20,8 @@ const DEEP: &str = "deep";
 
 #[cfg(feature = "profiling")]
 static DEEP_WANTED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "profiling")]
+static RUN_GIVEN: AtomicBool = AtomicBool::new(false);
 static INSTRUMENTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     engine::host::instruments()
         .iter()
@@ -43,15 +45,14 @@ pub struct Start<'a> {
 
 impl Session {
     pub fn open<G: Game>(host: &mut GameHost<G>, start: Start<'_>) -> engine::Result<Self> {
+        let world = host.engine_mut().app.world_mut();
         #[cfg(feature = "profiling")]
-        engine_profiler::deep_setting(host.engine_mut().app.world_mut());
-        host.engine_mut()
-            .app
-            .world_mut()
-            .insert_resource(engine::dev::Instruments {
-                names: &INSTRUMENTS,
-                switch: instrument,
-            });
+        engine_profiler::deep_setting(world);
+        world.insert_resource(engine::dev::Instruments {
+            names: &INSTRUMENTS,
+            switch: instrument,
+        });
+        engine_registry::register(world, engine::host::kept_entry(crate::io::kept_listing));
         let run = match start.run {
             Some(name) => {
                 let folder = run_folder("--run", name)?;
@@ -61,6 +62,8 @@ impl Session {
             }
             None => None,
         };
+        #[cfg(feature = "profiling")]
+        RUN_GIVEN.store(run.is_some(), Ordering::Relaxed);
         let lines = start.requests.then(|| {
             let ready = json!({
                 "ready": true,
@@ -77,6 +80,10 @@ impl Session {
             #[cfg(feature = "profiling")]
             deep: None,
         })
+    }
+
+    pub fn run(&self) -> Option<&Path> {
+        self.run.as_deref()
     }
 
     pub fn receive<G: Game>(&mut self, host: &mut GameHost<G>, wait: Duration) -> bool {
@@ -151,10 +158,16 @@ impl Session {
                 let capture = engine_profiler::DeepCapture::start(threads, sizes);
                 self.deep = Some((capture, folder, stem));
             }
-            (Some(running), true, Some(_)) => self.deep = Some(running),
-            (Some((capture, folder, stem)), false, _)
-            | (Some((capture, folder, stem)), true, None) => {
-                capture.finish(&folder, &stem)?;
+            (Some(running), true, _) => self.deep = Some(running),
+            (Some((capture, folder, stem)), false, _) => {
+                let files = capture.finish(&folder, &stem)?;
+                let record = json!({
+                    "event": "deep_capture_written",
+                    "viewer": files.viewer,
+                    "digest": files.digest,
+                    "complete": files.complete,
+                });
+                eprintln!("{record}");
             }
             (None, _, _) => {}
         }
@@ -182,7 +195,10 @@ impl Session {
 }
 
 pub fn follow_source<G: Game>(host: &mut GameHost<G>) {
-    if let Some(Err(error)) = host.follow_source() {
+    if host.follow_source()
+        && let Err(error) =
+            read_source(host).and_then(|(source, files)| host.reload_scene(&source, &files))
+    {
         let record = json!({"event": "source_changed", "error": error});
         eprintln!("{record}");
     }
@@ -196,7 +212,7 @@ fn read_source<G: Game>(host: &mut GameHost<G>) -> engine::Result<(String, Scene
     let source =
         std::fs::read_to_string(&path).map_err(|error| file_error("$.source", &path, &error))?;
     let kinds = SceneKinds::of(host.engine().app.world());
-    let files = files::scene_files(&path, &source, &kinds)?;
+    let (_, files) = crate::io::scene_opened(&path, &source, &kinds)?;
     Ok((source, files))
 }
 
@@ -226,6 +242,9 @@ fn instrument(
 #[cfg(feature = "profiling")]
 fn deep(reach: &mut ReachMut<'_>, on: bool) -> Result<&'static str, &'static str> {
     if on {
+        if !RUN_GIVEN.load(Ordering::Relaxed) {
+            return Err("deep_capture_needs_--run");
+        }
         engine_profiler::deep_sizes(reach.world)?;
     }
     DEEP_WANTED.store(on, Ordering::Relaxed);

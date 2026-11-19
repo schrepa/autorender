@@ -9,7 +9,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::members::{add_member, drop_members, init_members};
+use crate::BrickRecord;
+use crate::members::{drop_members, fill_members};
 use crate::registry::BrickId;
 
 #[derive(Clone, Copy, Debug)]
@@ -35,13 +36,10 @@ impl Owned {
     }
 }
 
-type MemberAdd = fn(&mut World, Box<dyn Any + Send + Sync>, BrickId, &'static str);
-
 pub(crate) struct JoinEntry {
     pub(crate) list: TypeId,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
-    pub(crate) add: MemberAdd,
-    pub(crate) init: fn(&mut World),
+    pub(crate) fill: fn(&mut World, &mut [BrickRecord]),
     pub(crate) left: fn(&mut World, BrickId),
 }
 
@@ -50,8 +48,7 @@ impl JoinEntry {
         Self {
             list: TypeId::of::<L>(),
             member: Some(Box::new(member)),
-            add: add_member::<L>,
-            init: init_members::<L>,
+            fill: fill_members::<L>,
             left: drop_members::<L>,
         }
     }
@@ -70,6 +67,7 @@ pub struct SettingsEntry {
     reset: fn(&mut World),
     current: fn(&World) -> Result<Value, Error>,
     default: fn() -> Value,
+    #[cfg(feature = "dev")]
     schema: fn() -> schemars::Schema,
     scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>,
 }
@@ -81,10 +79,9 @@ impl SettingsEntry {
         check: fn(&Value, &str) -> Result<(), Error>,
         set: fn(&mut World, &Value, &str) -> Result<(), Error>,
         scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>,
-        schema: fn() -> schemars::Schema,
     ) -> Self
     where
-        T: Resource + Clone + Default + Serialize + DeserializeOwned,
+        T: Resource + Clone + Default + Serialize + DeserializeOwned + schemars::JsonSchema,
     {
         Self {
             key,
@@ -98,7 +95,8 @@ impl SettingsEntry {
             reset: reset_of::<T>,
             current: written_of::<T>,
             default: default_of::<T>,
-            schema,
+            #[cfg(feature = "dev")]
+            schema: schema_of::<T>,
             scene,
         }
     }
@@ -140,6 +138,7 @@ impl SettingsEntry {
         (self.default)()
     }
 
+    #[cfg(feature = "dev")]
     pub fn schema(&self) -> schemars::Schema {
         (self.schema)()
     }
@@ -154,12 +153,11 @@ pub struct StatsEntry {
     pub at: &'static Location<'static>,
     init: fn(&mut World),
     read: fn(&World) -> Value,
-    schema: fn() -> schemars::Schema,
 }
 
 impl StatsEntry {
     #[track_caller]
-    pub fn of<T>(key: &'static str, schema: fn() -> schemars::Schema) -> Self
+    pub fn of<T>(key: &'static str) -> Self
     where
         T: Resource<Mutability = Mutable> + Default + Serialize,
     {
@@ -171,7 +169,6 @@ impl StatsEntry {
             at: Location::caller(),
             init: init_of::<T>,
             read: current_of::<T>,
-            schema,
         }
     }
 
@@ -187,20 +184,6 @@ impl StatsEntry {
     pub fn read(&self, world: &World) -> Value {
         (self.read)(world)
     }
-
-    pub fn schema(&self) -> schemars::Schema {
-        (self.schema)()
-    }
-}
-
-pub fn parse_section<T: DeserializeOwned>(
-    value: &Value,
-    path: &str,
-    check: fn(&T) -> Result<(), Error>,
-) -> Result<T, Error> {
-    let section: T = engine_settings::parse_value_at(value.clone(), path)?;
-    check(&section).map_err(|error| error.within(path))?;
-    Ok(section)
 }
 
 pub(crate) fn init_of<T: Resource + Default>(world: &mut World) {
@@ -237,11 +220,16 @@ fn default_of<T: Default + Serialize>() -> Value {
     to_json(&T::default())
 }
 
+#[cfg(feature = "dev")]
+fn schema_of<T: schemars::JsonSchema>() -> schemars::Schema {
+    schemars::schema_for!(T)
+}
+
 fn to_json(value: &impl Serialize) -> Value {
     serde_json::to_value(value).expect("registered_values_serialize")
 }
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "dev")]
 pub mod names {
     use std::any::Any;
     use std::borrow::Cow;

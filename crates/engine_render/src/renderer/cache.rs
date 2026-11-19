@@ -16,8 +16,8 @@ pub(crate) struct KeptCache {
     pub(crate) cache: wgpu::PipelineCache,
     place: Place,
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
-        expect(dead_code, reason = "only dev and profiling builds read the loaded bytes")
+        not(feature = "dev"),
+        expect(dead_code, reason = "only dev builds read the loaded bytes")
     )]
     loaded: u64,
     saved: Arc<Saved>,
@@ -32,7 +32,7 @@ struct Saved {
 }
 
 impl KeptCache {
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn facts(&self) -> serde_json::Value {
         serde_json::json!({
             "opened": true,

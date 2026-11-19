@@ -1,7 +1,7 @@
 import clients from "../generated/clients.json";
 import { warmAdapter } from "./adapter";
 import { type GameBindings, loadGame } from "./bindings";
-import { type Runtime, startGame } from "./host";
+import { type Fetched, type Runtime, type StartWatch, startGame } from "./host";
 import { type SceneFileBindings, loadSceneFiles, loadSceneSource } from "./source";
 
 const SCENE_SUFFIX = ".scene.json";
@@ -12,7 +12,7 @@ export interface Playable<T extends Runtime> {
   create(canvas: HTMLCanvasElement, scene?: string, files?: unknown): Promise<T>;
 }
 
-export interface PlayedGame<T extends Runtime, B extends PlayedBindings> {
+export interface PlayedGame<T extends Runtime, B extends PlayedBindings> extends StartWatch {
   wasm: string;
   scene?: string;
   load(): Promise<B>;
@@ -43,17 +43,20 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
   const source = url === undefined ? undefined : {
     url,
     load: (signal: AbortSignal) => loadSceneSource(sceneUrl(), signal),
-    files: async (text: string, signal: AbortSignal) => loadSceneFiles(sceneUrl(), text, await bindings(), signal),
+    files: async (text: string, signal: AbortSignal, fetched?: (fetched: Fetched) => void) => loadSceneFiles(sceneUrl(), text, await bindings(), signal, fetched),
   };
   const opening = new AbortController();
   const firstText = source && settled(Promise.resolve().then(() => source.load(opening.signal)));
   startGame<T>({
     source,
-    async create(canvas, signal) {
+    shown: game.shown,
+    failed: game.failed,
+    progress: game.progress,
+    async create(canvas, signal, fetched) {
       signal.addEventListener("abort", () => opening.abort(signal.reason), { once: true });
       const played = game.game(await bindings());
       const text = await firstText;
-      const files = source && text !== undefined ? await source.files(text, signal) : undefined;
+      const files = source && text !== undefined ? await source.files(text, signal, fetched) : undefined;
       signal.throwIfAborted();
       const running = await played.create(canvas, text, files);
       if (url !== undefined) running.set_file_root(new URL(".", sceneUrl()).href);

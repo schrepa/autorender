@@ -1041,13 +1041,9 @@ dependencies = [
  "engine_settings",
  "engine_textures",
  "glam 0.30.9",
- "js-sys",
  "schemars",
  "serde",
  "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]
@@ -1125,6 +1121,7 @@ dependencies = [
  "engine_gpu_bits",
  "engine_math",
  "engine_settings",
+ "glam 0.30.9",
  "schemars",
  "serde",
  "serde_json",
@@ -1340,6 +1337,9 @@ name = "fruit_fps"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "cook",
+ "cook_model",
+ "cook_texture",
  "engine",
  "engine_assets",
  "engine_core",
@@ -1349,6 +1349,7 @@ dependencies = [
  "engine_rig",
  "engine_sources",
  "glam 0.30.9",
+ "gltf",
  "schemars",
  "serde",
  "serde_json",

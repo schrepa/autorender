@@ -17,7 +17,7 @@ impl Target {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Rect {
     pub x: f32,
@@ -79,7 +79,7 @@ impl Default for Rect {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Clear {
     #[default]
@@ -114,3 +114,6 @@ impl View {
         }
     }
 }
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewSkip;

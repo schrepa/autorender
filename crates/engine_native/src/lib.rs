@@ -5,8 +5,8 @@
 
 #[cfg(feature = "dev")]
 mod dev;
-pub mod files;
 mod input;
+mod io;
 mod mixer;
 mod offscreen;
 mod options;
@@ -16,16 +16,14 @@ mod window;
 
 use std::process::ExitCode;
 
-pub use engine::GpuPreference;
-pub use engine_profiler as profiler;
-pub use offscreen::Offscreen;
-pub use options::{Argument, Arguments, HostOptions, StartScene, open_scene, options};
-pub use window::{Window, run};
+use offscreen::Offscreen;
+use options::{HostOptions, open_scene, options};
+use window::Window;
 
 const PIPELINE_CACHE_MIB: u64 = 256;
 
 pub fn main<G: engine::Game>(
-    game: engine::GameEntry<G>,
+    game: engine::GameEntry,
     arguments: impl Iterator<Item = String>,
 ) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
@@ -34,7 +32,7 @@ pub fn main<G: engine::Game>(
         return ExitCode::SUCCESS;
     }
     match HostOptions::parse(arguments) {
-        Ok(options) => exit(options.run(game)),
+        Ok(options) => exit(options.run::<G>(game)),
         Err(error) => {
             let record = serde_json::json!({"event": "arguments_rejected", "error": error});
             eprintln!("{record}");
@@ -43,7 +41,7 @@ pub fn main<G: engine::Game>(
     }
 }
 
-pub fn exit(outcome: engine::Result<()>) -> ExitCode {
+fn exit(outcome: engine::Result<()>) -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -66,7 +64,7 @@ fn host_error(code: engine::ErrorCode, path: &str, error: impl std::fmt::Display
     engine::Error::new(code, path).got(error.to_string())
 }
 
-pub fn file_error(path: &str, file: &std::path::Path, error: &std::io::Error) -> engine::Error {
+fn file_error(path: &str, file: &std::path::Path, error: &std::io::Error) -> engine::Error {
     let code = if error.kind() == std::io::ErrorKind::NotFound {
         engine::ErrorCode::MissingFile
     } else {

@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::{Component, Entity, World};
+use engine_place::NodePose;
 use glam::{Affine3A, BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use serde::Serialize;
 
-use crate::{Error, ErrorCode, GlobalTransforms, NodePose, Parent};
+use crate::{Error, ErrorCode, GlobalTransforms, Parent};
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 #[component(
@@ -91,7 +92,7 @@ impl Transform {
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Camera {
     pub near: f32,
@@ -100,7 +101,7 @@ pub struct Camera {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 pub enum Projection {
     Perspective { vertical_fov_radians: f32 },
     Orthographic { height: f32 },

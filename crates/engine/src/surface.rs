@@ -16,8 +16,8 @@ macro_rules! __game_surface {
                 fn touch_motion(id: u32, dx: f32, dy: f32);
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
                 fn suspend();
-                fn pause(reason: u32);
-                fn resume(reason: u32);
+                fn focused(focused: bool);
+                fn hidden(hidden: bool);
                 fn reset_camera();
                 fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
                 fn set_file_root(root: &str);
@@ -69,12 +69,11 @@ macro_rules! game {
             <$crate::BrickList as $crate::Listing>::with::<GameBrick>($bricks(list))
         }
 
-        pub const GAME: $crate::GameEntry<$game> = $crate::GameEntry {
+        pub const GAME: $crate::GameEntry = $crate::GameEntry {
             name: env!("CARGO_PKG_NAME"),
             title: $title,
             folder: env!("CARGO_MANIFEST_DIR"),
             bricks: __game_bricks,
-            build: $crate::game::default_build::<$game>,
             scene: $crate::DefaultScene {
                 name: $scene,
                 path: concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene),
@@ -86,7 +85,7 @@ macro_rules! game {
 
         #[cfg(not(target_arch = "wasm32"))]
         pub fn native(arguments: impl Iterator<Item = String>) -> ::std::process::ExitCode {
-            ::engine_native::main(GAME, arguments)
+            ::engine_native::main::<$game>(GAME, arguments)
         }
     };
 }
@@ -202,7 +201,7 @@ macro_rules! __export_game {
                 files: Option<SceneFileSet>,
             ) -> Result<$name, $crate::__private::JsValue> {
                 Ok(Self {
-                    host: $crate::browser::PageHost::start(
+                    host: $crate::browser::PageHost::<$game>::start(
                         canvas,
                         GAME,
                         scene.map(|source| (source, files.map(|set| set.files).unwrap_or_default())),

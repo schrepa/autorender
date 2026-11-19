@@ -3,7 +3,7 @@ use bevy_ecs::world::World;
 use engine_core::{
     BrickList, ComponentKind, Error, SceneComponents, SceneCx, core_components, scene_components,
 };
-use engine_registry::{Registry, SettingsEntry};
+use engine_registry::{MembersOf, Registry, SettingsEntry};
 use engine_settings::ErrorCode;
 use serde_json::Value;
 
@@ -38,24 +38,21 @@ impl SceneKinds {
     }
 
     pub fn listed(bricks: &BrickList) -> Self {
-        let records: Vec<_> = bricks
+        let mut records: Vec<_> = bricks
             .listed()
             .iter()
-            .map(|listed| listed.record())
+            .map(|listed| listed.record().0)
             .collect();
+        let members = MembersOf::<SceneComponents>::taken(&mut records);
         Self {
             listed: core_components()
                 .iter()
-                .chain(
-                    records
-                        .iter()
-                        .flat_map(|record| record.members::<SceneComponents>()),
-                )
+                .chain(members.all())
                 .cloned()
                 .collect(),
             sections: records
                 .iter()
-                .flat_map(|record| record.settings_entries().to_vec())
+                .flat_map(|record| record.settings_entries().iter().copied())
                 .collect(),
         }
     }
@@ -157,7 +154,7 @@ impl SceneObject {
     }
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 pub(crate) fn component_schemas(
     kinds: &SceneKinds,
     definitions: &mut serde_json::Map<String, Value>,
@@ -169,7 +166,7 @@ pub(crate) fn component_schemas(
         .collect()
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 fn component_property(
     kind: &ComponentKind,
     definitions: &mut serde_json::Map<String, Value>,

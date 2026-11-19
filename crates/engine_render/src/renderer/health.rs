@@ -85,6 +85,10 @@ pub(crate) struct Reports {
 }
 
 impl Reports {
+    pub(super) fn notice(&mut self, error: Error) {
+        self.notices.push(error);
+    }
+
     pub(super) fn lost(&mut self, reason: wgpu::DeviceLostReason, message: &str) {
         let error = failed("$.device")
             .expected(Expected::Live)
@@ -191,7 +195,7 @@ impl Renderer {
             Some(Health::Lost) => {
                 self.recovering = Some(Box::pin(super::startup::open(
                     self.core.display.instance(),
-                    self.core.display.power_preference(),
+                    self.core.request.clone(),
                 )));
                 self.change(Change::Recovering);
             }

@@ -3,7 +3,6 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Asked {
     Drawn,
-    Waited,
     Warmed,
 }
 
@@ -11,7 +10,6 @@ impl Asked {
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Drawn => "needed",
-            Self::Waited => "waited",
             Self::Warmed => "later",
         }
     }
@@ -67,7 +65,7 @@ impl Warming {
         self.made
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn stood_in(&self) -> u64 {
         self.stood_in
     }

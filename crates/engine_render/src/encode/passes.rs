@@ -21,7 +21,6 @@ impl Run {
 
     pub(crate) fn start_runs(&mut self) {
         self.planning.runs.clear();
-        self.planning.idle.clear();
     }
 
     pub(crate) fn forget_ran(&mut self, part: u32) {
@@ -52,56 +51,6 @@ impl Run {
         for (index, set) in self.sets.list.iter_mut().enumerate() {
             if global || index == at {
                 set.ran.insert(pass);
-            }
-        }
-    }
-
-    pub(crate) fn skip_kind(&mut self, kind: engine_core::DrawKind, reason: &'static str) {
-        let part = self.part;
-        if !self
-            .planning
-            .idle
-            .iter()
-            .any(|&(known, held, _)| known == part && held == kind)
-        {
-            self.planning.idle.push((part, kind, reason));
-        }
-    }
-
-    pub(crate) fn drop_idle_scenes(&mut self) {
-        if self.planning.idle.is_empty() {
-            return;
-        }
-        for (index, pass) in self.machine.declared.passes.iter().enumerate() {
-            let Some(bit) = pass.scene.filter(|scene| scene.core).and_then(|scene| scene.bit)
-            else {
-                continue;
-            };
-            if !self.planning.runs.contains(index) {
-                continue;
-            }
-            let (installs, idle) = (&self.installs, &self.planning.idle);
-            let scene = bit.index();
-            let listed = installs.members.get(scene as usize).map_or(&[][..], Vec::as_slice);
-            let skipped: Option<Vec<(u32, &'static str)>> = listed
-                .iter()
-                .filter_map(|&at| installs.draw_entries.get(at as usize))
-                .map(|member| {
-                    idle.iter()
-                        .find(|&&(part, kind, _)| part == member.part && kind == member.decl.kind)
-                        .map(|&(.., reason)| (member.kind, reason))
-                })
-                .collect();
-            let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) else {
-                continue;
-            };
-            self.planning.runs.remove(index);
-            let kinds = &mut self.tallies.kinds;
-            kinds.scened(scene);
-            for (kind, reason) in skipped {
-                kinds.begin(scene, kind);
-                kinds.skip(reason);
-                kinds.end();
             }
         }
     }
@@ -146,7 +95,7 @@ impl Run {
 
     pub(crate) fn record_readbacks(&mut self) {
         self.leave();
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         self.read_work();
     }
 
@@ -198,12 +147,12 @@ impl Run {
                 load: Load::Load,
                 ..ops
             },
-            Target::Shared(_) if matches!(ops.load, Load::Clear(Clear::Color(_))) => Ops {
-                load: Load::Clear(Clear::Color(clear)),
-                ..ops
-            },
             Target::Canvas if loaded => Ops {
                 load: Load::Load,
+                ..ops
+            },
+            Target::Canvas if matches!(ops.load, Load::Clear(Clear::Color(_))) => Ops {
+                load: Load::Clear(Clear::Color(clear)),
                 ..ops
             },
             Target::Shared(_) | Target::Canvas => ops,

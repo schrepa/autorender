@@ -397,7 +397,7 @@ impl InstallCore {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn pipeline_facts(decl: &PipelineDecl) -> serde_json::Value {
     use serde_json::{Map, Value, json};
 
@@ -497,7 +497,7 @@ pub(crate) fn pipeline_facts(decl: &PipelineDecl) -> serde_json::Value {
     })
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 impl Declared {
     pub(crate) fn target_facts(&self, reinstalls: &[Reinstall]) -> serde_json::Value {
         let mut targets = serde_json::Map::new();

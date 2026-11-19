@@ -48,7 +48,7 @@ impl<'de> serde::Deserialize<'de> for ErrorCode {
     }
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 impl schemars::JsonSchema for ErrorCode {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "ErrorCode".into()
@@ -78,7 +78,6 @@ error_codes! {
     InvalidPath => "invalid_path",
     InvalidCamera => "invalid_camera",
     InvalidInput => "invalid_input",
-    InvalidStep => "invalid_step",
     InvalidRevision => "invalid_revision",
     InvalidArguments => "invalid_arguments",
     InvalidPresentationAlpha => "invalid_presentation_alpha",
@@ -108,7 +107,6 @@ error_codes! {
     HierarchyInstallFailed => "hierarchy_install_failed",
     NestedPrefab => "nested_prefab",
     MissingAssetLibrary => "missing_asset_library",
-    AssetBudgetExceeded => "asset_budget_exceeded",
     InvalidMesh => "invalid_mesh",
     InvalidMaterial => "invalid_material",
     InvalidTexture => "invalid_texture",

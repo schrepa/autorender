@@ -12,10 +12,6 @@ fn view_clip(world: vec3<f32>) -> vec4<f32> {
     return clip;
 }
 
-fn view_mip_bias() -> f32 {
-    return camera.mip_bias;
-}
-
 fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     let scale = maximum_abs(value);
     if scale == 0.0 { // optics: a zero vector's guard, whatever it measures

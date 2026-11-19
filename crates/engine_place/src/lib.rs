@@ -10,6 +10,7 @@ mod feeds;
 mod names;
 mod nodes;
 mod passes;
+mod poses;
 mod readback;
 mod readiness;
 mod requests;
@@ -31,10 +32,15 @@ pub use passes::{
     KindCell, KindJoin, Pass, PassBit, PassEntry, PassMask, PassName, PassViews, ScenePass,
     ScenePasses, TargetName, Writes,
 };
+pub use poses::{
+    COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, DrawnPoses, MIN_LINEAR_SCALE, NodePose,
+    PoseEntry, PoseFrame, PoseNodes, PoseRows, Poses, poses_wgsl, rows_matrix, same_pose_bits,
+    same_rows_bits,
+};
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::{CORE_ROW, Readiness, Unsettled};
 pub use requests::{Board, Census, Interest, Progress, Request, Requests, Settling, Ticket};
-pub use views::{Clear, Rect, Target, View};
+pub use views::{Clear, Rect, Target, View, ViewSkip};
 
 pub trait List: Send + Sync + 'static {
     const NAME: &'static str;

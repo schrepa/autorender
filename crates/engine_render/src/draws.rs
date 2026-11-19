@@ -1,7 +1,26 @@
-use engine_core::PassBit;
+use std::ops::Range;
+
+use engine_core::{GeometryHandle, MaterialHandle, PassBit};
 
 use crate::drawn::{Batches, KindBatch};
 use crate::profiling::GpuProfiler;
+
+#[derive(Clone, Copy, Debug)]
+pub struct BatchOf<'a> {
+    pub geometry: Option<GeometryHandle>,
+    pub material: Option<MaterialHandle>,
+    pub instances: &'a Range<u32>,
+}
+
+impl<'a> BatchOf<'a> {
+    pub(crate) fn of(batch: &'a KindBatch) -> Self {
+        Self {
+            geometry: batch.geometry,
+            material: batch.material,
+            instances: &batch.instances,
+        }
+    }
+}
 
 pub(crate) struct RawDraw<'e> {
     encoding: &'e mut crate::encode::Run,

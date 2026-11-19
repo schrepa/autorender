@@ -129,6 +129,7 @@ fn step_shape() -> Value {
         {"ticks": 600},
         {"frames": 60, "ticks_per_frame": 1},
         {"until": "settled", "frames": 600},
+        {"until": "settled", "frames": 600, "ticks_per_frame": 1},
         {"until": "stable", "frames": 600, "apart": 10, "tolerance": 2},
         {"until": "multiple", "of": 2, "ticks_per_frame": 0},
         {"wall_ms": 1000.0},
@@ -137,7 +138,7 @@ fn step_shape() -> Value {
 }
 
 fn parsed<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, Error> {
-    engine_settings::parse_value_at(args.clone(), "$.args")
+    engine_settings::parse_value_at(args, "$.args")
 }
 
 pub(super) fn install(world: &mut World) {
@@ -284,10 +285,11 @@ impl Step {
                 None => Form::Frames(required(args.frames, "frames")?),
             },
         };
+        let waits = matches!(form, Form::Settled(_));
         Ok(Self {
             form,
             rate: Rate {
-                ticks: args.ticks_per_frame.unwrap_or(1),
+                ticks: args.ticks_per_frame.unwrap_or(u32::from(!waits)),
                 alpha: args.alpha,
             },
             drawn: 0,

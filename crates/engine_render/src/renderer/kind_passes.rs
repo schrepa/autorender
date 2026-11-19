@@ -175,7 +175,7 @@ fn add_totals(run: &mut Run) {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn dropped_name(run: &Run, dropped: &DroppedTally) -> String {
     let owner = match dropped.kind {
         Some(kind) => kind_name(run, kind),
@@ -184,7 +184,7 @@ fn dropped_name(run: &Run, dropped: &DroppedTally) -> String {
     format!("{owner}/{}", pass_name(run, dropped.pass))
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn reason_name(reason: DropReason) -> String {
     match serde_json::to_value(reason) {
         Ok(serde_json::Value::String(name)) => name,
@@ -265,7 +265,7 @@ pub(super) fn take_reports(run: &mut Run) -> Option<DrawReports> {
     run.tallies.kinds.report.take()
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(super) fn dropped_totals(run: &Run) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (dropped, total) in &run.tallies.kinds.totals {

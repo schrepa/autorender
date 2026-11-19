@@ -74,7 +74,7 @@ const LINT: &[Stage<Lint>] = &[
         name: "wasm",
         needs: &[],
         covers: clients_changed,
-        run: |lint| build_wasm(&lint.root, false),
+        run: |lint| build_wasm(&lint.root),
     },
     Stage {
         name: "web dependencies",

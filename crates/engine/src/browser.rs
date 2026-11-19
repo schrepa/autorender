@@ -1,6 +1,6 @@
 use crate::GameHost;
 use crate::game::{Game, GameEntry};
-use engine_core::BrickList;
+use engine_core::{BrickList, IoAct, IoOrder, IoReply};
 use engine_scene::SceneFiles;
 use engine_settings::js_error as js;
 use wasm_bindgen::prelude::*;
@@ -55,8 +55,95 @@ fn ended() -> JsValue {
 
 pub struct PageHost<G: Game> {
     host: GameHost<G>,
+    landed: Landed,
     #[cfg(feature = "dev")]
     pixels: Vec<u8>,
+}
+
+type Landed = std::rc::Rc<std::cell::RefCell<Vec<IoReply>>>;
+
+const KEPT_PREFIX: &str = "kept-";
+
+fn run_io(IoOrder { id, act }: IoOrder, landed: Landed) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let done = match act {
+            IoAct::Read(at) => fetched(&at)
+                .await
+                .map(Some)
+                .map_err(|error| format!("{at}: {error}")),
+            IoAct::Load(place, name) => load(&place, &name),
+            IoAct::Store(place, name, bytes) => store(&place, &name, &bytes).map(|()| None),
+        };
+        landed.borrow_mut().push(IoReply { id, done });
+    });
+}
+
+async fn fetched(at: &str) -> Result<Vec<u8>, String> {
+    use wasm_bindgen_futures::JsFuture;
+    let window = web_sys::window().ok_or("no window")?;
+    let response = JsFuture::from(window.fetch_with_str(at))
+        .await
+        .map_err(|error| format!("{error:?}"))?;
+    let response: web_sys::Response = response.dyn_into().map_err(|error| format!("{error:?}"))?;
+    if !response.ok() {
+        return Err(format!("status {}", response.status()));
+    }
+    let buffer = response
+        .array_buffer()
+        .map_err(|error| format!("{error:?}"))?;
+    let buffer = JsFuture::from(buffer)
+        .await
+        .map_err(|error| format!("{error:?}"))?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+fn storage() -> Result<web_sys::Storage, String> {
+    web_sys::window()
+        .ok_or("no window")?
+        .local_storage()
+        .map_err(|error| format!("{error:?}"))?
+        .ok_or_else(|| "no local storage".to_owned())
+}
+
+fn key(place: &str, name: &str) -> String {
+    format!("{place}/{KEPT_PREFIX}{name}")
+}
+
+fn store(place: &str, name: &str, bytes: &[u8]) -> Result<(), String> {
+    let text: String = bytes.iter().map(|&byte| char::from(byte)).collect();
+    storage()?
+        .set_item(&key(place, name), &text)
+        .map_err(|error| format!("{}: {error:?}", key(place, name)))
+}
+
+fn load(place: &str, name: &str) -> Result<Option<Vec<u8>>, String> {
+    let at = key(place, name);
+    let Some(text) = storage()?
+        .get_item(&at)
+        .map_err(|error| format!("{at}: {error:?}"))?
+    else {
+        return Ok(None);
+    };
+    text.chars()
+        .map(|unit| u8::try_from(u32::from(unit)).map_err(|_| format!("{at}: not bytes")))
+        .collect::<Result<Vec<u8>, String>>()
+        .map(Some)
+}
+
+#[cfg(feature = "dev")]
+fn kept_listing(place: &str) -> Result<Vec<(String, u64)>, String> {
+    let storage = storage()?;
+    let failed = |error: JsValue| format!("{place}: {error:?}");
+    let mut listed = Vec::new();
+    for index in 0..storage.length().map_err(failed)? {
+        let at = storage.key(index).map_err(failed)?.unwrap_or_default();
+        if let Some(name) = at.strip_prefix(&key(place, "")) {
+            let text = storage.get_item(&at).map_err(failed)?.unwrap_or_default();
+            listed.push((name.to_owned(), text.chars().count() as u64));
+        }
+    }
+    listed.sort();
+    Ok(listed)
 }
 
 impl<G: Game> std::ops::Deref for PageHost<G> {
@@ -76,14 +163,26 @@ impl<G: Game> std::ops::DerefMut for PageHost<G> {
 impl<G: Game> PageHost<G> {
     pub async fn start(
         canvas: HtmlCanvasElement,
-        game: GameEntry<G>,
+        game: GameEntry,
         scene: Option<(String, SceneFiles)>,
     ) -> Result<Self, JsValue> {
         let bricks = (game.bricks)(BrickList::default());
         let target = engine_render::RenderTarget::Canvas(canvas);
-        let mut host = GameHost::launch(target, move |_| bricks, game.build)
+        let mut host = GameHost::launch(target, G::start(), bricks)
             .await
             .map_err(js)?;
+        #[cfg(feature = "dev")]
+        host.engine_mut()
+            .app
+            .insert_resource(engine_dev::Instruments {
+                names: crate::host::instruments(),
+                switch: crate::host::instrument,
+            });
+        #[cfg(feature = "dev")]
+        engine_registry::register(
+            host.engine_mut().app.world_mut(),
+            crate::host::kept_entry(kept_listing),
+        );
         host.keep_in(game.name);
         match scene {
             Some((source, files)) => host.open_scene(&source, &files).map_err(js)?,
@@ -95,9 +194,9 @@ impl<G: Game> PageHost<G> {
                 host.open_document(&document, &files).map_err(js)?;
             }
         }
-        host.engine_mut().exchange();
         Ok(Self {
             host,
+            landed: Landed::default(),
             #[cfg(feature = "dev")]
             pixels: Vec::new(),
         })
@@ -109,10 +208,14 @@ impl<G: Game> PageHost<G> {
         width: u32,
         height: u32,
     ) -> Result<u32, JsValue> {
-        Ok(self
+        for reply in self.landed.take() {
+            self.host.land_io(reply);
+        }
+        let phase = self
             .host
             .animation_frame(timestamp, width, height)
-            .map_err(js)? as u32)
+            .map_err(js)?;
+        Ok(phase as u32)
     }
 
     pub fn mouse_button(&mut self, button: u32, down: bool) {
@@ -135,18 +238,6 @@ impl<G: Game> PageHost<G> {
 
     pub fn touch_motion(&mut self, id: u32, dx: f32, dy: f32) {
         self.host.touch_motion(id, dx, dy);
-    }
-
-    pub fn pause(&mut self, reason: u32) {
-        if let Some(pause) = crate::host::HostPause::of(reason) {
-            self.host.pause(pause);
-        }
-    }
-
-    pub fn resume(&mut self, reason: u32) {
-        if let Some(pause) = crate::host::HostPause::of(reason) {
-            self.host.resume(pause);
-        }
     }
 
     pub fn cursor_mode(&self) -> u32 {
@@ -209,6 +300,9 @@ impl<G: Game> PageHost<G> {
                 }
             }
             out.push(&object);
+        }
+        for order in self.host.take_io() {
+            run_io(order, std::rc::Rc::clone(&self.landed));
         }
         out
     }

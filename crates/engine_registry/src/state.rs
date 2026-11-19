@@ -1,14 +1,13 @@
 use std::any::TypeId;
 
 use bevy_ecs::change_detection::DetectChangesMut;
-use bevy_ecs::component::ComponentId;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_place::Board;
 
-use crate::BrickId;
 use crate::registry::Registry;
+use crate::{BrickId, SpawnedBy};
 
 pub type SwitchFn = fn(&World) -> bool;
 
@@ -120,13 +119,12 @@ fn turn_off(world: &mut World, brick: BrickId) {
     let Some(record) = registry.record(brick) else {
         return;
     };
-    let (spawned, despawn, resources) = (record.spawned, registry.despawn, record.dropped());
+    let (despawn, resources) = (registry.despawn, record.dropped());
     let joins: Vec<Left> = record.joins.iter().map(|joined| joined.left).collect();
     if let Some(mut states) = world.get_resource_mut::<BrickStates>() {
         states.set(brick, false);
     }
-    let id = spawned(world);
-    let owned = holders(world, id);
+    let owned = holders(world, brick);
     despawn.unwrap_or(despawn_all)(world, &owned);
     for owned in &resources {
         remove(world, owned.type_id);
@@ -154,11 +152,11 @@ fn despawn_all(world: &mut World, entities: &[Entity]) {
     }
 }
 
-fn holders(world: &World, id: ComponentId) -> Vec<Entity> {
+fn holders(world: &mut World, brick: BrickId) -> Vec<Entity> {
     world
-        .archetypes()
-        .iter()
-        .filter(|archetype| archetype.contains(id))
-        .flat_map(|archetype| archetype.entities().iter().map(|held| held.id()))
+        .query::<(Entity, &SpawnedBy)>()
+        .iter(world)
+        .filter(|(_, by)| by.0 == brick)
+        .map(|(entity, _)| entity)
         .collect()
 }

@@ -68,10 +68,29 @@ pub(crate) fn install(world: &mut World) {
     );
     register(world, input::entry());
     orders::install(world);
-    world.insert_resource(engine_dev::Instruments {
-        names: instruments(),
-        switch: instrument,
-    });
+}
+
+type Listing = fn(&str) -> Result<Vec<(String, u64)>, String>;
+
+pub fn kept_entry(listing: Listing) -> NameEntry {
+    NameEntry::read("kept", Kind::State, move |reach, _| {
+        let place = reach
+            .world
+            .get_resource::<engine_core::Kept>()
+            .and_then(engine_core::Kept::place)
+            .ok_or_else(|| {
+                Error::new(ErrorCode::UnsupportedFeature, "$.kept").got("this host keeps nothing")
+            })?;
+        let listed =
+            listing(place).map_err(|error| Error::new(ErrorCode::SourceIo, "$.kept").got(error))?;
+        Ok(json!({
+            "place": place,
+            "kept": listed
+                .into_iter()
+                .map(|(name, bytes)| json!({ "name": name, "bytes": bytes }))
+                .collect::<Vec<_>>(),
+        }))
+    })
 }
 
 const UNCHANGED_WRITES: &str = "unchanged_writes";

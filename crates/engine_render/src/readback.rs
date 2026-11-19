@@ -8,12 +8,12 @@ use engine_core::FrameId;
 pub(crate) enum Reader {
     FrameTimer,
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
+        not(feature = "dev"),
         expect(dead_code, reason = "only dev and profiling builds read GPU spans")
     )]
     Profiler(u32),
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
+        not(feature = "dev"),
         expect(dead_code, reason = "only dev and profiling builds count shader work")
     )]
     Work,

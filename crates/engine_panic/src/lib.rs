@@ -4,7 +4,7 @@
 )]
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct PanicReport {
     pub message: String,
     pub location: String,

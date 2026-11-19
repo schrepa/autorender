@@ -15,6 +15,7 @@ use engine_core::{
 };
 
 use crate::draws::RawDraw;
+pub use draws::BatchOf;
 
 pub use wgpu;
 
@@ -42,25 +43,26 @@ mod renderer;
 mod targets;
 mod textures;
 mod variant;
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 mod whatif;
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use profiling::INSTRUMENTS as GPU_INSTRUMENTS;
 #[doc(hidden)]
 pub use platform::{AdapterInfo, RenderTarget};
+pub use platform::{GpuAsk, GpuRequest, SurfaceForm};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
-pub use platform::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
+pub use platform::{NativeWindow, keep_pipeline_cache_in};
 pub use registration::{Entries, Made};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use gpu_calls::unchanged_writes;
 pub use renderer::{
     Ahead, DeviceHealth, Installation, Renderer, StartingRenderer, device_limits, install_noop,
 };
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use renderer::gpu_names;
 pub use shaders::FULLSCREEN;
 pub use targets::{SharedTarget, TargetClear};
@@ -477,10 +479,6 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.run_pass(pass.0);
     }
 
-    pub fn skip_kind(&mut self, kind: engine_core::DrawKind, reason: &'static str) {
-        self.core.skip_kind(kind, reason);
-    }
-
     pub fn set_batch(
         &mut self,
         group: BatchGroup<P>,
@@ -521,8 +519,8 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.assets.textures.is_texture_resident(texture)
     }
 
-    pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
-        self.core.allocate(texture.0, size, mips)
+    pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d) -> Allocation {
+        self.core.allocate(texture.0, size)
     }
 
     pub fn allocate_buffer(&mut self, buffer: Buffer<P>, bytes: u64) -> Allocation {
@@ -626,8 +624,17 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
 }
 
 impl<P: GpuPart> Draw<'_, P, Scene> {
-    pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>) {
+    pub fn batches(
+        &mut self,
+        pipeline: &Pipeline<P, Scene>,
+        vertices: Range<u32>,
+        mut keep: impl FnMut(BatchOf<'_>) -> Option<u32>,
+    ) {
+        let mut kept = std::mem::take(&mut self.raw.run().spare.shapes);
         for batch in self.raw.batches() {
+            let Some(order) = keep(BatchOf::of(batch)) else {
+                continue;
+            };
             let shape = match batch.geometry {
                 Some(mesh) => Shape::Mesh {
                     mesh,
@@ -640,8 +647,15 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
                     key: batch.material,
                 },
             };
+            kept.push((order, shape));
+        }
+        if !kept.is_sorted_by_key(|(order, _)| *order) {
+            kept.sort_by_key(|(order, _)| *order);
+        }
+        for (_, shape) in kept.drain(..) {
             self.draw(pipeline, shape);
         }
+        self.raw.run().spare.shapes = kept;
     }
 
     pub fn pass(&mut self) -> Option<PassBit> {
@@ -705,9 +719,5 @@ gpu_struct! {
     pub struct CameraUniform {
         pub view_projection: [[f32; 4]; 4],
         pub position: [f32; 4],
-        pub mip_bias: f32,
-        pub pad_0: u32,
-        pub pad_1: u32,
-        pub pad_2: u32,
     }
 }

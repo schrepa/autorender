@@ -35,14 +35,27 @@ pub enum RenderTarget {
     Window {
         window: std::sync::Arc<dyn NativeWindow>,
         size: (u32, u32),
-        gpu: GpuPreference,
-        vsync: bool,
     },
     #[cfg(not(target_arch = "wasm32"))]
-    Offscreen {
-        size: (u32, u32),
-        gpu: GpuPreference,
-    },
+    Offscreen { size: (u32, u32) },
+}
+
+#[derive(Clone, Debug)]
+pub struct GpuAsk {
+    pub features: wgpu::Features,
+    pub limits: wgpu::Limits,
+}
+
+#[derive(Clone, Debug)]
+pub struct GpuRequest {
+    pub power: wgpu::PowerPreference,
+    pub need: GpuAsk,
+    pub want: GpuAsk,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SurfaceForm {
+    pub srgb: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -101,14 +114,6 @@ fn dxc() -> Option<std::path::PathBuf> {
         .find(|file| file.is_file())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum GpuPreference {
-    #[default]
-    HighPerformance,
-    LowPower,
-}
-
 impl RenderTarget {
     pub fn instance(&self) -> wgpu::Instance {
         match self {
@@ -128,18 +133,6 @@ impl RenderTarget {
         }
     }
 
-    pub fn power_preference(&self) -> wgpu::PowerPreference {
-        match self {
-            #[cfg(target_arch = "wasm32")]
-            Self::Canvas(_) => wgpu::PowerPreference::HighPerformance,
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { gpu, .. } | Self::Offscreen { gpu, .. } => match gpu {
-                GpuPreference::HighPerformance => wgpu::PowerPreference::HighPerformance,
-                GpuPreference::LowPower => wgpu::PowerPreference::LowPower,
-            },
-        }
-    }
-
     pub fn surface(
         &self,
         instance: &wgpu::Instance,
@@ -155,14 +148,6 @@ impl RenderTarget {
                 .map(Some),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Offscreen { .. } => Ok(None),
-        }
-    }
-
-    pub fn present_mode(&self) -> wgpu::PresentMode {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { vsync: false, .. } => wgpu::PresentMode::AutoNoVsync,
-            _ => wgpu::PresentMode::Fifo,
         }
     }
 

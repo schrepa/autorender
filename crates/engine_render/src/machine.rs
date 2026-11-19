@@ -18,7 +18,7 @@ mod layouts;
 
 pub(crate) use composing::{BatchEntry, BatchLayout, Composing, batch_path, compose};
 pub(crate) use layouts::Layouts;
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) use layouts::layout_names;
 
 pub(crate) const CAMERA_STRIDE: u64 = 512;
@@ -192,7 +192,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) decl: PipelineDecl,
     pub(crate) stages: Vec<Stage>,
     pub(crate) layout: wgpu::PipelineLayout,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) group_layouts: Vec<wgpu::BindGroupLayout>,
     pub(crate) groups: Vec<OwnGroup>,
     pub(crate) variant: u32,
@@ -268,7 +268,7 @@ pub(crate) struct Machine {
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
     pub(crate) batches: Vec<BatchLayout>,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) layouts: Layouts,
     pub(crate) passes: Vec<crate::encode::PassLayout>,
     pub(crate) limits: Limits,
@@ -709,7 +709,7 @@ impl Machine {
                 };
                 used.push(layout);
             }
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             let group_layouts = (used.iter()).map(|&layout| layout.clone()).collect();
             let (layout, layout_key) = layouts.pipeline(device, &used);
             let (streams, colors) = match &decl.program {
@@ -745,7 +745,7 @@ impl Machine {
                 decl,
                 stages,
                 layout,
-                #[cfg(any(feature = "dev", feature = "profiling"))]
+                #[cfg(feature = "dev")]
                 group_layouts,
                 groups,
                 variant,
@@ -793,7 +793,7 @@ impl Machine {
             frame_bound,
             variants,
             batches,
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             layouts,
             passes: Vec::new(),
             limits,

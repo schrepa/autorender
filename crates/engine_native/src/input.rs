@@ -1,4 +1,4 @@
-use engine::host::policy::WHEEL_PIXELS;
+use engine::host::WHEEL_PIXELS;
 use engine::{CursorMode, Game, GameHost, MouseButton, TouchPhase};
 use gilrs::{Axis, Button, Gamepad, Gilrs};
 use winit::dpi::PhysicalPosition;

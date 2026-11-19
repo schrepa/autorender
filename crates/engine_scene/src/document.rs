@@ -11,11 +11,11 @@ use crate::{SceneEnvironment, SceneFiles, SceneMaterial, SceneTexture};
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
     #[cfg_attr(
-        feature = "schema",
+        feature = "dev",
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
@@ -40,12 +40,12 @@ impl SceneDocument {
                 .at_most(MAX_SOURCE_BYTES as u64)
                 .got(source.len()));
         }
-        let document: Self = crate::parse_json(source)?;
+        let document: Self = engine_settings::parse_json(source)?;
         document.structure()?;
         Ok(document)
     }
 
-    #[cfg(feature = "schema")]
+    #[cfg(feature = "dev")]
     pub fn schema_json(registry: &engine_registry::Registry, kinds: &crate::SceneKinds) -> String {
         let mut schema =
             serde_json::to_value(schemars::schema_for!(Self)).expect("schema_serializes");
@@ -53,7 +53,7 @@ impl SceneDocument {
             .get_mut("$defs")
             .and_then(serde_json::Value::as_object_mut)
         {
-            let sections = crate::section_schemas(registry, definitions);
+            let sections = crate::environment::section_schemas(registry, definitions);
             if let Some(properties) = definitions
                 .get_mut("SceneEnvironment")
                 .and_then(|environment| environment.get_mut("properties"))
@@ -82,11 +82,11 @@ impl SceneDocument {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneMesh {
     #[cfg_attr(
-        feature = "schema",
+        feature = "dev",
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
@@ -94,20 +94,20 @@ pub struct SceneMesh {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MeshSource {
     Cube {},
     Plane {},
     Inline {
-        #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
+        #[cfg_attr(feature = "dev", schemars(length(min = 1)))]
         vertices: Vec<SceneVertex>,
-        #[cfg_attr(feature = "schema", schemars(length(min = 3)))]
+        #[cfg_attr(feature = "dev", schemars(length(min = 3)))]
         indices: Vec<u32>,
     },
     Buffer {
         #[cfg_attr(
-            feature = "schema",
+            feature = "dev",
             schemars(
                 length(min = 1, max = 256),
                 regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
@@ -173,7 +173,7 @@ impl MeshSource {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneVertex {
     pub position: [f32; 3],

@@ -1,11 +1,10 @@
-use engine_core::{BrickList, Devices, Engine, FrameFacts, PauseReason, RenderStats};
+use bevy_ecs::resource::Resource;
+use engine_core::{BrickList, Devices, Engine, FrameFacts, Host, Present, RenderStats};
 use engine_registry::Registry;
 use engine_render::{Picture, RenderTarget, Renderer};
 
-use crate::Result;
 use crate::frame_stats::{FrameStats, GpuTime, ResolutionStats};
-use crate::host::InputSource;
-use crate::host::policy::FRAME_INTERVAL_MS;
+use crate::{Result, Start};
 
 #[path = "app_attribution.rs"]
 mod attribution;
@@ -30,12 +29,6 @@ pub fn now_ms() -> f64 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Focus {
-    Held,
-    Lost,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Advance {
     Clock(f64),
@@ -49,7 +42,6 @@ pub(crate) enum Advance {
 pub(crate) struct AppHost {
     pub(crate) engine: Engine,
     pub(crate) renderer: Box<Renderer>,
-    focus: Focus,
     preparation_ms: f64,
     size: (u32, u32),
     overlay: crate::host::SettingsLog,
@@ -75,17 +67,34 @@ fn built(build: impl FnOnce() -> Result<Engine>) -> Result<Engine> {
 impl AppHost {
     pub(crate) async fn launch(
         target: RenderTarget,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<()>,
+        start: Start,
+        bricks: BrickList,
+        game: impl Resource,
     ) -> Result<Self> {
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         engine_profile::install_clock(now_ms);
+        let Start {
+            ticks_per_second,
+            gpu,
+            surface,
+            present,
+            show,
+        } = start;
         let mut engine = built(|| {
-            let mut engine = crate::engine(bricks)?;
-            build(&mut engine)?;
+            let mut engine = crate::game::engine(bricks, ticks_per_second)?;
+            engine
+                .app
+                .insert_resource(game)
+                .insert_resource(present)
+                .insert_resource(show);
+            engine.report_host(Host {
+                focused: true,
+                hidden: false,
+                showing: false,
+            });
             Ok(engine)
         })?;
-        let mut start = std::pin::pin!(Renderer::start(target));
+        let mut start = std::pin::pin!(Renderer::start(target, gpu, surface, present));
         let started = std::future::poll_fn(|cx| {
             std::task::Poll::Ready(std::future::Future::poll(start.as_mut(), cx))
         })
@@ -96,7 +105,7 @@ impl AppHost {
             std::task::Poll::Pending => start.await,
         }?;
         let renderer = Box::new(starting.finish());
-        let mut host = Self::with(engine, renderer);
+        let mut host = Self::with(engine, renderer, ticks_per_second);
         host.claim_passes(ahead)?;
         for error in host.engine.notices() {
             log_notice(error);
@@ -104,7 +113,7 @@ impl AppHost {
         Ok(host)
     }
 
-    fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
+    fn with(mut engine: Engine, renderer: Box<Renderer>, ticks_per_second: u32) -> Self {
         engine.app.world_mut().init_resource::<FrameStats>();
         engine
             .app
@@ -123,13 +132,12 @@ impl AppHost {
         Self {
             engine,
             renderer,
-            focus: Focus::Held,
             preparation_ms: 0.0,
             size: (0, 0),
             overlay: crate::host::SettingsLog::default(),
             pipelines_kept: 0,
             pixel_ratio: 1.0,
-            refresh: FRAME_INTERVAL_MS,
+            refresh: 1000.0 / f64::from(ticks_per_second),
             gpu_ms,
         }
     }
@@ -142,19 +150,10 @@ impl AppHost {
         &mut self.engine
     }
 
-    pub(crate) fn set_focus(&mut self, focus: Focus, source: InputSource) {
-        self.focus = focus;
-        self.follow_focus(source);
-    }
-
-    pub(crate) fn follow_focus(&mut self, source: InputSource) {
-        match (self.focus, source) {
-            (Focus::Lost, InputSource::Player) => self.engine.pause(PauseReason::Focus),
-            (Focus::Lost, InputSource::Agent)
-            | (Focus::Held, InputSource::Player | InputSource::Agent) => {
-                self.engine.resume(PauseReason::Focus);
-            }
-        }
+    pub(crate) fn report_host(&mut self, change: impl FnOnce(&mut Host)) {
+        let mut host = *self.engine.app.world().resource::<Host>();
+        change(&mut host);
+        self.engine.report_host(host);
     }
 
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -227,7 +226,8 @@ impl AppHost {
         let fixed_steps = self.advance(advance)?;
         let simulation_ms = now_ms() - start;
         let drawn = self.render_frame(size, (simulation_ms, fixed_steps), picture)?;
-        self.engine.exchange();
+        let present = *self.engine.app.world().resource::<Present>();
+        self.renderer.set_present(present);
         Ok(drawn)
     }
 
@@ -239,30 +239,15 @@ impl AppHost {
             }
             #[cfg(feature = "dev")]
             Advance::Stepped { ticks, alpha } => {
-                if ticks == 0 {
-                    self.engine.frame_without_ticks();
-                }
-                let mut fixed_steps = 0;
-                for tick in 0..ticks {
-                    if tick > 0 {
-                        self.engine.start_frame();
-                        engine_core::hold_input(self.engine.app.world_mut());
-                    }
-                    self.engine.step_fixed(1)?;
-                    fixed_steps += self.engine.frame_time().ticks;
-                }
-                if let Some(alpha) = alpha {
-                    self.engine
-                        .present(engine_core::Presented::Between { alpha })?;
-                }
-                Ok(fixed_steps)
+                self.engine.step(ticks, alpha.unwrap_or(1.0))?;
+                Ok(self.engine.frame_time().ticks)
             }
         }
     }
 
     pub(crate) fn accept(&mut self, input: Devices) {
         let _profile = engine_profile::span("cpu", "host.input");
-        engine_core::accept_input(self.engine.app.world_mut(), input);
+        self.engine.accept_input(input);
     }
 
     fn display_size(&self, (width, height): (u32, u32)) -> glam::UVec2 {
@@ -315,7 +300,7 @@ impl AppHost {
             render: rendered,
         };
         *self.engine.app.world_mut().resource_mut::<FrameStats>() = summary;
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         self.add_stage_times([simulation_ms, extraction_ms, acquire_ms + draw_ms]);
         if acquired && picture == Picture::Shown && self.engine.readiness().settled() {
             self.renderer.settle_pipelines();
@@ -324,7 +309,7 @@ impl AppHost {
         Ok(acquired)
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     fn add_stage_times(&mut self, [simulation, extraction, render]: [f64; 3]) {
         use bevy_ecs::change_detection::DetectChangesMut;
         let ns = |ms: f64| (ms * 1.0e6) as u64;
@@ -339,7 +324,7 @@ impl AppHost {
 
     fn draw_frame(&mut self, (width, height): (u32, u32)) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
-        self.engine.start_frame();
+        self.engine.before_draw();
         let display_size = self.display_size((width, height));
         let facts = FrameFacts {
             display_size,
@@ -434,6 +419,6 @@ impl AppHost {
 
     pub fn suspend(&mut self) {
         self.engine.reset_clock();
-        engine_core::hold_input(self.engine.app.world_mut());
+        self.engine.drop_marks();
     }
 }

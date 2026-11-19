@@ -3,19 +3,22 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bevy_ecs::bundle::Bundle;
-use bevy_ecs::component::{Component, Immutable, Mutable};
+use bevy_ecs::component::{Component, Immutable};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryFilter, ReadOnlyQueryData};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::IntoScheduleConfigs;
-use bevy_ecs::system::{Commands, Query, ReadOnlySystemParam, Res, ScheduleSystem, SystemParam};
+use bevy_ecs::system::{
+    Commands, Local, Query, ReadOnlySystemParam, Res, ScheduleSystem, SystemParam,
+};
 use bevy_ecs::world::World;
-use engine_registry::{BrickRecord, Registry, SettingsEntry, SpawnedBy, StatsEntry};
+use engine_registry::{BrickId, BrickRecord, BrickSystems, Registry, SettingsEntry, SpawnedBy};
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Error, KindDecl, List, Mover, MoverId, Pace, Parent, SceneContext, Section, Source, Switch,
+    DevOnly, Error, ErrorCode, KindDecl, List, Mover, MoverId, Pace, Parent, SceneContext,
+    Schedule, Section, Source, Switch,
 };
 
 pub trait Brick: 'static {
@@ -24,7 +27,8 @@ pub trait Brick: 'static {
 }
 
 pub struct Bricks<'r> {
-    record: &'r mut BrickRecord,
+    pub(crate) record: &'r mut BrickRecord,
+    systems: &'r mut BrickSystems,
 }
 
 impl engine_registry::RecordExt for Bricks<'_> {
@@ -49,12 +53,9 @@ impl Bricks<'_> {
     pub fn systems<M>(
         &mut self,
         schedule: Schedule,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
-    ) -> &mut Self
-    where
-        M: 'static,
-    {
-        self.record.systems(schedule.label(), systems);
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> &mut Self {
+        self.systems.add(schedule.label(), systems);
         self
     }
 
@@ -66,12 +67,6 @@ impl Bricks<'_> {
     #[track_caller]
     pub fn settings<S: Section + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
         self.record.settings(settings_entry::<S>());
-        self
-    }
-
-    #[track_caller]
-    pub fn stats<S: Section + Resource<Mutability = Mutable>>(&mut self) -> &mut Self {
-        self.record.stats(StatsEntry::of::<S>(S::KEY, S::schema));
         self
     }
 
@@ -99,23 +94,42 @@ fn switch_on<S: Switch + Resource>(world: &World) -> bool {
 }
 
 #[track_caller]
-pub(crate) fn settings_entry<S: Section>() -> SettingsEntry {
-    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S>, scene_of::<S>, S::schema)
+pub(crate) fn settings_entry<S: Section + Resource>() -> SettingsEntry {
+    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S, S>, scene_of::<S>)
+}
+
+#[track_caller]
+pub(crate) fn dev_settings_entry<S: Section>() -> SettingsEntry {
+    SettingsEntry::of::<DevOnly<S>>(
+        S::KEY,
+        check_of::<S>,
+        set_of::<S, DevOnly<S>>,
+        scene_of::<S>,
+    )
+}
+
+fn checked<S: Section>(value: &Value, path: &str) -> Result<S, Error> {
+    let section: S = engine_settings::parse_value_at(value, path)?;
+    section.check().map_err(|error| error.within(path))?;
+    Ok(section)
 }
 
 fn check_of<S: Section>(value: &Value, path: &str) -> Result<(), Error> {
-    engine_registry::parse_section::<S>(value, path, S::check).map(drop)
+    checked::<S>(value, path).map(drop)
 }
 
-fn set_of<S: Section>(world: &mut World, value: &Value, path: &str) -> Result<(), Error> {
-    let section: S = engine_settings::parse_value_at(value.clone(), path)?;
-    section.check().map_err(|error| error.within(path))?;
+fn set_of<S: Section, R: Resource + From<S>>(
+    world: &mut World,
+    value: &Value,
+    path: &str,
+) -> Result<(), Error> {
+    let section = checked::<S>(value, path)?;
     if let Some(scene) = world.get_resource::<SceneContext>() {
         scene
             .scope(|| section.check_scene(scene))
             .map_err(|error| error.within(path))?;
     }
-    world.insert_resource(section);
+    world.insert_resource(R::from(section));
     Ok(())
 }
 
@@ -124,7 +138,7 @@ fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<()
         return Ok(());
     };
     scene.scope(|| {
-        let section: S = engine_settings::parse_value_at(value.clone(), path)?;
+        let section: S = engine_settings::parse_value_at(value, path)?;
         section
             .check_scene(scene)
             .map_err(|error| error.within(path))
@@ -139,27 +153,29 @@ pub trait Listing: Sized {
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct Listed {
-    record: fn() -> BrickRecord,
+    record: fn() -> (BrickRecord, BrickSystems),
 }
 
 impl Listed {
-    pub fn record(&self) -> BrickRecord {
+    pub fn record(&self) -> (BrickRecord, BrickSystems) {
         (self.record)()
     }
 }
 
-fn record_of<B: Brick>() -> BrickRecord {
+fn record_of<B: Brick>() -> (BrickRecord, BrickSystems) {
     let source = B::SOURCE;
-    let mut record = BrickRecord::new::<B>(source.package());
+    let mut record = BrickRecord::new(source.package());
     record.set_game(source.game());
     if let Some(first) = source.modules().first() {
         let path = first.path();
         record.shader_prefix(path.split("::").next().unwrap_or(path));
     }
+    let mut systems = BrickSystems::default();
     B::register(&mut Bricks {
         record: &mut record,
+        systems: &mut systems,
     });
-    record
+    (record, systems)
 }
 
 #[doc(hidden)]
@@ -231,20 +247,28 @@ read_tuples!(
 #[derive(SystemParam)]
 pub struct Spawner<'w, 's, B: Brick> {
     commands: Commands<'w, 's>,
+    registry: Res<'w, Registry>,
+    by: Local<'s, Option<BrickId>>,
     brick: PhantomData<fn() -> B>,
 }
 
 impl<B: Brick> Spawner<'_, '_, B> {
     pub fn spawn(&mut self, bundle: impl Bundle) -> Entity {
         let entity = self.commands.spawn_empty().id();
+        let package = B::SOURCE.package();
+        if self.by.is_none() {
+            *self.by = self.registry.id(package);
+        }
+        let by = *self.by;
         self.commands
-            .queue(move |world: &mut World| spawned::<B, _>(world, entity, bundle));
+            .queue(move |world: &mut World| spawned(world, entity, bundle, by, package));
         entity
     }
 
     pub fn insert(&mut self, entity: Entity, bundle: impl Bundle) {
+        let package = B::SOURCE.package();
         self.commands
-            .queue(move |world: &mut World| inserted::<B, _>(world, entity, bundle));
+            .queue(move |world: &mut World| inserted(world, entity, bundle, package));
     }
 
     pub fn remove<T: Bundle>(&mut self, entity: Entity) {
@@ -266,23 +290,35 @@ impl<B: Brick> Spawner<'_, '_, B> {
     }
 
     pub fn set_parents(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
+        let package = B::SOURCE.package();
         self.commands
-            .queue(move |world: &mut World| parented::<B>(world, &changes));
+            .queue(move |world: &mut World| parented(world, &changes, package));
     }
 }
 
-fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
+fn spawned<T: Bundle>(
+    world: &mut World,
+    entity: Entity,
+    bundle: T,
+    by: Option<BrickId>,
+    package: &'static str,
+) {
+    let Some(by) = by else {
+        let _ = world.try_despawn(entity);
+        let unlisted = Error::new(ErrorCode::UnknownReference, "$").got(package);
+        return refused(world, package, "spawn", unlisted);
+    };
     let Ok(mut spawned) = world.get_entity_mut(entity) else {
         return;
     };
-    spawned.insert((bundle, SpawnedBy::<B>::new()));
+    spawned.insert((bundle, SpawnedBy(by)));
     if let Err(error) = crate::admit(world, entity, None, "$") {
         let _ = world.try_despawn(entity);
-        refused::<B>(world, "spawn", error);
+        refused(world, package, "spawn", error);
     }
 }
 
-fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
+fn inserted<T: Bundle>(world: &mut World, entity: Entity, bundle: T, package: &'static str) {
     let Ok(mut held) = world.get_entity_mut(entity) else {
         return;
     };
@@ -295,17 +331,17 @@ fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
         if let Ok(mut held) = world.get_entity_mut(entity) {
             held.remove::<T>();
         }
-        refused::<B>(world, "insert", error);
+        refused(world, package, "insert", error);
     }
 }
 
-fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
+fn parented(world: &mut World, changes: &[(Entity, Option<Entity>)], package: &'static str) {
     let before: Vec<(Entity, Option<Entity>)> = changes
         .iter()
         .map(|&(child, _)| (child, world.get::<Parent>(child).map(Parent::parent)))
         .collect();
     if let Err(error) = crate::set_parents(world, changes) {
-        refused::<B>(world, "parent", error);
+        refused(world, package, "parent", error);
         return;
     }
     let admitted = changes
@@ -313,12 +349,12 @@ fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
         .try_for_each(|&(child, _)| crate::admit(world, child, None, "$"));
     if let Err(error) = admitted {
         let _ = crate::set_parents(world, &before);
-        refused::<B>(world, "parent", error);
+        refused(world, package, "parent", error);
     }
 }
 
-fn refused<B: Brick>(world: &mut World, call: &str, error: Error) {
-    let path = format!("$.bricks.{}.spawner.{call}", B::SOURCE.package());
+fn refused(world: &mut World, package: &str, call: &str, error: Error) {
+    let path = format!("$.bricks.{package}.spawner.{call}");
     report(world, error.within(&path));
 }
 
@@ -326,11 +362,4 @@ fn report(world: &mut World, error: Error) {
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         registry.report(error);
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Schedule {
-    FrameStart,
-    FixedSimulation,
-    Presentation,
 }

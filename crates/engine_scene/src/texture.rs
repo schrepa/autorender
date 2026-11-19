@@ -6,25 +6,25 @@ use serde::{Deserialize, Serialize};
 use crate::SceneFiles;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTexture {
     #[cfg_attr(
-        feature = "schema",
+        feature = "dev",
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[cfg_attr(feature = "dev", schemars(range(min = 1)))]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[cfg_attr(feature = "dev", schemars(range(min = 1)))]
     pub height: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rgba8: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "schema",
+        feature = "dev",
         schemars(
             length(min = 1, max = 256),
             regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")

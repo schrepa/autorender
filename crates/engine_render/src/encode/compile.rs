@@ -5,6 +5,7 @@ use super::*;
 use crate::Variant;
 use crate::install::RenderDecl;
 use crate::machine::{BuiltPipeline, Stage};
+use engine_core::DropReason;
 
 fn stage_key(
     stage: &Stage,
@@ -182,7 +183,7 @@ pub(crate) struct Compiler<'r> {
     machine: &'r mut Machine,
     pipelines: &'r mut Pipelines,
     frame: u64,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     bound: &'r mut super::run::Bound,
 }
 
@@ -382,7 +383,7 @@ impl Run {
             machine: &mut self.machine,
             pipelines: &mut self.pipelines,
             frame: self.frames.asked,
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             bound: &mut self.bound,
         }
     }
@@ -427,7 +428,7 @@ impl Run {
         let making = &pipelines.making;
         pipelines.standing.retain(|&made| making.waits(made));
         self.pipelines = pipelines;
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         if self.pipelines.work.as_ref().is_some_and(|work| work.live.is_some()) {
             let _ = self.count_work(true);
         }
@@ -461,7 +462,6 @@ impl Run {
         pipeline: u32,
         drawn: Option<(&Variant, u64)>,
     ) -> Result<usize, engine_core::DropReason> {
-        use engine_core::DropReason;
         let layout = self
             .recording
             .open()
@@ -504,7 +504,7 @@ impl Run {
             });
         };
         self.pipelines.making.book.used((program, key), self.frames.asked);
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         if self.pipelines.work.is_some() {
             let variant = if exact { variant } else { variant.and_then(|variant| variant.stand_in.as_deref()) };
             self.compiler().count_ready(pipeline, (targets, shown), (program, key), variant);
@@ -526,16 +526,21 @@ impl Run {
     pub(super) fn compute_pipeline(
         &mut self,
         pipeline: u32,
-        wait: bool,
-    ) -> Option<wgpu::ComputePipeline> {
-        let found = self.compute_with(pipeline, if wait { Asked::Waited } else { Asked::Drawn })?;
-        let program = self.machine.pipelines.get(pipeline as usize)?.program_key;
+    ) -> Result<wgpu::ComputePipeline, DropReason> {
+        let built = self.machine.pipelines.get(pipeline as usize);
+        let program = built.ok_or(DropReason::UnknownPipeline)?.program_key;
+        let Some(found) = self.compute_with(pipeline, Asked::Drawn) else {
+            return Err(if self.pipelines.making.program_waits(program) {
+                DropReason::PipelineCompiling
+            } else {
+                DropReason::PipelineRefused
+            });
+        };
         self.pipelines.making.book.used((program, 0), self.frames.asked);
-        Some(found)
+        Ok(found)
     }
 
     pub(super) fn compute_with(&mut self, pipeline: u32, asked: Asked) -> Option<wgpu::ComputePipeline> {
-        let wait = asked == Asked::Waited;
         self.compiler().collect(None);
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let (Program::Compute(_), Some(stage)) = (&built.decl.program, built.stages.first()) else {
@@ -583,14 +588,14 @@ impl Run {
         } else if asked != Asked::Warmed {
             self.pipelines.warming.promote(made);
         }
-        self.compiler().collect(wait.then_some(made));
+        self.compiler().collect(None);
         let found = computed_by_program(&self.machine.pipelines, program, key)?;
         if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize)
             && !built.computed.iter().any(|(known, _)| *known == key)
         {
             built.computed.push((key, found.clone()));
         }
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         if asked != Asked::Warmed {
             self.compiler().count_compute(pipeline, made);
         }
@@ -601,7 +606,7 @@ impl Run {
 impl Compiler<'_> {
     pub(crate) fn collect(&mut self, waited: Option<(u64, u64)>) {
         for finished in self.pipelines.making.take(waited) {
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            #[cfg(feature = "dev")]
             let Some(finished) = self.counted_arrived(finished) else {
                 continue;
             };
@@ -985,5 +990,5 @@ fn cut_depth(state: &mut wgpu::DepthStencilState, cut: &Variant) {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 mod counted;

@@ -15,7 +15,7 @@ pub use attributes::{
     StreamShape, attributes_wgsl,
 };
 pub use library::{
-    Asset, AssetBudget, AssetLibrary, GeometryHandle, MaterialHandle, SceneAssets, SceneTable,
+    Asset, AssetLibrary, GeometryHandle, MaterialHandle, SceneAssets, SceneTable,
     TextureHandle,
 };
 pub use material::{

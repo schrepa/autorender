@@ -27,7 +27,7 @@ pub struct DrawKey {
 #[cfg(feature = "profiling")]
 pub const FEATURES: wgpu::Features = wgpu::Features::PIPELINE_STATISTICS_QUERY;
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub const INSTRUMENTS: [&str; 4] = [
     "gpu.passes",
     "gpu.passes.split",
@@ -35,22 +35,22 @@ pub const INSTRUMENTS: [&str; 4] = [
     crate::linker::counting::INSTRUMENT,
 ];
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 const MARKS: &str = "adds an empty compute pass with two time stamps at each group and batch boundary";
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 const SPLIT: &str = concat!(
     "pass merging off, so every group of passes is its own render pass; ",
     "adds an empty compute pass with two time stamps at each group and batch boundary"
 );
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use timer::GpuProfiler;
 
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
+#[cfg(not(feature = "dev"))]
 pub struct GpuProfiler;
 
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
+#[cfg(not(feature = "dev"))]
 impl GpuProfiler {
     pub fn new(_features: wgpu::Features, _period_ns: f64) -> Self {
         Self
@@ -102,7 +102,7 @@ impl GpuProfiler {
     pub(crate) fn arrived(&mut self, _slot: u32, _arrival: crate::readback::Arrival<'_>) {}
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 mod timer {
     use std::cell::{Cell, RefCell};
 

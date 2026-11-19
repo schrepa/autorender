@@ -6,12 +6,11 @@ use engine_core::{
     OperationScene, Parent, Reach, ReachMut, Refusals, Transform, scene_component,
     scene_components, unavailable,
 };
+use engine_registry::{Registry, SpawnedBy};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-
-const SPAWNED_BY: &str = "SpawnedBy<";
 
 pub fn row(world: &mut World) -> NameEntry {
     let kinds: Vec<_> = scene_components(world).cloned().collect();
@@ -98,13 +97,9 @@ fn header(world: &World, entity: Entity) -> Map<String, Value> {
     row
 }
 
-fn spawned_by(world: &World, entity: Entity) -> Option<String> {
-    world.inspect_entity(entity).ok()?.find_map(|info| {
-        let name = info.name().shortname().to_string();
-        name.strip_prefix(SPAWNED_BY)
-            .and_then(|rest| rest.strip_suffix('>'))
-            .map(str::to_owned)
-    })
+fn spawned_by(world: &World, entity: Entity) -> Option<&'static str> {
+    let SpawnedBy(brick) = *world.get::<SpawnedBy>(entity)?;
+    Some(world.get_resource::<Registry>()?.record(brick)?.package)
 }
 
 fn listing(
@@ -180,14 +175,12 @@ pub fn values(reach: &Reach<'_>, entity: Entity, covered: &[ComponentId]) -> Vec
             found.push((kind.key().to_owned(), value));
         }
     }
+    let spawned = world.component_id::<SpawnedBy>();
     if let Ok(infos) = world.inspect_entity(entity) {
-        for info in infos.filter(|info| !covered.contains(&info.id())) {
-            let short = info.name().shortname().to_string();
-            if short.starts_with(SPAWNED_BY) {
-                continue;
-            }
+        for info in infos.filter(|info| !covered.contains(&info.id()) && Some(info.id()) != spawned)
+        {
             let reason = format!("{} has no serializer", info.name());
-            found.push((short, unavailable(reason)));
+            found.push((info.name().shortname().to_string(), unavailable(reason)));
         }
     }
     found

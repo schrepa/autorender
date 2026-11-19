@@ -25,8 +25,8 @@ export interface Runtime {
   touch_motion(id: number, dx: number, dy: number): void;
   animation_frame(timestamp: number, width: number, height: number): number;
   suspend(): void;
-  pause(reason: number): void;
-  resume(reason: number): void;
+  focused(focused: boolean): void;
+  hidden(hidden: boolean): void;
   reset_camera(): void;
   reload_scene(source: string, files: unknown): void;
   set_file_root(root: string): void;

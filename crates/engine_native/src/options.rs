@@ -4,25 +4,18 @@ use std::path::{Path, PathBuf};
 use engine::command_line::CommandOption;
 use engine::host::{HostSettings, OVERLAY, SceneLoad};
 use engine::scene::SceneKinds;
-use engine::{
-    BrickList, DefaultScene, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost,
-    GpuPreference,
-};
+use engine::prelude::wgpu::PowerPreference;
+use engine::{BrickList, DefaultScene, Error, ErrorCode, Expected, Game, GameEntry, GameHost, Start};
 use serde_json::json;
 
 use crate::{Offscreen, Window};
 
-pub fn options() -> Vec<CommandOption> {
-    let defaults = HostOptions::default();
-    let gpu = match defaults.gpu {
-        GpuPreference::HighPerformance => "discrete",
-        GpuPreference::LowPower => "integrated",
-    };
+pub(crate) fn options() -> Vec<CommandOption> {
     vec![
         CommandOption::taking("--scene", "PATH"),
         CommandOption::taking("--size", "WxH").in_unit("px"),
-        CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
-        CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
+        CommandOption::taking("--gpu", "discrete|integrated"),
+        CommandOption::taking("--vsync", "on|off"),
         CommandOption::taking(&format!("--{OVERLAY}"), "KEY=JSON"),
         CommandOption::taking("--offscreen", "[N]"),
         CommandOption::flag("--dev"),
@@ -32,10 +25,6 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
     ]
-}
-
-fn switch(on: bool) -> &'static str {
-    if on { "on" } else { "off" }
 }
 
 #[derive(Clone, Debug)]
@@ -131,12 +120,12 @@ impl Iterator for Arguments {
 }
 
 #[derive(Clone, Debug)]
-pub enum StartScene {
+pub(crate) enum StartScene {
     File(PathBuf),
     Declared { scene: DefaultScene, folder: String },
 }
 
-pub fn open_scene<G: Game>(host: &mut GameHost<G>, scene: &StartScene) -> engine::Result<()> {
+pub(crate) fn open_scene<G: Game>(host: &mut GameHost<G>, scene: &StartScene) -> engine::Result<()> {
     let kinds = SceneKinds::of(host.engine().app.world());
     match scene {
         StartScene::Declared { scene, folder } => {
@@ -148,7 +137,7 @@ pub fn open_scene<G: Game>(host: &mut GameHost<G>, scene: &StartScene) -> engine
         StartScene::File(path) => {
             let source = std::fs::read_to_string(path)
                 .map_err(|error| crate::file_error("--scene", path, &error))?;
-            let (document, files) = crate::files::scene_opened(path, &source, &kinds)?;
+            let (document, files) = crate::io::scene_opened(path, &source, &kinds)?;
             host.open_document(&document, &files)?;
             host.set_file_root(&folder_of(path));
             #[cfg(feature = "dev")]
@@ -181,39 +170,20 @@ fn folder_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-#[derive(Clone, Debug)]
-pub struct HostOptions {
-    pub scene: Option<PathBuf>,
-    pub assets: Option<PathBuf>,
-    pub size: Option<(u32, u32)>,
-    pub gpu: GpuPreference,
-    pub vsync: bool,
-    pub settings: HostSettings,
-    pub headless: bool,
-    pub frames: Option<u32>,
-    pub dev: bool,
-    pub run: Option<String>,
-    pub schemas: bool,
-    pub shaders: bool,
-}
-
-impl Default for HostOptions {
-    fn default() -> Self {
-        Self {
-            scene: None,
-            assets: None,
-            size: None,
-            gpu: GpuPreference::HighPerformance,
-            vsync: true,
-            settings: HostSettings::default(),
-            headless: false,
-            frames: None,
-            dev: false,
-            run: None,
-            schemas: false,
-            shaders: false,
-        }
-    }
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HostOptions {
+    scene: Option<PathBuf>,
+    assets: Option<PathBuf>,
+    pub(crate) size: Option<(u32, u32)>,
+    gpu: Option<PowerPreference>,
+    vsync: Option<bool>,
+    pub(crate) settings: HostSettings,
+    headless: bool,
+    frames: Option<u32>,
+    dev: bool,
+    run: Option<String>,
+    schemas: bool,
+    shaders: bool,
 }
 
 impl HostOptions {
@@ -242,15 +212,15 @@ impl HostOptions {
                 self.size = Some(parsed.ok_or_else(|| argument.invalid(&size))?);
             }
             "--gpu" => {
-                self.gpu = match arguments.value(argument)?.as_str() {
-                    "discrete" => GpuPreference::HighPerformance,
-                    "integrated" => GpuPreference::LowPower,
+                self.gpu = Some(match arguments.value(argument)?.as_str() {
+                    "discrete" => PowerPreference::HighPerformance,
+                    "integrated" => PowerPreference::LowPower,
                     other => {
                         return Err(argument.invalid(other).variants(["discrete", "integrated"]));
                     }
-                }
+                });
             }
-            "--vsync" => self.vsync = arguments.switch(argument)?,
+            "--vsync" => self.vsync = Some(arguments.switch(argument)?),
             switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
                 let value = arguments.value(argument)?;
                 self.settings
@@ -322,46 +292,55 @@ impl HostOptions {
         Ok(())
     }
 
-    pub fn run<G: Game>(&self, game: GameEntry<G>) -> engine::Result<()> {
+    pub fn run<G: Game>(&self, game: GameEntry) -> engine::Result<()> {
         let options = self.for_game(&game);
         let bricks = (game.bricks)(BrickList::default());
         #[cfg(feature = "dev")]
         if options.schemas {
-            return engine::tooling::print_schemas(move |_| bricks).map_err(|problems| {
+            return engine::tooling::print_schemas::<G>(bricks).map_err(|problems| {
                 Error::new(ErrorCode::InvalidArguments, "--schemas").got(problems)
             });
         }
         #[cfg(feature = "dev")]
         if options.shaders {
-            return engine::tooling::print_shaders(move |_| bricks).map_err(|problems| {
+            return engine::tooling::print_shaders::<G>(bricks).map_err(|problems| {
                 Error::new(ErrorCode::InvalidArguments, "--shaders").got(problems)
             });
         }
         let scene = options.start_scene(&game);
-        let build = game.build;
         crate::keep_pipeline_cache();
         if options.headless {
-            return options.run_offscreen((move |_| bricks, build), &scene);
+            return options.run_offscreen::<G>(bricks, &scene);
         }
-        crate::run(
+        crate::window::run::<G>(
             Window {
                 title: game.title.to_owned(),
                 keep: keep_folder(game.name),
                 options: options.clone(),
                 scene,
             },
-            move |_| bricks,
-            build,
+            bricks,
         )
     }
 
-    pub(crate) fn for_game<G>(&self, game: &GameEntry<G>) -> Self {
+    pub(crate) fn start<G: Game>(&self) -> Start {
+        let mut start = G::start();
+        if let Some(power) = self.gpu {
+            start.gpu.power = power;
+        }
+        if let Some(vsync) = self.vsync {
+            start.present.vsync = vsync;
+        }
+        start
+    }
+
+    pub(crate) fn for_game(&self, game: &GameEntry) -> Self {
         let mut options = self.clone();
         options.assets = Some(default_assets(game.folder));
         options
     }
 
-    fn start_scene<G>(&self, game: &GameEntry<G>) -> StartScene {
+    fn start_scene(&self, game: &GameEntry) -> StartScene {
         if let Some(path) = &self.scene {
             return StartScene::File(path.clone());
         }
@@ -397,21 +376,21 @@ impl HostOptions {
         )
     }
 
-    fn run_offscreen<G: Game, E: Into<engine::Error>>(
+    fn run_offscreen<G: Game>(
         &self,
-        (bricks, build): (
-            impl FnOnce(BrickList) -> BrickList,
-            impl FnOnce(&mut Engine) -> Result<G, E>,
-        ),
+        bricks: BrickList,
         scene: &StartScene,
     ) -> engine::Result<()> {
         let size = self.size()?;
-        let mut game = Offscreen::launch(size, self.gpu, bricks, build)?;
+        let mut game = Offscreen::<G>::launch(size, self.start::<G>(), bricks)?;
         open_scene(game.host_mut(), scene)?;
         self.settings.apply(game.host_mut())?;
         #[cfg(feature = "dev")]
         let played = {
             let mut session = self.session(game.host_mut(), size)?;
+            if let Some(folder) = session.run() {
+                game.host_mut().keep_in(&folder.to_string_lossy());
+            }
             game.play(self.frames, |host, phase| {
                 crate::dev::follow_source(host);
                 session.after(host)?;

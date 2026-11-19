@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = []
+dev = []
 
 [dependencies]
 glam.workspace = true

@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars"]
+dev = ["dep:schemars"]
 
 [dependencies]
 schemars = { workspace = true, optional = true }

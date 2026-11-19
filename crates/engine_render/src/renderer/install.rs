@@ -480,15 +480,18 @@ impl Renderer {
                 .ok()
                 .map(|kept| kept.cache.clone());
         }
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         crate::whatif::install(world, &run.machine);
         self.run = Some(run);
     }
 }
 
 #[doc(hidden)]
-pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
-    let (device, queue) = noop_device().map_err(|error| vec![error])?;
+pub fn install_noop(
+    world: &mut World,
+    gpu: crate::GpuRequest,
+) -> Result<Installation, Vec<Error>> {
+    let (device, queue) = noop_device(gpu).map_err(|error| vec![error])?;
     let mut installed = install(
         &device,
         world,
@@ -682,31 +685,22 @@ pub(crate) fn reinstall(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
+fn noop_device(gpu: crate::GpuRequest) -> Result<(wgpu::Device, wgpu::Queue), Error> {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::NOOP;
     descriptor.backend_options.noop.enable = true;
     let instance = wgpu::Instance::new(descriptor);
-    let adapter =
-        crate::platform::ready(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .ok_or_else(|| failed("$.adapter"))?
-            .map_err(|error| failed_with("$.adapter", error))?;
-    let (device, queue) = crate::platform::ready(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("engine/noop-device"),
-        required_limits: super::startup::device_limits(&adapter.limits()),
-        ..Default::default()
-    }))
-    .ok_or_else(|| failed("$.device"))?
-    .map_err(|error| failed_with("$.device", error))?;
-    Ok((device, queue))
+    let opened = crate::platform::ready(super::startup::open(instance, gpu))
+        .ok_or_else(|| failed("$.device"))??;
+    Ok((opened.device, opened.queue))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
+fn noop_device(_: crate::GpuRequest) -> Result<(wgpu::Device, wgpu::Queue), Error> {
     Err(failed("$.device").expected(Expected::Supported))
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(super) fn declared_names(world: &mut World) {
     use engine_registry::{Kind, NameEntry, register, unavailable};
 
@@ -730,7 +724,7 @@ pub(super) fn declared_names(world: &mut World) {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn targets(run: &Run) -> serde_json::Value {
     let mut facts = run.machine.declared.target_facts(&run.installs.reinstalls);
     let set = (run.sets.list.get(run.sets.at)).or_else(|| run.sets.list.first());
@@ -748,7 +742,7 @@ fn targets(run: &Run) -> serde_json::Value {
     facts
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn links(run: &Run) -> serde_json::Value {
     use serde_json::{Map, Value, json};
 

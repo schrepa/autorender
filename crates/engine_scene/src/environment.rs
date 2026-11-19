@@ -85,7 +85,7 @@ fn listed(world: &World, key: &str) -> Option<SettingsEntry> {
     world.get_resource::<Registry>()?.section(key).copied()
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 impl schemars::JsonSchema for SceneEnvironment {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "SceneEnvironment".into()
@@ -100,8 +100,8 @@ impl schemars::JsonSchema for SceneEnvironment {
     }
 }
 
-#[cfg(feature = "schema")]
-pub fn section_schemas(
+#[cfg(feature = "dev")]
+pub(crate) fn section_schemas(
     registry: &Registry,
     definitions: &mut serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {

@@ -19,4 +19,4 @@ zune-jpeg.workspace = true
 workspace = true
 
 [package.metadata.engine]
-kind = "tool"
+kind = "cook"

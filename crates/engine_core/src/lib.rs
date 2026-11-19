@@ -12,18 +12,17 @@ mod background;
 mod bricks;
 mod clock;
 mod closing;
-mod cursor;
+mod dev_doors;
 mod drawn;
 mod entity_indices;
 mod files;
 mod hierarchy;
+mod host;
 mod input;
 mod kept;
 pub mod math;
 mod moves;
 pub use engine_math::collections;
-mod presentation;
-pub mod presentation_bounds;
 mod refusals;
 mod render_stats;
 mod scene;
@@ -45,10 +44,9 @@ pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use closing::Closing;
-pub use cursor::*;
 pub use drawn::{DrawnBatch, DrawnRecord, DrawnSettings, DrawnTable, drawn_wgsl};
 pub use engine_assets::{
-    Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
+    Aabb, AlphaMode, Asset, AssetLibrary, Attribute, AttributeFormat, Attributes,
     BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, FIRST_NAMED_LOCATION,
     Filter, GeometryStream, InstanceInput, LightingModel, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
     Material, Mesh, MeshVertex, NORMAL_MAP, NamedStream, RenderState, Sampler, StreamShape,
@@ -66,10 +64,10 @@ pub use engine_place::{
     TextureHandle, Ticket, Unsettled, Writes,
 };
 pub use engine_place::{BitValue, FrameId, GpuBits, Readable, Readback, gpu_bits};
-pub use engine_place::{Clear, Rect, Target, View};
+pub use engine_place::{Clear, Rect, Target, View, ViewSkip};
 pub use engine_codec::content_hash;
 pub use engine_registry::FrameFacts;
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use engine_registry::{
     Answer, Kind, Lands, NameEntry, Reach, ReachMut, register, unavailable,
 };
@@ -78,17 +76,19 @@ pub use engine_settings::{
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
 pub use engine_textures::decode_texture;
-pub use files::Files;
+pub use dev_doors::{DevBricks, DevOnly, DevSetting, Stats};
+pub use files::{Files, IoAct, IoOrder, IoReply};
 pub use kept::Kept;
 pub use glam;
 pub use hierarchy::*;
+pub use host::*;
 pub use input::*;
 pub use moves::{Moves, Teleport, send_ask};
-pub use presentation::*;
 pub use refusals::{Refusals, Refused};
 pub use render_stats::DrawReports;
 pub use render_stats::{DropReason, DroppedDraws, KindPass, KindPassState, Names, RenderStats};
 pub use scene::*;
+pub use schedules::Schedule;
 pub use section::{Section, Switch};
 pub use services::{
     ComponentKind, ComponentKindOf, DeviceLimits, Prepared, SceneBuffers, SceneComponents,
@@ -127,18 +127,7 @@ use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, Single
 use bevy_ecs::world::World;
 use clock::{Advanced, FixedClock, Interval};
 use engine_registry::{MembersOf, Registry, RegistryBuilder, Switches};
-use schedules::{FixedSimulation, FrameStart, Presentation, TransformPropagation};
-
-#[cfg(feature = "dev")]
-fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
-    if ticks >= 1 {
-        Ok(())
-    } else {
-        Err(Error::new(ErrorCode::InvalidStep, "$.ticks")
-            .at_least(1)
-            .got(ticks))
-    }
-}
+use schedules::{BeforeDraw, BeforeTicks, FixedSimulation, Presentation, TransformPropagation};
 
 #[cfg(feature = "dev")]
 #[derive(Resource, Default)]
@@ -172,6 +161,7 @@ pub struct Engine {
     pub app: App,
     clock: FixedClock,
     interval: Interval,
+    ticked: Devices,
     gates: Option<Switches>,
     facts: Option<FrameFacts>,
     finalized: bool,
@@ -241,7 +231,7 @@ fn install_passes(world: &mut World) {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 #[derive(Resource, Clone, Copy, Default)]
 pub struct StageTimes {
     pub simulation: u64,
@@ -249,7 +239,7 @@ pub struct StageTimes {
     pub render: u64,
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn stages_time(world: &World) -> serde_json::Value {
     world.get_resource::<StageTimes>().map_or_else(
         || engine_registry::unavailable("stages_not_timed"),
@@ -263,7 +253,7 @@ fn stages_time(world: &World) -> serde_json::Value {
     )
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn core_names(world: &mut World) {
     world.init_resource::<StageTimes>();
     register(
@@ -282,14 +272,15 @@ fn refused(problems: &[Error]) -> Result<(), Error> {
 }
 
 impl Engine {
-    pub fn new(config: EngineConfig) -> Self {
+    pub fn listed(list: BrickList, ticks_per_second: u32) -> Result<Self, Error> {
         let board = Board::default();
-        board.scope(|| Self::on_board(config, board.clone()))
+        let mut engine = board.scope(|| Self::on_board(ticks_per_second, board.clone()))?;
+        engine.scoped(|engine| engine.install(&list))?;
+        Ok(engine)
     }
 
-    fn on_board(config: EngineConfig, board: Board) -> Self {
-        let clock = FixedClock::new(config);
-        let assets = AssetLibrary::new(config.asset_budget);
+    fn on_board(ticks_per_second: u32, board: Board) -> Result<Self, Error> {
+        let clock = FixedClock::new(ticks_per_second)?;
         let mut app = App::empty();
         app.world_mut()
             .resource_mut::<Schedules>()
@@ -311,6 +302,7 @@ impl Engine {
                 delta_seconds: clock.step_seconds() as f32,
                 elapsed_seconds: 0.0,
                 tick: 0,
+                rate: ticks_per_second,
             })
             .init_resource::<FrameTime>()
             .init_resource::<Pause>()
@@ -327,24 +319,24 @@ impl Engine {
             .init_resource::<Devices>()
             .init_resource::<CursorMode>()
             .init_resource::<Sounds>()
-            .init_resource::<DrawnPoses>()
+            .init_resource::<engine_place::DrawnPoses>()
             .init_resource::<Asked<Teleport>>()
-            .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
-            .insert_resource(assets);
+            .init_resource::<AssetLibrary>();
         assets::install(app.world_mut());
         drawn::install(app.world_mut());
         #[cfg(feature = "dev")]
         app.init_resource::<Held>();
-        Self {
+        Ok(Self {
             app,
             clock,
             interval: Interval::Fresh,
+            ticked: Devices::default(),
             gates: None,
             facts: None,
             finalized: false,
             board,
-        }
+        })
     }
 
     fn scoped<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
@@ -352,23 +344,18 @@ impl Engine {
         board.scope(|| run(self))
     }
 
-    pub fn listed(list: BrickList) -> Result<Self, Error> {
-        let mut engine = Self::default();
-        engine.scoped(|engine| engine.install(&list))?;
-        Ok(engine)
-    }
-
     fn install(&mut self, list: &BrickList) -> Result<(), Error> {
         let mut registry = RegistryBuilder::default();
         core_entries(&mut registry);
         for listed in list.listed() {
-            registry.add(listed.record());
+            let (record, systems) = listed.record();
+            registry.add(record, systems);
         }
         let world = self.app.world_mut();
         world.register_component::<Camera>();
         world.register_component::<Drawn>();
         world.register_component::<View>();
-        let labels: [InternedScheduleLabel; 3] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 4] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
         moves::install_kinds(world);
         drawn::install_kinds(world);
@@ -378,11 +365,11 @@ impl Engine {
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
         twice.extend(authoring::keys_taken(world));
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         core_names(world);
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         drawn::object_names(world);
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         sound::names(world);
         let mut registry = world.resource_mut::<Registry>();
         for error in twice {
@@ -449,132 +436,68 @@ impl Engine {
 
     fn frame_at(&mut self, timestamp_seconds: f64) {
         self.finalize();
-        let (interval, real_seconds) = self.interval.next(Some(timestamp_seconds));
-        self.interval = interval;
-        let rate = self.time_rate();
+        let real_seconds = if self.shown() {
+            let (interval, real_seconds) = self.interval.next(timestamp_seconds);
+            self.interval = interval;
+            real_seconds
+        } else {
+            0.0
+        };
+        let rate = if self.time_runs() { 1.0 } else { 0.0 };
         let limits = *self.app.world().resource::<FrameLimits>();
         let advanced = self
             .clock
             .advance(real_seconds * rate, limits.max_fixed_steps);
         let shown = real_seconds.min(limits.max_frame_seconds);
-        self.run_frame(
-            Presented::Paced {
-                alpha: advanced.alpha,
-            },
-            advanced,
-            (shown, shown * rate),
-            real_seconds - shown,
-        );
-    }
-
-    pub fn present(&mut self, presented: Presented) -> Result<(), Error> {
-        presentation::check_alpha(presented.alpha())?;
-        self.scoped(|engine| {
-            engine.finalize();
-            engine.run_gates();
-            if moves::start_frame(engine.app.world_mut()) {
-                engine.refresh_transforms();
-            }
-            #[cfg(feature = "dev")]
-            place_held(engine.app.world_mut());
-            presentation::present(engine.app.world_mut(), presented);
-        });
-        Ok(())
-    }
-
-    pub fn pause(&mut self, reason: PauseReason) {
-        let world = self.app.world_mut();
-        if world.resource::<Pause>().holds(reason) {
-            return;
-        }
-        world.resource_mut::<Pause>().add(reason);
-        if reason.stops_frames() {
-            self.interval = self.interval.next(None).0;
-        }
-    }
-
-    pub fn resume(&mut self, reason: PauseReason) {
-        let world = self.app.world_mut();
-        if !world.resource::<Pause>().holds(reason) {
-            return;
-        }
-        world.resource_mut::<Pause>().remove(reason);
-        if reason.stops_frames() {
-            self.interval = self.interval.next(None).0;
-        }
+        self.run_frame(advanced, (shown, shown * rate), real_seconds - shown);
     }
 
     pub fn frame_time(&self) -> FrameTime {
         *self.app.world().resource::<FrameTime>()
     }
 
-    pub fn drawn_pose(&self, node: bevy_ecs::entity::Entity) -> Option<glam::Mat4> {
-        let world = self.app.world();
-        world
-            .resource::<DrawnPoses>()
-            .drawn_pose(world.get_resource::<GlobalTransforms>()?, node)
-    }
-
-    fn time_rate(&self) -> f64 {
-        let world = self.app.world();
-        if world.resource::<Pause>().paused() {
-            0.0
-        } else {
-            1.0
+    fn time_runs(&mut self) -> bool {
+        let runs = self.shown() && !self.app.world().resource::<Pause>().paused();
+        if !runs {
+            self.drop_tick_marks();
         }
+        runs
     }
 
     #[cfg(feature = "dev")]
-    pub fn step_fixed(&mut self, ticks: u32) -> Result<(), Error> {
-        check_dev_ticks(ticks)?;
-        self.scoped(|engine| engine.step_ticks(ticks));
-        Ok(())
-    }
-
-    #[cfg(feature = "dev")]
-    pub fn frame_without_ticks(&mut self) {
+    pub fn step(&mut self, ticks: u32, alpha: f32) -> Result<(), Error> {
+        if !(0.0..=1.0).contains(&alpha) {
+            return Err(Error::new(ErrorCode::InvalidPresentationAlpha, "$.alpha")
+                .range(0.0, 1.0)
+                .got(alpha));
+        }
         self.scoped(|engine| {
             engine.finalize();
             engine.clock.reset();
-            engine.interval = engine.interval.next(None).0;
+            engine.interval = Interval::Fresh;
             let step = engine.clock.step_seconds();
-            let advanced = Advanced {
-                ticks: 0,
-                dropped_seconds: 0.0,
-                alpha: 1.0,
+            let lasting = if engine.shown() {
+                f64::from(ticks) * step
+            } else {
+                0.0
             };
-            engine.run_frame(Presented::Tick, advanced, (step, 0.0), 0.0);
+            let ran = if engine.time_runs() { ticks } else { 0 };
+            let advanced = Advanced {
+                ticks: ran,
+                dropped_seconds: 0.0,
+                alpha,
+            };
+            engine.run_frame(advanced, (lasting, f64::from(ran) * step), 0.0);
         });
+        Ok(())
     }
 
-    #[cfg(feature = "dev")]
-    fn step_ticks(&mut self, ticks: u32) {
-        self.finalize();
-        self.clock.reset();
-        self.interval = self.interval.next(None).0;
-        let step = self.clock.step_seconds();
-        for _ in 0..ticks {
-            let ticked = u32::from(self.time_rate() != 0.0);
-            let advanced = Advanced {
-                ticks: ticked,
-                dropped_seconds: 0.0,
-                alpha: 1.0,
-            };
-            self.run_frame(
-                Presented::Tick,
-                advanced,
-                (step, step * f64::from(ticked)),
-                0.0,
-            );
-        }
-    }
-
-    pub fn start_frame(&mut self) {
+    pub fn before_draw(&mut self) {
         self.scoped(|engine| {
             engine.finalize();
             let world = engine.app.world_mut();
-            if has_systems(world, FrameStart) {
-                world.run_schedule(FrameStart);
+            if has_systems(world, BeforeDraw) {
+                world.run_schedule(BeforeDraw);
             }
         });
     }
@@ -590,7 +513,6 @@ impl Engine {
 
     fn run_frame(
         &mut self,
-        presented: Presented,
         advanced: Advanced,
         (real_seconds, seconds): (f64, f64),
         cut_seconds: f64,
@@ -604,7 +526,7 @@ impl Engine {
         let world = self.app.world_mut();
         let ticked =
             world.resource::<FixedTime>().elapsed_seconds + f64::from(advanced.ticks) * step;
-        let alpha = presented.alpha();
+        let alpha = advanced.alpha;
         modify(world, |time: &mut FrameTime| {
             time.frame = time.frame.saturating_add(1);
             time.ticks = advanced.ticks;
@@ -616,11 +538,13 @@ impl Engine {
             time.dropped_seconds += advanced.dropped_seconds;
             time.cut_seconds += cut_seconds;
         });
-        for _ in 0..advanced.ticks {
-            self.run_fixed_tick();
+        if has_systems(self.app.world(), BeforeTicks) {
+            let _profile = engine_profile::span("ecs", "BeforeTicks");
+            self.app.world_mut().run_schedule(BeforeTicks);
+            self.refresh_transforms();
         }
-        self.exchange_now();
-        presentation::present(self.app.world_mut(), presented);
+        self.run_ticks(advanced.ticks);
+        moves::present(self.app.world_mut(), alpha);
         {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
@@ -630,7 +554,7 @@ impl Engine {
         self.app.world_mut().clear_trackers();
     }
 
-    fn run_fixed_tick(&mut self) {
+    pub(crate) fn run_fixed_tick(&mut self) {
         let _profile = engine_profile::span("cpu", "fixed_tick");
         let step = self.clock.step_seconds();
         modify(self.app.world_mut(), |time: &mut FixedTime| {
@@ -643,14 +567,14 @@ impl Engine {
         }
         moves::end_tick(self.app.world_mut());
         self.refresh_transforms();
-        presentation::capture(self.app.world_mut());
+        moves::capture(self.app.world_mut());
     }
 
     pub fn reset_clock(&mut self) {
         self.clock.reset();
-        self.interval = self.interval.next(None).0;
+        self.interval = Interval::Fresh;
         let world = self.app.world_mut();
-        presentation::fresh_all(world);
+        moves::fresh_all(world);
         modify(world, |time: &mut FrameTime| {
             time.ticks = 0;
             time.seconds = 0.0;
@@ -667,7 +591,6 @@ impl Engine {
         self.scoped(|engine| {
             engine.finalize();
             engine.refresh_transforms();
-            presentation::gather(engine.app.world_mut());
             engine.sync_view();
             shared::settle_readiness(engine.app.world_mut(), &engine.board);
         });
@@ -676,24 +599,22 @@ impl Engine {
         })
     }
 
-    #[doc(hidden)]
-    pub fn exchange(&mut self) {
-        self.scoped(Self::exchange_now);
+    pub fn take_io(&mut self) -> Vec<IoOrder> {
+        self.scoped(|engine| files::take_io(engine.app.world_mut()))
     }
 
-    fn exchange_now(&mut self) {
-        let world = self.app.world_mut();
-        files::read_files(world);
-        kept::exchange_kept(world);
+    pub fn land_io(&mut self, reply: IoReply) {
+        self.scoped(|engine| files::land_io(engine.app.world_mut(), reply));
     }
 
     fn sync_view(&mut self) {
         let _profile = engine_profile::span("ecs", "ViewSync");
         let facts = self.facts.unwrap_or_default();
         let world = self.app.world_mut();
-        views::settle(world, facts);
         drawn::ask(world);
         assets::settle_assets(world);
+        moves::gather(world);
+        views::settle(world, facts);
     }
 
     fn finalize(&mut self) {
@@ -722,10 +643,4 @@ impl Engine {
 
 fn refuse_bevy_hierarchy(add: On<Add, ChildOf>) {
     panic!("child_of_ignored {}", add.entity);
-}
-
-impl Default for Engine {
-    fn default() -> Self {
-        Self::new(EngineConfig::default())
-    }
 }

@@ -2,10 +2,9 @@ use bevy_ecs::prelude::*;
 use glam::Mat4;
 
 use super::{
-    GlobalTransforms, Link, MAX_HIERARCHY_DEPTH, NO_NODE, Parent, SEGMENTS, Source, UNPLACED,
-    words,
+    GlobalTransforms, Link, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, NO_NODE, Parent, SEGMENTS,
+    Source, UNPLACED, pose_rows, words,
 };
-use crate::presentation::pose_rows;
 use crate::{NodeWord, Transform};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,7 +158,6 @@ impl GlobalTransforms {
             }
         }
         self.settle_links();
-        self.restructured = true;
         true
     }
 
@@ -170,7 +168,7 @@ impl GlobalTransforms {
         transform: &Ref<'_, Transform>,
         parent: Option<Entity>,
     ) -> bool {
-        if self.len() >= self.limit {
+        if self.len() >= MAX_TRANSFORM_NODES {
             return false;
         }
         let index = match self.slots.free.pop() {
@@ -179,10 +177,9 @@ impl GlobalTransforms {
                 self.entities.push(Entity::PLACEHOLDER);
                 self.sources.push(Source::EMPTY);
                 self.locals.push([0.0; 10]);
-                self.local_revisions.push(0);
                 self.links.push(Link::DETACHED);
                 self.globals.push(pose_rows(Mat4::IDENTITY));
-                self.revisions.push(None);
+                self.published.push(false);
                 self.declared.push(words::Declared::default());
                 self.words.push(NodeWord::ROOT);
                 self.walk.visits.push(Visit::Idle);
@@ -198,10 +195,9 @@ impl GlobalTransforms {
             transform_added: transform.added().get(),
         };
         self.locals[index] = transform.to_pose();
-        self.local_revisions[index] = self.revision.wrapping_add(1);
         self.links[index] = Link::DETACHED;
         self.globals[index] = pose_rows(Mat4::IDENTITY);
-        self.revisions[index] = None;
+        self.published[index] = false;
         self.declared[index] = words::Declared::read(world, entity);
         self.words[index] = NodeWord::ROOT;
         self.dirty.flags[index] = false;
@@ -231,7 +227,7 @@ impl GlobalTransforms {
         self.entities[index] = Entity::PLACEHOLDER;
         self.sources[index] = Source::EMPTY;
         self.links[index] = Link::DETACHED;
-        self.revisions[index] = None;
+        self.published[index] = false;
         self.declared[index] = words::Declared::default();
         self.words[index] = NodeWord::ROOT;
         self.dirty.flags[index] = false;
@@ -341,7 +337,7 @@ impl GlobalTransforms {
         if changed {
             self.placed.mark(index as u32);
         }
-        if changed || self.revisions[index].is_none() {
+        if changed || !self.published[index] {
             self.dirty.mark(index, threshold);
             self.worded.push(index);
         }

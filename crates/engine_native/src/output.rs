@@ -8,9 +8,19 @@ use cpal::{FromSample, SampleFormat, SizedSample};
 
 use crate::mixer::{Command, Mixer, Pcm};
 
+fn ogg_vorbis(bytes: &[u8]) -> bool {
+    let packet = bytes
+        .get(26)
+        .and_then(|&segments| bytes.get(27 + usize::from(segments)..));
+    bytes.starts_with(b"OggS") && packet.is_some_and(|packet| packet.starts_with(b"\x01vorbis"))
+}
+
 pub(crate) fn decode(bytes: &Arc<[u8]>) -> Result<Pcm, String> {
     use lewton::inside_ogg::OggStreamReader;
     use lewton::samples::InterleavedSamples;
+    if !ogg_vorbis(bytes) {
+        return Err("not_ogg_vorbis".to_owned());
+    }
     let mut reader =
         OggStreamReader::new(Cursor::new(Arc::clone(bytes))).map_err(|error| error.to_string())?;
     let channels = usize::from(reader.ident_hdr.audio_channels);

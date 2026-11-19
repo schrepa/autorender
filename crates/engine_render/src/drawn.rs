@@ -3,11 +3,10 @@ use std::sync::Arc;
 
 use bevy_ecs::system::{Res, SystemParamItem};
 use engine_core::{
-    DrawnPoses, DrawnRecord, DrawnTable, Entry, Error, GeometryHandle, GlobalTransforms, GpuStruct,
-    Layers, MAX_HIERARCHY_DEPTH, MaterialHandle, NodeInfo, NodePose, NodeStreams, PassBit,
-    PassMask, PoseRows, Var, ViewFacts, gpu_struct,
+    DrawnRecord, DrawnTable, Entry, Error, GeometryHandle, Layers, MaterialHandle, PassBit,
+    PassMask, Var, ViewFacts,
 };
-use engine_place::Changed;
+use engine_place::{Changed, DrawnPoses, PoseEntry, PoseFrame, PoseRows};
 
 use crate::shaders::core_module;
 use crate::uploads::{UploadRange, listed_ranges};
@@ -17,13 +16,11 @@ use crate::{
 };
 
 pub(crate) const DRAWN_MODULE: &str = "engine::drawn";
+pub(crate) const POSES_MODULE: &str = "engine::poses";
 pub(crate) const DRAWN_POSE_MODULE: &str = "engine::drawn_pose";
 const POSE_GROUP: u32 = 64;
 const FIRST_SLOTS: u64 = 64;
-const POSE_BYTES: u64 = 48;
-const COMPOSED_BYTES: u64 = 112;
 const MIN_STORAGE_BYTES: u64 = 256;
-const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const WRITE_CALL_BYTES: usize = 4_096;
 
 const VARS: &str = "struct DrawnPose {
@@ -44,140 +41,37 @@ fn drawn_model(slot: u32) -> mat4x4<f32> {
 }
 ";
 
-const POSE_IMPORTS: &str = "import package::engine::drawn::{DrawnPose, drawn_records};
-import package::engine::presentation::{NO_PARENT, POSE_FLOATS, Pose, drawn_local,
-    pose_admitted, pose_trs, pose_word_blend, pose_word_composed, pose_word_parent_composed,
-    pose_word_valid};
-";
+const POSE: &str = "import package::engine::drawn::DrawnPose;
+import package::engine::poses::{NO_PARENT, NO_SLOT, PoseEntry, PoseFrame, pose_admitted,
+    pose_base, pose_local};
 
-const POSE: &str = "
-struct Rows {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
-}
+@group(1) @binding(0) var<uniform> pose_frame: PoseFrame;
+@group(1) @binding(1) var<storage, read> pose_entries: array<PoseEntry>;
+@group(1) @binding(2) var<storage, read_write> posed: array<DrawnPose>;
 
-struct Composed {
-    display: Rows,
-    current: Rows,
-    status: vec4<u32>,
-}
-
-struct Level {
-    start: u32,
-    end: u32,
-    pad0: u32,
-    pad1: u32,
-}
-
-@group(2) @binding(0) var<uniform> pose_frame: DrawnFrame;
-@group(2) @binding(1) var<storage, read> node_locals: array<f32>;
-@group(2) @binding(2) var<storage, read> node_info: array<vec2<u32>>;
-@group(2) @binding(3) var<storage, read> node_authority: array<Rows>;
-@group(2) @binding(4) var<storage, read_write> node_composed: array<Composed>;
-@group(2) @binding(5) var<storage, read> node_parents: array<u32>;
-@group(2) @binding(6) var<uniform> node_level: Level;
-@group(2) @binding(7) var<storage, read_write> posed: array<DrawnPose>;
-
-fn rows_matrix(rows: Rows) -> mat4x4<f32> {
-    return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
-}
-
-fn matrix_rows(m: mat4x4<f32>) -> Rows {
-    let t = transpose(m);
-    return Rows(t[0], t[1], t[2]);
-}
-
-fn node_pose(at: u32) -> Pose {
-    return Pose(
-        vec3<f32>(node_locals[at], node_locals[at + 1u], node_locals[at + 2u]),
-        vec4<f32>(node_locals[at + 4u], node_locals[at + 5u], node_locals[at + 6u],
-            node_locals[at + 7u]),
-        vec3<f32>(node_locals[at + 3u], node_locals[at + 8u], node_locals[at + 9u]),
-    );
-}
-
-fn compose(node: u32) -> Composed {
-    let record = node_info[node];
-    let parent = record.x;
-    let word = record.y;
-    var base_display = mat4x4<f32>(
-        vec4<f32>(1.0, 0.0, 0.0, 0.0),
-        vec4<f32>(0.0, 1.0, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0),
-    );
-    var base_current = base_display;
-    var parent_fallback = false;
-    if pose_word_parent_composed(word) {
-        let above = node_composed[parent];
-        base_display = rows_matrix(above.display);
-        base_current = rows_matrix(above.current);
-        parent_fallback = above.status.x != 0u;
-    } else if parent != NO_PARENT {
-        base_display = rows_matrix(node_authority[parent]);
-        base_current = base_display;
+fn pose_chain(first: u32, alpha: f32) -> mat4x4<f32> {
+    var m = pose_local(pose_entries[first], alpha);
+    var at = pose_entries[first].parent;
+    while at != NO_PARENT {
+        m = pose_local(pose_entries[at], alpha) * m;
+        at = pose_entries[at].parent;
     }
-    let now = node_pose(node * POSE_FLOATS);
-    let current = base_current * pose_trs(now);
-    var result: Composed;
-    result.current = matrix_rows(current);
-    if !parent_fallback {
-        let was = node_pose((pose_frame.capacity + node) * POSE_FLOATS);
-        let display = base_display * drawn_local(was, now, pose_frame.alpha, pose_word_blend(word));
-        if pose_admitted(display) {
-            result.display = matrix_rows(display);
-            result.status = vec4<u32>(0u);
-            return result;
-        }
-    }
-    result.display = result.current;
-    result.status = vec4<u32>(1u, 0u, 0u, 0u);
-    return result;
+    return pose_base(pose_entries[first]) * m;
 }
 
-fn placed(node: u32) -> bool {
-    return node < pose_frame.nodes && pose_word_valid(node_info[node].y);
-}
-
-@compute @workgroup_size(64)
-fn drawn_compose(@builtin(global_invocation_id) id: vec3<u32>) {
-    let position = node_level.start + id.x;
-    if position >= node_level.end {
-        return;
-    }
-    let node = node_parents[position];
-    node_composed[node] = compose(node);
-}
-
-@compute @workgroup_size(64)
+@compute @workgroup_size(POSE_GROUP)
 fn drawn_pose(@builtin(global_invocation_id) id: vec3<u32>) {
-    let slot = id.x;
-    if slot >= pose_frame.slots {
+    if id.x >= pose_frame.entries || pose_entries[id.x].slot == NO_SLOT {
         return;
     }
-    let node = drawn_records[slot].node;
-    if !placed(node) {
-        return;
+    var m = pose_chain(id.x, pose_frame.alpha);
+    if !pose_admitted(m[0], m[1], m[2], m[3]) {
+        m = pose_chain(id.x, 1.0);
     }
-    var rows: Rows;
-    if pose_word_composed(node_info[node].y) {
-        rows = compose(node).display;
-    } else {
-        rows = node_authority[node];
-    }
-    posed[slot] = DrawnPose(rows.r0, rows.r1, rows.r2);
+    let rows = transpose(m);
+    posed[pose_entries[id.x].slot] = DrawnPose(rows[0], rows[1], rows[2]);
 }
 ";
-
-gpu_struct! {
-    pub struct DrawnFrame {
-        pub alpha: f32,
-        pub capacity: u32,
-        pub nodes: u32,
-        pub slots: u32,
-    }
-}
 
 pub(crate) fn source() -> String {
     let mut source = engine_core::drawn_wgsl();
@@ -186,10 +80,7 @@ pub(crate) fn source() -> String {
 }
 
 pub(crate) fn pose_source() -> String {
-    let mut source = String::from(POSE_IMPORTS);
-    source.push_str(DrawnFrame::WGSL);
-    source.push_str(POSE);
-    source
+    format!("{POSE}\nconst POSE_GROUP: u32 = {POSE_GROUP}u;\n")
 }
 
 pub(crate) struct KindBatch {
@@ -233,34 +124,18 @@ impl Batches {
     }
 }
 
-struct Nodes {
-    locals: Buffer<DrawnGpu>,
-    info: Buffer<DrawnGpu>,
-    authority: Buffer<DrawnGpu>,
-    composed: Buffer<DrawnGpu>,
-    parents: Buffer<DrawnGpu>,
-    levels: Vec<Buffer<DrawnGpu>>,
-    capacity: usize,
-    composed_capacity: usize,
-    parent_capacity: usize,
-    parents_sent: Vec<u32>,
-    level_ranges: Vec<(u32, u32)>,
-    whole: bool,
-}
-
 pub(crate) struct DrawnGpu {
     records: Buffer<Self>,
     values: Buffer<Self>,
     order: Buffer<Self>,
-    frame: Buffer<Self>,
     poses: Buffer<Self>,
-    nodes: Nodes,
+    frame: Buffer<Self>,
+    entries: Buffer<Self>,
     pass: Pass<Self>,
-    compose: Vec<ComputePipeline<Self>>,
     pose: ComputePipeline<Self>,
     scratch: Scratch,
-    frame_sent: DrawnFrame,
-    slots: u32,
+    frame_sent: PoseFrame,
+    entries_sent: Vec<PoseEntry>,
     owed: bool,
 }
 
@@ -270,10 +145,6 @@ fn var(module: &str, name: &'static str) -> Var {
 
 fn storage_bytes(bytes: u64) -> u64 {
     bytes.max(MIN_STORAGE_BYTES)
-}
-
-fn grow(needed: usize) -> usize {
-    needed.max(1_024).next_power_of_two()
 }
 
 struct Scratch {
@@ -339,20 +210,20 @@ impl DrawnGpu {
         let stride = table.value_vec4s();
         let record_bytes = room * size_of::<DrawnRecord>() as u64;
         let value_bytes = room * (stride * size_of::<[f32; 4]>()) as u64;
+        let pose_bytes = room * size_of::<PoseRows>() as u64;
         let mut whole =
             cx.allocate_buffer(self.records, storage_bytes(record_bytes)) == Allocation::Fresh;
         whole |= cx.allocate_buffer(self.values, storage_bytes(value_bytes)) == Allocation::Fresh;
-        let fresh = cx.allocate_buffer(self.poses, room * POSE_BYTES) == Allocation::Fresh;
+        whole |= cx.allocate_buffer(self.poses, storage_bytes(pose_bytes)) == Allocation::Fresh;
         let changes = table.slot_changes();
         let read = changes.read();
         self.scratch.changed(&read, whole, count);
         let ranges = &self.scratch.ranges;
         write_ranges(cx, (self.records, 0), (table.records(), 1), ranges);
         write_ranges(cx, (self.values, 0), (table.values(), stride), ranges);
+        write_ranges(cx, (self.poses, 0), (table.poses(), 1), ranges);
         changes.take(0, read.upto);
-        let moved = fresh || !ranges.is_empty() || self.slots != count as u32;
-        self.slots = count as u32;
-        moved
+        !ranges.is_empty()
     }
 
     fn upload_order(&mut self, table: &DrawnTable, cx: &mut Prepare<'_, Self>) -> bool {
@@ -367,109 +238,39 @@ impl DrawnGpu {
         whole || read.all || !read.listed.is_empty()
     }
 
-    fn ensure_nodes(&mut self, nodes: usize, parents: usize, cx: &mut Prepare<'_, Self>) {
-        let held = &mut self.nodes;
-        if nodes > held.capacity {
-            held.capacity = grow(nodes);
-            held.composed_capacity = 0;
+    fn upload_entries(&mut self, entries: &[PoseEntry], cx: &mut Prepare<'_, Self>) -> bool {
+        let bytes = (entries.len() as u64).next_power_of_two() * size_of::<PoseEntry>() as u64;
+        if cx.allocate_buffer(self.entries, storage_bytes(bytes)) == Allocation::Fresh {
+            self.entries_sent.clear();
         }
-        let capacity = held.capacity as u64;
-        let sizes = [
-            (
-                held.locals,
-                storage_bytes(2 * capacity * size_of::<NodePose>() as u64),
-            ),
-            (
-                held.info,
-                storage_bytes(capacity * size_of::<NodeInfo>() as u64),
-            ),
-            (
-                held.authority,
-                storage_bytes(capacity * size_of::<PoseRows>() as u64),
-            ),
-        ];
-        let mut fresh = false;
-        for (buffer, bytes) in sizes {
-            fresh |= cx.allocate_buffer(buffer, bytes) == Allocation::Fresh;
-        }
-        if parents != 0 && held.composed_capacity < held.capacity {
-            held.composed_capacity = held.capacity;
-        }
-        fresh |= cx.allocate_buffer(
-            held.composed,
-            storage_bytes(held.composed_capacity as u64 * COMPOSED_BYTES),
-        ) == Allocation::Fresh;
-        if parents > held.parent_capacity {
-            held.parent_capacity = grow(parents);
-        }
-        let parent_bytes = storage_bytes(held.parent_capacity as u64 * 4);
-        fresh |= cx.allocate_buffer(held.parents, parent_bytes) == Allocation::Fresh;
-        for &level in &held.levels {
-            fresh |= cx.allocate_buffer(level, 16) == Allocation::Fresh;
-        }
-        if fresh {
-            held.whole = true;
-        }
-    }
-
-    fn upload_nodes(
-        &mut self,
-        poses: &DrawnPoses,
-        streams: &NodeStreams<'_>,
-        cx: &mut Prepare<'_, Self>,
-    ) -> bool {
-        let count = streams.info.len();
-        self.ensure_nodes(count, streams.parents.len(), cx);
-        let changes = poses.node_changes();
-        let read = changes.read();
-        let whole = std::mem::take(&mut self.nodes.whole);
-        if !whole && !read.all && read.listed.is_empty() {
+        let sent: &[u8] = bytemuck::cast_slice(&self.entries_sent);
+        if sent == bytemuck::cast_slice::<PoseEntry, u8>(entries) {
             return false;
         }
-        self.scratch.changed(&read, whole, count);
-        let held = &mut self.nodes;
-        let previous = (held.capacity * size_of::<NodePose>()) as u64;
-        let ranges = &self.scratch.ranges;
-        write_ranges(cx, (held.locals, 0), (streams.current, 1), ranges);
-        write_ranges(cx, (held.locals, previous), (streams.previous, 1), ranges);
-        write_ranges(cx, (held.info, 0), (streams.info, 1), ranges);
-        write_ranges(cx, (held.authority, 0), (streams.authority, 1), ranges);
-        if whole {
-            held.parents_sent.clear();
-            held.level_ranges.clear();
+        if !entries.is_empty() {
+            cx.write(self.entries, 0, entries);
         }
-        if !streams.parents.is_empty() && held.parents_sent.as_slice() != streams.parents {
-            cx.write(held.parents, 0, streams.parents);
-            held.parents_sent.clear();
-            held.parents_sent.extend_from_slice(streams.parents);
+        self.entries_sent.clear();
+        self.entries_sent.extend_from_slice(entries);
+        true
+    }
+
+    fn upload_frame(&mut self, frame: PoseFrame, cx: &mut Prepare<'_, Self>) -> bool {
+        if cx.allocate_buffer(self.frame, size_of::<PoseFrame>() as u64) == Allocation::Fresh {
+            self.frame_sent = PoseFrame::default();
         }
-        let mut start = 0;
-        for (level, &end) in streams.levels.iter().enumerate() {
-            let range = (start, end);
-            start = end;
-            if held.level_ranges.get(level) == Some(&range) {
-                continue;
-            }
-            if level < NODE_LEVELS {
-                cx.write(held.levels[level], 0, &[range.0, range.1, 0, 0]);
-            }
-            match held.level_ranges.get_mut(level) {
-                Some(known) => *known = range,
-                None => held.level_ranges.push(range),
-            }
+        if frame.entries == 0 || bytemuck::bytes_of(&frame) == bytemuck::bytes_of(&self.frame_sent)
+        {
+            return false;
         }
-        held.level_ranges.truncate(streams.levels.len());
-        changes.take(0, read.upto);
+        cx.write(self.frame, 0, &[frame]);
+        self.frame_sent = frame;
         true
     }
 }
 
 impl GpuPart for DrawnGpu {
-    type Reads = (
-        Res<'static, DrawnTable>,
-        Res<'static, DrawnPoses>,
-        Res<'static, GlobalTransforms>,
-    );
+    type Reads = (Res<'static, DrawnTable>, Res<'static, DrawnPoses>);
     const NAME: &'static str = "drawn";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -478,56 +279,21 @@ impl GpuPart for DrawnGpu {
         let records = cx.buffer("drawn_records", Lifetime::Kept);
         let values = cx.buffer("drawn_values", Lifetime::Kept);
         let order = cx.buffer("drawn_order", Lifetime::Kept);
-        let frame = cx.buffer("drawn_frame", Lifetime::Kept);
         let poses = cx.buffer("drawn_poses", Lifetime::Kept);
-        let nodes = Nodes {
-            locals: cx.buffer("drawn_node_locals", Lifetime::Kept),
-            info: cx.buffer("drawn_node_info", Lifetime::Kept),
-            authority: cx.buffer("drawn_node_authority", Lifetime::Kept),
-            composed: cx.buffer("drawn_node_composed", Lifetime::Kept),
-            parents: cx.buffer("drawn_node_parents", Lifetime::Kept),
-            levels: (0..NODE_LEVELS)
-                .map(|_| cx.buffer("drawn_node_level", Lifetime::Kept))
-                .collect(),
-            capacity: 0,
-            composed_capacity: 0,
-            parent_capacity: 0,
-            parents_sent: Vec::new(),
-            level_ranges: Vec::new(),
-            whole: false,
-        };
+        let frame = cx.buffer("drawn_pose_frame", Lifetime::Kept);
+        let entries = cx.buffer("drawn_pose_entries", Lifetime::Kept);
         cx.frame(drawn_at("drawn_records"), Bind::Buffer(records))?;
         cx.frame(drawn_at("drawn_values"), Bind::Buffer(values))?;
         cx.frame(drawn_at("drawn_order"), Bind::Buffer(order))?;
         cx.frame(drawn_at("drawn_poses"), Bind::Buffer(poses))?;
         let pass = cx.pass("drawn_pose").label("engine/drawn-pose").id();
-        let entry = |name: &'static str| Entry::generated(core_module(DRAWN_POSE_MODULE), name);
-        let node_binds = |level: Buffer<Self>| {
-            [
-                (posed_at("pose_frame"), Bind::Buffer(frame)),
-                (posed_at("node_locals"), Bind::Buffer(nodes.locals)),
-                (posed_at("node_info"), Bind::Buffer(nodes.info)),
-                (posed_at("node_authority"), Bind::Buffer(nodes.authority)),
-                (posed_at("node_composed"), Bind::Buffer(nodes.composed)),
-                (posed_at("node_parents"), Bind::Buffer(nodes.parents)),
-                (posed_at("node_level"), Bind::Buffer(level)),
-            ]
-        };
-        let mut compose = Vec::with_capacity(NODE_LEVELS);
-        for &level in &nodes.levels {
-            let binds = node_binds(level);
-            compose.push(cx.compute_pipeline(pass, entry("drawn_compose"), &[], &binds)?);
-        }
         let pose = cx.compute_pipeline(
             pass,
-            entry("drawn_pose"),
+            Entry::generated(core_module(DRAWN_POSE_MODULE), "drawn_pose"),
             &[],
             &[
                 (posed_at("pose_frame"), Bind::Buffer(frame)),
-                (posed_at("node_locals"), Bind::Buffer(nodes.locals)),
-                (posed_at("node_info"), Bind::Buffer(nodes.info)),
-                (posed_at("node_authority"), Bind::Buffer(nodes.authority)),
-                (posed_at("node_composed"), Bind::Buffer(nodes.composed)),
+                (posed_at("pose_entries"), Bind::Buffer(entries)),
                 (posed_at("posed"), Bind::Buffer(poses)),
             ],
         )?;
@@ -535,26 +301,25 @@ impl GpuPart for DrawnGpu {
             records,
             values,
             order,
-            frame,
             poses,
-            nodes,
+            frame,
+            entries,
             pass,
-            compose,
             pose,
             scratch: Scratch {
                 bits: Vec::new(),
                 held: Vec::new(),
                 ranges: Vec::new(),
             },
-            frame_sent: DrawnFrame::default(),
-            slots: 0,
+            frame_sent: PoseFrame::default(),
+            entries_sent: Vec::new(),
             owed: true,
         })
     }
 
     fn prepare(
         &mut self,
-        (table, poses, hierarchy): SystemParamItem<'_, '_, Self::Reads>,
+        (table, poses): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.owed |= self.upload_slots(&table, cx);
@@ -564,26 +329,9 @@ impl GpuPart for DrawnGpu {
                 member.batches.fill(&table, member.decl.kind);
             }
         }
-        let streams = poses.streams(&hierarchy);
-        self.owed |= self.upload_nodes(&poses, &streams, cx);
-        let fresh =
-            cx.allocate_buffer(self.frame, size_of::<DrawnFrame>() as u64) == Allocation::Fresh;
-        let frame = DrawnFrame {
-            alpha: if streams.blended > 0 {
-                streams.alpha
-            } else {
-                self.frame_sent.alpha
-            },
-            capacity: self.nodes.capacity as u32,
-            nodes: streams.info.len() as u32,
-            slots: self.slots,
-        };
-        if fresh || bytemuck::bytes_of(&frame) != bytemuck::bytes_of(&self.frame_sent) {
-            cx.write(self.frame, 0, &[frame]);
-            self.frame_sent = frame;
-            self.owed = true;
-        }
-        if self.owed && self.slots != 0 {
+        self.owed |= self.upload_entries(poses.entries(), cx);
+        self.owed |= self.upload_frame(poses.frame(), cx);
+        if self.owed && !self.entries_sent.is_empty() {
             cx.run(self.pass);
         }
     }
@@ -599,14 +347,8 @@ impl GpuPart for DrawnGpu {
             return;
         }
         cx.recorded();
-        for (level, &(start, end)) in self.nodes.level_ranges.iter().enumerate() {
-            if end > start
-                && let Some(pipeline) = self.compose.get(level)
-            {
-                cx.dispatch(pipeline, [(end - start).div_ceil(POSE_GROUP), 1, 1]);
-            }
-        }
-        cx.dispatch(&self.pose, [self.slots.div_ceil(POSE_GROUP), 1, 1]);
+        let groups = (self.entries_sent.len() as u32).div_ceil(POSE_GROUP);
+        cx.dispatch(&self.pose, [groups, 1, 1]);
         self.owed = cx.recorded() != Recorded::Exact;
     }
 }

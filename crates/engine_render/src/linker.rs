@@ -5,7 +5,7 @@ use std::sync::Arc;
 use engine_core::{Entry, Error, ErrorCode, Source, Var};
 use wesl::Mangler as _;
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) mod counting;
 mod driver;
 mod facts;

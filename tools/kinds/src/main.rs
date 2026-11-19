@@ -7,7 +7,15 @@ use std::process::{Command, ExitCode};
 
 use serde_json::Value;
 
-const KINDS: &[&str] = &["support", "core", "core-internal", "host", "game", "tool"];
+const KINDS: &[&str] = &[
+    "support",
+    "core",
+    "core-internal",
+    "host",
+    "game",
+    "cook",
+    "tool",
+];
 
 const CORE_CRATES: &[&str] = &[
     "engine_ecs",
@@ -358,7 +366,7 @@ fn check_member(member: &Member, folders: &BTreeMap<&Path, &Member>, problems: &
     for dependency in &member.dependencies {
         let edge = format!("{at}: {} {}", dependency.table, dependency.key);
         if let Some(target) = dependency.path.as_deref().and_then(|dir| folders.get(dir)) {
-            if !allowed(kind, target) {
+            if !allowed(kind, target, &dependency.table) {
                 let target_kind = target.kind.as_deref().unwrap_or("no kind");
                 problems.push(format!(
                     "{edge}: a {kind} crate may not depend on {} ({target_kind})",
@@ -373,7 +381,7 @@ fn check_member(member: &Member, folders: &BTreeMap<&Path, &Member>, problems: &
     }
 }
 
-fn allowed(kind: &str, target: &Member) -> bool {
+fn allowed(kind: &str, target: &Member, table: &str) -> bool {
     let target_kind = target.kind.as_deref().unwrap_or_default();
     match kind {
         "support" => target_kind == "support",
@@ -381,7 +389,11 @@ fn allowed(kind: &str, target: &Member) -> bool {
             matches!(target_kind, "support" | "core" | "core-internal")
         }
         "host" => matches!(target_kind, "support" | "core" | "core-internal" | "host"),
-        "game" => matches!(target_kind, "host" | "core" | "support"),
+        "game" => {
+            matches!(target_kind, "host" | "core" | "support")
+                || target_kind == "cook" && table.contains("not(target_arch = \"wasm32\")")
+        }
+        "cook" => matches!(target_kind, "support" | "core" | "core-internal" | "cook"),
         "tool" => true,
         _ => false,
     }

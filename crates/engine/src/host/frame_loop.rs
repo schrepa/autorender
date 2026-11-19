@@ -1,4 +1,4 @@
-use engine_core::{PauseReason, Readiness};
+use engine_core::{Readiness, Show};
 use engine_render::Picture;
 
 use super::now_ms;
@@ -29,39 +29,9 @@ impl FramePhase {
     ];
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum HostPause {
-    Focus = 0,
-    Hidden = 1,
-    Suspended = 2,
-}
-
-impl HostPause {
-    pub const ALL: [(Self, &'static str); 3] = [
-        (Self::Focus, "focus"),
-        (Self::Hidden, "hidden"),
-        (Self::Suspended, "suspended"),
-    ];
-
-    pub const fn reason(self) -> PauseReason {
-        match self {
-            Self::Focus => PauseReason::Focus,
-            Self::Hidden => PauseReason::Hidden,
-            Self::Suspended => PauseReason::Suspended,
-        }
-    }
-
-    pub fn of(code: u32) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .find(|&&(pause, _)| pause as u32 == code)
-            .map(|&(pause, _)| pause)
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 enum Stage {
+    #[default]
     Unprepared,
     Preparing {
         since: f64,
@@ -71,25 +41,9 @@ enum Stage {
     Playing,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum View {
-    Sized,
-    Empty,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FrameLoop {
     stage: Stage,
-    view: View,
-}
-
-impl Default for FrameLoop {
-    fn default() -> Self {
-        Self {
-            stage: Stage::Unprepared,
-            view: View::Sized,
-        }
-    }
 }
 
 impl FrameLoop {
@@ -101,15 +55,11 @@ impl FrameLoop {
     ) -> crate::Result<FramePhase> {
         #[cfg(feature = "dev")]
         host.dev_apply();
-        if width == 0 || height == 0 {
-            host.pause(HostPause::Hidden);
-            self.view = View::Empty;
+        let empty = width == 0 || height == 0;
+        host.sized(empty);
+        if empty {
             return Ok(FramePhase::Idle);
         }
-        if let View::Empty = self.view {
-            host.resume(HostPause::Hidden);
-        }
-        self.view = View::Sized;
         let (stage, phase) = self.advance(host, timestamp, (width, height))?;
         self.stage = stage;
         Ok(phase)
@@ -126,9 +76,14 @@ impl FrameLoop {
                 let phase = host.play(timestamp, (width, height))?;
                 return Ok((Stage::Playing, phase));
             }
+            Stage::Unprepared if *host.engine().app.world().resource::<Show>() == Show::Now => {
+                host.show(true);
+                host.suspend();
+                host.play(timestamp, (width, height))?;
+                return Ok((Stage::Playing, FramePhase::Started));
+            }
             Stage::Unprepared => {
                 host.suspend();
-                host.hold_preparation(true);
                 (now_ms(), Picture::Hidden, None)
             }
             Stage::Preparing {
@@ -162,7 +117,7 @@ impl FrameLoop {
                 return Ok((preparing(Picture::Hidden, Some(readiness)), waiting));
             }
             host.set_preparation_ms(now_ms() - since);
-            host.hold_preparation(false);
+            host.show(true);
             host.suspend();
             return Ok((Stage::Playing, FramePhase::Started));
         }

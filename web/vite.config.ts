@@ -114,11 +114,9 @@ export default defineConfig(({ command, mode }) => ({
     },
   }],
   resolve: {
-    alias: instrumented.has(mode) ? games.map(({ wasm }) => ({
-      find: wasmImport(wasm), replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/${wasm}.js`),
-    })) : command === "serve" ? clients.map(({ wasm }) => ({
-      find: wasmImport(wasm), replacement: resolve(import.meta.dirname, `pkg-dev/${wasm}.js`),
-    })) : [],
+    alias: clients.map(({ wasm }) => ({
+      find: wasmImport(wasm), replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode) ?? (command === "serve" ? "dev" : "ship")}/${wasm}.js`),
+    })),
   },
   build: {
     outDir: instrumented.has(mode) ? `dist-${instrumented.get(mode)}` : "dist",

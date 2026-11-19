@@ -110,12 +110,12 @@ impl Run {
                     let dimension = view_dimension(entry.ty);
                     match self.tables.textures.get_mut(*texture as usize).and_then(Option::as_mut) {
                         Some(made) => Held::View(made.viewed(dimension).clone()),
-                        None => self.batch_placeholder(entry.ty),
+                        None => self.batch_stand_in(entry, decl.index, &path)?,
                     }
                 }
                 BatchEntryRaw::Asset(texture) => match self.assets.textures.texture_view(*texture) {
                     Some(view) => Held::View(view.clone()),
-                    None => self.batch_placeholder(entry.ty),
+                    None => self.batch_stand_in(entry, decl.index, &path)?,
                 },
                 BatchEntryRaw::AssetSampler(sampler) => {
                     let device = self.device.clone();
@@ -173,18 +173,18 @@ impl Run {
         }
     }
 
-    fn batch_placeholder(&mut self, ty: Ty) -> Held {
-        self.placeholder((ty, 0));
-        let made = self
-            .bindings
-            .placeholders
-            .iter()
-            .find(|(known, _)| *known == (ty, 0))
-            .map(|(_, made)| made);
-        match made {
-            Some(Placeholder::Texture(view)) => Held::View(view.clone()),
-            Some(Placeholder::Sampler(sampler)) => Held::Sampler(sampler.clone()),
-            None => Held::Range(self.uniforms.camera.clone(), 0, self.uniforms.camera.size()),
+    fn batch_stand_in(
+        &mut self,
+        entry: &crate::machine::BatchEntry,
+        group: u32,
+        path: &str,
+    ) -> Result<Held, Error> {
+        match self.reported_stand_in(Some(self.part), entry.ty, (group, entry.binding)) {
+            Resolved::View(view) => Ok(Held::View(view)),
+            Resolved::Sampler(sampler) => Ok(Held::Sampler(sampler)),
+            Resolved::Buffer(_) | Resolved::Dynamic(..) | Resolved::Missing => {
+                Err(fault(path.to_owned(), ErrorCode::InvalidValue).got(entry.name.as_str()))
+            }
         }
     }
 }

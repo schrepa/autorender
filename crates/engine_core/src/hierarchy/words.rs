@@ -1,5 +1,6 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
+use engine_place::PoseNodes;
 
 use super::{GlobalTransforms, tracking};
 use crate::{Mobility, Mover, Node, NodeWord};
@@ -69,7 +70,7 @@ impl GlobalTransforms {
         self.declared[index].word(parent)
     }
 
-    pub(super) fn settle_words(&mut self) -> bool {
+    pub(super) fn settle_words(&mut self) {
         let _profile = engine_profile::span("hierarchy", "settle_words");
         if std::mem::take(&mut self.words_stale) {
             self.worded.clear();
@@ -84,10 +85,9 @@ impl GlobalTransforms {
                     self.woken.push(entity);
                 }
             }
-            return true;
+            return;
         }
         let threshold = self.dense_threshold();
-        let mut changed = false;
         let mut worded = std::mem::take(&mut self.worded);
         while let Some(index) = worded.pop() {
             if !self.live(index) {
@@ -100,7 +100,6 @@ impl GlobalTransforms {
             }
             self.words[index] = next;
             self.placed.mark(index as u32);
-            changed = true;
             if !before.active && next.active {
                 self.dirty.mark(index, threshold);
                 self.woken.push(self.entities[index]);
@@ -108,7 +107,6 @@ impl GlobalTransforms {
             worded.extend(self.children(index));
         }
         self.worded = worded;
-        changed
     }
 
     pub(crate) fn take_woken(&mut self) -> Vec<Entity> {

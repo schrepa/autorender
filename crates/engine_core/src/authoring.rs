@@ -15,32 +15,31 @@ use crate::{
 };
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
-    let node = ComponentKind::of::<Node>("node");
-    let mover = ComponentKind::of::<Mover>("mover");
-    let camera = ComponentKind::of::<Camera>("camera").check(camera_checked);
-    let view = ComponentKind::form::<ViewForm>("view")
-        .check(view_checked)
-        .prepare(view_camera);
-    let drawn = ComponentKind::form::<DrawnForm>("drawn").check(drawn_checked);
-    #[cfg(feature = "schema")]
-    let (node, mover, camera, view, drawn) = (
-        node.schema(schema_of::<Node>),
-        mover.schema(schema_of::<Mover>),
-        camera.schema(schema_of::<Camera>),
-        view.schema(schema_of::<ViewForm>),
-        drawn.schema(schema_of::<DrawnForm>),
-    );
     [
-        node.into(),
-        mover.into(),
-        camera.into(),
-        view.into(),
-        drawn.into(),
+        ComponentKind::of::<Node>("node")
+            .schema(crate::schema_of::<Node>)
+            .into(),
+        ComponentKind::of::<Mover>("mover")
+            .schema(crate::schema_of::<Mover>)
+            .into(),
+        ComponentKind::of::<Camera>("camera")
+            .check(camera_checked)
+            .schema(crate::schema_of::<Camera>)
+            .into(),
+        ComponentKind::form::<ViewForm>("view")
+            .check(view_checked)
+            .prepare(view_camera)
+            .schema(crate::schema_of::<ViewForm>)
+            .into(),
+        ComponentKind::form::<DrawnForm>("drawn")
+            .check(drawn_checked)
+            .schema(crate::schema_of::<DrawnForm>)
+            .into(),
     ]
 });
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DrawnForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,7 +162,7 @@ fn switched(listed: &ScenePasses, mask: PassMask, base: PassMask) -> BTreeMap<St
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ViewForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -273,11 +272,6 @@ impl ViewForm {
 
 fn camera_checked(camera: &Camera, path: &str) -> Result<(), Error> {
     camera.check().map_err(|error| error.within(path))
-}
-
-#[cfg(feature = "schema")]
-fn schema_of<C: schemars::JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(C)).unwrap_or(Value::Null)
 }
 
 #[doc(hidden)]

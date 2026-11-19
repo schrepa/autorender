@@ -13,12 +13,12 @@ mod services;
 mod state;
 
 pub use engine_place::CORE_ROW;
-#[cfg(feature = "profiling")]
+#[cfg(feature = "dev")]
 pub use entries::names::{Answer, Kind, Lands, NameEntry, Reach, ReachMut, unavailable};
-pub use entries::{Owned, SettingsEntry, StatsEntry, parse_section};
+pub use entries::{Owned, SettingsEntry, StatsEntry};
 pub use members::MembersOf;
-pub use record::{BrickRecord, RecordExt};
-#[cfg(feature = "profiling")]
+pub use record::{BrickRecord, BrickSystems, RecordExt};
+#[cfg(feature = "dev")]
 pub use registry::register;
 pub use registry::{BrickId, Registry, RegistryBuilder, settings};
 pub use scene::{SceneRead, SpawnedBy};

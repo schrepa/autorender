@@ -35,11 +35,11 @@ pub(crate) struct Bound {
     groups: Vec<Option<(wgpu::BindGroup, Option<u32>)>>,
     render: Option<wgpu::RenderPipeline>,
     compute: Option<wgpu::ComputePipeline>,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) swap: Option<Swap>,
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) struct Swap {
     pub(crate) group: wgpu::BindGroup,
     pub(crate) empty: wgpu::BindGroup,
@@ -47,7 +47,7 @@ pub(crate) struct Swap {
     pub(crate) compute: Vec<(wgpu::ComputePipeline, wgpu::ComputePipeline, u32)>,
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 impl Swap {
     fn groups(&self, from: u32) -> impl Iterator<Item = (u32, &wgpu::BindGroup)> {
         let group = crate::linker::counting::GROUP;
@@ -57,7 +57,7 @@ impl Swap {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) struct Work {
     pub(crate) counter: crate::linker::counting::Counter,
     pub(crate) generation: u64,
@@ -65,7 +65,7 @@ pub(crate) struct Work {
     pub(crate) live: Option<Live>,
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) struct CountedAsk {
     pub(crate) counted: (u64, u64),
     pub(crate) plain: (u64, u64),
@@ -73,7 +73,7 @@ pub(crate) struct CountedAsk {
     pub(crate) generation: u64,
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) struct Live {
     pub(crate) buffer: wgpu::Buffer,
     pub(crate) layout: wgpu::BindGroupLayout,
@@ -146,7 +146,7 @@ impl Bound {
             return;
         }
         self.render = Some(pipeline.clone());
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         if let Some(swap) = self.swap.take() {
             let found = swap.render.iter().find(|(plain, ..)| plain == pipeline);
             if let Some((_, counted, from)) = found {
@@ -173,7 +173,7 @@ impl Bound {
             return;
         }
         self.compute = Some(pipeline.clone());
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         if let Some(swap) = self.swap.take() {
             let found = swap.compute.iter().find(|(plain, ..)| plain == pipeline);
             if let Some((_, counted, from)) = found {
@@ -274,7 +274,8 @@ pub(crate) struct Bindings {
     pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) frame_groups: Vec<Groups>,
     pub(crate) own_groups: Vec<Vec<Groups>>,
-    pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
+    pub(crate) placeholders: Vec<(Ty, Placeholder)>,
+    pub(crate) reported_stand_ins: Vec<(u32, u32, u32)>,
     pub(crate) wanted_textures: Vec<TextureHandle>,
     pub(crate) samplers: Vec<wgpu::Sampler>,
 }
@@ -306,12 +307,12 @@ pub(crate) struct Pipelines {
     pub(crate) warming: super::warming::Warming,
     pub(crate) settled: bool,
     pub(crate) standing: Vec<(u64, u64)>,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) work: Option<Work>,
 }
 
 impl Pipelines {
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn work_landed(
         &mut self,
         written: engine_core::FrameId,
@@ -322,7 +323,7 @@ impl Pipelines {
         }
     }
 
-    #[cfg(not(any(feature = "dev", feature = "profiling")))]
+    #[cfg(not(feature = "dev"))]
     pub(crate) fn work_landed(
         &mut self,
         _written: engine_core::FrameId,
@@ -351,7 +352,6 @@ pub(crate) struct Planning {
     pub(crate) pass_sets: Vec<Arc<[SetFormat]>>,
     pub(crate) merge: bool,
     pub(crate) labelled: Option<u32>,
-    pub(crate) idle: Vec<(u32, engine_core::DrawKind, &'static str)>,
 }
 
 #[derive(Default)]
@@ -616,6 +616,7 @@ impl Run {
                 frame_groups,
                 own_groups,
                 placeholders: Vec::new(),
+                reported_stand_ins: Vec::new(),
                 wanted_textures: Vec::new(),
                 samplers,
             },
@@ -635,7 +636,6 @@ impl Run {
                 pass_sets,
                 merge: true,
                 labelled: None,
-                idle: Vec::new(),
             },
             tallies: Tallies {
                 drawn,

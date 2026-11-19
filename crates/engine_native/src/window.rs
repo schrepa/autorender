@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use engine::host::{FramePhase, HostPause};
+use engine::host::FramePhase;
 use engine::stats::GpuTime;
-use engine::{BrickList, Engine, ErrorCode, Game, GameHost, RenderTarget};
+use engine::{BrickList, ErrorCode, Game, GameHost, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
@@ -16,31 +16,19 @@ use crate::input::Input;
 use crate::options::{HostOptions, StartScene};
 
 #[derive(Clone, Debug)]
-pub struct Window {
-    pub title: String,
-    pub keep: Option<String>,
-    pub options: HostOptions,
-    pub scene: StartScene,
+pub(crate) struct Window {
+    pub(crate) title: String,
+    pub(crate) keep: Option<String>,
+    pub(crate) options: HostOptions,
+    pub(crate) scene: StartScene,
 }
 
-type Build<'a, G> = (
-    Box<dyn FnOnce(BrickList) -> BrickList + 'a>,
-    Box<dyn FnOnce(&mut Engine) -> engine::Result<G> + 'a>,
-);
-
-pub fn run<'a, G: Game, E: Into<engine::Error>>(
-    window: Window,
-    bricks: impl FnOnce(BrickList) -> BrickList + 'a,
-    build: impl FnOnce(&mut Engine) -> Result<G, E> + 'a,
-) -> engine::Result<()> {
+pub(crate) fn run<G: Game>(window: Window, bricks: BrickList) -> engine::Result<()> {
     let event_loop = EventLoop::new()
         .map_err(|error| host_error(ErrorCode::RenderFailed, "$.event_loop", error))?;
-    let mut app = App {
+    let mut app = App::<G> {
         options: window,
-        build: Some((
-            Box::new(bricks),
-            Box::new(move |engine: &mut Engine| build(engine).map_err(Into::<engine::Error>::into)),
-        )),
+        bricks: Some(bricks),
         input: Input::default(),
         running: None,
         outcome: Ok(()),
@@ -51,9 +39,9 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
     app.outcome
 }
 
-struct App<'a, G: Game> {
+struct App<G: Game> {
     options: Window,
-    build: Option<Build<'a, G>>,
+    bricks: Option<BrickList>,
     input: Input,
     running: Option<Running<G>>,
     outcome: engine::Result<()>,
@@ -65,15 +53,16 @@ struct Running<G: Game> {
     size: (u32, u32),
     title: Title,
     speaker: crate::sound::Speaker,
+    io: crate::io::Io,
     #[cfg(feature = "dev")]
     session: crate::dev::Session,
 }
 
-impl<'a, G: Game> App<'a, G> {
+impl<G: Game> App<G> {
     fn start(
         &mut self,
         event_loop: &ActiveEventLoop,
-        (bricks, build): Build<'a, G>,
+        bricks: BrickList,
     ) -> engine::Result<Running<G>> {
         let options = &self.options.options;
         let mut attributes =
@@ -91,11 +80,11 @@ impl<'a, G: Game> App<'a, G> {
         let target = RenderTarget::Window {
             window: window.clone(),
             size,
-            gpu: options.gpu,
-            vsync: options.vsync,
         };
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
-            target, bricks, build,
+            target,
+            options.start::<G>(),
+            bricks,
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
@@ -114,28 +103,29 @@ impl<'a, G: Game> App<'a, G> {
             size,
             title: Title::new(&self.options.title),
             speaker: crate::sound::Speaker::default(),
+            io: crate::io::Io::default(),
             #[cfg(feature = "dev")]
             session,
         })
     }
 }
 
-impl<G: Game> ApplicationHandler for App<'_, G> {
+impl<G: Game> ApplicationHandler for App<G> {
     fn suspended(&mut self, _: &ActiveEventLoop) {
         if let Some(running) = &mut self.running {
-            running.host.pause(HostPause::Suspended);
+            running.host.hidden(true);
         }
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(build) = self.build.take() else {
+        let Some(bricks) = self.bricks.take() else {
             if let Some(running) = &mut self.running {
-                running.host.resume(HostPause::Suspended);
+                running.host.hidden(false);
                 running.window.request_redraw();
             }
             return;
         };
-        match self.start(event_loop, build) {
+        match self.start(event_loop, bricks) {
             Ok(running) => {
                 running.window.request_redraw();
                 self.running = Some(running);
@@ -153,7 +143,10 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
             return;
         };
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                ask_close(&mut running.host);
+                running.window.request_redraw();
+            }
             WindowEvent::Moved(_) => self.input.regrab(),
             WindowEvent::Resized(size) => {
                 self.input.regrab();
@@ -169,11 +162,12 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     .host
                     .set_refresh_interval(refresh_interval(&running.window));
             }
-            WindowEvent::Focused(false) => {
-                self.input.clear();
-                running.host.pause(HostPause::Focus);
+            WindowEvent::Focused(focused) => {
+                if !focused {
+                    self.input.clear();
+                }
+                running.host.focused(focused);
             }
-            WindowEvent::Focused(true) => running.host.resume(HostPause::Focus),
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key
                     && !event.repeat
@@ -219,7 +213,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     event_loop.exit();
                     return;
                 }
-                if phase == FramePhase::Idle {
+                if phase == FramePhase::Idle && !closing(&running.host) {
                     return;
                 }
                 match phase {
@@ -262,6 +256,7 @@ impl<G: Game> Running<G> {
         let (width, height) = self.size;
         let phase = self.host.animation_frame(timestamp, width, height)?;
         self.speaker.exchange(&mut self.host);
+        self.io.exchange(&mut self.host);
         #[cfg(feature = "dev")]
         self.session.after(&mut self.host)?;
         match phase {
@@ -273,6 +268,21 @@ impl<G: Game> Running<G> {
         }
         Ok(phase)
     }
+}
+
+fn ask_close<G: Game>(host: &mut GameHost<G>) {
+    let world = host.engine_mut().app.world_mut();
+    if let Some(mut closing) = world.get_resource_mut::<engine_core::Closing>() {
+        let _ = closing.ask();
+    }
+}
+
+fn closing<G: Game>(host: &GameHost<G>) -> bool {
+    host.engine()
+        .app
+        .world()
+        .get_resource::<engine_core::Closing>()
+        .is_some_and(engine_core::Closing::asked)
 }
 
 fn refresh_interval(window: &winit::window::Window) -> Option<f64> {

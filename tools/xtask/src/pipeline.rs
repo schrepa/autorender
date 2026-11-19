@@ -10,7 +10,13 @@ const PROFILING: &str = "profiling";
 const PROFILING_FEATURES: &str = "dev,profiling";
 
 pub fn build(root: &Path, profiling: bool) -> Result<(), String> {
-    build_clients(root, &clients().iter().collect::<Vec<_>>(), false, true)?;
+    build_clients(
+        root,
+        &clients().iter().collect::<Vec<_>>(),
+        false,
+        true,
+        "web/pkg-ship",
+    )?;
     let mut arguments = vec!["run", "build", "--prefix", "web"];
     if profiling {
         build_profiling_wasm(root)?;
@@ -58,14 +64,15 @@ pub fn build_profiling_wasm(root: &Path) -> Result<(), String> {
 }
 
 pub fn build_dev(root: &Path, game: Option<&str>) -> Result<(), String> {
-    match game {
-        Some(game) => build_clients(root, &[of_game(game)?], true, false),
-        None => build_wasm(root, true),
-    }
+    let selected = match game {
+        Some(game) => vec![of_game(game)?],
+        None => clients().iter().collect(),
+    };
+    build_clients(root, &selected, true, false, "web/pkg-dev")
 }
 
 pub fn build_native(root: &Path, project: &Project) -> Result<String, String> {
-    native(root, project, &["--features", "dev"], "debug", &[])
+    native(root, project, &["--features", DEV_FEATURES], "debug", &[])
 }
 
 pub fn build_profiling(root: &Path, project: &Project) -> Result<String, String> {
@@ -119,12 +126,13 @@ fn of_game(game: &str) -> Result<&'static Client, String> {
         })
 }
 
-pub fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
+pub fn build_wasm(root: &Path) -> Result<(), String> {
     build_clients(
         root,
         &clients().iter().collect::<Vec<_>>(),
-        development,
         false,
+        false,
+        "web/pkg",
     )
 }
 
@@ -133,13 +141,10 @@ fn build_clients(
     selected: &[&Client],
     development: bool,
     release: bool,
+    out_dir: &str,
 ) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
-    let (profile, folder) = if release {
-        ("release", "release")
-    } else {
-        ("dev", "debug")
-    };
+    let folder = if release { "release" } else { "debug" };
     let mut arguments: Vec<&str> = vec!["build"];
     for client in selected {
         arguments.extend(["-p", client.package.as_str()]);
@@ -152,11 +157,6 @@ fn build_clients(
         arguments.extend(["--features", DEV_FEATURES]);
     }
     run(root, "cargo", &arguments)?;
-    let out_dir = if development {
-        "web/pkg-dev"
-    } else {
-        "web/pkg"
-    };
     for client in selected {
         let name = client.wasm.as_str();
         let artifact = format!("target/{WASM_TARGET}/{folder}/{name}.wasm");
@@ -174,13 +174,7 @@ fn build_clients(
         }
         run(root, "wasm-bindgen", &arguments)?;
     }
-    let features: &[&str] = if development { &[DEV_FEATURES] } else { &[] };
-    let identity = serde_json::json!({"profile": profile, "features": features});
-    fs::write(
-        root.join(out_dir).join("build.json"),
-        serde_json::to_string_pretty(&identity).expect("identity_serializes") + "\n",
-    )
-    .map_err(|error| format!("cannot write {out_dir}/build.json: {error}"))
+    Ok(())
 }
 
 pub fn install_web_dependencies(root: &Path) -> Result<(), String> {

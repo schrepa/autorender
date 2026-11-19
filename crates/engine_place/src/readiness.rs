@@ -12,7 +12,7 @@ pub struct Unsettled {
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct Readiness {
     pub loading: Progress,
     pub compiling: u32,

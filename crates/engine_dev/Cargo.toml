@@ -7,10 +7,10 @@ publish.workspace = true
 
 [dependencies]
 bevy_ecs.workspace = true
-engine_settings = { workspace = true, features = ["schema"] }
+engine_settings = { workspace = true, features = ["dev"] }
 engine_core = { workspace = true, features = ["dev"] }
-engine_registry = { workspace = true, features = ["profiling"] }
-engine_scene = { workspace = true, features = ["schema"] }
+engine_registry = { workspace = true, features = ["dev"] }
+engine_scene = { workspace = true, features = ["dev"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -2,8 +2,8 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, Camera, Drawn, FixedTime, GlobalTransforms, Held, Kind, Lands, NameEntry, Pause,
-    Projection, Reach, ReachMut, Transform, glam::Vec3, main_camera, place_camera,
+    AssetLibrary, Camera, Drawn, FixedTime, GlobalTransforms, Held, Host, Kind, Lands, NameEntry,
+    Pause, Projection, Reach, ReachMut, Transform, glam::Vec3, main_camera, place_camera,
 };
 use engine_registry::{BrickStates, Registry, SettingsEntry, StatsEntry};
 use engine_scene::{SceneEntity, SceneInstance};
@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 use crate::request::Verb;
 
 pub fn args<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, Error> {
-    engine_settings::parse_value_at(args.clone(), "$.args")
+    engine_settings::parse_value_at(args, "$.args")
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -91,7 +91,6 @@ pub fn install(world: &mut World) {
         bare("assets", assets),
         bare("bricks", |reach| Ok(bricks(reach.world))),
         bare("entities.refused", |reach| Ok(crate::entities::refused(reach))),
-        bare("kept", kept),
         camera(),
         instruments(),
         pause(),
@@ -137,7 +136,7 @@ fn setting(section: &SettingsEntry) -> NameEntry {
     })
     .args(
         engine_core::schema_of::<SectionArgs>(),
-        json!({ "value": section.default_value() }),
+        json!({ "value": first_field(section.default_value()) }),
     )
     .set(Lands::ThisFrame, move |reach, given| {
         let given: SectionArgs = args(given)?;
@@ -160,6 +159,13 @@ fn setting(section: &SettingsEntry) -> NameEntry {
         Ok(json!({ "before": before, "after": after }))
     })
     .owned_by(section.brick)
+}
+
+fn first_field(whole: Value) -> Value {
+    let Value::Object(fields) = whole else {
+        return whole;
+    };
+    Value::Object(fields.into_iter().take(1).collect())
 }
 
 fn stats(stats: &StatsEntry) -> NameEntry {
@@ -202,20 +208,6 @@ fn status(reach: &Reach<'_>) -> Value {
         "notices": registry.map(Registry::notices),
         "fixed_delta_seconds": world.resource::<FixedTime>().delta_seconds,
     })
-}
-
-fn kept(reach: &Reach<'_>) -> Result<Value, Error> {
-    let kept = reach.world.get_resource::<engine_core::Kept>().ok_or_else(|| {
-        Error::new(ErrorCode::MissingResource, "$.kept").expected(Expected::Present)
-    })?;
-    let listed = kept.listing()?;
-    Ok(json!({
-        "place": kept.place(),
-        "kept": listed
-            .into_iter()
-            .map(|(name, bytes)| json!({ "name": name, "bytes": bytes }))
-            .collect::<Vec<_>>(),
-    }))
 }
 
 fn bricks(world: &World) -> Value {
@@ -389,6 +381,7 @@ fn pause() -> NameEntry {
         Ok(json!({
             "paused": world.resource::<Held>().paused,
             "game": world.get_resource::<Pause>().map(|pause| pause.reasons().collect::<Vec<_>>()),
+            "host": world.get_resource::<Host>(),
         }))
     })
     .args(engine_core::schema_of::<PauseArgs>(), json!({ "value": true }))

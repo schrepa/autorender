@@ -31,7 +31,7 @@ impl KindDecl {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 pub struct Layers(pub u32);
 
 impl Layers {
@@ -51,7 +51,7 @@ impl Default for Layers {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct InstanceValues {
     pub tint: [f32; 4],

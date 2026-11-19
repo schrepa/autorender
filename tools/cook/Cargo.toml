@@ -14,4 +14,4 @@ sha2.workspace = true
 workspace = true
 
 [package.metadata.engine]
-kind = "tool"
+kind = "cook"

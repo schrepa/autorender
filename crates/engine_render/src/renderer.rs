@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use engine_core::{Error, Expected};
-use glam::Mat4;
 
 use crate::encode::{Assets, Run};
 use crate::mesh_arena::GpuMeshes;
@@ -25,7 +24,7 @@ mod startup;
 
 pub(crate) use display::Display;
 use display::DisplayFrame;
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub use frame::names::gpu_names;
 pub use health::DeviceHealth;
 pub use install::{Ahead, Installation, device_limits, install_noop};
@@ -56,6 +55,7 @@ pub(crate) struct Core {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: crate::gpu_calls::Queue,
     pub(crate) adapter: crate::AdapterInfo,
+    pub(crate) request: crate::GpuRequest,
     pub(crate) display: Display,
     pub(crate) health: Arc<Mutex<health::Reports>>,
     pub(crate) profiler: GpuProfiler,
@@ -86,6 +86,18 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.core.display.resize(width, height);
+        let notice = self.core.display.resize(width, height);
+        self.notice(notice);
+    }
+
+    pub fn set_present(&mut self, present: engine_core::Present) {
+        let notice = self.core.display.set_present(present);
+        self.notice(notice);
+    }
+
+    fn notice(&self, notice: Option<Error>) {
+        if let (Some(notice), Ok(mut reports)) = (notice, self.core.health.lock()) {
+            reports.notice(notice);
+        }
     }
 }

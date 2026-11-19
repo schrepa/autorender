@@ -128,12 +128,6 @@ fn copy_picture(
     })
 }
 
-struct Viewed {
-    view_projection: Mat4,
-    eye: glam::Vec3,
-    seconds: f32,
-}
-
 fn mark_between(
     encoder: &mut wgpu::CommandEncoder,
     end: Option<Span<'_>>,
@@ -156,10 +150,6 @@ fn mark_span(
     if let (Some(encoder), Some(span)) = (encoder, profiler.span(name)) {
         span.mark(encoder, end);
     }
-}
-
-fn camera_of(viewed: &Viewed) -> CameraUniform {
-    CameraUniform::exact(viewed.view_projection, viewed.eye, viewed.seconds)
 }
 
 impl Renderer {
@@ -350,7 +340,7 @@ impl Renderer {
             return Ok(self.answer_picture(surface));
         }
         let world = frame.world();
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         self.core
             .queue
             .mark_unchanged(world.contains_resource::<crate::gpu_calls::UnchangedWrites>());
@@ -392,13 +382,8 @@ impl Renderer {
             .map_or(0.0, |time| time.elapsed as f32);
         run.settle_sets(listed);
         run.uniforms.cameras.clear();
-        run.uniforms.cameras.extend(listed.iter().map(|facts| {
-            camera_of(&Viewed {
-                view_projection: facts.view_projection,
-                eye: facts.eye,
-                seconds,
-            })
-        }));
+        let cameras = listed.iter().map(|facts| CameraUniform::of(facts, seconds));
+        run.uniforms.cameras.extend(cameras);
         let shown = surface.as_ref().map(|surface| {
             let texture = surface.texture().clone();
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -461,7 +446,7 @@ impl Renderer {
             scratch.asked.insert(canvas.index());
         }
         scratch.base.assign(&run.planning.runs);
-        #[cfg(any(feature = "dev", feature = "profiling"))]
+        #[cfg(feature = "dev")]
         if crate::whatif::changed(world, &mut scratch.seen) {
             for set in &mut run.sets.list {
                 set.plans.retain(|(skips, ..)| *skips == 0);
@@ -527,7 +512,10 @@ impl Renderer {
             }
             run.forget_viewed();
             keep_eligible(run, &facts, (first, index == 0));
-            #[cfg(any(feature = "dev", feature = "profiling"))]
+            if world.get::<engine_core::ViewSkip>(facts.view).is_some() {
+                skip_scenes(run);
+            }
+            #[cfg(feature = "dev")]
             {
                 run.sets.scratch.skips =
                     crate::whatif::skip(world, run.frames.asked, &mut run.planning.runs);
@@ -780,8 +768,8 @@ fn warm_on_flip(
 ) {
     run.pipelines.warming.open(
         world
-            .get_resource::<engine_core::Pause>()
-            .is_none_or(|pause| !pause.holds(engine_core::PauseReason::Preparing)),
+            .get_resource::<engine_core::Host>()
+            .is_some_and(|host| host.showing),
     );
     let generation = world
         .get_resource::<engine_registry::BrickStates>()
@@ -857,10 +845,17 @@ fn keep_eligible(
     if !facts.target.surface() {
         runs.remove_all(&sets.fixed.main_views);
     }
-    run.drop_idle_scenes();
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+fn skip_scenes(run: &mut Run) {
+    for (index, pass) in run.machine.declared.passes.iter().enumerate() {
+        if pass.scene.is_some_and(|scene| scene.core) {
+            run.planning.runs.remove(index);
+        }
+    }
+}
+
+#[cfg(feature = "dev")]
 pub(super) mod names {
     use bevy_ecs::world::World;
     use engine_core::AssetResidency;
@@ -1022,14 +1017,14 @@ pub(super) mod names {
                     declared_of.textures[at].part,
                     declared_of.textures[at].lifetime,
                     run.tables
-                        .sizes
+                        .textures
                         .get(at)
-                        .copied()
-                        .flatten()
+                        .and_then(Option::as_ref)
                         .map_or_else(
                             || unavailable("not_allocated"),
-                            |(size, mips)| {
-                                json!([size.width, size.height, size.depth_or_array_layers, mips])
+                            |made| {
+                                let size = made.size;
+                                json!([size.width, size.height, size.depth_or_array_layers])
                             },
                         ),
                 ),

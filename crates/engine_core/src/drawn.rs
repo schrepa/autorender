@@ -9,7 +9,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
 use engine_assets::{Asset, AssetLibrary, attributes_wgsl};
-use engine_place::Changes;
+use engine_place::{Changes, PoseNodes, PoseRows, same_rows_bits};
 use engine_registry::Registry;
 
 use crate::{
@@ -46,7 +46,6 @@ fn drawn_float_count(slot: u32) -> u32 {
 
 gpu_struct! {
     pub struct DrawnRecord {
-        pub node: u32,
         pub values: u32,
         pub floats: u32,
     }
@@ -60,7 +59,7 @@ pub fn drawn_wgsl() -> String {
 }
 
 const NO_BATCH: u32 = u32::MAX;
-const NO_SLOT: u32 = u32::MAX;
+const HOLE: u32 = u32::MAX;
 const VALUE_HEAD: usize = 2;
 
 fn stride_of(floats: u32) -> usize {
@@ -132,6 +131,7 @@ pub struct DrawnTable {
     homes: Vec<Home>,
     records: Vec<DrawnRecord>,
     values: Vec<[f32; 4]>,
+    poses: Vec<PoseRows>,
     free: Vec<u32>,
     order: Vec<u32>,
     batches: Vec<DrawnBatch>,
@@ -158,6 +158,7 @@ impl Default for DrawnTable {
             homes: Vec::new(),
             records: Vec::new(),
             values: Vec::new(),
+            poses: Vec::new(),
             free: Vec::new(),
             order: Vec::new(),
             batches: Vec::new(),
@@ -196,6 +197,20 @@ impl DrawnTable {
 
     pub fn values(&self) -> &[[f32; 4]] {
         &self.values
+    }
+
+    pub fn poses(&self) -> &[PoseRows] {
+        &self.poses
+    }
+
+    pub(crate) fn slot_of(&self, entity: Entity) -> Option<u32> {
+        match self.held.get(&entity)?.state {
+            DrawnState::Drawn { slot } => Some(slot),
+            DrawnState::Hidden
+            | DrawnState::Unplaced
+            | DrawnState::Waiting
+            | DrawnState::Refused(_) => None,
+        }
     }
 
     pub fn value_vec4s(&self) -> usize {
@@ -274,7 +289,7 @@ impl DrawnTable {
                 placed
                     .listed
                     .iter()
-                    .filter_map(|&node| globals.entity_at(node))
+                    .filter_map(|&node| globals.entity_at(node as usize))
                     .filter(|entity| self.held.contains_key(entity)),
             );
         }
@@ -296,6 +311,40 @@ impl DrawnTable {
         }
         touched.clear();
         self.touched = touched;
+        self.mirror_moved(globals);
+    }
+
+    fn mirror_moved(&mut self, globals: &GlobalTransforms) {
+        let moved = globals.posed().read();
+        let Self {
+            held,
+            poses,
+            slot_changes,
+            ..
+        } = self;
+        let mut mirror = |entity: Entity, node: usize| {
+            if let Some(kept) = held.get(&entity)
+                && let DrawnState::Drawn { slot } = kept.state
+                && let Some(rows) = globals.rows(node)
+                && copy_rows(&mut poses[slot as usize], rows)
+            {
+                slot_changes.mark(slot);
+            }
+        };
+        if moved.all {
+            for &entity in held.keys() {
+                if let Some(node) = globals.node_index(entity) {
+                    mirror(entity, node);
+                }
+            }
+        } else {
+            for &node in moved.listed {
+                if let Some(entity) = globals.entity_at(node as usize) {
+                    mirror(entity, node as usize);
+                }
+            }
+        }
+        globals.posed().take(0, moved.upto);
     }
 
     fn take_held(&mut self, entity: Entity, drawn: &Drawn, residency: &AssetResidency) -> Held {
@@ -479,6 +528,7 @@ impl DrawnTable {
             at: 0,
         });
         self.records.push(DrawnRecord::default());
+        self.poses.push([[0.0; 4]; 3]);
         self.values
             .extend(std::iter::repeat_n([0.0; 4], self.stride));
         (self.records.len() - 1) as u32
@@ -506,14 +556,17 @@ impl DrawnTable {
     fn write(&mut self, slot: u32, entity: Entity, drawn: &Drawn, cx: &Context<'_>) {
         let at = slot as usize;
         let record = DrawnRecord {
-            node: cx
-                .globals
-                .node_index(entity)
-                .map_or(u32::MAX, |index| index as u32),
             values: (at * self.stride) as u32,
             floats: drawn.values.floats.len() as u32,
         };
         let mut changed = self.records[at] != record;
+        if let Some(rows) = cx
+            .globals
+            .node_index(entity)
+            .and_then(|node| cx.globals.rows(node))
+        {
+            changed |= copy_rows(&mut self.poses[at], rows);
+        }
         let [red, green, blue] = drawn.values.emission;
         let floats = &drawn.values.floats;
         for index in 0..self.stride {
@@ -584,7 +637,7 @@ impl DrawnTable {
             self.homes[moved as usize].at = at;
             self.order_changes.mark(hole);
         }
-        self.order[last as usize] = NO_SLOT;
+        self.order[last as usize] = HOLE;
         self.order_changes.mark(last);
         self.batches[batch as usize].instances.end = last;
         if last == instances.start {
@@ -648,7 +701,7 @@ impl DrawnTable {
         let (from, len) = (instances.start as usize, instances.len());
         self.order
             .copy_within(from..from + len, start as usize);
-        self.order[from..from + len].fill(NO_SLOT);
+        self.order[from..from + len].fill(HOLE);
         for index in start..start + len as u32 {
             self.order_changes.mark(index);
         }
@@ -666,7 +719,7 @@ impl DrawnTable {
             return start;
         }
         let start = self.order.len();
-        self.order.resize(start + room as usize, NO_SLOT);
+        self.order.resize(start + room as usize, HOLE);
         start as u32
     }
 }
@@ -684,6 +737,14 @@ fn stale(drawn: &Drawn, library: &AssetLibrary, before: u64) -> bool {
                         .any(|texture| moved(library.revision_of(texture)))
                 })
         })
+}
+
+fn copy_rows(held: &mut PoseRows, rows: &PoseRows) -> bool {
+    let differs = !same_rows_bits(held, rows);
+    if differs {
+        *held = *rows;
+    }
+    differs
 }
 
 fn refused_of(state: &DrawnState) -> Option<&Error> {
@@ -796,23 +857,23 @@ pub(crate) fn resolve(world: &mut World) {
     crate::refusals::prune(world);
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct NoArgs {}
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 fn table_of<'w>(
     reach: &crate::Reach<'w>,
     given: &serde_json::Value,
 ) -> Result<Option<&'w DrawnTable>, Error> {
-    let NoArgs {} = crate::parse_value_at(given.clone(), "$.args")?;
+    let NoArgs {} = crate::parse_value_at(given, "$.args")?;
     Ok(reach.world.get_resource::<DrawnTable>())
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 impl DrawnTable {
-    fn objects(&self) -> serde_json::Value {
+    fn objects(&self, globals: Option<&GlobalTransforms>) -> serde_json::Value {
         let mut rows: Vec<(u32, serde_json::Value)> = self
             .held
             .iter()
@@ -830,7 +891,7 @@ impl DrawnTable {
                 let row = serde_json::json!({
                     "slot": slot,
                     "entity": entity.to_string(),
-                    "node": (record.node != u32::MAX).then_some(record.node),
+                    "node": globals.and_then(|globals| globals.node_index(entity)),
                     "kind": self.batches.get(batch as usize).map(|batch| batch.kind.name()),
                     "batch": (batch != NO_BATCH).then_some(batch),
                     "values": [record.values as usize, record.values as usize + self.stride],
@@ -887,13 +948,15 @@ impl DrawnTable {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn object_names(world: &mut World) {
     use crate::{Kind, NameEntry, register};
     let shape = engine_place::schema_of::<NoArgs>();
     let entries = [
         NameEntry::read("objects", Kind::State, |reach, given| {
-            Ok(table_of(reach, given)?.map_or(serde_json::json!([]), DrawnTable::objects))
+            let globals = reach.world.get_resource::<GlobalTransforms>();
+            Ok(table_of(reach, given)?
+                .map_or(serde_json::json!([]), |table| table.objects(globals)))
         }),
         NameEntry::read("objects.batches", Kind::State, |reach, given| {
             let passes = reach.world.get_resource::<crate::ScenePasses>();

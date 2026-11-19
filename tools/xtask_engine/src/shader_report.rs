@@ -50,7 +50,7 @@ struct Installed {
 
 fn standard() -> Result<Installed, String> {
     let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let installed = engine_checks::install::noop(&mut engine)?;
+    let installed = engine_checks::install::noop(&mut engine, engine::Start::default().gpu)?;
     Ok(Installed {
         source: "standard".to_owned(),
         modules: installed.modules,

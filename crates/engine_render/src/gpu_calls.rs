@@ -55,7 +55,7 @@ pub(crate) fn create_texture(
     device.create_texture(descriptor)
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn created() -> serde_json::Value {
     serde_json::json!({
         "buffers": CREATED_BUFFERS.load(Ordering::Relaxed),
@@ -63,7 +63,7 @@ pub(crate) fn created() -> serde_json::Value {
     })
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub(crate) fn created_bytes() -> serde_json::Value {
     serde_json::json!({
         "buffers": CREATED_BUFFER_BYTES.load(Ordering::Relaxed),
@@ -104,7 +104,7 @@ pub(crate) struct Writes {
     marks: Option<HashMap<u64, u64>>,
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 impl Writes {
     pub(crate) fn marking(&self) -> bool {
         self.marks.is_some()
@@ -158,11 +158,11 @@ impl Drawn {
     }
 }
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 #[derive(bevy_ecs::resource::Resource)]
 pub struct UnchangedWrites;
 
-#[cfg(any(feature = "dev", feature = "profiling"))]
+#[cfg(feature = "dev")]
 pub fn unchanged_writes(
     world: &mut bevy_ecs::world::World,
     on: bool,
@@ -216,7 +216,7 @@ impl Queue {
         submit(&self.0.queue, buffers);
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub fn submitted_at_once(&self) -> u64 {
         self.0.submitted_at_once.get()
     }
@@ -310,7 +310,7 @@ impl Queue {
         }
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub(crate) fn writes(&self) -> std::cell::Ref<'_, Writes> {
         self.0.writes.borrow()
     }
@@ -322,7 +322,7 @@ impl Queue {
         fresh
     }
 
-    #[cfg(any(feature = "dev", feature = "profiling"))]
+    #[cfg(feature = "dev")]
     pub fn mark_unchanged(&self, on: bool) {
         let mut writes = self.0.writes.borrow_mut();
         if on != writes.marks.is_some() {

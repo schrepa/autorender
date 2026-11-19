@@ -8,7 +8,10 @@ pub fn standard<L: Listing>(list: L) -> L {
 }
 
 pub fn standard_engine() -> Result<Engine, Error> {
-    engine::engine(standard::<BrickList>)
+    engine::game::engine(
+        standard(BrickList::default()),
+        engine::Start::default().ticks_per_second,
+    )
 }
 
 pub fn standard_kinds() -> Result<SceneKinds, Error> {

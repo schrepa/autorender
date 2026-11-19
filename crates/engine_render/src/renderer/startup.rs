@@ -1,63 +1,59 @@
 use super::*;
-
-pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
-    let required = crate::pipelines::REQUIRED_LIMITS;
-    wgpu::Limits {
-        max_buffer_size: adapter.max_buffer_size,
-        max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size,
-        max_texture_dimension_2d: adapter.max_texture_dimension_2d,
-        max_texture_dimension_3d: adapter.max_texture_dimension_3d,
-        max_storage_buffers_per_shader_stage: adapter
-            .max_storage_buffers_per_shader_stage
-            .max(required.storage_buffers),
-        max_bind_groups: required.bind_groups,
-        max_uniform_buffers_per_shader_stage: required.uniform_buffers,
-        max_sampled_textures_per_shader_stage: required.sampled_textures,
-        max_samplers_per_shader_stage: required.samplers,
-        max_storage_textures_per_shader_stage: required.storage_textures,
-        max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
-        max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
-        max_uniform_buffer_binding_size: engine_place::UNIFORM_BINDING_BYTES,
-        max_texture_array_layers: adapter.max_texture_array_layers,
-        max_color_attachments: adapter.max_color_attachments,
-        max_color_attachment_bytes_per_sample: adapter.max_color_attachment_bytes_per_sample,
-        ..wgpu::Limits::downlevel_defaults()
-    }
-}
+use crate::platform::{GpuRequest, SurfaceForm};
+use engine_core::{ErrorCode, Present};
 
 pub(crate) struct Opened {
     adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub(super) device: wgpu::Device,
+    pub(super) queue: wgpu::Queue,
     features: wgpu::Features,
 }
 
 pub(super) type Opening =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Opened, Error>>>>;
 
-fn features_of(adapter: &wgpu::Adapter) -> wgpu::Features {
-    let compression = adapter.features()
-        & (wgpu::Features::TEXTURE_COMPRESSION_BC
-            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
-            | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
-    let core = wgpu::Features::INDIRECT_FIRST_INSTANCE | wgpu::Features::TIMESTAMP_QUERY;
-    let features = compression | (adapter.features() & core);
+fn own_features(offered: wgpu::Features) -> wgpu::Features {
+    let own = wgpu::Features::TIMESTAMP_QUERY;
     #[cfg(not(target_arch = "wasm32"))]
-    let features = features | (adapter.features() & wgpu::Features::PIPELINE_CACHE);
-    #[cfg(not(feature = "profiling"))]
-    let required = features;
+    let own = own | wgpu::Features::PIPELINE_CACHE;
     #[cfg(feature = "profiling")]
-    let required = features | (adapter.features() & crate::profiling::FEATURES);
-    required
+    let own = own | crate::profiling::FEATURES;
+    offered & own
 }
 
-async fn opened(adapter: wgpu::Adapter) -> Result<Opened, Error> {
-    let features = features_of(&adapter);
+fn granted(
+    request: &GpuRequest,
+    adapter: &wgpu::Adapter,
+) -> Result<(wgpu::Features, wgpu::Limits), Error> {
+    let (offered, most) = (adapter.features(), adapter.limits());
+    let missing = request.need.features.difference(offered);
+    if !missing.is_empty() {
+        let path = "$.gpu.need.features";
+        return Err(Error::new(ErrorCode::UnsupportedFeature, path).got(format!("{missing:?}")));
+    }
+    let mut short = None;
+    (request.need.limits).check_limits_with_fail_fn(&most, true, |name, _, offered| {
+        short = Some((name, offered));
+    });
+    if let Some((name, offered)) = short {
+        let path = format!("$.gpu.need.limits.{name}");
+        return Err(Error::new(ErrorCode::UnsupportedFeature, path).got(offered));
+    }
+    let limits = (request.want.limits.clone())
+        .or_worse_values_from(&most)
+        .or_better_values_from(&request.need.limits)
+        .or_better_values_from(&crate::pipelines::floor());
+    let features = request.need.features | (request.want.features & offered);
+    Ok((features | own_features(offered), limits))
+}
+
+async fn opened(adapter: wgpu::Adapter, request: &GpuRequest) -> Result<Opened, Error> {
+    let (features, limits) = granted(request, &adapter)?;
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("engine/device"),
             required_features: features,
-            required_limits: device_limits(&adapter.limits()),
+            required_limits: limits,
             ..Default::default()
         })
         .await
@@ -70,20 +66,17 @@ async fn opened(adapter: wgpu::Adapter) -> Result<Opened, Error> {
     })
 }
 
-pub(super) async fn open(
-    instance: wgpu::Instance,
-    power_preference: wgpu::PowerPreference,
-) -> Result<Opened, Error> {
+pub(super) async fn open(instance: wgpu::Instance, request: GpuRequest) -> Result<Opened, Error> {
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference,
+            power_preference: request.power,
             compatible_surface: None,
             force_fallback_adapter: false,
             ..Default::default()
         })
         .await
         .map_err(|error| failed_with("$.adapter", error))?;
-    opened(adapter).await
+    opened(adapter, &request).await
 }
 
 fn watch(device: &wgpu::Device, health: &Arc<Mutex<health::Reports>>) {
@@ -146,14 +139,19 @@ impl Renderer {
         Ok(())
     }
 
-    pub async fn start(target: RenderTarget) -> Result<StartingRenderer, Error> {
+    pub async fn start(
+        target: RenderTarget,
+        gpu: GpuRequest,
+        form: SurfaceForm,
+        present: Present,
+    ) -> Result<StartingRenderer, Error> {
         let instance = target.instance();
         let surface = target
             .surface(&instance)
             .map_err(|error| failed_with("$.surface", error))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: target.power_preference(),
+                power_preference: gpu.power,
                 compatible_surface: surface.as_ref(),
                 force_fallback_adapter: false,
                 ..Default::default()
@@ -166,19 +164,23 @@ impl Renderer {
             device,
             queue: wgpu_queue,
             features: required_features,
-        } = opened(adapter).await?;
+        } = opened(adapter, &gpu).await?;
         let queue = crate::gpu_calls::Queue::new(wgpu_queue);
         let health = Arc::new(Mutex::new(health::Reports::default()));
         watch(&device, &health);
         let limits = super::install::device_limits(&device.limits());
 
-        let mut display = Display::new(
+        let (mut display, notice) = Display::new(
             instance,
             surface,
             target,
             &adapter,
             device.limits().max_texture_dimension_2d,
+            (form, present),
         )?;
+        if let (Some(notice), Ok(mut reports)) = (notice, health.lock()) {
+            reports.notice(notice);
+        }
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device, queue.get_timestamp_period());
         let assets = new_assets(&device);
@@ -191,6 +193,7 @@ impl Renderer {
             device,
             queue,
             adapter: adapter_info,
+            request: gpu,
             display,
             health,
             profiler,

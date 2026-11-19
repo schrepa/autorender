@@ -1,8 +1,8 @@
-use crate::app_host::{Advance, AppHost, Focus};
-use crate::game::{Arrival, Game, LoadedScene};
-use crate::host::{DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource};
+use crate::app_host::{Advance, AppHost};
+use crate::game::{Arrival, Game, LoadedScene, Start};
+use crate::host::{DeviceGatherer, FrameLoop, FramePhase, InputSource};
 use engine_core::{
-    BrickList, CursorMode, Devices, Engine, MouseButton, Pause, PauseReason, TouchPhase,
+    BrickList, CursorMode, Devices, Engine, IoOrder, IoReply, MouseButton, TouchPhase,
 };
 use engine_render::{Picture, RenderTarget};
 use engine_scene::SceneFiles;
@@ -13,6 +13,8 @@ pub struct GameHost<G: Game> {
     pub(crate) scene: LoadedScene,
     input: DeviceGatherer,
     frames: FrameLoop,
+    away: bool,
+    empty: bool,
     #[cfg(feature = "dev")]
     pub(crate) development: crate::dev_host::DevHost,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -24,22 +26,17 @@ pub struct GameHost<G: Game> {
 }
 
 impl<G: Game> GameHost<G> {
-    pub async fn launch<E: Into<crate::Error>>(
+    pub async fn launch(
         target: RenderTarget,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        start: Start,
+        bricks: BrickList,
     ) -> crate::Result<Self> {
         engine_panic::install();
         #[cfg_attr(
             not(feature = "dev"),
             expect(unused_mut, reason = "dev installs names")
         )]
-        let mut app = AppHost::launch(target, bricks, |engine| {
-            let game = build(engine).map_err(Into::into)?;
-            engine.app.world_mut().insert_resource(game);
-            Ok(())
-        })
-        .await?;
+        let mut app = AppHost::launch(target, start, bricks, G::default()).await?;
         #[cfg(feature = "dev")]
         crate::dev_host::install(app.engine.app.world_mut());
         Ok(Self {
@@ -48,6 +45,8 @@ impl<G: Game> GameHost<G> {
             scene: LoadedScene::default(),
             input: DeviceGatherer::default(),
             frames: FrameLoop::default(),
+            away: false,
+            empty: false,
             #[cfg(feature = "dev")]
             development: crate::dev_host::DevHost::default(),
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -73,9 +72,7 @@ impl<G: Game> GameHost<G> {
         size: (u32, u32),
         picture: Picture,
     ) -> crate::Result<bool> {
-        let source = self.input_source();
-        self.app.follow_focus(source);
-        let input = self.frame_input(source);
+        let input = self.frame_input(self.input_source());
         self.app.accept(input);
         self.app.frame(advance, size, picture)
     }
@@ -118,34 +115,29 @@ impl<G: Game> GameHost<G> {
         Devices::default()
     }
 
-    pub fn pause(&mut self, pause: HostPause) {
-        let reason = pause.reason();
-        if self
-            .app
-            .engine()
-            .app
-            .world()
-            .resource::<Pause>()
-            .holds(reason)
-        {
-            return;
+    pub fn focused(&mut self, focused: bool) {
+        if !focused {
+            self.input.clear();
         }
-        let source = self.input_source();
-        match pause {
-            HostPause::Focus => self.app.set_focus(Focus::Lost, source),
-            HostPause::Hidden | HostPause::Suspended => self.app.engine_mut().pause(reason),
-        }
-        self.input.clear();
+        self.app.report_host(|host| host.focused = focused);
     }
 
-    pub fn resume(&mut self, pause: HostPause) {
-        let source = self.input_source();
-        match pause {
-            HostPause::Focus => self.app.set_focus(Focus::Held, source),
-            HostPause::Hidden | HostPause::Suspended => {
-                self.app.engine_mut().resume(pause.reason());
-            }
+    pub fn hidden(&mut self, hidden: bool) {
+        self.away = hidden;
+        self.report_hidden();
+    }
+
+    pub(crate) fn sized(&mut self, empty: bool) {
+        self.empty = empty;
+        self.report_hidden();
+    }
+
+    fn report_hidden(&mut self) {
+        let hidden = self.away || self.empty;
+        if hidden {
+            self.input.clear();
         }
+        self.app.report_host(|host| host.hidden = hidden);
     }
 
     pub fn refresh_interval(&self) -> f64 {
@@ -164,13 +156,8 @@ impl<G: Game> GameHost<G> {
         phase
     }
 
-    pub(crate) fn hold_preparation(&mut self, held: bool) {
-        let engine = self.app.engine_mut();
-        if held {
-            engine.pause(PauseReason::Preparing);
-        } else {
-            engine.resume(PauseReason::Preparing);
-        }
+    pub(crate) fn show(&mut self, showing: bool) {
+        self.app.report_host(|host| host.showing = showing);
     }
 
     pub(crate) fn set_preparation_ms(&mut self, milliseconds: f64) {
@@ -236,6 +223,14 @@ impl<G: Game> GameHost<G> {
         if let Some(mut sounds) = world.get_resource_mut::<engine_core::Sounds>() {
             sounds.hear(reply);
         }
+    }
+
+    pub fn take_io(&mut self) -> Vec<IoOrder> {
+        self.app.engine_mut().take_io()
+    }
+
+    pub fn land_io(&mut self, reply: IoReply) {
+        self.app.engine_mut().land_io(reply);
     }
 
     pub fn suspend(&mut self) {
@@ -354,30 +349,19 @@ impl<G: Game> GameHost<G> {
         self.source.as_deref()
     }
 
-    pub fn follow_source(&mut self) -> Option<crate::Result<()>> {
+    pub fn follow_source(&mut self) -> bool {
         let now = std::time::Instant::now();
         if self
             .checked
             .is_some_and(|checked| now.duration_since(checked) < CHECK_EVERY)
         {
-            return None;
+            return false;
         }
         self.checked = Some(now);
         self.app.reload_shaders();
-        if self
-            .watched
+        self.watched
             .iter()
-            .all(|(file, stamp)| modified(file) == *stamp)
-        {
-            return None;
-        }
-        self.watch();
-        let path = self.source.clone()?;
-        let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
-        Some(
-            read_scene(&path, &kinds)
-                .and_then(|(source, files)| self.reload_scene(&source, &files)),
-        )
+            .any(|(file, stamp)| modified(file) != *stamp)
     }
 
     fn watch(&mut self) {
@@ -412,28 +396,6 @@ fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .ok()
-}
-
-#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-fn read_scene(
-    path: &std::path::Path,
-    kinds: &engine_scene::SceneKinds,
-) -> crate::Result<(String, SceneFiles)> {
-    use engine_core::{Error, ErrorCode};
-    let source = std::fs::read_to_string(path).map_err(|error| {
-        Error::new(ErrorCode::SourceIo, "$.path").got(format!("{}: {error}", path.display()))
-    })?;
-    let mut load = crate::host::SceneLoad::new(&source, kinds)?;
-    let folder = path.parent().unwrap_or(std::path::Path::new("."));
-    for read in load.take_reads() {
-        let file = folder.join(&read.uri);
-        let bytes = std::fs::read(&file).map_err(|error| {
-            Error::new(ErrorCode::SourceIo, "$.path").got(format!("{}: {error}", file.display()))
-        })?;
-        load.read(&read.uri, bytes)?;
-    }
-    let (_, files) = load.opened()?;
-    Ok((source, files))
 }
 
 #[cfg(feature = "dev")]

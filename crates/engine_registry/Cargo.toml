@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-profiling = []
+dev = []
 
 [dependencies]
 engine_place.workspace = true

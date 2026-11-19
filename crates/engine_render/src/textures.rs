@@ -141,7 +141,7 @@ impl TextureStore {
     }
 
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
+        not(feature = "dev"),
         expect(dead_code, reason = "read by the gpu.assets names")
     )]
     pub(crate) fn texture_formats(&self) -> BTreeMap<String, (u32, u64)> {
@@ -157,7 +157,7 @@ impl TextureStore {
     }
 
     #[cfg_attr(
-        not(any(feature = "dev", feature = "profiling")),
+        not(feature = "dev"),
         expect(dead_code, reason = "read by the gpu.assets names")
     )]
     pub(crate) fn texture_totals(&self) -> (u32, u64) {

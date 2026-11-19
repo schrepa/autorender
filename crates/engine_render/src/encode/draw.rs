@@ -244,6 +244,7 @@ impl Run {
                 .entries
                 .clone();
             let index = self.machine.pipelines[pipeline as usize].groups[group].index;
+            let part = self.machine.pipelines[pipeline as usize].decl.part;
             let mut hole = 0;
             let mut resolved = Vec::with_capacity(entries.len());
             for (binding, bound, ty) in entries {
@@ -252,10 +253,10 @@ impl Run {
                     hole += 1;
                     match texture.and_then(|texture| self.assets.textures.texture_view(texture)) {
                         Some(view) => Resolved::View(view.clone()),
-                        None => Resolved::Placeholder(ty),
+                        None => self.reported_stand_in(Some(part), ty, (index, binding)),
                     }
                 } else {
-                    self.resource(&bound, ty)
+                    self.resource((&bound, ty), (Some(part), (index, binding)))
                 };
                 resolved.push((binding, found));
             }
@@ -285,8 +286,17 @@ impl Run {
             return crate::Recorded::Refused;
         }
         if built.compute_ready.is_none() {
-            let Some(made) = self.compute_pipeline(handle, true) else {
-                return crate::Recorded::Waiting;
+            let made = match self.compute_pipeline(handle) {
+                Ok(made) => made,
+                Err(reason) => {
+                    let at = (part, self.pass);
+                    self.tallies.kinds.drop_draws(at, (reason, None), 1);
+                    return if reason == DropReason::PipelineRefused {
+                        crate::Recorded::Refused
+                    } else {
+                        crate::Recorded::Waiting
+                    };
+                }
             };
             self.machine.pipelines[handle as usize].compute_ready = Some(made);
         }

@@ -11,26 +11,28 @@ pub fn print_generated(files: &[(&str, String)]) {
 }
 
 #[cfg(feature = "dev")]
-pub fn print_schemas(
-    bricks: impl FnOnce(crate::BrickList) -> crate::BrickList,
-) -> Result<(), String> {
-    let engine = crate::engine(bricks).map_err(|error| error.to_string())?;
+fn listed<G: crate::Game>(bricks: crate::BrickList) -> Result<crate::Engine, String> {
+    crate::game::engine(bricks, G::start().ticks_per_second).map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "dev")]
+pub fn print_schemas<G: crate::Game>(bricks: crate::BrickList) -> Result<(), String> {
+    let engine = listed::<G>(bricks)?;
     print_generated(&engine_dev::schemas::game(engine.app.world())?);
     Ok(())
 }
 
 #[cfg(feature = "dev")]
-pub fn print_shaders(
-    bricks: impl FnOnce(crate::BrickList) -> crate::BrickList,
-) -> Result<(), String> {
-    let mut engine = crate::engine(bricks).map_err(|error| error.to_string())?;
-    let installed = engine_render::install_noop(engine.app.world_mut()).map_err(|problems| {
-        problems
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+pub fn print_shaders<G: crate::Game>(bricks: crate::BrickList) -> Result<(), String> {
+    let mut engine = listed::<G>(bricks)?;
+    let installed = engine_render::install_noop(engine.app.world_mut(), G::start().gpu)
+        .map_err(|problems| {
+            problems
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
     let stages: Vec<Value> = (installed.stages.iter())
         .map(|(entry, passes, text)| {
             serde_json::json!({"entry": entry, "passes": passes, "text": text})

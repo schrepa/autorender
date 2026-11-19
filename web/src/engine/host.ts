@@ -1,6 +1,8 @@
-import { FRAME_INTERVAL_MS, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
+import { FRAME_PHASES } from "../generated/host";
 import { engineError, engineFailure } from "../generated/errors";
+import type { Error as Failure } from "../generated/reply";
 import { parseJson, type Runtime } from "../generated/runtime";
+import type { Progress, Readiness } from "../generated/stats";
 import type { Development } from "./dev";
 import { BrowserInput } from "./input";
 import { fatal, panicReport } from "./panic";
@@ -52,18 +54,6 @@ class FrameHud {
   private gpu = 0;
   private timed = 0;
   private samples = 0;
-  private marked = { at: -Infinity, phase: -1 };
-
-  preparing(runtime: Runtime, phase: number) {
-    const at = performance.now();
-    if (phase === this.marked.phase && at - this.marked.at < 250) return;
-    this.marked = { at, phase };
-    const stats = parseJson(runtime.stats());
-    performance.mark("engine-preparing", { detail: {
-      phase, tick: stats.tick, preparation_ms: stats.preparation_ms, readiness: stats.readiness,
-      pipelines: stats.pipelines, pipelines_created: stats.pipelines_created, upload_bytes: stats.upload_bytes,
-    } });
-  }
 
   reset() {
     this.span = undefined;
@@ -103,7 +93,7 @@ class GpuPace {
   private since = 0;
   private done = false;
   private shown = true;
-  private refresh = FRAME_INTERVAL_MS;
+  private refresh = Infinity;
   private animated: number | undefined;
   private stamp = -Infinity;
   private posted = 0;
@@ -167,8 +157,18 @@ class GpuPace {
   }
 }
 
-export interface GameOptions<T extends Runtime> {
-  create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
+export interface Fetched { files: Progress; bytes: number }
+export interface Loading extends Fetched { readiness?: Readiness; pipelines: number }
+export interface Stopped { title: string; summary: string; detail: string; error?: Failure }
+
+export interface StartWatch {
+  shown?(): void;
+  failed?(stopped: Stopped): void;
+  progress?(loading: Loading): void;
+}
+
+export interface GameOptions<T extends Runtime> extends StartWatch {
+  create(canvas: HTMLCanvasElement, signal: AbortSignal, fetched: (fetched: Fetched) => void): Promise<T>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
 }
 
@@ -206,6 +206,22 @@ ticks.port1.onmessage = (event: MessageEvent<number>) => {
 };
 let pixelWidth = 1;
 let pixelHeight = 1;
+let fetched: Fetched = { files: { done: 0, total: 0 }, bytes: 0 };
+let preparing: Omit<Loading, keyof Fetched> = { pipelines: 0 };
+let sampled = { at: -Infinity, phase: -1 };
+
+function progress() {
+  options.progress?.({ ...fetched, ...preparing });
+}
+
+function prepared(game: T, phase: number) {
+  const at = performance.now();
+  if (phase === sampled.phase && at - sampled.at < 250) return;
+  sampled = { at, phase };
+  const { readiness, pipelines } = parseJson(game.stats());
+  preparing = { readiness, pipelines };
+  progress();
+}
 
 function setStatus(text: string, shown: string) {
   status.replaceChildren(document.createElement("i"), document.createTextNode(text));
@@ -220,23 +236,12 @@ function halted(current: Live<T>) { return current.paused || document.hidden; }
 
 function disposed() { return state.kind === "disposed"; }
 
-function clearInput() { input.clear(); }
-
 function connectInput() {
   input.game = live()?.game;
 }
 
 function suspendGame() {
   live()?.game.suspend();
-}
-
-function pauseGame(reason: keyof typeof HOST_PAUSES) {
-  clearInput();
-  live()?.game.pause(HOST_PAUSES[reason]);
-}
-
-function resumeGame(reason: keyof typeof HOST_PAUSES) {
-  live()?.game.resume(HOST_PAUSES[reason]);
 }
 
 function resize() {
@@ -285,16 +290,25 @@ function fail(error: unknown) {
   state = { kind: "failed" };
   connectInput();
   const refused = engineError(error);
-  setStatus(stopped ? "Engine stopped" : refused ? "Engine error" : "Renderer unavailable", "error");
+  const title = stopped ? "Engine stopped" : refused ? "Engine error" : "Renderer unavailable";
+  const summary = stopped ? "The engine stopped."
+    : refused ? "The engine could not start or continue."
+    : "Unable to start or continue the engine.";
+  const detail = stopped ? stopped
+    : refused ? refused.message
+    : `${String(error)}\nWebGPU requires a supported browser on localhost or HTTPS.`;
+  setStatus(title, "error");
   message.hidden = false;
-  message.textContent = stopped ? `The engine stopped.\n${stopped}`
-    : refused ? `The engine could not start or continue.\n${refused.message}`
-    : `Unable to start or continue the engine.\n${String(error)}\nWebGPU requires a supported browser on localhost or HTTPS.`;
+  message.textContent = `${summary}\n${detail}`;
   pause.disabled = true;
   reset.disabled = true;
   halt();
   dev?.close(stopped ? `runtime_panicked ${stopped}` : `runtime_failed ${refused?.message ?? String(error)}`);
   console.error(error);
+  const failure: Failure | undefined = !stopped && refused
+    ? { code: refused.code, path: refused.path, allowed: refused.allowed, expected: refused.expected, got: refused.got, nearest: refused.nearest }
+    : undefined;
+  options.failed?.({ title, summary, detail, error: failure });
 }
 
 function guarded(work: () => void) {
@@ -319,6 +333,7 @@ function started(current: Live<T>) {
   canvas.style.visibility = "";
   message.hidden = true;
   if (!halted(current)) setStatus("WebGPU active", "running");
+  options.shown?.();
 }
 
 function frame(timestamp: number) {
@@ -349,7 +364,7 @@ function run(current: Live<T>, at: number, early: boolean) {
     input.setCursorMode(game.cursor_mode());
     sound.exchange(game);
     dev?.turned();
-    if (current.kind === "preparing") hud.preparing(game, phase);
+    if (current.kind === "preparing" && options.progress) prepared(game, phase);
     if (phase === FRAME_PHASES.started) {
       starting(current);
     } else if (phase === FRAME_PHASES.playing) {
@@ -391,18 +406,19 @@ function resume() {
   request = requestAnimationFrame(frame);
 }
 
-window.addEventListener("blur", () => pauseGame("focus"), listenerOptions);
-window.addEventListener("focus", () => resumeGame("focus"), listenerOptions);
+window.addEventListener("blur", () => live()?.game.focused(false), listenerOptions);
+window.addEventListener("focus", () => live()?.game.focused(true), listenerOptions);
 window.addEventListener("error", event => { if (fatal(event.error)) fail(event.error); }, listenerOptions);
 window.addEventListener("unhandledrejection", event => { if (fatal(event.reason)) fail(event.reason); }, listenerOptions);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     halt();
-    pauseGame("hidden");
+    input.clear();
+    live()?.game.hidden(true);
     if (state.kind !== "failed") setStatus("Suspended", "suspended");
     return;
   }
-  resumeGame("hidden");
+  live()?.game.hidden(false);
   if (state.kind !== "failed") resume();
 }, listenerOptions);
 pause.addEventListener("click", () => {
@@ -424,7 +440,7 @@ async function start() {
   pause.disabled = true;
   reset.disabled = true;
   if (!("gpu" in navigator)) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "gpu" });
-  const created = await options.create(canvas, lifecycle.signal);
+  const created = await options.create(canvas, lifecycle.signal, files => { fetched = files; progress(); });
   if (disposed()) { created.free(); return; }
   state = { kind: "preparing", game: created, paused: false, shown: false };
   created.apply_host_settings(location.search);
@@ -441,8 +457,6 @@ async function start() {
   resume();
 }
 
-window.addEventListener("pagehide", () => { halt(); pauseGame("suspended"); }, listenerOptions);
-window.addEventListener("pageshow", () => { resumeGame("suspended"); resume(); }, listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
   lifecycle.abort();

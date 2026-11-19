@@ -12,6 +12,14 @@ type SoundGame = Pick<Runtime, "take_sound" | "sound_opened" | "sound_open_faile
 
 interface Voice { source: AudioBufferSourceNode; gain: GainNode; panner: StereoPannerNode }
 
+function text(bytes: Uint8Array, start: number, length: number): string {
+  return String.fromCharCode(...bytes.subarray(start, start + length));
+}
+
+function oggVorbis(bytes: Uint8Array): boolean {
+  return text(bytes, 0, 4) === "OggS" && text(bytes, 27 + (bytes[26] ?? 0), 7) === "\x01vorbis";
+}
+
 function ramp(param: AudioParam, value: number, at: number, seconds: number) {
   param.cancelScheduledValues(at);
   param.setValueAtTime(param.value, at);
@@ -80,6 +88,7 @@ export class PageSound {
 
   private decode(sound: number, bytes: Uint8Array) {
     const context = this.context;
+    if (!oggVorbis(bytes)) { this.replies.push(game => game.sound_failed(sound, "not_ogg_vorbis")); return; }
     if (!context) { this.replies.push(game => game.sound_failed(sound, "no_output")); return; }
     const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     context.decodeAudioData(copy).then(

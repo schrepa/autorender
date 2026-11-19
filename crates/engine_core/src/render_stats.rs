@@ -83,7 +83,7 @@ pub struct DrawReports {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 pub struct RenderStats {
     pub draw_calls: u64,
     pub instances: u64,
@@ -115,7 +115,7 @@ impl Serialize for Names {
     }
 }
 
-#[cfg(feature = "schema")]
+#[cfg(feature = "dev")]
 impl schemars::JsonSchema for Names {
     fn inline_schema() -> bool {
         true
