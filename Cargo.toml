@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_profile", "crates/engine_sources", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "tools/xtask", "tools/xtask_engine", "crates/engine_checks", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_codec", "tools/kinds", "crates/engine_gpu_bits", "tools/command_line", "crates/engine_rig", "tools/glb_cook", "crates/engine/examples/fruit_fps"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_profile", "crates/engine_sources", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "tools/xtask", "tools/xtask_engine", "crates/engine_checks", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_codec", "tools/kinds", "crates/engine_gpu_bits", "tools/command_line", "crates/engine_rig", "tools/glb_cook", "tools/cook", "tools/cook_texture", "tools/cook_model", "crates/engine/examples/fruit_fps"]
 resolver = "3"
 exclude = ["vendor", "archive"]
 
@@ -35,6 +35,9 @@ engine_gpu_bits = { path = "crates/engine_gpu_bits" }
 engine_registry = { path = "crates/engine_registry" }
 engine_codec = { path = "crates/engine_codec" }
 engine_rig = { path = "crates/engine_rig" }
+cook = { path = "tools/cook" }
+cook_texture = { path = "tools/cook_texture" }
+cook_model = { path = "tools/cook_model" }
 base64 = "=0.22.1"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"

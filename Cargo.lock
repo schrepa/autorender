@@ -646,6 +646,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "cook"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "cook_model"
+version = "0.1.0"
+dependencies = [
+ "cook",
+ "cook_texture",
+ "engine_assets",
+ "engine_rig",
+ "glam 0.30.9",
+ "gltf",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cook_texture"
+version = "0.1.0"
+dependencies = [
+ "cook",
+ "engine_assets",
+ "engine_math",
+ "engine_textures",
+ "png",
+ "serde",
+ "serde_json",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
