@@ -9,13 +9,13 @@ use crate::play::actors::{Actor, Alive, Body, Motion, Wish};
 use crate::play::arms::Arms;
 use crate::play::camera::TestCamera;
 use crate::play::events::arms::{ArmsEvents, Inspect, Weapon};
-use crate::play::figures::{BaseLayer, FIELD_AT_CAMERA, FIGURE, Figure, FigurePlay, HandTarget};
+use crate::play::figures::{BaseLayer, FIELD_AT_CAMERA, FIGURE, Figure, FigurePlay};
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::puppet::{
-    ActorMuzzle, DEVICE, Muzzles, PuppetBook, PuppetFile, PuppetTable, Task, Tasks, ViewModel,
-    ViewPlace, ViewTable, WeaponLook, swing_clip, weapon_key,
+    ActorMuzzle, DEVICE, Muzzles, PuppetFile, PuppetTable, Task, Tasks, ViewModel, ViewPlace,
+    ViewTable, WeaponLook, swing_clip, weapon_key,
 };
 use crate::play::view::{ViewOffsets, Watched};
 use crate::weapons::{Loadout, Stance};
@@ -103,42 +103,6 @@ struct Frame {
     root: Vec3,
     turn: Quat,
     sight: Vec3,
-}
-
-fn hands(
-    book: &PuppetBook,
-    weapon: &str,
-    look: &WeaponLook,
-    frame: &Frame,
-) -> [Option<HandTarget>; 2] {
-    let table = &book.table;
-    let Some(pose) = table
-        .weapons
-        .get(weapon)
-        .and_then(|hold| table.holds.get(hold))
-    else {
-        return [None, None];
-    };
-    let grip_r = look.markers.grip_r.unwrap_or(Vec3::ZERO);
-    let at = |point: Vec3| frame.root + frame.turn * point;
-    let right = HandTarget {
-        position: at(pose.right.wrist(grip_r)).to_array(),
-        rotation: (frame.turn * pose.right.hand(&table.hand_axes.right))
-            .normalize()
-            .to_array(),
-        pole: (frame.turn * Vec3::from_array(pose.right.pole)).to_array(),
-    };
-    let left = pose
-        .left
-        .zip(look.markers.grip_l)
-        .map(|(grip, held)| HandTarget {
-            position: at(grip.wrist(held)).to_array(),
-            rotation: (frame.turn * grip.hand(&table.hand_axes.left))
-                .normalize()
-                .to_array(),
-            pole: (frame.turn * Vec3::from_array(grip.pole)).to_array(),
-        });
-    [Some(right), left]
 }
 
 fn sighted(place: &ViewPlace, held: &Held, raise: f32) -> Vec3 {
@@ -291,7 +255,6 @@ fn bare((tick, slot): (u64, u32), weapon: Option<&'static str>, scale: f32) -> V
         muzzle: None,
         direction: Vec3::ZERO,
         sight: Vec3::ZERO,
-        hands: [None, None],
         scale,
     }
 }
@@ -605,7 +568,6 @@ struct Shown<'a> {
 }
 
 fn published(
-    book: &PuppetBook,
     (held, frame): (&Held, &Frame),
     (body, yaw, pitch): (&Body, f32, f32),
     shown: Shown<'_>,
@@ -641,7 +603,6 @@ fn published(
         muzzle,
         direction,
         sight: frame.sight,
-        hands: hands(book, weapon, look, frame),
         scale,
     };
     if *view != fresh {
@@ -876,7 +837,6 @@ pub(super) fn place(
         body_muzzle: body_muzzle(test.as_deref(), muzzles.as_deref(), actor.slot),
     };
     published(
-        &book,
         (&held, &frame),
         (body, yaw, pitch),
         shown,

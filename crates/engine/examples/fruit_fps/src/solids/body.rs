@@ -63,8 +63,6 @@ pub struct Moved {
     pub body: Body,
     pub landed: Option<Landed>,
     pub ground: Option<Ground>,
-    pub wall: Option<Hit>,
-    pub stand_refused: bool,
     pub shift: f32,
     pub work: Work,
 }
@@ -426,7 +424,7 @@ fn capped(velocity: Vec3, cap: f32) -> Vec3 {
     }
 }
 
-fn settle_crouch(solids: &Tally, body: &Body, wants: bool, numbers: &Player) -> (bool, bool, f32) {
+fn settle_crouch(solids: &Tally, body: &Body, wants: bool, numbers: &Player) -> (bool, f32) {
     let gap = least(
         numbers.crouch_jump_lift_m,
         most(numbers.height_m - numbers.crouch_height_m, 0.0),
@@ -434,10 +432,10 @@ fn settle_crouch(solids: &Tally, body: &Body, wants: bool, numbers: &Player) -> 
     let airborne = !body.grounded;
     if wants {
         let shift = if airborne && !body.crouched { gap } else { 0.0 };
-        return (true, false, shift);
+        return (true, shift);
     }
     if !body.crouched {
-        return (false, false, 0.0);
+        return (false, 0.0);
     }
     let standing = |feet: Vec3| Capsule {
         feet,
@@ -445,13 +443,9 @@ fn settle_crouch(solids: &Tally, body: &Body, wants: bool, numbers: &Player) -> 
         radius: numbers.radius_m,
     };
     if airborne && !solids.capsule_overlaps(standing(body.position - Vec3::Y * gap)) {
-        return (false, false, -gap);
+        return (false, -gap);
     }
-    if solids.capsule_overlaps(standing(body.position)) {
-        (true, true, 0.0)
-    } else {
-        (false, false, 0.0)
-    }
+    (solids.capsule_overlaps(standing(body.position)), 0.0)
 }
 
 fn wish_target(wish: &Wish) -> Vec3 {
@@ -479,7 +473,7 @@ pub fn step(
         work: Cell::new(Work::default()),
     };
     let solids = &tally;
-    let (crouched, stand_refused, shift) = settle_crouch(solids, &body, wish.crouch, numbers);
+    let (crouched, shift) = settle_crouch(solids, &body, wish.crouch, numbers);
     let from = body.position + Vec3::Y * shift;
     let height = if crouched {
         numbers.crouch_height_m
@@ -560,8 +554,6 @@ pub fn step(
         },
         landed,
         ground: support.map(|support| support.ground),
-        wall: moved.wall,
-        stand_refused,
         shift,
         work: tally.work.get(),
     }

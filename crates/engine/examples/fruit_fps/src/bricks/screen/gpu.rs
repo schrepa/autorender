@@ -1,8 +1,8 @@
 use engine::prelude::Res;
 use engine_core::{Error, PassViews, Sampler, TargetName, ViewFacts};
 use engine_render::{
-    Access, Allocation, Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own,
-    PerBatch, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Access, Allocation, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, PerBatch,
+    Pipeline, Prepare, RenderPipeline, Shape, wgpu,
 };
 
 use super::shaders::screen::quads;
@@ -108,7 +108,7 @@ impl GpuPart for ScreenGpu {
         let Some(filled) = &self.filled else {
             return;
         };
-        cx.render(Attach::Declared).draw(
+        cx.render().draw(
             filled,
             Shape::Pulled {
                 vertices: 0..6,

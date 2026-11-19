@@ -510,16 +510,6 @@
           },
           "type": "object"
         },
-        "projection": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DrawnProjection"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "values": {
           "$ref": "#/$defs/InstanceValues",
           "default": {
@@ -538,23 +528,6 @@
           }
         }
       },
-      "type": "object"
-    },
-    "DrawnProjection": {
-      "properties": {
-        "depth_scale": {
-          "format": "float",
-          "type": "number"
-        },
-        "vertical_fov": {
-          "format": "float",
-          "type": "number"
-        }
-      },
-      "required": [
-        "vertical_fov",
-        "depth_scale"
-      ],
       "type": "object"
     },
     "DrawnSettings": {
@@ -1608,26 +1581,6 @@
             "uri"
           ],
           "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "provided",
-              "type": "string"
-            },
-            "name": {
-              "maxLength": 64,
-              "minLength": 1,
-              "pattern": "^[A-Za-z0-9_.-]+$",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "name"
-          ],
-          "type": "object"
         }
       ]
     },
@@ -2038,15 +1991,6 @@
     },
     "RenderSettings": {
       "properties": {
-        "readback_slot_bytes": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 4,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
         "readback_slots": {
           "default": 3,
           "format": "uint32",
@@ -2416,15 +2360,6 @@
           "maximum": 1.0,
           "type": [
             "number",
-            "null"
-          ]
-        },
-        "provided": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": [
-            "string",
             "null"
           ]
         },
@@ -2852,15 +2787,6 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$",
           "type": "string"
-        },
-        "provided": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "rgba8": {
           "type": [
@@ -3608,10 +3534,6 @@
           "default": 0,
           "format": "int32",
           "type": "integer"
-        },
-        "steady": {
-          "default": false,
-          "type": "boolean"
         },
         "texture": {
           "maxLength": 64,

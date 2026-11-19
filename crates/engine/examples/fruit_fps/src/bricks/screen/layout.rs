@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::play::screen::{Align, Anchor, Fit, Rgba, Shown, Tone, Weight};
+use crate::play::screen::{Align, Anchor, Rgba, Shown, Tone, Weight};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Seg {
@@ -64,17 +64,10 @@ impl Template {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct StrokeRef {
-    pub width: f32,
-    pub color: Paint,
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Set {
     pub fill: Option<Paint>,
     pub color: Option<Paint>,
-    pub stroke: Option<StrokeRef>,
     pub icon: Option<Template>,
     pub grey: Option<f32>,
     pub shadows: Option<Vec<Shadow>>,
@@ -86,13 +79,6 @@ pub(super) struct Shadow {
     pub grow: f32,
     pub soft: f32,
     pub color: Paint,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Dir {
-    LeftToRight,
-    RightToLeft,
-    BottomToTop,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,7 +102,7 @@ pub(super) enum FlowKind {
         w: f32,
         h: f32,
         color: Option<Paint>,
-        atlas: Option<String>,
+        atlas: String,
     },
 }
 
@@ -133,14 +119,13 @@ pub(super) struct Arc {
     pub width: f32,
     pub track: Option<Paint>,
     pub start_deg: f32,
-    pub clockwise: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Kind {
     Plate,
     Text(TextKind),
-    Icon(Fit, Option<String>),
+    Icon(String),
     Arc(Arc),
     Image(Picture),
     Markers(Markers),
@@ -148,7 +133,6 @@ pub(super) enum Kind {
         value: Number,
         max: Number,
         track: Paint,
-        dir: Dir,
         knob: Option<Knob>,
     },
     Pips {
@@ -212,12 +196,10 @@ pub(super) struct Element {
     pub id: String,
     pub rect: [f32; 4],
     pub anchor: Anchor,
-    pub unscaled: bool,
     pub when: Conds,
     pub styles: Vec<(Conds, Set)>,
     pub look: Set,
     pub radius: f32,
-    pub sweep: Option<Number>,
     pub pulse: Option<Pulse>,
     pub serial: usize,
     pub kind: Kind,
@@ -243,14 +225,12 @@ pub(super) struct Pulse {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Screen {
-    pub over: Option<Shown>,
     pub elements: Vec<Element>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Layout {
     pub reference: [f32; 2],
-    pub stroke_rim: f32,
     pub min_text_px: f32,
     pub palette: BTreeMap<String, Rgba>,
     pub screens: BTreeMap<Shown, Screen>,
@@ -586,22 +566,6 @@ fn align(text: &str, at: &str) -> Result<Align, String> {
     }
 }
 
-fn stroke(
-    value: &Value,
-    palette: &BTreeMap<String, Rgba>,
-    at: String,
-) -> Result<StrokeRef, String> {
-    let read = Reader::of(value, at)?;
-    Ok(StrokeRef {
-        width: read.number("width")?,
-        color: paint(
-            read.get("color").unwrap_or(&Value::Null),
-            palette,
-            &read.within("color"),
-        )?,
-    })
-}
-
 fn set_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Result<Set, String> {
     let read = Reader::of(value, at)?;
     let mut set = Set::default();
@@ -610,7 +574,6 @@ fn set_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Result
         match key.as_str() {
             "fill" => set.fill = Some(paint(given, palette, &at)?),
             "color" => set.color = Some(paint(given, palette, &at)?),
-            "stroke" => set.stroke = Some(stroke(given, palette, at)?),
             "icon" => {
                 let text = given
                     .as_str()
@@ -626,16 +589,12 @@ fn set_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Result
 }
 
 fn text_kind(read: &Reader<'_>, cx: &Context<'_>) -> Result<TextKind, String> {
-    let face = match read.get("face") {
-        None => (cx.font_atlas.to_owned(), read.text("weight")?.to_owned()),
-        Some(_) => {
-            let name = read.text("face")?;
-            cx.fonts
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("{}: `{name}` is not in `fonts`", read.within("face")))?
-        }
-    };
+    let name = read.text("face")?;
+    let face = cx
+        .fonts
+        .get(name)
+        .cloned()
+        .ok_or_else(|| format!("{}: `{name}` is not in `fonts`", read.within("face")))?;
     Ok(TextKind {
         text: template(read.text("text")?, &read.within("text"))?,
         size: read.number("size")?,
@@ -671,22 +630,13 @@ fn flow_items(read: &Reader<'_>, cx: &Context<'_>) -> Result<Vec<FlowItem>, Stri
                     cap,
                 }
             }
-            "icon" => {
-                let atlas = sticker_of(&item, cx)?;
-                if atlas.is_none() && color.is_none() {
-                    return Err(format!(
-                        "{}: a tinted icon needs a colour",
-                        item.within("color")
-                    ));
-                }
-                FlowKind::Icon {
-                    icon: template(item.text("icon")?, &item.within("icon"))?,
-                    w: item.number("w")?,
-                    h: item.number("h")?,
-                    color,
-                    atlas,
-                }
-            }
+            "icon" => FlowKind::Icon {
+                icon: template(item.text("icon")?, &item.within("icon"))?,
+                w: item.number("w")?,
+                h: item.number("h")?,
+                color,
+                atlas: sticker_of(&item, cx)?,
+            },
             other => return Err(format!("{}.type: unknown item `{other}`", item.at)),
         };
         items.push(FlowItem {
@@ -697,13 +647,13 @@ fn flow_items(read: &Reader<'_>, cx: &Context<'_>) -> Result<Vec<FlowItem>, Stri
     Ok(items)
 }
 
-fn sticker_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Option<String>, String> {
-    if read.get("atlas").is_none() {
-        return Ok(None);
-    }
+fn sticker_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<String, String> {
     let named = read.text("atlas")?;
-    let file = cx.atlases.get(named).map_or(named, String::as_str);
-    Ok((Some(file) != cx.icons_atlas).then(|| file.to_owned()))
+    Ok(cx
+        .atlases
+        .get(named)
+        .map_or(named, String::as_str)
+        .to_owned())
 }
 
 fn arc_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Arc, String> {
@@ -717,10 +667,6 @@ fn arc_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Arc, St
             Some(given) => Some(paint(given, palette, &read.within("track"))?),
         },
         start_deg: read.number_or("start_deg", 0.0)?,
-        clockwise: match read.get("clockwise") {
-            None => true,
-            Some(_) => read.flag("clockwise")?,
-        },
     })
 }
 
@@ -742,17 +688,7 @@ fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
         "plate" => Kind::Plate,
         "reticle" => Kind::Reticle,
         "text" => Kind::Text(text_kind(read, cx)?),
-        "icon" => Kind::Icon(
-            match read.get("fit") {
-                None => Fit::Cell,
-                Some(_) => match read.text("fit")? {
-                    "cell" => Fit::Cell,
-                    "trim" => Fit::Trim,
-                    other => return Err(format!("{}: unknown fit `{other}`", read.within("fit"))),
-                },
-            },
-            sticker_of(read, cx)?,
-        ),
+        "icon" => Kind::Icon(sticker_of(read, cx)?),
         "arc" => Kind::Arc(arc_of(read, palette)?),
         "image" => Kind::Image(Picture {
             image: template(read.text("image")?, &read.within("image"))?,
@@ -771,17 +707,6 @@ fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
             track: match read.get("track") {
                 None => Paint::None,
                 Some(_) => paint_at("track")?,
-            },
-            dir: match read.text("dir")? {
-                "ltr" => Dir::LeftToRight,
-                "rtl" => Dir::RightToLeft,
-                "btt" => Dir::BottomToTop,
-                other => {
-                    return Err(format!(
-                        "{}: unknown direction `{other}`",
-                        read.within("dir")
-                    ));
-                }
             },
             knob: match read.get("knob") {
                 None => None,
@@ -903,7 +828,10 @@ fn markers_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Markers, String> {
         rotate: read.flag("rotate")?,
         backing,
         outline,
-        atlas: sticker_of(read, cx)?,
+        atlas: match read.get("atlas") {
+            None => None,
+            Some(_) => Some(sticker_of(read, cx)?),
+        },
         disc,
     })
 }
@@ -932,8 +860,6 @@ struct Context<'a> {
     anchors: &'a BTreeMap<String, Anchor>,
     fonts: &'a BTreeMap<String, (String, String)>,
     atlases: &'a BTreeMap<String, String>,
-    font_atlas: &'a str,
-    icons_atlas: Option<&'a str>,
     key_cap: bool,
     rows: &'a [String],
 }
@@ -991,10 +917,6 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
             None => None,
             Some(given) => Some(paint(given, cx.palette, &read.within("color"))?),
         },
-        stroke: match read.get("stroke") {
-            None => None,
-            Some(given) => Some(stroke(given, cx.palette, read.within("stroke"))?),
-        },
         icon: match read.get("icon") {
             None => None,
             Some(_) => Some(template(read.text("icon")?, &read.within("icon"))?),
@@ -1010,16 +932,6 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
     };
     let card = card_of(&styles);
     let kind = kind_of(&read, cx)?;
-    let sweep = match read.get("sweep") {
-        None => None,
-        Some(given) => Some(number_of(given, &read.within("sweep"))?),
-    };
-    if sweep.is_some() && !matches!(kind, Kind::Plate) {
-        return Err(format!(
-            "{}: sweep draws on plate elements only",
-            read.within("sweep")
-        ));
-    }
     let pulse = match read.get("pulse") {
         None => None,
         Some(given) => Some(pulse_of(given, cx.palette, read.within("pulse"))?),
@@ -1032,12 +944,10 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
         id: read.text("id")?.to_owned(),
         rect,
         anchor,
-        unscaled: read.flag("unscaled")?,
         when: conds_of(read.get("when"), &read.within("when"))?,
         styles,
         look,
         radius: read.number_or("radius", 0.0)?,
-        sweep,
         pulse,
         serial: 0,
         kind,
@@ -1285,8 +1195,6 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         anchors: &anchors,
         fonts: &fonts,
         atlases: &atlases,
-        font_atlas: font.text("atlas")?,
-        icons_atlas: atlases.get("icons").map(String::as_str),
         key_cap: key_cap.is_some(),
         rows: &rows,
     };
@@ -1304,13 +1212,6 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
             continue;
         };
         let screen = Reader::of(value, at.clone())?;
-        let over = match screen.get("over") {
-            None => None,
-            Some(_) => {
-                let over = screen.text("over")?;
-                Some(shown_of(over).ok_or_else(|| format!("{at}.over: unknown screen `{over}`"))?)
-            }
-        };
         let mut elements = Vec::new();
         for (index, value) in screen.list("elements")?.iter().enumerate() {
             match element(value, &cx, format!("{at}.elements[{index}]")) {
@@ -1318,7 +1219,7 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
                 Err(problem) => skipped.push(problem),
             }
         }
-        screens.insert(shown, Screen { over, elements });
+        screens.insert(shown, Screen { elements });
     }
     for missing in Shown::ALL {
         if let std::collections::btree_map::Entry::Vacant(empty) = screens.entry(missing) {
@@ -1327,7 +1228,6 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
                 missing.key()
             ));
             empty.insert(Screen {
-                over: None,
                 elements: Vec::new(),
             });
         }
@@ -1339,7 +1239,6 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
     }
     Ok(Layout {
         reference,
-        stroke_rim: read.number("stroke_rim")?,
         min_text_px: font.number("min_px")?,
         palette,
         screens,
@@ -1399,9 +1298,6 @@ fn number_paths(number: &Number, found: &mut Vec<Path>) {
 fn set_paths(set: &Set, found: &mut Vec<Path>) {
     for given in [&set.fill, &set.color].into_iter().flatten() {
         paint_paths(given, found);
-    }
-    if let Some(stroke) = &set.stroke {
-        paint_paths(&stroke.color, found);
     }
     if let Some(icon) = &set.icon {
         template_paths(icon, found);
@@ -1564,9 +1460,6 @@ impl Element {
         let mut listed = Vec::new();
         cond_paths(&self.when, &mut listed);
         set_paths(&self.look, &mut listed);
-        if let Some(sweep) = &self.sweep {
-            number_paths(sweep, &mut listed);
-        }
         if let Some(pulse) = &self.pulse {
             listed.push(pulse.watch.clone());
             if let Some(color) = &pulse.color {

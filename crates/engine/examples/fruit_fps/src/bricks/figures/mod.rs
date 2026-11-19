@@ -28,11 +28,6 @@ pub const LEVEL: DrawKind = DrawKind("level");
 
 pub const LIGHTMAP_MAP: &str = "lightmap";
 
-pub const UV1: StreamShape = StreamShape {
-    name: "uv1",
-    format: AttributeFormat::Float32x2,
-};
-
 pub const JOINTS: StreamShape = StreamShape {
     name: "joints",
     format: AttributeFormat::Uint32x4,

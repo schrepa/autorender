@@ -59,7 +59,6 @@ pub struct Kick {
 pub struct Shot {
     pub origin: Vec3,
     pub direction: Vec3,
-    pub burst_index: u32,
     pub spread_deg: f32,
 }
 
@@ -157,7 +156,6 @@ pub fn fire(
         deviation,
         turn_draw * TAU,
     );
-    let burst_index = recoil.shots;
     recoil.shots = recoil.shots.saturating_add(1);
     let (up, side) = pattern_deg(recoil_numbers, recoil.shots);
     let jitter = (jitter_draw * 2.0 - 1.0) * recoil_numbers.side_jitter_deg;
@@ -178,7 +176,6 @@ pub fn fire(
     let shot = Shot {
         origin: aim.eye,
         direction,
-        burst_index,
         spread_deg,
     };
     (shot, kick)

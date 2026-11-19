@@ -8,8 +8,6 @@ const LOOK_AHEAD_TICKS: u64 = 300;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preview {
-    pub ability: AbilityId,
-    pub team: usize,
     pub at: Vec3,
     pub shape: DrawShape,
     pub path: Vec<Vec3>,
@@ -156,8 +154,6 @@ pub fn preview(
         if let Some((cue, at, size)) = landed {
             path.push(at);
             return Some(Preview {
-                ability: spec.id,
-                team: caster.team,
                 at,
                 shape: footprint(&effects, cue, at, size, throw_radius),
                 path,
@@ -167,8 +163,6 @@ pub fn preview(
     }
     let at = path.last().copied().unwrap_or(aim.origin);
     Some(Preview {
-        ability: spec.id,
-        team: caster.team,
         at,
         shape: DrawShape::Sphere {
             centre: at,

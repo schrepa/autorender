@@ -24,7 +24,7 @@ use crate::play::events::round::RoundEvents;
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::round::Round;
-use crate::play::sound::{Anchor, Cue, SoundCues, SoundLoad, Volume};
+use crate::play::sound::{Anchor, Cue, SoundLoad, Volume};
 use crate::play::view::Watched;
 use crate::play::world::{Arena, Barrier};
 
@@ -136,7 +136,6 @@ impl Brick for SoundBrick {
                     .files(SoundTable::files)
                     .prepare(SoundTable::prepared),
             )
-            .resource::<SoundCues>()
             .resource::<SoundLoad>()
             .settings::<Volume>()
             .resource::<Bank>()
@@ -270,12 +269,10 @@ fn mix(
     round: Option<Res<Round>>,
     watched: Option<Res<Watched>>,
     volume: Res<Volume>,
-    mut cues: ResMut<SoundCues>,
     actors: Query<ActorRow<'_>>,
     mut mixdown: ResMut<Mixdown>,
     mut sounds: ResMut<Sounds>,
 ) {
-    let heard = std::mem::take(&mut cues.cues);
     let (Some(table), Some(tps)) = (bank.table.as_ref(), ticks_per_second(&time)) else {
         return;
     };
@@ -289,7 +286,7 @@ fn mix(
     };
     let heard_by = listener(&rows, watched.as_deref());
     let own = heard_by.and_then(|(slot, _)| slot);
-    let mut fresh = heard;
+    let mut fresh = Vec::new();
     let fed = Fed {
         who,
         rows: &rows,

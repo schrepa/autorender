@@ -40,7 +40,6 @@ pub enum Form {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shown {
     pub effect: u32,
-    pub owner: Option<u32>,
     pub look: Look,
     pub form: Form,
     pub team: Team,
@@ -61,7 +60,6 @@ pub enum CueLook {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cue {
     pub look: CueLook,
-    pub owner: u32,
     pub at: Vec3,
     pub size: f32,
     pub ticks: u32,
@@ -116,10 +114,8 @@ pub enum PropPlace {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropShown {
     pub effect: u32,
-    pub owner: u32,
     pub prop: String,
     pub team: Team,
-    pub born_tick: u64,
     pub place: PropPlace,
     pub enemy_share: f32,
 }

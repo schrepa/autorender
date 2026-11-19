@@ -19,5 +19,4 @@ pub use preview::{Preview, needs_aim, preview};
 pub use props::{PropPose, PropState};
 pub use queries::{
     Danger, DangerKind, DrawKind, DrawShape, Drawable, ShootableHit, Status, StatusKind,
-    Transformation, WireChain,
 };

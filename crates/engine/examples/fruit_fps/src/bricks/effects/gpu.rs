@@ -4,7 +4,7 @@ use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
 use engine_core::{Entry, Error, Sampler, TextureRef, Var, ViewFacts};
 use engine_render::{
-    Access, Attach, BatchGroup, Encode, FULLSCREEN, GroupEntry, Own, PerBatch, Scene, Texture,
+    Access, BatchGroup, Encode, FULLSCREEN, GroupEntry, Own, PerBatch, Scene, Texture,
 };
 
 use super::assemble::BOX_VERTICES;
@@ -106,18 +106,10 @@ fn bound(
         .collect()
 }
 
-fn pulled(vertices: u32, instances: &Range<u32>) -> Shape<'static, EffectsGpu, Scene> {
+fn pulled(vertices: u32, instances: &Range<u32>) -> Shape {
     Shape::Pulled {
         vertices: 0..vertices,
         instances: instances.clone(),
-        key: None,
-    }
-}
-
-fn pulled_own(vertices: u32, instances: Range<u32>) -> Shape<'static, EffectsGpu, Own> {
-    Shape::Pulled {
-        vertices: 0..vertices,
-        instances,
         key: None,
     }
 }
@@ -280,21 +272,15 @@ impl GpuPart for EffectsGpu {
     }
 
     fn encode(&mut self, _pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
-        let mut draw = cx.render(Attach::Declared);
+        let mut draw = cx.render();
         if !self.marks_range.is_empty() {
-            draw.draw(
-                &self.marks,
-                pulled_own(BOX_VERTICES, self.marks_range.clone()),
-            );
+            draw.draw(&self.marks, pulled(BOX_VERTICES, &self.marks_range));
         }
         if !self.smoke_range.is_empty() {
-            draw.draw(
-                &self.smoke,
-                pulled_own(BOX_VERTICES, self.smoke_range.clone()),
-            );
+            draw.draw(&self.smoke, pulled(BOX_VERTICES, &self.smoke_range));
         }
         if self.screened {
-            draw.draw(&self.screen, pulled_own(FULLSCREEN_VERTICES, 0..1));
+            draw.draw(&self.screen, pulled(FULLSCREEN_VERTICES, &(0..1)));
         }
     }
 }

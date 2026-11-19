@@ -45,8 +45,6 @@ pub(super) struct SoundEntry {
     pub own_gain: f32,
     pub group: Group,
     #[serde(default)]
-    pub stand_in: Option<String>,
-    #[serde(default)]
     pub gain_jitter_db: f32,
 }
 

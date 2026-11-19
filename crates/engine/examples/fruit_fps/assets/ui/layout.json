@@ -5,7 +5,6 @@
   1920,
   1080
  ],
- "stroke_rim": 0,
  "name": {
   "lines": [
    "PULP",
@@ -130,7 +129,6 @@
   "outline_limit": "a shadow's grow must stay under 12 * size / 64 - 1 px (the distance field ends there)"
  },
  "font": {
-  "atlas": "fredoka.json",
   "faces": [
    "regular",
    "bold"
@@ -781,7 +779,6 @@
      "max": 45,
      "fill": "attack",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -1165,7 +1162,6 @@
      "max": 100,
      "fill": "health",
      "track": "paper",
-     "dir": "ltr",
      "radius": 4.0,
      "shadows": [
       {
@@ -1296,7 +1292,6 @@
      "max": 100,
      "fill": "health",
      "track": "paper",
-     "dir": "ltr",
      "radius": 4.0,
      "shadows": [
       {
@@ -1427,7 +1422,6 @@
      "max": 100,
      "fill": "health",
      "track": "paper",
-     "dir": "ltr",
      "radius": 4.0,
      "shadows": [
       {
@@ -1558,7 +1552,6 @@
      "max": 100,
      "fill": "health",
      "track": "paper",
-     "dir": "ltr",
      "radius": 4.0,
      "shadows": [
       {
@@ -1689,7 +1682,6 @@
      "max": 100,
      "fill": "health",
      "track": "paper",
-     "dir": "ltr",
      "radius": 4.0,
      "shadows": [
       {
@@ -3057,7 +3049,6 @@
      "max": 100,
      "fill": "health",
      "track": "paper",
-     "dir": "ltr",
      "radius": 12.0,
      "shadows": [
       {
@@ -5130,7 +5121,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 4.0,
      "shadows": [
       {
@@ -5577,7 +5567,6 @@
      "max": 1,
      "fill": "@action.color",
      "track": "paper",
-     "dir": "ltr",
      "radius": 12.0,
      "shadows": [
       {
@@ -8013,7 +8002,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -8086,7 +8074,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -8159,7 +8146,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -8710,7 +8696,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -8783,7 +8768,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -8856,7 +8840,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -9407,7 +9390,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -9480,7 +9462,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -9553,7 +9534,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -10104,7 +10084,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -10177,7 +10156,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -10250,7 +10228,6 @@
      "max": 1,
      "fill": "ink",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7.0,
      "shadows": [
       {
@@ -18818,7 +18795,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -18917,7 +18893,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -19016,7 +18991,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -19115,7 +19089,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -19231,7 +19204,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -19465,7 +19437,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -19564,7 +19535,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -20373,7 +20343,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -20472,7 +20441,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -20571,7 +20539,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -20670,7 +20637,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 7,
      "knob": {
       "size": 30,
@@ -26135,7 +26101,6 @@
      "max": 1,
      "fill": "sun",
      "track": "paper",
-     "dir": "ltr",
      "radius": 17.0,
      "shadows": [
       {

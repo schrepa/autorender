@@ -211,7 +211,6 @@ struct FontFile {
 #[derive(Deserialize)]
 struct IconsFile {
     icons: BTreeMap<String, [f32; 4]>,
-    trim: BTreeMap<String, [f32; 4]>,
 }
 
 #[derive(Deserialize)]
@@ -409,14 +408,12 @@ impl ScreenSource {
                     return Err(at(format!("atlas `{named}` is no bound picture atlas")));
                 }
             }
-            layout::Kind::Icon(_, Some(named)) if !bound_atlas(pictures, named) => {
+            layout::Kind::Icon(named) if !bound_atlas(pictures, named) => {
                 return Err(at(format!("atlas `{named}` is no bound picture atlas")));
             }
             layout::Kind::Flow { items, .. } => {
                 for item in items {
-                    if let layout::FlowKind::Icon {
-                        atlas: Some(named), ..
-                    } = &item.kind
+                    if let layout::FlowKind::Icon { atlas: named, .. } = &item.kind
                         && !bound_atlas(pictures, named)
                     {
                         return Err(at(format!("atlas `{named}` is no bound picture atlas")));
@@ -542,10 +539,7 @@ impl ScreenSource {
             layout,
             font,
             font_textures,
-            icons: Icons {
-                cells: icons.icons,
-                trims: icons.trim,
-            },
+            icons: Icons { cells: icons.icons },
             map: MapFrame {
                 px_per_m: map.px_per_m,
                 origin_m: map.origin_m,
@@ -867,7 +861,7 @@ fn draw_screen(
         if sniping {
             painter.scope(&source.menu.scope, facts.scope_ease);
         }
-        painter.screen(state.shown, facts.spread_px);
+        painter.screen(state.shown);
         let cross = facts.menu.settings.reticle;
         let reach = cross.gap + cross.length + cross.outline + facts.spread_px;
         if state.shown == Shown::Hud && !painter.crossed(Shown::Hud, reach) {

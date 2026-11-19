@@ -30,12 +30,6 @@ impl Costs {
             .unwrap_or(f32::INFINITY)
     }
 
-    pub fn scale_polygons(&mut self, polygons: &[PolygonId], factor: f32) {
-        for &polygon in polygons {
-            self.set(polygon, self.get(polygon) * factor);
-        }
-    }
-
     pub fn scale_disc(&mut self, mesh: &NavMesh, center: Vec3, radius: f32, factor: f32) {
         let middle = flat(center);
         let reach = glam::Vec2::splat(radius);
@@ -60,16 +54,12 @@ impl Costs {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Path {
     pub corners: Vec<Vec3>,
-    pub polygons: Vec<PolygonId>,
-    pub length: f32,
-    pub cost: f32,
     pub expanded: u32,
 }
 
 struct Route {
     polygons: Vec<PolygonId>,
     crossings: Vec<u32>,
-    cost: f32,
     expanded: u32,
 }
 
@@ -182,19 +172,10 @@ impl NavMesh {
     pub fn path(&self, from: Spot, to: Spot, radius: f32, costs: &Costs) -> Option<Path> {
         let route = self.route(from, to, radius, costs)?;
         let gates = self.gates(from, to, &route.polygons, &route.crossings, radius);
-        let corners = super::funnel::corners(&gates, radius);
-        let length = corners.windows(2).map(|w| w[0].distance(w[1])).sum();
         Some(Path {
-            corners,
-            polygons: route.polygons,
-            length,
-            cost: route.cost,
+            corners: super::funnel::corners(&gates, radius),
             expanded: route.expanded,
         })
-    }
-
-    pub fn path_cost(&self, from: Spot, to: Spot, radius: f32, costs: &Costs) -> Option<f32> {
-        self.route(from, to, radius, costs).map(|route| route.cost)
     }
 
     fn factor(&self, costs: &Costs, polygon: PolygonId, start: PolygonId, lowest: f32) -> f32 {
@@ -211,15 +192,14 @@ impl NavMesh {
         if self.island(from.polygon) != self.island(to.polygon) || !lowest.is_finite() {
             return None;
         }
-        let start_factor = self.factor(costs, from.polygon, from.polygon, lowest);
         if from.polygon == to.polygon {
             return Some(Route {
                 polygons: vec![from.polygon],
                 crossings: Vec::new(),
-                cost: start_factor * from.point.distance(to.point),
                 expanded: 0,
             });
         }
+        let start_factor = self.factor(costs, from.polygon, from.polygon, lowest);
         let nodes = self.portals.len() * STEPS as usize + 1;
         let mut frontier = Frontier {
             mesh: self,
@@ -240,7 +220,7 @@ impl NavMesh {
                 continue;
             }
             if entry.node == goal {
-                return Some(self.trace_back(&frontier, entry.walked, expanded));
+                return Some(self.trace_back(&frontier, expanded));
             }
             expanded += 1;
             let portal = self.portals[(entry.node / STEPS) as usize];
@@ -255,7 +235,7 @@ impl NavMesh {
         None
     }
 
-    fn trace_back(&self, frontier: &Frontier<'_>, cost: f32, expanded: u32) -> Route {
+    fn trace_back(&self, frontier: &Frontier<'_>, expanded: u32) -> Route {
         let mut polygons = Vec::new();
         let mut crossings = Vec::new();
         let mut node = frontier.goal_node();
@@ -273,7 +253,6 @@ impl NavMesh {
         let mut route = Route {
             polygons: Vec::with_capacity(polygons.len()),
             crossings: Vec::with_capacity(crossings.len()),
-            cost,
             expanded,
         };
         route.polygons.push(polygons[0]);

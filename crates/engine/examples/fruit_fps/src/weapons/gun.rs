@@ -68,7 +68,6 @@ pub struct GunTick {
     pub dry_fire: bool,
     pub reload_started: bool,
     pub reload_done: bool,
-    pub became_ready: bool,
     pub kick: Kick,
 }
 
@@ -144,10 +143,6 @@ impl Gun {
             Phase::Equipping { left } => Some(left),
             Phase::Holstered | Phase::Ready | Phase::Reloading { .. } => None,
         }
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.phase == Phase::Ready
     }
 
     pub fn idle(&self) -> bool {
@@ -259,7 +254,7 @@ impl Gun {
         let pull = match self.phase {
             Phase::Holstered => Pull::Nothing,
             Phase::Equipping { left } => {
-                self.equip_step(left, &mut out);
+                self.equip_step(left);
                 Pull::Nothing
             }
             Phase::Reloading { left, total } => {
@@ -309,12 +304,11 @@ impl Gun {
         out
     }
 
-    fn equip_step(&mut self, left: u32, out: &mut GunTick) {
+    fn equip_step(&mut self, left: u32) {
         if left > 1 {
             self.phase = Phase::Equipping { left: left - 1 };
         } else {
             self.phase = Phase::Ready;
-            out.became_ready = true;
         }
     }
 
@@ -377,8 +371,4 @@ impl Gun {
             Pull::Nothing
         }
     }
-}
-
-pub fn scoped_fov_radians(base_fov_radians: f32, zoom: f32) -> f32 {
-    2.0 * ((base_fov_radians * 0.5).tan() / zoom).atan()
 }

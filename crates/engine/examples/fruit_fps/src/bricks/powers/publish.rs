@@ -173,7 +173,6 @@ impl Sheet<'_> {
         };
         Shown {
             effect: drawable.effect.0,
-            owner: Some(drawable.owner.0),
             look,
             form: form_of(drawable.shape),
             team: team_of(drawable.team),
@@ -191,14 +190,12 @@ impl Sheet<'_> {
             .filter_map(|event| match event {
                 Event::Cue {
                     cue,
-                    owner,
                     at,
                     size,
                     ticks,
                     ..
                 } => cue_look(*cue).map(|look| Cue {
                     look,
-                    owner: owner.0,
                     at: *at,
                     size: *size,
                     ticks: *ticks,
@@ -303,10 +300,8 @@ impl Sheet<'_> {
                 };
                 Some(PropShown {
                     effect: state.effect.0,
-                    owner: state.owner.0,
                     prop,
                     team: team_of(state.team),
-                    born_tick: state.born,
                     place,
                     enemy_share: spec.enemy_visibility,
                 })

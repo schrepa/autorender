@@ -50,14 +50,6 @@ impl DamageLedger {
         self.harms
             .retain(|harm| now.saturating_sub(harm.tick) <= window);
     }
-
-    pub fn len(&self) -> usize {
-        self.harms.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.harms.is_empty()
-    }
 }
 
 pub fn joints_from_body(

@@ -4,8 +4,8 @@ use engine::math;
 use glam::Vec2;
 
 use crate::play::screen::{
-    Align, Anchor, Area, Case, Cover, Fit, HudFacts, Plate, Reticle, Rgba, ScreenDraw, Shown,
-    Stroke, TextStyle, Weight,
+    Align, Anchor, Area, Case, HudFacts, Plate, Reticle, Rgba, ScreenDraw, Shown, Stroke,
+    TextStyle, Weight,
 };
 
 const KNOB_RING_PX: f32 = 6.0;
@@ -17,8 +17,8 @@ const ARMOR_POP: f32 = 0.3;
 const ARMOR_POP_SHARE: f32 = 0.3;
 
 use super::layout::{
-    Arc, Cond, Dir, Element, FlowItem, FlowKind, Format, Kind, Knob, Layout, Markers, Number,
-    Paint, Picture, Piece, Screen, Set, Shadow, Stack, StrokeRef, Template, TextKind,
+    Arc, Cond, Element, FlowItem, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint,
+    Picture, Piece, Screen, Set, Shadow, Stack, Template, TextKind,
 };
 use super::menu::ScopeNumbers;
 use super::paths::Val;
@@ -93,7 +93,6 @@ pub(super) struct PulseState {
 struct Look<'a> {
     fill: Option<&'a Paint>,
     color: Option<&'a Paint>,
-    stroke: Option<&'a StrokeRef>,
     icon: Option<&'a Template>,
     grey: f32,
     shadows: &'a [Shadow],
@@ -175,8 +174,8 @@ fn number_of(facts: &HudFacts, number: &Number) -> Option<f32> {
 }
 
 impl Painter<'_> {
-    fn px(&self, size: f32, unscaled: bool) -> f32 {
-        self.draw.text_px(size, unscaled) * self.zoom
+    fn px(&self, size: f32) -> f32 {
+        self.draw.text_px(size) * self.zoom
     }
 
     fn pulse<'e>(&mut self, element: &'e Element) -> (f32, Option<&'e Paint>) {
@@ -232,7 +231,6 @@ impl Painter<'_> {
         let mut look = Look {
             fill: element.look.fill.as_ref(),
             color: element.look.color.as_ref(),
-            stroke: element.look.stroke.as_ref(),
             icon: element.look.icon.as_ref(),
             grey: element.look.grey.unwrap_or(0.0),
             shadows: element.look.shadows.as_deref().unwrap_or(&[]),
@@ -253,15 +251,6 @@ impl Painter<'_> {
                 Piece::Value(path, format) => formatted(self.facts.value(path), *format, out),
             }
         }
-    }
-
-    fn stroke(&self, stroke: Option<&StrokeRef>, s: f32) -> Option<Stroke> {
-        let stroke = stroke?;
-        Some(Stroke {
-            width: stroke.width * s,
-            inset: self.layout.stroke_rim * s,
-            color: self.color(Some(&stroke.color))?,
-        })
     }
 
     fn plate(&mut self, area: Area, fill: Option<Rgba>, radius: f32, stroke: Option<Stroke>) {
@@ -343,7 +332,7 @@ impl Painter<'_> {
         &mut self,
         shadows: &[Shadow],
         area: Area,
-        (fill, radius, stroke): (Option<Rgba>, f32, Option<Stroke>),
+        (fill, radius): (Option<Rgba>, f32),
         s: f32,
     ) {
         let case = self.case_of(shadows, s);
@@ -355,7 +344,7 @@ impl Painter<'_> {
             Plate {
                 fill,
                 radius,
-                stroke,
+                stroke: None,
                 angle_radians: 0.0,
                 soft: 1.0,
                 sweep: 1.0,
@@ -364,11 +353,7 @@ impl Painter<'_> {
         );
     }
 
-    fn shadows(&mut self, element: &Element, look: &Look<'_>, area: Area, (radius, s): (f32, f32)) {
-        if matches!(element.kind, Kind::Plate) {
-            self.shadow_plates(look.shadows, area, (radius, s));
-            return;
-        }
+    fn shadows(&mut self, element: &Element, look: &Look<'_>, area: Area, s: f32) {
         for shadow in look.shadows {
             let Some(color) = self.color(Some(&shadow.color)) else {
                 continue;
@@ -377,7 +362,7 @@ impl Painter<'_> {
             match &element.kind {
                 Kind::Text(text) => {
                     let mut out = std::mem::take(self.scratch);
-                    let px = self.fitted(text, area.w, element.unscaled, &mut out);
+                    let px = self.fitted(text, area.w, &mut out);
                     let placed = Area {
                         x: area.x + shadow.offset[0] * s,
                         y: area.y + shadow.offset[1] * s,
@@ -407,23 +392,16 @@ impl Painter<'_> {
         }
     }
 
-    fn icon(&mut self, look: &Look<'_>, area: Area, (fit, atlas): (Fit, Option<&str>)) {
+    fn icon(&mut self, look: &Look<'_>, area: Area, atlas: &str) {
         let Some(icon) = look.icon else {
             return;
         };
         let color = self.color(look.color);
         let mut out = std::mem::take(self.scratch);
         self.render(icon, &mut out);
-        match (atlas, color) {
-            _ if out.is_empty() => {}
-            (Some(atlas), color) => {
-                self.draw
-                    .sticker((atlas, &out), area, (color.unwrap_or(WHITE), look.grey));
-            }
-            (None, Some(color)) => {
-                self.draw.icon(&out, area, (color, fit));
-            }
-            (None, None) => {}
+        if !out.is_empty() {
+            self.draw
+                .sticker((atlas, &out), area, (color.unwrap_or(WHITE), look.grey));
         }
         *self.scratch = out;
     }
@@ -461,7 +439,7 @@ impl Painter<'_> {
             return;
         };
         let turn = std::f32::consts::TAU;
-        let start = arc.start_deg.to_radians() - if arc.clockwise { 0.0 } else { share * turn };
+        let start = arc.start_deg.to_radians();
         self.draw.plate(ring, band(color, start, share));
         if share >= 1.0 {
             return;
@@ -481,16 +459,13 @@ impl Painter<'_> {
         }
     }
 
-    pub(super) fn screen(&mut self, shown: Shown, spread_px: f32) {
+    pub(super) fn screen(&mut self, shown: Shown) {
         let Some(screen) = self.layout.screens.get(&shown) else {
             return;
         };
-        if let Some(over) = screen.over {
-            self.screen(over, spread_px);
-        }
         self.stack(screen);
         for element in &screen.elements {
-            self.element(element, spread_px);
+            self.element(element);
         }
     }
 
@@ -503,9 +478,7 @@ impl Painter<'_> {
             if !self.holds(&element.when) {
                 continue;
             }
-            let area = self
-                .draw
-                .place(element.rect, element.anchor, element.unscaled);
+            let area = self.draw.place(element.rect, element.anchor);
             let (top, bottom) = (area.y, area.y + area.h);
             let Some(state) = self.rows.get_mut(row) else {
                 continue;
@@ -517,16 +490,14 @@ impl Painter<'_> {
         let layout = self.layout;
         let s = self.draw.scale();
         for stack in &layout.stacks {
-            let edge = |(rect, anchor): ([f32; 4], Anchor)| self.draw.place(rect, anchor, false).y;
+            let edge = |(rect, anchor): ([f32; 4], Anchor)| self.draw.place(rect, anchor).y;
             let bounds = (stack.gap * s, edge(stack.ceiling), edge(stack.floor));
             place_rows(self.rows, stack, bounds);
         }
     }
 
     fn placed(&self, element: &Element) -> Option<Area> {
-        let mut area = self
-            .draw
-            .place(element.rect, element.anchor, element.unscaled);
+        let mut area = self.draw.place(element.rect, element.anchor);
         if let Some(row) = element.row {
             area.y += self.rows.get(row).and_then(|state| state.lift)?;
         }
@@ -552,26 +523,7 @@ impl Painter<'_> {
         })
     }
 
-    fn crosshair_shift(&self, area: Area) -> Vec2 {
-        let center = (self.draw.size * 0.5).round();
-        let delta = area.center() - center;
-        let step = |value: f32| {
-            if value >= 1.0 {
-                1.0
-            } else if value <= -1.0 {
-                -1.0
-            } else {
-                0.0
-            }
-        };
-        Vec2::new(step(delta.x), step(delta.y))
-    }
-
-    fn framed<'e>(
-        &mut self,
-        element: &'e Element,
-        spread_px: f32,
-    ) -> Option<(Look<'e>, Area, f32, f32)> {
+    fn framed<'e>(&mut self, element: &'e Element) -> Option<(Look<'e>, Area, f32)> {
         let mut area = self.placed(element)?;
         let mut look = self.look(element);
         let (zoom, flash) = self.pulse(element);
@@ -587,63 +539,32 @@ impl Painter<'_> {
             area.x = center.x - area.w * 0.5;
             area.y = center.y - area.h * 0.5;
         }
-        if element.unscaled {
-            let shift = self.crosshair_shift(area) * spread_px;
-            area.x += shift.x.round();
-            area.y += shift.y.round();
-        }
-        let s = zoom
-            * if element.unscaled {
-                1.0
-            } else {
-                self.draw.scale()
-            };
-        let sweep = element
-            .sweep
-            .as_ref()
-            .and_then(|sweep| number_of(self.facts, sweep))
-            .unwrap_or(1.0);
-        Some((look, area, s, sweep))
+        let s = zoom * self.draw.scale();
+        Some((look, area, s))
     }
 
-    fn element(&mut self, element: &Element, spread_px: f32) {
+    fn element(&mut self, element: &Element) {
         if !self.holds(&element.when) {
             return;
         }
-        let Some((look, area, s, sweep)) = self.framed(element, spread_px) else {
+        let Some((look, area, s)) = self.framed(element) else {
             return;
         };
         let radius = element.radius * s;
-        let whole = matches!(element.kind, Kind::Plate) && sweep >= 1.0;
-        if !whole {
-            self.shadows(element, &look, area, (radius, s));
+        if !matches!(element.kind, Kind::Plate) {
+            self.shadows(element, &look, area, s);
         }
         match &element.kind {
             Kind::Plate => {
                 let fill = self.color(look.fill);
-                let stroke = self.stroke(look.stroke, s);
-                if whole {
-                    self.cased(look.shadows, area, (fill, radius, stroke), s);
-                } else {
-                    self.draw.plate(
-                        area,
-                        Plate {
-                            fill,
-                            radius,
-                            stroke,
-                            angle_radians: 0.0,
-                            soft: 1.0,
-                            sweep,
-                        },
-                    );
-                }
+                self.cased(look.shadows, area, (fill, radius), s);
             }
             Kind::Text(text) => {
                 let Some(color) = self.color(look.color) else {
                     return;
                 };
                 let mut out = std::mem::take(self.scratch);
-                let px = self.fitted(text, area.w, element.unscaled, &mut out);
+                let px = self.fitted(text, area.w, &mut out);
                 self.draw.text(
                     &out,
                     area,
@@ -658,7 +579,7 @@ impl Painter<'_> {
                 );
                 *self.scratch = out;
             }
-            Kind::Icon(fit, atlas) => self.icon(&look, area, (*fit, atlas.as_deref())),
+            Kind::Icon(atlas) => self.icon(&look, area, atlas),
             Kind::Arc(arc) => self.arc(arc, area, s, self.color(look.color)),
             Kind::Image(picture) => self.image(picture, &look, area, (radius, s)),
             Kind::Markers(markers) => self.markers(markers, area, s, self.color(look.color)),
@@ -666,7 +587,6 @@ impl Painter<'_> {
                 value,
                 max,
                 track,
-                dir,
                 knob,
             } => {
                 let end = self.bar(
@@ -674,7 +594,6 @@ impl Painter<'_> {
                     (radius, look.shadows, s),
                     (value, max),
                     (self.color(Some(track)), self.color(look.fill)),
-                    *dir,
                 );
                 if let Some(knob) = knob {
                     self.knob(knob, end, s);
@@ -698,18 +617,17 @@ impl Painter<'_> {
         let mut out = std::mem::take(self.scratch);
         let mut name = std::mem::take(self.spare);
         self.render(&picture.image, &mut name);
-        let fit = Cover::Fit;
         match &picture.cell {
             Some((_, key)) => {
                 self.render(key, &mut out);
                 if !out.is_empty() {
                     self.draw
-                        .image((&name, Some(&out), fit, look.grey), area, (color, frame));
+                        .image((&name, Some(&out), look.grey), area, (color, frame));
                 }
             }
             None if !name.is_empty() => {
                 self.draw
-                    .image((&name, None, fit, look.grey), area, (color, frame));
+                    .image((&name, None, look.grey), area, (color, frame));
             }
             None => {}
         }
@@ -723,10 +641,9 @@ impl Painter<'_> {
         (radius, shadows, s): (f32, &[Shadow], f32),
         (value, max): (&Number, &Number),
         (track, fill): (Option<Rgba>, Option<Rgba>),
-        dir: Dir,
     ) -> Vec2 {
         if track.is_some() {
-            self.cased(shadows, area, (track, radius, None), s);
+            self.cased(shadows, area, (track, radius), s);
         } else {
             self.shadow_plates(shadows, area, (radius, s));
         }
@@ -740,30 +657,10 @@ impl Painter<'_> {
         } else {
             0.0
         };
-        let filled = match dir {
-            Dir::LeftToRight => Area { w: across, ..area },
-            Dir::RightToLeft => Area {
-                x: area.x + area.w - across,
-                w: across,
-                ..area
-            },
-            Dir::BottomToTop => Area {
-                y: area.y + area.h * (1.0 - share),
-                h: area.h * share,
-                ..area
-            },
-        };
-        let rounded = if dir == Dir::BottomToTop && share < 1.0 {
-            radius
-        } else {
-            math::min(radius, math::min(filled.w, filled.h) * 0.5)
-        };
+        let filled = Area { w: across, ..area };
+        let rounded = math::min(radius, math::min(filled.w, filled.h) * 0.5);
         self.plate(filled, fill, rounded, None);
-        match dir {
-            Dir::LeftToRight => Vec2::new(area.x + area.w * share, area.y + area.h * 0.5),
-            Dir::RightToLeft => Vec2::new(area.x + area.w * (1.0 - share), area.y + area.h * 0.5),
-            Dir::BottomToTop => Vec2::new(area.x + area.w * 0.5, filled.y),
-        }
+        Vec2::new(area.x + area.w * share, area.y + area.h * 0.5)
     }
 
     fn knob(&mut self, knob: &Knob, at: Vec2, s: f32) {
@@ -860,7 +757,7 @@ impl Painter<'_> {
     }
 
     fn shrunk(&self, size: f32, share: f32) -> f32 {
-        let px = self.px(size, false);
+        let px = self.px(size);
         math::max(px * share, math::min(px, self.draw.min_text_px))
     }
 
@@ -874,9 +771,9 @@ impl Painter<'_> {
         out.push_str(mark);
     }
 
-    fn fitted(&mut self, text: &TextKind, room: f32, unscaled: bool, out: &mut String) -> f32 {
+    fn fitted(&mut self, text: &TextKind, room: f32, out: &mut String) -> f32 {
         self.render(&text.text, out);
-        let px = self.px(text.size, unscaled);
+        let px = self.px(text.size);
         let wide = self.draw.measure(out, px, text.weight);
         if room <= 0.0 || wide <= room {
             return px;
@@ -913,9 +810,7 @@ impl Painter<'_> {
             match &item.kind {
                 FlowKind::Text { text, cap, .. } => {
                     self.render(&text.text, out);
-                    let wide = self
-                        .draw
-                        .measure(out, self.px(text.size, false), text.weight);
+                    let wide = self.draw.measure(out, self.px(text.size), text.weight);
                     if *cap {
                         fixed += self.capped(wide, true, s);
                     } else {
@@ -984,13 +879,12 @@ impl Painter<'_> {
             Align::Right => area.x + area.w - width,
         };
         let fill = self.color(look.fill);
-        let stroke = self.stroke(look.stroke, s);
         let pill = Area {
             x,
             w: width,
             ..area
         };
-        self.cased(look.shadows, pill, (fill, element.radius * s, stroke), s);
+        self.cased(look.shadows, pill, (fill, element.radius * s), s);
         let mut at = x + fit.lead + (width - fit.content) * 0.5;
         for (index, item) in items.iter().enumerate() {
             if !self.holds(&item.when) {
@@ -1046,7 +940,7 @@ impl Painter<'_> {
                         w: iw,
                         h: ih,
                     };
-                    self.flow_icon((&out, atlas.as_deref()), place, color.as_ref());
+                    self.flow_icon((&out, atlas), place, color.as_ref());
                     at += iw + gap * s;
                 }
             }
@@ -1054,24 +948,12 @@ impl Painter<'_> {
         *self.scratch = out;
     }
 
-    fn flow_icon(
-        &mut self,
-        (name, atlas): (&str, Option<&str>),
-        place: Area,
-        color: Option<&Paint>,
-    ) {
-        let tint = self.color(color);
-        match (atlas, tint) {
-            _ if name.is_empty() => {}
-            (Some(atlas), tint) => {
-                self.draw
-                    .sticker((atlas, name), place, (tint.unwrap_or(WHITE), 0.0));
-            }
-            (None, Some(tint)) => {
-                self.draw.icon(name, place, (tint, Fit::Cell));
-            }
-            (None, None) => {}
+    fn flow_icon(&mut self, (name, atlas): (&str, &str), place: Area, color: Option<&Paint>) {
+        if name.is_empty() {
+            return;
         }
+        let tint = self.color(color).unwrap_or(WHITE);
+        self.draw.sticker((atlas, name), place, (tint, 0.0));
     }
 
     fn capped(&self, wide: f32, cap: bool, s: f32) -> f32 {
@@ -1093,7 +975,7 @@ impl Painter<'_> {
             ..place
         };
         let fill = self.color(Some(&piece.fill));
-        self.cased(&piece.shadows, cap, (fill, piece.radius * s, None), s);
+        self.cased(&piece.shadows, cap, (fill, piece.radius * s), s);
     }
 
     fn markers(&mut self, markers: &Markers, area: Area, s: f32, color: Option<Rgba>) {
@@ -1390,9 +1272,6 @@ fn apply<'e>(look: &mut Look<'e>, set: &'e Set) {
     }
     if let Some(color) = &set.color {
         look.color = Some(color);
-    }
-    if let Some(stroke) = &set.stroke {
-        look.stroke = Some(stroke);
     }
     if let Some(icon) = &set.icon {
         look.icon = Some(icon);

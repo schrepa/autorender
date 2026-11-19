@@ -77,14 +77,6 @@ pub enum Tone {
 }
 
 impl Tone {
-    pub const ALL: [Tone; 5] = [
-        Tone::Text,
-        Tone::Attack,
-        Tone::Defend,
-        Tone::Ready,
-        Tone::Danger,
-    ];
-
     pub fn key(self) -> &'static str {
         match self {
             Tone::Text => "text",
@@ -430,12 +422,6 @@ pub struct PointFacts {
     pub reason: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Cover {
-    Fit,
-    Fill,
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PickupFacts {
     pub active: bool,
@@ -658,14 +644,6 @@ impl Font {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Icons {
     pub cells: BTreeMap<String, [f32; 4]>,
-    pub trims: BTreeMap<String, [f32; 4]>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Fit {
-    #[default]
-    Cell,
-    Trim,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -860,18 +838,6 @@ impl ScreenDraw {
         self.punch();
     }
 
-    pub fn floor_at(&mut self, at: usize) {
-        let canvas = [0.0, 0.0, self.size.x, self.size.y];
-        if self
-            .quads
-            .get(at)
-            .is_some_and(|quad| covers(quad.rect, canvas))
-        {
-            self.floor = at;
-            self.opaque = true;
-        }
-    }
-
     fn punch(&mut self) {
         let Some(bottom) = self.quads.first().copied().filter(plain) else {
             return;
@@ -925,7 +891,7 @@ impl ScreenDraw {
         )
     }
 
-    pub fn place(&self, rect: [f32; 4], anchor: Anchor, unscaled: bool) -> Area {
+    pub fn place(&self, rect: [f32; 4], anchor: Anchor) -> Area {
         let [x, y, w, h] = rect;
         let [ax, ay] = match anchor {
             Anchor::Stretch => {
@@ -940,7 +906,7 @@ impl ScreenDraw {
             }
             Anchor::At(at) => at,
         };
-        let s = if unscaled { 1.0 } else { self.scale() };
+        let s = self.scale();
         let origin_x = (ax * self.size.x).round();
         let origin_y = (ay * self.size.y).round();
         Area {
@@ -951,9 +917,8 @@ impl ScreenDraw {
         }
     }
 
-    pub fn text_px(&self, size: f32, unscaled: bool) -> f32 {
-        let s = if unscaled { 1.0 } else { self.scale() };
-        math::max(self.min_text_px, size * s)
+    pub fn text_px(&self, size: f32) -> f32 {
+        math::max(self.min_text_px, size * self.scale())
     }
 
     pub fn plate(&mut self, rect: Area, plate: Plate) {
@@ -1006,7 +971,7 @@ impl ScreenDraw {
 
     pub fn image(
         &mut self,
-        (name, cell, fit, grey): (&str, Option<&str>, Cover, f32),
+        (name, cell, grey): (&str, Option<&str>, f32),
         rect: Area,
         (color, (radius, case)): (Rgba, (f32, Option<Case>)),
     ) {
@@ -1019,7 +984,7 @@ impl ScreenDraw {
             return;
         };
         let before = self.quads.len();
-        self.picture_quad(index, (cell, fit, grey), rect, color);
+        self.picture_quad(index, (cell, grey), rect, color);
         let case = case.filter(|case| case.color.visible());
         if let Some(quad) = self.quads.get_mut(before) {
             let [_, _, w, h] = quad.rect;
@@ -1046,7 +1011,7 @@ impl ScreenDraw {
             self.icons_missing += 1;
             return;
         };
-        self.picture_quad(index, (Some(cell), Cover::Fit, grey), rect, color);
+        self.picture_quad(index, (Some(cell), grey), rect, color);
     }
 
     pub fn sticker_size(&self, atlas: &str, cell: &str) -> Option<[f32; 2]> {
@@ -1094,7 +1059,7 @@ impl ScreenDraw {
     fn picture_quad(
         &mut self,
         index: usize,
-        (cell, fit, grey): (Option<&str>, Cover, f32),
+        (cell, grey): (Option<&str>, f32),
         rect: Area,
         color: Rgba,
     ) {
@@ -1114,29 +1079,16 @@ impl ScreenDraw {
         if !color.visible() || iw <= 0.0 || ih <= 0.0 {
             return;
         }
-        let (quad, uv) = match fit {
-            Cover::Fit => {
-                let k = math::min(rect.w / iw, rect.h / ih);
-                let (w, h) = (iw * k, ih * k);
-                let at = [
-                    (rect.x + (rect.w - w) * 0.5).round(),
-                    (rect.y + (rect.h - h) * 0.5).round(),
-                ];
-                ([at[0], at[1], w, h], [ix, iy, iw, ih])
-            }
-            Cover::Fill => {
-                let k = math::max(rect.w / iw, rect.h / ih);
-                let (sw, sh) = (rect.w / k, rect.h / k);
-                (
-                    [rect.x, rect.y, rect.w, rect.h],
-                    [ix + (iw - sw) * 0.5, iy + (ih - sh) * 0.5, sw, sh],
-                )
-            }
-        };
-        let k = quad[2] / uv[2];
+        let k = math::min(rect.w / iw, rect.h / ih);
+        let (w, h) = (iw * k, ih * k);
         self.quads.push(Quad {
-            rect: quad,
-            uv,
+            rect: [
+                (rect.x + (rect.w - w) * 0.5).round(),
+                (rect.y + (rect.h - h) * 0.5).round(),
+                w,
+                h,
+            ],
+            uv: [ix, iy, iw, ih],
             fill: color.packed(),
             edge: index as u32,
             mode: IMAGE,
@@ -1169,40 +1121,6 @@ impl ScreenDraw {
             angle: angle_radians,
             ..Quad::default()
         });
-    }
-
-    pub fn icon(&mut self, name: &str, rect: Area, (color, fit): (Rgba, Fit)) -> bool {
-        let cells = match fit {
-            Fit::Cell => &self.icons.cells,
-            Fit::Trim => &self.icons.trims,
-        };
-        let Some(&[ix, iy, iw, ih]) = cells.get(name) else {
-            self.icons_missing += 1;
-            return false;
-        };
-        if !color.visible() || iw <= 0.0 || ih <= 0.0 {
-            return true;
-        }
-        let k = math::min(rect.w / iw, rect.h / ih);
-        let (w, h) = (iw * k, ih * k);
-        self.quads.push(Quad {
-            rect: [
-                (rect.x + (rect.w - w) * 0.5).round(),
-                (rect.y + (rect.h - h) * 0.5).round(),
-                w,
-                h,
-            ],
-            uv: [ix, iy, iw, ih],
-            fill: color.packed(),
-            edge: 0,
-            mode: ICON,
-            radius: 0.0,
-            stroke_width: 0.0,
-            stroke_inset: 0.0,
-            scale: k,
-            ..Quad::default()
-        });
-        true
     }
 
     pub fn measure(&self, text: &str, px: f32, weight: Weight) -> f32 {

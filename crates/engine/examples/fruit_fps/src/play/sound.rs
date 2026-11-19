@@ -20,24 +20,6 @@ pub struct Cue {
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct SoundCues {
-    pub cues: Vec<Cue>,
-}
-
-impl SoundCues {
-    pub fn push(&mut self, event: impl Into<String>, anchor: Anchor, source: Option<u32>) {
-        self.cues.push(Cue {
-            event: event.into(),
-            anchor,
-            source,
-            gain: 1.0,
-            hold_ticks: None,
-            tag: None,
-        });
-    }
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct SoundLoad {
     pub ready: bool,
     pub asked: u32,

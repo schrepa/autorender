@@ -618,7 +618,6 @@ struct Found {
     rest_eye: Option<f32>,
     fit: f32,
     shift: Vec3,
-    tick: u64,
     readout: Readout,
 }
 
@@ -636,7 +635,6 @@ fn published(joints: &mut FigureJoints, (rig, pose, world): (&Rig, &[Posed], Mat
     joints.rest_eye_m = found
         .rest_eye
         .map(|eye| eye * world_height(world) / found.fit);
-    joints.tick = found.tick;
     let readout = &found.readout;
     joints.base_seconds = readout.base_seconds;
     joints.base_done = readout.base_done;
@@ -649,14 +647,9 @@ fn published(joints: &mut FigureJoints, (rig, pose, world): (&Rig, &[Posed], Mat
 }
 
 fn measured(joints: &mut FigureJoints, rig: &Rig) {
-    if joints.strides.len() == rig.clips.len() {
+    if joints.steps.len() == rig.clips.len() {
         return;
     }
-    joints.strides = rig
-        .clips
-        .iter()
-        .map(|(name, played)| (name.clone(), played.motion.stride_mps))
-        .collect();
     joints.steps = rig
         .clips
         .iter()
@@ -864,7 +857,6 @@ pub fn figure_tick(
                 rest_eye,
                 fit: clock.fit,
                 shift: scratch.shift,
-                tick: fixed.tick,
                 readout: clock.readout(),
             };
             published(&mut joints, (&rig, pose, world), &found);

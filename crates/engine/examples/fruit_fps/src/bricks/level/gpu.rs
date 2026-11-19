@@ -7,9 +7,7 @@ use engine_core::{
     GeometryHandle, Material, MaterialHandle, Sampler, TextureHandle, TextureRef, Var, ViewFacts,
     gpu_struct,
 };
-use engine_render::{
-    BatchGroup, GroupEntry, PerBatch, Scene, Texture, Variant, VertexLayout, wgpu,
-};
+use engine_render::{BatchGroup, GroupEntry, PerBatch, Scene, Texture, Variant, wgpu};
 
 use super::chunks::{self, Chunk, PieceSizes, Sized};
 use super::sets::VisibleSets;
@@ -61,17 +59,17 @@ const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
     depth_or_array_layers: 1,
 };
 
-const LEVEL_STREAMS: [VertexLayout; 2] = [
-    VertexLayout::Geometry(engine_core::GeometryStream::Vertex),
-    VertexLayout::Geometry(engine_core::GeometryStream::Extra),
+const LEVEL_STREAMS: [engine_core::GeometryStream; 2] = [
+    engine_core::GeometryStream::Vertex,
+    engine_core::GeometryStream::Extra,
 ];
 
-const DETAIL_STREAMS: [VertexLayout; 2] = [
-    VertexLayout::Geometry(engine_core::GeometryStream::Vertex),
-    VertexLayout::Geometry(engine_core::GeometryStream::Named {
+const DETAIL_STREAMS: [engine_core::GeometryStream; 2] = [
+    engine_core::GeometryStream::Vertex,
+    engine_core::GeometryStream::Named {
         shape: COLOR_STREAM,
         location: 6,
-    }),
+    },
 ];
 
 const MAPS: [(&str, Var, Var); 3] = [
@@ -171,7 +169,7 @@ fn face(cull: Cull) -> Option<wgpu::Face> {
 
 fn described<'a>(
     (vertex, fragment): (engine_core::Entry, engine_core::Entry),
-    vertices: &'a [VertexLayout],
+    vertices: &'a [engine_core::GeometryStream],
     write: bool,
     per_batch: PerBatch,
     constants: &'a [(&'static str, f64)],

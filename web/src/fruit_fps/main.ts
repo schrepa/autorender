@@ -1,7 +1,6 @@
 import { adapterFeatures } from "../engine/adapter";
 import { playGame } from "../engine/game";
 import { refuseGpu, watchStart } from "./shell";
-import JobWorker from "./worker.ts?worker";
 
 interface KeyboardLock { lock(codes?: string[]): Promise<void>; unlock(): void }
 
@@ -45,7 +44,7 @@ if (!window.isSecureContext) {
   watchStart();
   interruptions();
   adapterFeatures().then(
-    features => playGame({ wasm: "fruit_fps", scene: features.includes("texture-compression-bc") ? "fruit_fps.scene.json" : "fruit_fps.rgba8.scene.json", load: () => import("../../pkg/fruit_fps"), worker: JobWorker, game: bindings => bindings.FruitFpsGame }),
+    features => playGame({ wasm: "fruit_fps", scene: features.includes("texture-compression-bc") ? "fruit_fps.scene.json" : "fruit_fps.rgba8.scene.json", load: () => import("../../pkg/fruit_fps"), game: bindings => bindings.FruitFpsGame }),
     () => refuseGpu("This browser has WebGPU but gave no graphics adapter: hardware acceleration may be off, or the GPU or its driver is blocked. chrome://gpu (Chrome, Edge) or about:support (Firefox) shows why."),
   );
 }

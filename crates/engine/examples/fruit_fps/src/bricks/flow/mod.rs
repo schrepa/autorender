@@ -240,8 +240,7 @@ fn steer(
         book.waiting.clear();
     }
     let away = HOST_AWAY.iter().any(|reason| pause.holds(*reason));
-    let asked = std::mem::take(&mut flow.pause_asked);
-    if (asked || away) && flow.stage == Stage::Playing {
+    if away && flow.stage == Stage::Playing {
         flow.stage = Stage::Paused;
     }
     if flow.stage == Stage::Playing {

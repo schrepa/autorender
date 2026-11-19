@@ -15,31 +15,17 @@ pub enum StatusKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Status {
     pub kind: StatusKind,
-    pub ability: AbilityId,
-    pub effect: Option<EffectId>,
     pub to_team: Option<usize>,
-    pub until: u64,
     pub ticks_left: u64,
-    pub strength: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WireChain {
-    pub wire: EffectId,
-    pub ability: AbilityId,
-    pub since: u64,
-    pub until: u64,
-    pub slow: f32,
+struct WireChain {
+    wire: EffectId,
+    until: u64,
 }
 use super::numbers::{AbilityId, Modifiers, TrapShape};
 use super::shapes::{ray_box, ray_sphere};
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Transformation {
-    pub ability: AbilityId,
-    pub until: u64,
-    pub refresh_signature_on_kill: bool,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DangerKind {
@@ -56,8 +42,6 @@ pub struct Danger {
     pub kind: DangerKind,
     pub centre: Vec3,
     pub radius: f32,
-    pub weight: f32,
-    pub until: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,7 +79,6 @@ pub struct Drawable {
     pub effect: EffectId,
     pub kind: DrawKind,
     pub ability: AbilityId,
-    pub owner: ActorId,
     pub team: usize,
     pub shape: DrawShape,
     pub age: u32,
@@ -174,7 +157,7 @@ impl Effects {
             })
     }
 
-    pub fn wire_chain(&self, actor: ActorId) -> Option<WireChain> {
+    fn wire_chain(&self, actor: ActorId) -> Option<WireChain> {
         self.livings.iter().find_map(|living| {
             let State::Trap(trap) = &living.state else {
                 return None;
@@ -183,37 +166,22 @@ impl Effects {
             let chain = trap.spec.chain?;
             (held == actor).then_some(WireChain {
                 wire: living.id,
-                ability: living.ability,
-                since,
                 until: since + u64::from(chain.windup_ticks),
-                slow: chain.slow,
             })
         })
     }
 
     pub fn statuses(&self, actor: ActorId) -> Vec<Status> {
         let now = self.now;
-        let status = |kind, ability, effect, until: u64, strength| Status {
+        let status = |kind, until: u64| Status {
             kind,
-            ability,
-            effect,
             to_team: None,
-            until,
             ticks_left: until.saturating_sub(now),
-            strength,
         };
         let chain = self.wire_chain(actor);
         let mut out: Vec<Status> = chain
             .iter()
-            .map(|chain| {
-                status(
-                    StatusKind::Chained,
-                    chain.ability,
-                    Some(chain.wire),
-                    chain.until,
-                    Some(chain.slow),
-                )
-            })
+            .map(|chain| status(StatusKind::Chained, chain.until))
             .collect();
         let buffs = self
             .marks
@@ -222,33 +190,24 @@ impl Effects {
             .map(|(_, buff)| buff)
             .filter(|buff| chain.is_none_or(|chain| chain.wire != buff.effect));
         for buff in buffs {
-            let made = |kind, strength| {
-                status(
-                    kind,
-                    buff.ability,
-                    Some(buff.effect),
-                    buff.until,
-                    Some(strength),
-                )
-            };
             let m = buff.modifiers;
             if m.speed < 1.0 {
-                out.push(made(StatusKind::Slowed, 1.0 - m.speed));
+                out.push(status(StatusKind::Slowed, buff.until));
             }
-            if let Some(sight) = m.sight_m {
-                out.push(made(StatusKind::SightCut, sight));
+            if m.sight_m.is_some() {
+                out.push(status(StatusKind::SightCut, buff.until));
             }
             if m.damage_taken > 1.0 {
-                out.push(made(StatusKind::Vulnerable, m.damage_taken - 1.0));
+                out.push(status(StatusKind::Vulnerable, buff.until));
             }
             let boost = [m.fire_rate, m.reload, m.speed]
                 .into_iter()
                 .fold(1.0, |best, value| if value > best { value } else { best });
             if boost > 1.0 {
-                out.push(made(StatusKind::Boosted, boost - 1.0));
+                out.push(status(StatusKind::Boosted, buff.until));
             }
         }
-        for (&(team, _), &(until, ability)) in self
+        for (&(team, _), &until) in self
             .marks
             .reveals
             .iter()
@@ -256,7 +215,7 @@ impl Effects {
         {
             out.push(Status {
                 to_team: Some(team),
-                ..status(StatusKind::Revealed, ability, None, until, None)
+                ..status(StatusKind::Revealed, until)
             });
         }
         out
@@ -266,81 +225,45 @@ impl Effects {
         self.marks.reveals.contains_key(&(team, actor))
     }
 
-    pub fn reveals(&self) -> Vec<(usize, ActorId, u64)> {
-        self.marks
-            .reveals
-            .iter()
-            .map(|(&(team, actor), &(until, _))| (team, actor, until))
-            .collect()
-    }
-
-    pub fn transformation(&self, actor: ActorId) -> Option<Transformation> {
-        self.livings.iter().find_map(|living| {
-            let State::Transform {
-                ticks,
-                refresh_signature_on_kill,
-            } = living.state
-            else {
-                return None;
-            };
-            (living.caster.id == actor).then_some(Transformation {
-                ability: living.ability,
-                until: living.born + ticks as u64,
-                refresh_signature_on_kill,
-            })
-        })
-    }
-
     pub fn dangers(&self, team: usize) -> Vec<Danger> {
         let mut dangers = Vec::new();
         for living in &self.livings {
             let enemy = living.caster.team != team;
             match living.state {
                 State::Zone { centre, spec } => {
-                    let until = living.born + spec.ticks as u64;
-                    let mut add = |kind, weight| {
+                    let mut add = |kind| {
                         dangers.push(Danger {
                             kind,
                             centre,
                             radius: spec.radius_m,
-                            weight,
-                            until,
                         })
                     };
-                    if let Some(per_tick) = spec.damage_per_tick
-                        && (enemy || spec.hurts_team)
-                    {
-                        add(DangerKind::Damage, per_tick);
+                    if spec.damage_per_tick.is_some() && (enemy || spec.hurts_team) {
+                        add(DangerKind::Damage);
                     }
                     if enemy {
-                        if let Some(slow) = spec.slow {
-                            add(DangerKind::Slow, slow);
+                        if spec.slow.is_some() {
+                            add(DangerKind::Slow);
                         }
-                        if let Some(sight) = spec.sight_m {
-                            add(DangerKind::NearSight, sight);
+                        if spec.sight_m.is_some() {
+                            add(DangerKind::NearSight);
                         }
                         if spec.reveal {
-                            add(DangerKind::Reveal, 0.0);
+                            add(DangerKind::Reveal);
                         }
                     }
                 }
                 State::Strike {
-                    centre,
-                    warn_ticks,
-                    falloff,
+                    centre, falloff, ..
                 } if enemy || falloff.hurts_team => dangers.push(Danger {
                     kind: DangerKind::Strike,
                     centre,
                     radius: falloff.radius_m,
-                    weight: falloff.max,
-                    until: living.born + warn_ticks as u64,
                 }),
                 State::Smoke { centre, spec } => dangers.push(Danger {
                     kind: DangerKind::Smoke,
                     centre,
                     radius: Living::smoke_radius(&spec, living.age(self.now)),
-                    weight: spec.radius_m,
-                    until: living.born + spec.ticks as u64,
                 }),
                 State::Strike { .. }
                 | State::Pending
@@ -473,7 +396,6 @@ impl Effects {
             effect: living.id,
             kind,
             ability: living.ability,
-            owner: living.caster.id,
             team: living.caster.team,
             shape,
             age,
@@ -532,14 +454,5 @@ impl Effects {
             }
         }
         best
-    }
-
-    pub fn effect_of_solid(&self, id: u32) -> Option<EffectId> {
-        self.livings.iter().find_map(|living| {
-            let State::Wall(wall) = living.state else {
-                return None;
-            };
-            (wall.solid_id == Some(id)).then_some(living.id)
-        })
     }
 }

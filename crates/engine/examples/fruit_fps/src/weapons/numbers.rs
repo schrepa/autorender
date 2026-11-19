@@ -245,15 +245,9 @@ impl ClassMeters {
     }
 }
 
-pub const DEFAULT_SURFACE: &str = "stone";
+const DEFAULT_SURFACE: &str = "stone";
 
 impl CombatNumbers {
-    pub fn surface(&self, kind: &str) -> Option<&SurfaceNumbers> {
-        self.surfaces
-            .get(kind)
-            .or_else(|| self.surfaces.get(DEFAULT_SURFACE))
-    }
-
     pub fn surface_by(&self, same: impl Fn(&str) -> bool) -> Option<&SurfaceNumbers> {
         self.surfaces
             .iter()

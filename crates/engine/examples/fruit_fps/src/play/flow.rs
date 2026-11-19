@@ -14,15 +14,6 @@ pub enum Stage {
 }
 
 impl Stage {
-    pub const ALL: [Stage; 6] = [
-        Stage::Title,
-        Stage::Select,
-        Stage::Loading,
-        Stage::Playing,
-        Stage::Paused,
-        Stage::MatchEnd,
-    ];
-
     pub fn key(self) -> &'static str {
         match self {
             Stage::Title => "title",
@@ -31,13 +22,6 @@ impl Stage {
             Stage::Playing => "playing",
             Stage::Paused => "paused",
             Stage::MatchEnd => "match_end",
-        }
-    }
-
-    pub fn holds_match(self) -> bool {
-        match self {
-            Stage::Playing | Stage::Paused | Stage::MatchEnd => true,
-            Stage::Title | Stage::Select | Stage::Loading => false,
         }
     }
 
@@ -70,7 +54,6 @@ pub struct Flow {
     pub roster: Vec<SeatChoice>,
     pub game: u64,
     pub progress: f32,
-    pub pause_asked: bool,
     pub restored: bool,
     pub next_match_left: f32,
 }

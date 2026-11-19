@@ -300,7 +300,6 @@ fn shape(vertices: &[Vec3], corners: Vec<u32>, links: Vec<Option<u32>>) -> Polyg
     Polygon {
         corners,
         links,
-        center,
         normal,
         offset: normal.dot(center),
         min,

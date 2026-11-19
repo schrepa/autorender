@@ -13,12 +13,8 @@
       "root_motion": "Hip",
       "clips": {
         "idle": "idle",
-        "walk": "walk",
-        "run": "run",
-        "jump": "jump",
         "fall": "fall",
         "turn": "turn",
-        "fire": "fire",
         "hit_to_head": "hit_to_head",
         "hit_to_body_01": "hit_to_body",
         "cast_a_spell": "cast",
@@ -38,9 +34,6 @@
         "joints": 96,
         "influences": 4
       },
-      "remove_travel": [
-        "run"
-      ],
       "textures": [
         {
           "name": "bc",

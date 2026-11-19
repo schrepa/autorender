@@ -7,8 +7,8 @@ use engine_core::{
     ViewFacts, Writes, gpu_struct,
 };
 use engine_render::{
-    Access, Allocation, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install,
-    Lifetime, Own, PerBatch, Pipeline, Prepare, RenderBricks, RenderPipeline, Shape, SharedTarget,
+    Access, Allocation, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
+    Own, PerBatch, Pipeline, Prepare, RenderBricks, RenderPipeline, Shape, SharedTarget,
     TargetClear, wgpu,
 };
 
@@ -199,7 +199,7 @@ impl GpuPart for Composite {
 
     fn encode(&mut self, pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
         if pass == self.cover {
-            let _ = cx.render(Attach::Declared);
+            let _ = cx.render();
             return;
         }
         let pipeline = if pass == self.tone_pass {
@@ -207,7 +207,7 @@ impl GpuPart for Composite {
         } else {
             &self.pipeline
         };
-        cx.render(Attach::Declared).draw(
+        cx.render().draw(
             pipeline,
             Shape::Pulled {
                 vertices: 0..3,

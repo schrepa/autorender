@@ -257,10 +257,6 @@ impl Loadout {
         }
     }
 
-    pub fn give_primary(&mut self, numbers: &WeaponNumbers, kind: GunKind) {
-        self.primary = Some(Gun::new(kind, numbers));
-    }
-
     pub fn give(&mut self, numbers: &WeaponNumbers, kind: GunKind, ticks_per_second: u32) {
         let slot = if kind == GunKind::Sidearm {
             self.sidearm = Some(Gun::new(kind, numbers));
@@ -270,10 +266,6 @@ impl Loadout {
             Slot::Primary
         };
         self.switch(numbers, slot, ticks_per_second);
-    }
-
-    pub fn pace(&self) -> Pace {
-        self.pace
     }
 
     pub fn inspecting(&self) -> Option<GunKind> {

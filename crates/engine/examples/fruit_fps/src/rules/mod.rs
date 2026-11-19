@@ -647,10 +647,6 @@ impl Match {
         &self.catalog
     }
 
-    pub fn ticks(&self) -> u64 {
-        self.tick
-    }
-
     pub fn side_of(&self, team: Team) -> Side {
         self.sides[team.index()]
     }

@@ -4,11 +4,10 @@ use glam::{Vec2, Vec3};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::nav::{self, Costs, Eyes, NavMesh, NavNumbers, PlaceShape, Tactics};
+use crate::nav::{self, Costs, Eyes, NavMesh, NavNumbers, Tactics};
 use crate::play::numbers::GameNumbers;
-use crate::play::paths::{Built, Hold, MeshSource, SpawnIsland, Tuning, Watch, ZoneArea};
+use crate::play::paths::{Built, MeshSource, Tuning};
 use crate::play::world::Arena;
-use crate::rules::Side;
 use crate::solids::Block;
 
 use super::layout::{Layout, Map};
@@ -70,7 +69,6 @@ pub(super) fn tuning(numbers: &GameNumbers, nav: &NavNumbers) -> Tuning {
     Tuning {
         nav: nav.clone(),
         radius: numbers.player.moving.radius_m,
-        run_speed: numbers.player.run_speed_mps,
         eyes: Eyes {
             stand: numbers.player.eye_height_m,
             crouch: numbers.player.crouch_eye_height_m,
@@ -106,111 +104,6 @@ fn floor_mesh(
         .map_err(|error| format!("floor nav: {error:?}"))
 }
 
-fn zone_of(zones: &[ZoneArea], point: Vec3) -> Option<&ZoneArea> {
-    zones
-        .iter()
-        .filter(|zone| zone.covers(point))
-        .min_by(|a, b| a.area().total_cmp(&b.area()))
-}
-
-struct Sight<'a> {
-    mesh: &'a NavMesh,
-    tactics: &'a Tactics,
-    tuning: &'a Tuning,
-    arena: &'a Arena,
-}
-
-fn holds(sight: &Sight<'_>, map: &Map) -> Vec<Hold> {
-    let Sight {
-        mesh,
-        tactics,
-        tuning,
-        arena,
-    } = *sight;
-    let mut found = Vec::new();
-    for site in &map.sites {
-        let Some(zone) = zone_of(&map.zones, site.centre) else {
-            continue;
-        };
-        let reach = (zone.max - zone.min).with_y(0.0).length();
-        let Some(near) = mesh.locate(site.centre, tuning.nav.locate_height_m, reach) else {
-            continue;
-        };
-        for choke in map
-            .chokes
-            .iter()
-            .filter(|c| c.zones.contains(&zone.place.name))
-        {
-            let threat = (choke.a + choke.b) * 0.5 + Vec3::Y * tuning.eyes.stand;
-            let spots = tactics.positions_with_cover_from(
-                mesh,
-                threat,
-                near,
-                tuning.eyes,
-                tuning.radius,
-                reach,
-                |eye, target| arena.sees(eye, target),
-            );
-            for spot in spots {
-                let inside = zone_of(&map.zones, spot.spot.point)
-                    .is_some_and(|held| held.place.name == zone.place.name);
-                if inside {
-                    found.push(Hold {
-                        site: site.name.clone(),
-                        choke: choke.name.clone(),
-                        cover: tactics.places()[spot.place].place.name.clone(),
-                        at: spot.spot.point,
-                    });
-                }
-            }
-        }
-    }
-    found
-}
-
-fn watches(map: &Map, tactics: &Tactics, tuning: &Tuning) -> Vec<Watch> {
-    let lift = Vec3::Y * tuning.eyes.stand;
-    let mut points: Vec<Vec3> = map
-        .chokes
-        .iter()
-        .flat_map(|choke| [choke.a + lift, choke.b + lift])
-        .collect();
-    for facts in tactics.places() {
-        if let PlaceShape::Cover { center, half, .. } = facts.place.shape {
-            let base = center.y - half.y + tuning.eyes.stand;
-            for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-                points.push(Vec3::new(
-                    center.x + sx * half.x,
-                    base,
-                    center.z + sz * half.z,
-                ));
-            }
-        }
-    }
-    points
-        .into_iter()
-        .map(|at| Watch {
-            at,
-            zone: zone_of(&map.zones, at).map(|zone| zone.place.name.clone()),
-        })
-        .collect()
-}
-
-fn spawn_islands(mesh: &NavMesh, arena: &Arena, nav: &NavNumbers) -> Vec<SpawnIsland> {
-    [Side::Attack, Side::Defend]
-        .into_iter()
-        .flat_map(|side| {
-            arena.spawns(side).iter().map(move |spawn| SpawnIsland {
-                side,
-                at: spawn.position,
-                island: mesh
-                    .locate(spawn.position, nav.locate_height_m, nav.locate_distance_m)
-                    .map(|spot| mesh.island(spot.polygon)),
-            })
-        })
-        .collect()
-}
-
 pub(super) fn build(
     prepared: &Prepared,
     numbers: &GameNumbers,
@@ -228,31 +121,16 @@ pub(super) fn build(
                 .map_err(|error| format!("cooked nav: {error:?}"))?,
         ),
     };
-    let tuning = tuning(numbers, nav);
     let map = match &prepared.layout {
-        Some((_, layout)) => layout.map(numbers.player.moving.height_m)?,
+        Some((_, layout)) => layout.map(numbers.player.moving.height_m),
         None => Map::default(),
     };
-    let tactics = Tactics::build(&mesh, map.places.clone(), tuning.radius, nav);
-    let sight = Sight {
-        mesh: &mesh,
-        tactics: &tactics,
-        tuning: &tuning,
-        arena,
-    };
-    let holds = holds(&sight, &map);
-    let watches = watches(&map, &tactics, &tuning);
-    let spawn_islands = spawn_islands(&mesh, arena, nav);
     Ok(Built {
         source,
         plain: Costs::new(&mesh),
-        places: map.zones.iter().map(|zone| zone.place.clone()).collect(),
+        tactics: Tactics::build(map.covers, nav),
         zones: map.zones,
-        holds,
-        watches,
-        spawn_islands,
         layout: prepared.layout.as_ref().map(|(text, _)| text.clone()),
         mesh,
-        tactics,
     })
 }

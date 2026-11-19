@@ -31,7 +31,6 @@ gpu_struct! {
         pub clock: [f32; 4],
         pub flash: [f32; 4],
         pub damage: [f32; 4],
-        pub cover: [f32; 4],
         pub sun: [f32; 4],
         pub sun_color: [f32; 4],
         pub sky_color: [f32; 4],
@@ -125,7 +124,6 @@ settings! {
 pub struct ScreenStats {
     pub flash: f32,
     pub damage: f32,
-    pub cover: f32,
     pub near_sight: f32,
 }
 

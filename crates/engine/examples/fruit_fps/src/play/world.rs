@@ -18,10 +18,6 @@ pub enum Zone {
     BuyDefend,
 }
 
-impl Zone {
-    pub const ALL: [Zone; 4] = [Zone::SiteA, Zone::SiteB, Zone::BuyAttack, Zone::BuyDefend];
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ZoneBox {
     pub zone: Zone,
@@ -58,7 +54,6 @@ pub struct Markers {
     pub defend: Vec<Spawn>,
     pub zones: Vec<ZoneBox>,
     pub kinds: Vec<(Kind, String)>,
-    pub floor_half_size: Option<f32>,
     pub unknown_kinds: Vec<String>,
 }
 
@@ -113,10 +108,6 @@ impl Arena {
         &self.markers.zones
     }
 
-    pub fn floor_half_size(&self) -> Option<f32> {
-        self.markers.floor_half_size
-    }
-
     pub fn kind_name(&self, kind: Kind) -> Option<&str> {
         (self.markers.kinds.iter())
             .find(|(known, _)| *known == kind)
@@ -151,13 +142,6 @@ impl Arena {
             .zones
             .iter()
             .any(|held| held.zone == zone && held.contains(point))
-    }
-
-    pub fn zones_at(&self, point: Vec3) -> Vec<Zone> {
-        Zone::ALL
-            .into_iter()
-            .filter(|&zone| self.zone(zone, point))
-            .collect()
     }
 
     pub fn site(&self, point: Vec3) -> Option<usize> {

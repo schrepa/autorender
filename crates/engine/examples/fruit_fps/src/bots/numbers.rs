@@ -131,7 +131,6 @@ pub struct PlayNumbers {
     pub heal_below: f32,
     pub flash_mate_m: f32,
     pub flash_inside_m: f32,
-    pub smoke_inside_m: f32,
     pub smoke_open_step_m: f32,
     pub utility_aim_deg: f32,
     pub utility_seconds: f32,
@@ -159,8 +158,6 @@ pub struct PlayNumbers {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct BotPlayer {
     pub run_speed_mps: f32,
-    pub walk_factor: f32,
-    pub crouch_factor: f32,
     pub eye_height_m: f32,
     pub crouch_eye_height_m: f32,
     pub radius_m: f32,

@@ -140,7 +140,6 @@ fn floor(floor: &Floor) -> (Solids, Markers) {
     }
     let markers = Markers {
         kinds,
-        floor_half_size: Some(h),
         ..Markers::default()
     };
     (solids, markers)
@@ -209,7 +208,6 @@ fn markers(file: &MarkerFile) -> Markers {
         defend: defend.into_iter().map(|(_, spawn)| spawn).collect(),
         zones,
         kinds: Vec::new(),
-        floor_half_size: None,
         unknown_kinds: Vec::new(),
     }
 }

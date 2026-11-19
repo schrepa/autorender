@@ -24,10 +24,6 @@ pub const LEFT_LEG: [&str; 3] = ["L_Thigh", "L_Calf", "L_Foot"];
 pub struct FigureBytes(Arc<BTreeMap<String, Arc<[u8]>>>);
 
 impl FigureBytes {
-    pub fn new(files: BTreeMap<String, Arc<[u8]>>) -> Self {
-        Self(Arc::new(files))
-    }
-
     pub fn get(&self, uri: &str) -> Option<&Arc<[u8]>> {
         self.0.get(uri)
     }
@@ -305,8 +301,6 @@ pub struct FigureJoints {
     #[serde(skip)]
     pub joints: Vec<JointAt>,
     #[serde(skip)]
-    pub tick: u64,
-    #[serde(skip)]
     pub base_seconds: f32,
     #[serde(skip)]
     pub base_done: bool,
@@ -320,8 +314,6 @@ pub struct FigureJoints {
     pub upper_cue: Option<u32>,
     #[serde(skip)]
     pub upper_rate: f32,
-    #[serde(skip)]
-    pub strides: BTreeMap<String, f32>,
     #[serde(skip)]
     pub steps: BTreeMap<String, f32>,
     #[serde(skip)]

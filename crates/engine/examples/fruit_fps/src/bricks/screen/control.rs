@@ -72,7 +72,7 @@ fn hovered(layout: &Layout, draw: &ScreenDraw, pointer: Option<Vec2>) -> Option<
     let screen = layout.screens.get(&Shown::Buy)?;
     screen.elements.iter().rev().find_map(|element| {
         let card = element.card?;
-        draw.place(element.rect, element.anchor, element.unscaled)
+        draw.place(element.rect, element.anchor)
             .contains(pointer)
             .then_some(card)
     })

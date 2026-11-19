@@ -239,7 +239,6 @@ pub enum Action {
         ticks: u32,
         modifiers: Modifiers,
         overshield: Option<f32>,
-        refresh_signature_on_kill: bool,
     },
 }
 
@@ -659,7 +658,6 @@ struct SelfBuffFields {
     damage_taken_factor: Option<f32>,
     spread_factor: Option<f32>,
     overshield: Option<f32>,
-    dash_refresh_on_kill: Option<bool>,
 }
 
 fn fields<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
@@ -1009,7 +1007,6 @@ fn personal(block: &str, value: &Value, rate: Rate) -> Built {
                         sight_m: None,
                     },
                     overshield: f.overshield,
-                    refresh_signature_on_kill: f.dash_refresh_on_kill == Some(true),
                 },
             ))
         }

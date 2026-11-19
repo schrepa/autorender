@@ -75,10 +75,4 @@ impl Round {
         let team = game.view().players.get(slot)?.team;
         Some(game.side_of(team))
     }
-
-    pub fn slot_of(&self, entity: Entity) -> Option<usize> {
-        self.seats
-            .iter()
-            .position(|seat| seat.entity == Some(entity))
-    }
 }

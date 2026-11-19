@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::events::arms::{SwingEvent, Weapon};
-use crate::play::figures::{ChestFrame, Figure, Form, HandTarget, Offset};
+use crate::play::figures::{ChestFrame, Figure, Form, Offset};
 use crate::play::light::MapFilter;
 use crate::rules::AbilitySlot;
 use crate::weapons::{Loadout, Slot};
@@ -902,7 +902,6 @@ pub struct ViewModel {
     pub muzzle: Option<Vec3>,
     pub direction: Vec3,
     pub sight: Vec3,
-    pub hands: [Option<HandTarget>; 2],
     pub scale: f32,
 }
 

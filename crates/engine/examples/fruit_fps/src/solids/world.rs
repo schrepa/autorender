@@ -4,7 +4,7 @@ use glam::Vec3;
 
 use super::shapes::{self, Boxed, Swept, Triangle};
 use super::tree::{self, Node, Probe};
-use super::{Block, Capsule, Dropped, Ground, Hit, Kind, Solid};
+use super::{Block, Capsule, Dropped, Ground, Hit, Kind};
 
 const SWEEP_TOLERANCE: f32 = 1e-5;
 const BOUNDS_MARGIN: f32 = 1e-4;
@@ -50,7 +50,6 @@ pub struct Work {
 #[derive(Clone, Debug)]
 pub struct Solids {
     triangles: Vec<Triangle>,
-    sources: Vec<u32>,
     surfaces: Vec<Ground>,
     nodes: Vec<Node>,
     blocks: Vec<Block>,
@@ -131,17 +130,16 @@ impl Solids {
                 dropped.unlabelled += 1;
                 continue;
             };
-            found.push((triangle, k as u32, surface));
+            found.push((triangle, surface));
         }
         let bounds: Vec<(Vec3, Vec3)> = found
             .iter()
-            .map(|(triangle, _, _)| (triangle.low(), triangle.high()))
+            .map(|(triangle, _)| (triangle.low(), triangle.high()))
             .collect();
         let (nodes, order) = tree::build(&bounds);
         Solids {
             triangles: order.iter().map(|&k| found[k as usize].0).collect(),
-            sources: order.iter().map(|&k| found[k as usize].1).collect(),
-            surfaces: order.iter().map(|&k| found[k as usize].2).collect(),
+            surfaces: order.iter().map(|&k| found[k as usize].1).collect(),
             nodes,
             blocks: Vec::new(),
             placed: Vec::new(),
@@ -155,10 +153,6 @@ impl Solids {
 
     pub fn triangle_count(&self) -> usize {
         self.triangles.len()
-    }
-
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
     }
 
     pub fn relabel(&mut self, from: Kind, to: Kind) {
@@ -208,13 +202,12 @@ impl Solids {
         }
     }
 
-    fn label(&self, owner: Owner) -> (Ground, Solid) {
+    fn label(&self, owner: Owner) -> Ground {
         match owner {
-            Owner::Static(slot) => (self.surfaces[slot], Solid::Triangle(self.sources[slot])),
-            Owner::Block(index, _) => {
-                let block = &self.blocks[index];
-                (Ground { kind: block.kind }, Solid::Block(block.id))
-            }
+            Owner::Static(slot) => self.surfaces[slot],
+            Owner::Block(index, _) => Ground {
+                kind: self.blocks[index].kind,
+            },
         }
     }
 
@@ -297,14 +290,11 @@ impl Solids {
     pub fn ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<Hit> {
         let (t, along, owner) = self.cast(origin, direction, max, false)?;
         let normal = shapes::facing(self.triangle(owner).normal, -along);
-        let (ground, solid) = self.label(owner);
         Some(Hit {
             distance: t,
             point: origin + along * t,
             normal,
-            face_normal: normal,
-            kind: ground.kind,
-            solid,
+            kind: self.label(owner).kind,
         })
     }
 
@@ -338,14 +328,11 @@ impl Solids {
         let at = shape.bottom + motion * fraction;
         let triangle = self.triangle(owner);
         let (_, point) = shapes::segment_triangle(at, at + Vec3::Y * shape.lift, triangle);
-        let (ground, solid) = self.label(owner);
         Some(Hit {
             distance: fraction * length,
             point,
             normal,
-            face_normal: shapes::facing(triangle.normal, normal),
-            kind: ground.kind,
-            solid,
+            kind: self.label(owner).kind,
         })
     }
 
@@ -372,10 +359,6 @@ impl Solids {
         work: &mut Work,
     ) -> Option<Hit> {
         self.sweep(swept(capsule), motion, work)
-    }
-
-    pub fn capsule_push_out(&self, capsule: Capsule) -> Vec3 {
-        self.capsule_push_out_counted(capsule, &mut Work::default())
     }
 
     pub(super) fn capsule_push_out_counted(&self, capsule: Capsule, work: &mut Work) -> Vec3 {
@@ -462,7 +445,7 @@ impl Solids {
                 if stands && best.is_none_or(|held| normal.y > held.normal.y) {
                     best = Some(Support {
                         normal,
-                        ground: self.label(owner).0,
+                        ground: self.label(owner),
                     });
                 }
             },

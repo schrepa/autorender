@@ -8,7 +8,7 @@ use engine_core::{
 };
 use engine_render::{
     Allocation, BatchGroup, Bind, Buffer, DepthUse, Draw, GpuPart, GroupEntry, Install, Lifetime,
-    PerBatch, Pipeline, Prepare, RenderPipeline, Scene, Texture, Variant, VertexLayout, wgpu,
+    PerBatch, Pipeline, Prepare, RenderPipeline, Scene, Texture, Variant, wgpu,
 };
 
 use super::play::FigureDrawing;
@@ -41,19 +41,19 @@ const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
 
 const ROW_BYTES: u64 = 48;
 
-const FIGURE_STREAMS: [VertexLayout; 3] = [
-    VertexLayout::Geometry(GeometryStream::Vertex),
-    VertexLayout::Geometry(GeometryStream::Named {
+const FIGURE_STREAMS: [GeometryStream; 3] = [
+    GeometryStream::Vertex,
+    GeometryStream::Named {
         shape: JOINTS,
         location: FIRST_NAMED_LOCATION,
-    }),
-    VertexLayout::Geometry(GeometryStream::Named {
+    },
+    GeometryStream::Named {
         shape: WEIGHTS,
         location: FIRST_NAMED_LOCATION + 1,
-    }),
+    },
 ];
 
-const GROUND_STREAMS: [VertexLayout; 1] = [VertexLayout::Geometry(GeometryStream::Vertex)];
+const GROUND_STREAMS: [GeometryStream; 1] = [GeometryStream::Vertex];
 
 const MAPS: [(&str, Var, Var); 3] = [
     (
@@ -94,7 +94,7 @@ pub(super) struct FiguresGpu {
     maps: Option<ShadeMaps>,
 }
 
-fn pipeline<'a>(vertex: engine_core::Entry, vertices: &'a [VertexLayout]) -> RenderPipeline<'a> {
+fn pipeline<'a>(vertex: engine_core::Entry, vertices: &'a [GeometryStream]) -> RenderPipeline<'a> {
     RenderPipeline {
         vertex,
         fragment: Some(light::FS_FIGURES),

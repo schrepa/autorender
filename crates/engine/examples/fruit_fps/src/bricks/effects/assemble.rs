@@ -5,7 +5,7 @@ use glam::{Mat3, Quat};
 use super::gather::{Setup, Spawns, SprayKind, device_spot, view_direction};
 use super::models::{ShowcaseModels, traps_layout};
 use super::numbers::{
-    BarrierLook, DeviceLook, EffectsNumbers, OrbLook, PropsLook, RindLook, SmokeLook, Spray,
+    BarrierLook, DeviceLook, EffectsNumbers, OrbLook, PropsLook, RindLook, Spray,
 };
 use super::{EffectsDrawing, EffectsFrame, EffectsShow, EffectsStats, Item, ScreenStats, Show};
 use crate::abilities::OrbState;
@@ -251,7 +251,6 @@ struct Solid {
     glow: f32,
     edge: [f32; 3],
     armed: bool,
-    strength: f32,
     pulse_hz: f32,
 }
 
@@ -262,12 +261,7 @@ fn solid_item(solid: &Solid) -> Item {
             row(shape.centre, 0.0),
             row(shape.half, solid.pulse_hz),
             rgb(solid.fill, solid.glow),
-            [
-                solid.kind,
-                0.0,
-                if solid.armed { 1.0 } else { 0.0 },
-                solid.strength,
-            ],
+            [solid.kind, 0.0, if solid.armed { 1.0 } else { 0.0 }, 0.0],
             row(shape.axes.x_axis, 0.0),
             row(shape.axes.y_axis, 0.0),
             rgb(solid.edge, 0.0),
@@ -352,7 +346,6 @@ struct Sorted {
     sheets: Vec<Item>,
     smokes: Vec<Item>,
     marks: Vec<Item>,
-    cover: f32,
 }
 
 fn smoke_item(look: &EffectsNumbers, centre: Vec3, radius: f32, strength: f32, seed: f32) -> Item {
@@ -563,11 +556,6 @@ fn shown_things(
     pooled_marks(look, spawns, now, sorted, stats);
 }
 
-fn cover_color(smoke: &SmokeLook) -> [f32; 3] {
-    let share = math::clamp(smoke.tint_share, 0.0, 1.0);
-    std::array::from_fn(|at| smoke.color[at] + (smoke.tint[at] - smoke.color[at]) * share)
-}
-
 fn sort_shown(
     look: &EffectsNumbers,
     (shown, meshed, faded): (&[Shown], &[u32], &[(u32, f32)]),
@@ -600,7 +588,6 @@ fn sort_shown(
             },
             edge,
             armed: thing.armed,
-            strength: thing.strength,
             pulse_hz: traps.pulse_hz,
         };
         match thing.look {
@@ -613,11 +600,6 @@ fn sort_shown(
                     thing.strength,
                     index as f32,
                 ));
-                if let Some(eye) = eye {
-                    let inside = 1.0 - (eye.distance(centre) - radius) / look.smoke.rim_m;
-                    out.cover =
-                        math::max(out.cover, math::clamp(inside, 0.0, 1.0) * thing.strength);
-                }
             }
             Look::DamageZone => out.marks.push(zone(look.zones.damage)),
             Look::SlowZone => out.marks.push(zone(look.zones.slow)),
@@ -751,7 +733,6 @@ fn showcase_shown(
     let life = 1000;
     let shown = |look: Look, form: Form, team: Team| Shown {
         effect: u32::MAX,
-        owner: None,
         look,
         form,
         team,
@@ -921,7 +902,6 @@ fn device_items(
         glow,
         edge: device.light,
         armed: false,
-        strength: 1.0,
         pulse_hz: 0.0,
     };
     let halo = device.light.map(|value| value * glow * 0.5);
@@ -1353,7 +1333,6 @@ fn screen_frame(
     show: Show,
     spawns: &Spawns,
     now: f64,
-    cover: f32,
 ) -> (EffectsFrame, ScreenStats) {
     let screen = &look.screen;
     let cycle = 1.0 - (now / f64::from(look.showcase.every_seconds)).fract() as f32;
@@ -1369,7 +1348,6 @@ fn screen_frame(
         clock: [(now % 3600.0) as f32, screen.damage_edge, 0.0, 0.0],
         flash: rgb(screen.flash, math::clamp(flash, 0.0, 1.0)),
         damage: rgb(screen.damage, damage),
-        cover: rgb(cover_color(&look.smoke), 0.0),
         sun: [0.0; 4],
         sun_color: [0.0; 4],
         sky_color: [0.0; 4],
@@ -1406,7 +1384,6 @@ fn screen_frame(
     let stats = ScreenStats {
         flash: frame.flash[3],
         damage,
-        cover,
         near_sight: 0.0,
     };
     (frame, stats)
@@ -1635,7 +1612,7 @@ pub(super) fn assemble(
     let sheet = put(&mut items, sorted.sheets);
     let device = put(&mut items, device_solids);
     let smoke = put(&mut items, sorted.smokes);
-    let (mut frame, mut screen) = screen_frame(look, &feed, show.show, &spawns, now, sorted.cover);
+    let (mut frame, mut screen) = screen_frame(look, &feed, show.show, &spawns, now);
     let field = lit_frame(&mut frame, seen.lighting.as_deref());
     let limit = if show.show == Show::NearSight {
         Some(look.showcase.radius_m)
@@ -1667,7 +1644,7 @@ pub(super) fn assemble(
         &mut next,
     );
     let barrier = put(&mut items, faces);
-    let screened = frame.flash[3] > 0.0 || frame.damage[3] > 0.0 || frame.cover[3] > 0.0;
+    let screened = frame.flash[3] > 0.0 || frame.damage[3] > 0.0;
     let ranges = [
         &glow, &solid, &slab, &sheet, &device, &smoke, &marks, &barrier,
     ];

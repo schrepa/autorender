@@ -1003,7 +1003,6 @@
       "plan_seconds": 0.25,
       "heal_below": 60,
       "flash_inside_m": 5,
-      "smoke_inside_m": 5,
       "smoke_open_step_m": 0.25,
       "utility_aim_deg": 8,
       "utility_seconds": 0.5,
@@ -1061,9 +1060,6 @@
     "weld_m": 0.01,
     "locate_height_m": 1.0,
     "locate_distance_m": 1.0,
-    "arrive_m": 0.2,
-    "replan_m": 1.5,
-    "lookahead_corners": 4,
     "cover_gap_m": 0.15
   },
   "combat": {

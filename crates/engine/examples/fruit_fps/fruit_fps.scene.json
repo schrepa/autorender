@@ -6626,7 +6626,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -6635,7 +6634,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -6659,7 +6657,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -6674,8 +6671,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "banana_far",
@@ -6758,7 +6754,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -6767,7 +6762,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -6791,7 +6785,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -6806,8 +6799,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "strawberry_far",
@@ -6888,7 +6880,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -6897,7 +6888,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -6921,7 +6911,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -6936,8 +6925,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "orange_far",
@@ -7018,7 +7006,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7027,7 +7014,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7051,7 +7037,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7066,8 +7051,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "watermelon_far",
@@ -7148,7 +7132,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7157,7 +7140,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7181,7 +7163,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7196,8 +7177,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "eggplant_far",
@@ -7278,7 +7258,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7287,7 +7266,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7311,7 +7289,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7326,8 +7303,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "banana_far",
@@ -7408,7 +7384,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7417,7 +7392,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7441,7 +7415,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7456,8 +7429,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "strawberry_far",
@@ -7538,7 +7510,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7547,7 +7518,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7571,7 +7541,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7586,8 +7555,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "orange_far",
@@ -7668,7 +7636,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7677,7 +7644,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7701,7 +7667,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7716,8 +7681,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "watermelon_far",
@@ -7798,7 +7762,6 @@
           "draw_smg": "assets/cooked/draw_smg.clip",
           "draw_sniper": "assets/cooked/draw_sniper.clip",
           "fall": "assets/cooked/fall.clip",
-          "fire": "assets/cooked/fire.clip",
           "fire_long": "assets/cooked/fire_long.clip",
           "fire_pistol": "assets/cooked/fire_pistol.clip",
           "fire_sniper": "assets/cooked/fire_sniper.clip",
@@ -7807,7 +7770,6 @@
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
           "idle": "assets/cooked/idle.clip",
-          "jump": "assets/cooked/jump.clip",
           "knife_heavy": "assets/cooked/knife_heavy.clip",
           "knife_light_a": "assets/cooked/knife_light_a.clip",
           "knife_light_b": "assets/cooked/knife_light_b.clip",
@@ -7831,7 +7793,6 @@
           "reload_pistol": "assets/cooked/reload_pistol.clip",
           "reload_smg": "assets/cooked/reload_smg.clip",
           "reload_sniper": "assets/cooked/reload_sniper.clip",
-          "run": "assets/cooked/run.clip",
           "throw_hold": "assets/cooked/throw_hold.clip",
           "throw_ready": "assets/cooked/throw_ready.clip",
           "throw_ready_sidearm": "assets/cooked/throw_ready_sidearm.clip",
@@ -7846,8 +7807,7 @@
           "throw_roll_smg": "assets/cooked/throw_roll_smg.clip",
           "throw_roll_sniper": "assets/cooked/throw_roll_sniper.clip",
           "turn": "assets/cooked/turn.clip",
-          "victory": "assets/cooked/victory.clip",
-          "walk": "assets/cooked/walk.clip"
+          "victory": "assets/cooked/victory.clip"
         },
         "forms": {
           "far": "eggplant_far",

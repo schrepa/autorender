@@ -189,7 +189,6 @@ pub enum Event {
     Transformed {
         actor: ActorId,
         until: u64,
-        refresh_signature_on_kill: bool,
         ability: AbilityId,
     },
     TransformEnded {
@@ -302,7 +301,6 @@ pub(super) enum State {
     },
     Transform {
         ticks: u32,
-        refresh_signature_on_kill: bool,
     },
     Done,
 }
@@ -399,7 +397,6 @@ impl Living {
 pub(super) struct Buff {
     pub(super) actor: ActorId,
     pub(super) effect: EffectId,
-    pub(super) ability: AbilityId,
     pub(super) modifiers: Modifiers,
     pub(super) until: u64,
 }
@@ -434,7 +431,7 @@ impl Blind {
 pub(super) struct Marks {
     pub(super) buffs: BTreeMap<(ActorId, EffectId), Buff>,
     pub(super) blinds: BTreeMap<ActorId, Vec<Blind>>,
-    pub(super) reveals: BTreeMap<(usize, ActorId), (u64, AbilityId)>,
+    pub(super) reveals: BTreeMap<(usize, ActorId), u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -755,7 +752,6 @@ impl<W: World> Run<'_, W> {
             Buff {
                 actor,
                 effect,
-                ability: living.ability,
                 modifiers,
                 until,
             },
@@ -772,11 +768,9 @@ impl<W: World> Run<'_, W> {
     fn reveal(&mut self, living: &Living, actor: ActorId, until: u64) {
         let team = living.caster.team;
         match self.marks.reveals.get_mut(&(team, actor)) {
-            Some(existing) => existing.0 = existing.0.max(until),
+            Some(existing) => *existing = (*existing).max(until),
             None => {
-                self.marks
-                    .reveals
-                    .insert((team, actor), (until, living.ability));
+                self.marks.reveals.insert((team, actor), until);
                 self.events.push(Event::RevealStarted {
                     actor,
                     team,
@@ -1555,14 +1549,7 @@ impl<W: World> Run<'_, W> {
                 ticks,
                 modifiers,
                 overshield,
-                refresh_signature_on_kill,
-            } => self.transform(
-                living,
-                ticks,
-                modifiers,
-                overshield,
-                refresh_signature_on_kill,
-            ),
+            } => self.transform(living, ticks, modifiers, overshield),
         }
     }
 
@@ -1691,7 +1678,6 @@ impl<W: World> Run<'_, W> {
         ticks: u32,
         modifiers: Modifiers,
         overshield: Option<f32>,
-        refresh_signature_on_kill: bool,
     ) -> State {
         let caster = living.caster;
         let until = self.tick + ticks as u64;
@@ -1699,7 +1685,6 @@ impl<W: World> Run<'_, W> {
         self.events.push(Event::Transformed {
             actor: caster.id,
             until,
-            refresh_signature_on_kill,
             ability: living.ability,
         });
         if let Some(amount) = overshield {
@@ -1718,10 +1703,7 @@ impl<W: World> Run<'_, W> {
             caster.radius,
             ticks,
         );
-        State::Transform {
-            ticks,
-            refresh_signature_on_kill,
-        }
+        State::Transform { ticks }
     }
 
     fn wall(&mut self, living: &Living, point: Vec3, spec: WallSpec) -> State {
@@ -1794,7 +1776,7 @@ impl<W: World> Run<'_, W> {
             blinds.retain(|blind| blind.start + blind.ticks as u64 > tick);
             alive(*actor) && !blinds.is_empty()
         });
-        self.marks.reveals.retain(|(team, actor), (until, _)| {
+        self.marks.reveals.retain(|(team, actor), until| {
             let keep = *until > tick && alive(*actor);
             if !keep {
                 ended.push(Event::RevealEnded {

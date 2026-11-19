@@ -12,7 +12,6 @@ pub use body::{Body, Landed, Moved, Player, Wish, capsule_of, step};
 pub use openings::{Opening, Probe, openings};
 pub use peers::apart;
 pub use world::Solids;
-pub use world::Work;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Kind(pub u32);
@@ -38,20 +37,12 @@ pub struct Ground {
     pub kind: Kind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Solid {
-    Triangle(u32),
-    Block(u32),
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hit {
     pub distance: f32,
     pub point: Vec3,
     pub normal: Vec3,
-    pub face_normal: Vec3,
     pub kind: Kind,
-    pub solid: Solid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

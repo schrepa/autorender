@@ -1,6 +1,5 @@
 mod build;
 mod floor;
-mod follow;
 mod funnel;
 mod search;
 mod tactics;
@@ -10,9 +9,8 @@ use glam::{Vec2, Vec3};
 use serde::Deserialize;
 
 pub use floor::{Carved, carve};
-pub use follow::{Follower, Steer};
 pub use search::{Costs, Path};
-pub use tactics::{CoverClass, CoverSpot, Eyes, Place, PlaceFacts, PlaceShape, Tactics};
+pub use tactics::{Cover, CoverClass, CoverSpot, Eyes, Tactics};
 
 pub type PolygonId = u32;
 
@@ -22,9 +20,6 @@ pub struct NavNumbers {
     pub weld_m: f32,
     pub locate_height_m: f32,
     pub locate_distance_m: f32,
-    pub arrive_m: f32,
-    pub replan_m: f32,
-    pub lookahead_corners: usize,
     pub cover_gap_m: f32,
 }
 
@@ -134,7 +129,6 @@ pub enum NavBuildError {
 struct Polygon {
     corners: Vec<u32>,
     links: Vec<Option<u32>>,
-    center: Vec3,
     normal: Vec3,
     offset: f32,
     min: Vec2,
@@ -201,28 +195,8 @@ impl NavMesh {
         self.polygons.len()
     }
 
-    pub fn portals(&self) -> &[Portal] {
-        &self.portals
-    }
-
     pub fn island(&self, polygon: PolygonId) -> u32 {
         self.polygon(polygon).island
-    }
-
-    pub fn polygon_center(&self, polygon: PolygonId) -> Vec3 {
-        self.polygon(polygon).center
-    }
-
-    pub fn polygon_area(&self, polygon: PolygonId) -> f32 {
-        self.polygon(polygon).area
-    }
-
-    pub fn polygon_points(&self, polygon: PolygonId) -> Vec<Vec3> {
-        self.polygon(polygon)
-            .corners
-            .iter()
-            .map(|&v| self.vertices[v as usize])
-            .collect()
     }
 
     fn polygon(&self, polygon: PolygonId) -> &Polygon {

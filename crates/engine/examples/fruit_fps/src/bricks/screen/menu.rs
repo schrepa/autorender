@@ -226,10 +226,7 @@ impl Nav<'_> {
     fn area(&self, shown: Shown, id: &str) -> Option<Area> {
         let screen = self.layout.screens.get(&shown)?;
         let element = screen.elements.iter().find(|element| element.id == id)?;
-        Some(
-            self.draw
-                .place(element.rect, element.anchor, element.unscaled),
-        )
+        Some(self.draw.place(element.rect, element.anchor))
     }
 
     fn over(&self, shown: Shown, id: &str) -> Option<Area> {
