@@ -1,16 +1,9 @@
+import { SOUND_ORDERS as O } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 
-export type SoundOrder =
-  | { open: true; latency: number | null }
-  | { decode: number; bytes: Uint8Array }
-  | { start: number; sound: number; gain: number; pan: number; rate: number; looping: boolean; offset: number }
-  | { tune: number; gain: number; pan: number; rate: number; seconds: number }
-  | { stop: number; seconds: number }
-  | { master: number; seconds: number };
+type SoundGame = Pick<Runtime, "take_sound" | "take_sound_bytes" | "sound_opened" | "sound_open_failed" | "sound_decoded" | "sound_failed" | "voice_ended" | "voice_dropped">;
 
-type SoundGame = Pick<Runtime, "take_sound" | "sound_opened" | "sound_open_failed" | "sound_decoded" | "sound_failed" | "voice_ended" | "voice_dropped">;
-
-interface Voice { source: AudioBufferSourceNode; gain: GainNode; panner: StereoPannerNode }
+interface Voice { source: AudioBufferSourceNode; gain: GainNode; panner: StereoPannerNode; rate: number }
 
 function text(bytes: Uint8Array, start: number, length: number): string {
   return String.fromCharCode(...bytes.subarray(start, start + length));
@@ -33,7 +26,7 @@ export class PageSound {
   private readonly buffers = new Map<number, AudioBuffer>();
   private readonly voices = new Map<number, Voice>();
   private replies: ((game: SoundGame) => void)[] = [];
-  private told = "";
+  private readonly told = { state: "", rate: 0, channels: 0, latency: 0 };
   private readonly abort = new AbortController();
 
   constructor(canvas: HTMLCanvasElement) {
@@ -43,17 +36,22 @@ export class PageSound {
   }
 
   exchange(game: SoundGame) {
-    for (const reply of this.replies.splice(0)) reply(game);
+    if (this.replies.length > 0) {
+      const replies = this.replies;
+      this.replies = [];
+      for (const reply of replies) reply(game);
+    }
     const context = this.context;
     if (context) {
       const latency = context.baseLatency + (context.outputLatency || 0);
-      const state = `${context.state} ${context.sampleRate} ${context.destination.channelCount} ${latency}`;
-      if (state !== this.told) {
-        this.told = state;
-        game.sound_opened(context.state === "running", context.sampleRate, context.destination.channelCount, latency);
+      const channels = context.destination.channelCount;
+      const told = this.told;
+      if (context.state !== told.state || context.sampleRate !== told.rate || channels !== told.channels || !Object.is(latency, told.latency)) {
+        Object.assign(told, { state: context.state, rate: context.sampleRate, channels, latency });
+        game.sound_opened(context.state === "running", context.sampleRate, channels, latency);
       }
     }
-    for (const order of game.take_sound()) this.apply(order);
+    this.apply(game.take_sound(), game);
   }
 
   dispose() {
@@ -64,13 +62,36 @@ export class PageSound {
     this.context = undefined;
   }
 
-  private apply(order: SoundOrder) {
-    if ("open" in order) this.open(order.latency);
-    else if ("decode" in order) this.decode(order.decode, order.bytes);
-    else if ("start" in order) this.start(order);
-    else if ("tune" in order) this.tune(order);
-    else if ("stop" in order) this.stop(order.stop, order.seconds);
-    else if (this.context && this.master) ramp(this.master.gain, order.master, this.context.currentTime, order.seconds);
+  private apply(orders: Float64Array, game: SoundGame) {
+    let bytes: Uint8Array | undefined;
+    let read = 0;
+    let at = 0;
+    const field = (offset: number) => orders[at + offset];
+    while (at < orders.length) {
+      const code = field(0);
+      if (code === O.open.code) {
+        this.open(field(O.open.latency_given) ? field(O.open.latency_seconds) : null);
+        at += O.open.size;
+      } else if (code === O.decode.code) {
+        bytes ??= game.take_sound_bytes();
+        const length = field(O.decode.length);
+        this.decode(field(O.decode.sound), bytes.subarray(read, read + length));
+        read += length;
+        at += O.decode.size;
+      } else if (code === O.start.code) {
+        this.start(field(O.start.voice), field(O.start.sound), field(O.start.gain), field(O.start.pan), field(O.start.rate), field(O.start.looping) !== 0, field(O.start.offset_seconds));
+        at += O.start.size;
+      } else if (code === O.tune.code) {
+        this.tune(field(O.tune.voice), field(O.tune.gain), field(O.tune.pan), field(O.tune.rate), field(O.tune.seconds));
+        at += O.tune.size;
+      } else if (code === O.stop.code) {
+        this.stop(field(O.stop.voice), field(O.stop.seconds));
+        at += O.stop.size;
+      } else {
+        if (this.context && this.master) ramp(this.master.gain, field(O.master.gain), this.context.currentTime, field(O.master.seconds));
+        at += O.master.size;
+      }
+    }
   }
 
   private open(latency: number | null) {
@@ -100,21 +121,20 @@ export class PageSound {
     );
   }
 
-  private start(order: Extract<SoundOrder, { start: number }>) {
-    const voice = order.start;
+  private start(voice: number, sound: number, level: number, pan: number, rate: number, looping: boolean, offset: number) {
     const context = this.context;
     const master = this.master;
-    const buffer = this.buffers.get(order.sound);
+    const buffer = this.buffers.get(sound);
     if (!context || !master || !buffer) { this.replies.push(game => game.voice_dropped(voice, "no_output_or_sound")); return; }
     try {
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.loop = order.looping;
-      source.playbackRate.value = order.rate;
+      source.loop = looping;
+      source.playbackRate.value = rate;
       const gain = context.createGain();
-      gain.gain.value = order.gain;
+      gain.gain.value = level;
       const panner = context.createStereoPanner();
-      panner.pan.value = order.pan;
+      panner.pan.value = pan;
       source.connect(gain).connect(panner).connect(master);
       source.onended = () => {
         if (this.voices.get(voice)?.source !== source) return;
@@ -122,21 +142,23 @@ export class PageSound {
         panner.disconnect();
         this.replies.push(game => game.voice_ended(voice));
       };
-      source.start(0, order.offset);
-      this.voices.set(voice, { source, gain, panner });
+      source.start(0, offset);
+      this.voices.set(voice, { source, gain, panner, rate });
     } catch (error) {
       this.replies.push(game => game.voice_dropped(voice, String(error)));
     }
   }
 
-  private tune(order: Extract<SoundOrder, { tune: number }>) {
-    const voice = this.voices.get(order.tune);
+  private tune(id: number, gain: number, pan: number, rate: number, seconds: number) {
+    const voice = this.voices.get(id);
     const context = this.context;
     if (!voice || !context) return;
     const at = context.currentTime;
-    ramp(voice.gain.gain, order.gain, at, order.seconds);
-    ramp(voice.panner.pan, order.pan, at, order.seconds);
-    ramp(voice.source.playbackRate, order.rate, at, order.seconds);
+    ramp(voice.gain.gain, gain, at, seconds);
+    ramp(voice.panner.pan, pan, at, seconds);
+    if (rate === voice.rate) return;
+    ramp(voice.source.playbackRate, rate, at, seconds);
+    voice.rate = rate;
   }
 
   private stop(id: number, seconds: number) {

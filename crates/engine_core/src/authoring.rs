@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Camera, Clear, ComponentKind, Drawn, DrawnTable, Error, ErrorCode, GeometryHandle,
-    InstanceValues, Layers, List, MaterialHandle, Mover, Node, PassMask, Rect, Rule,
-    SceneComponents, SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target, TextureHandle,
-    View,
+    Asset, Camera, Clear, ComponentKind, Drawn, DrawnTable, Error, ErrorCode, InstanceValues,
+    Layers, List, Material, MeshFile, Mover, Node, PassMask, Rect, Rule, SceneComponents, SceneCx,
+    SceneEntity, SceneForm, ScenePasses, Setting, Target, Texture, View,
 };
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
@@ -45,9 +44,9 @@ pub(crate) struct DrawnForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mesh: Option<GeometryHandle>,
+    pub mesh: Option<Asset<MeshFile>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material: Option<MaterialHandle>,
+    pub material: Option<Asset<Material>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub passes: BTreeMap<String, bool>,
     #[serde(default)]
@@ -168,7 +167,7 @@ pub(crate) struct ViewForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub texture: Option<TextureHandle>,
+    pub texture: Option<Asset<Texture>>,
     #[serde(default)]
     pub viewport: Rect,
     #[serde(default = "every_layer")]
@@ -241,23 +240,11 @@ impl SceneForm for ViewForm {
         } else {
             Some(world.get::<SceneEntity>(view.camera)?.authored_id.clone())
         };
-        Some(Self::of_view(view, camera))
-    }
-
-    fn held(world: &World, entity: Entity) -> Option<Self> {
-        world
-            .get::<View>(entity)
-            .map(|view| Self::of_view(view, None))
-    }
-}
-
-impl ViewForm {
-    fn of_view(view: &View, camera: Option<String>) -> Self {
         let texture = match view.target {
             Target::Surface => None,
             Target::Texture(texture) => Some(texture),
         };
-        Self {
+        Some(Self {
             camera,
             texture,
             viewport: view.viewport,
@@ -266,7 +253,7 @@ impl ViewForm {
             clear_color: view.clear_color,
             order: view.order,
             found: None,
-        }
+        })
     }
 }
 

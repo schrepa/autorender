@@ -1,14 +1,15 @@
 use std::ops::Range;
 
-use engine_core::{GeometryHandle, MaterialHandle, PassBit};
+use engine_core::{Asset, Material, MeshFile, PassBit};
 
+use crate::DrawOrder;
 use crate::drawn::{Batches, KindBatch};
 use crate::profiling::GpuProfiler;
 
 #[derive(Clone, Copy, Debug)]
 pub struct BatchOf<'a> {
-    pub geometry: Option<GeometryHandle>,
-    pub material: Option<MaterialHandle>,
+    pub geometry: Option<Asset<MeshFile>>,
+    pub material: Option<Asset<Material>>,
     pub instances: &'a Range<u32>,
 }
 
@@ -26,7 +27,7 @@ pub(crate) struct RawDraw<'e> {
     encoding: &'e mut crate::encode::Run,
     part: u32,
     timer: &'e GpuProfiler,
-    batches: Option<(&'e Batches, Option<PassBit>)>,
+    batches: Option<(&'e mut Batches, Option<PassBit>)>,
 }
 
 impl<'e> RawDraw<'e> {
@@ -48,14 +49,14 @@ impl<'e> RawDraw<'e> {
             encoding: &mut *self.encoding,
             part: self.part,
             timer: self.timer,
-            batches: self.batches,
+            batches: (self.batches.as_mut()).map(|(batches, pass)| (&mut **batches, *pass)),
         }
     }
 
     pub(crate) fn member<'m>(
         &'m mut self,
         part: u32,
-        batches: (&'m Batches, Option<PassBit>),
+        batches: (&'m mut Batches, Option<PassBit>),
     ) -> RawDraw<'m> {
         RawDraw {
             encoding: &mut *self.encoding,
@@ -77,9 +78,11 @@ impl<'e> RawDraw<'e> {
         self.encoding
     }
 
-    pub(crate) fn batches(&self) -> impl Iterator<Item = &'e KindBatch> + use<'e> {
-        self.batches
-            .into_iter()
-            .flat_map(|(batches, pass)| batches.drawn(pass))
+    pub(crate) fn batches(&mut self, (handle, vertices, order): (u32, Range<u32>, DrawOrder)) {
+        let Some((batches, pass)) = self.batches.as_mut() else {
+            return;
+        };
+        let drawn = (&mut **batches, *pass);
+        (self.encoding).batches((self.part, self.timer), (handle, vertices, order), drawn);
     }
 }

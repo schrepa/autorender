@@ -21,11 +21,8 @@ use bevy_ecs::world::World;
 pub use asks::Asked;
 pub use calls::{SCENE_SCHEMA, schema_of};
 pub use drawn::{DrawKind, Drawn, InstanceValues, KindDecl, Layers, NodeId};
-pub use engine_assets::{
-    AttributeFormat, GeometryHandle, MaterialHandle, StreamShape, TextureHandle,
-};
 pub use engine_settings::{Error, ErrorCode};
-pub use feeds::{Changed, Changes, Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
+pub use feeds::{Changed, Changes};
 pub use names::{AuthoredId, OperationScene, SceneEntity, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{

@@ -26,7 +26,11 @@ pub(crate) struct Run {
     pub(crate) tallies: Tallies,
     pub(crate) reading: Reading,
     pub(crate) bound: Bound,
+    pub(crate) layouts: MeshLayouts,
+    pub(crate) verdicts: crate::drawn::Verdicts,
 }
+
+pub(crate) type MeshLayouts = engine_core::collections::HashMap<(u32, u32), Option<Box<[u32]>>>;
 
 #[derive(Default)]
 pub(crate) struct Bound {
@@ -212,11 +216,12 @@ impl Bound {
         &mut self,
         render: &mut wgpu::RenderPass<'static>,
         buffer: &wgpu::Buffer,
+        format: wgpu::IndexFormat,
     ) {
         if self.index.as_ref() == Some(buffer) {
             return;
         }
-        render.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render.set_index_buffer(buffer.slice(..), format);
         self.index = Some(buffer.clone());
     }
 }
@@ -276,7 +281,6 @@ pub(crate) struct Bindings {
     pub(crate) own_groups: Vec<Vec<Groups>>,
     pub(crate) placeholders: Vec<(Ty, Placeholder)>,
     pub(crate) reported_stand_ins: Vec<(u32, u32, u32)>,
-    pub(crate) wanted_textures: Vec<TextureHandle>,
     pub(crate) samplers: Vec<wgpu::Sampler>,
 }
 
@@ -336,11 +340,7 @@ impl Pipelines {
     }
 
     pub(crate) fn stood_in(&self) -> u32 {
-        let left = self
-            .standing
-            .iter()
-            .filter(|&&made| !self.making.waits(made) || self.warming.fed == Some(made));
-        u32::try_from(left.count()).unwrap_or(u32::MAX)
+        u32::try_from(self.standing.len()).unwrap_or(u32::MAX)
     }
 }
 
@@ -359,6 +359,7 @@ pub(crate) struct Tallies {
     pub(crate) drawn: crate::gpu_calls::Drawn,
     pub(crate) kinds: KindTallies,
     pub(crate) worst: crate::Recorded,
+    pub(crate) held: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -376,7 +377,7 @@ pub(crate) struct DroppedTally {
     pub(crate) kind: Option<u32>,
     pub(crate) pass: u32,
     pub(crate) reason: engine_core::DropReason,
-    pub(crate) asset: Option<engine_core::Asset>,
+    pub(crate) asset: Option<engine_core::AssetId>,
     pub(crate) count: u32,
 }
 
@@ -472,7 +473,7 @@ impl KindTallies {
     pub(crate) fn drop_draws(
         &mut self,
         (part, own_pass): (u32, u32),
-        (reason, asset): (engine_core::DropReason, Option<engine_core::Asset>),
+        (reason, asset): (engine_core::DropReason, Option<engine_core::AssetId>),
         count: u32,
     ) {
         let (kind, pass) = match self.drawing {
@@ -617,7 +618,6 @@ impl Run {
                 own_groups,
                 placeholders: Vec::new(),
                 reported_stand_ins: Vec::new(),
-                wanted_textures: Vec::new(),
                 samplers,
             },
             canvas: Canvas::fresh(),
@@ -646,6 +646,8 @@ impl Run {
                 ..Reading::default()
             },
             bound,
+            layouts: MeshLayouts::default(),
+            verdicts: crate::drawn::Verdicts::default(),
         }
     }
 }

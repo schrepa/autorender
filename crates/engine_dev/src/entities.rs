@@ -2,12 +2,11 @@ use bevy_ecs::component::ComponentId;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, Drawn, GeometryHandle, GlobalTransforms, Kind, Lands, MaterialHandle, NameEntry,
-    OperationScene, Parent, Reach, ReachMut, Refusals, Transform, scene_component,
-    scene_components, unavailable,
+    Assets, Drawn, GlobalTransforms, Kind, Lands, NameEntry, OperationScene, Parent, Reach,
+    ReachMut, Refusals, Transform, scene_component, scene_components, unavailable,
 };
 use engine_registry::{Registry, SpawnedBy};
-use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
+use engine_scene::{SceneEntity, SceneInstance, SceneMaterial};
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -226,38 +225,42 @@ fn hierarchy(reach: &Reach<'_>, entity: Entity) -> Value {
 fn drawn_mesh(reach: &Reach<'_>, entity: Entity) -> Option<Value> {
     let world = reach.world;
     let drawn = world.get::<Drawn>(entity)?;
-    let handle: GeometryHandle = drawn.geometry?;
-    let held: Option<MaterialHandle> = drawn.material;
-    let assets = world.get_resource::<AssetLibrary>()?;
-    let scene = reach.part::<SceneInstance>();
-    let mesh = assets.mesh(handle).map(|mesh| {
-        let origin = scene.and_then(|scene| scene.mesh_origin(handle));
-        let bounds = mesh.bounds();
+    let geometry = drawn.geometry?;
+    let assets = world.get_resource::<Assets>()?;
+    let mesh = assets.get(geometry).ok().map(|mesh| {
+        let description = mesh.description();
+        let streams: Vec<Value> = description
+            .streams
+            .iter()
+            .map(|stream| {
+                let locations: Vec<u32> =
+                    stream.inputs.iter().map(|input| input.location).collect();
+                json!({ "stride": stream.stride, "locations": locations })
+            })
+            .collect();
+        let bounds = description.bounds;
         json!({
-            "id": origin.map(|(id, _)| id),
-            "source": origin.map(|(_, source)| source),
-            "vertices": mesh.vertices().len(),
-            "indices": mesh.indices().len(),
-            "local_bounds": { "min": bounds.min().to_array(), "max": bounds.max().to_array() },
-            "colors": mesh.colors().is_some(),
-            "uv1": mesh.uv1().is_some(),
+            "id": assets.name(geometry),
+            "uri": assets.uri(geometry),
+            "vertices": description.vertex_count,
+            "indices": description.index_count,
+            "index_format": format!("{:?}", description.index_format),
+            "streams": streams,
+            "local_bounds": { "min": bounds.min.to_array(), "max": bounds.max.to_array() },
         })
     });
-    let material = held.and_then(|material| assets.material(material));
+    let held = drawn.material;
+    let material = held.and_then(|material| assets.get(material).ok());
     let textures: Vec<Value> = material
         .into_iter()
         .flat_map(|material| material.maps().iter())
         .map(|(_, map)| {
-            let origin = scene.and_then(|scene| scene.texture_origin(map.texture));
-            let texture = assets.texture(map.texture);
-            let uri = match origin.map(|(_, source)| source) {
-                Some(TextureOrigin::File { uri }) => Some(uri),
-                Some(TextureOrigin::Inline) | None => None,
-            };
+            let texture = assets.get(map.texture).ok();
+            let uri = assets.uri(map.texture);
             json!({
-                "id": origin.map(|(id, _)| id),
+                "id": assets.name(map.texture),
                 "uri": uri,
-                "inline": matches!(origin, Some((_, TextureOrigin::Inline))),
+                "inline": uri.is_none(),
                 "loaded": texture.is_some(),
                 "width": texture.map(|texture| texture.width()),
                 "height": texture.map(|texture| texture.height()),
@@ -265,16 +268,9 @@ fn drawn_mesh(reach: &Reach<'_>, entity: Entity) -> Option<Value> {
         })
         .collect();
     let material = material.map(|material| {
-        let id = scene
-            .and_then(|scene| scene.materials().find(|&(_, known)| Some(known) == held))
-            .map(|(id, _)| id.to_owned());
-        let texture = |handle| {
-            scene
-                .and_then(|scene| scene.texture_origin(handle))
-                .map(|(id, _)| id.to_owned())
-                .unwrap_or_default()
-        };
-        SceneMaterial::from_runtime(id.unwrap_or_default(), material, texture)
+        let id = held.and_then(|held| assets.name(held)).unwrap_or_default();
+        let texture = |texture| assets.name(texture).unwrap_or_default().to_owned();
+        SceneMaterial::from_runtime(id, material, texture)
     });
     Some(json!({ "mesh": mesh, "material": material, "textures": textures }))
 }
@@ -304,7 +300,7 @@ fn set(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {
                 crate::table::unknown(&key, "$.args.component", &keys)
             })?;
             let before = kind.value(world, entity);
-            kind.read(world, entity, &value)
+            engine_scene::named(world, |world| kind.read(world, entity, &value))
                 .map_err(|error| error.within("$.args.value"))?;
             let after = kind.value(world, entity);
             Ok(json!({ "before": before, "after": after }))

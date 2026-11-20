@@ -1,4 +1,4 @@
-use engine_core::{Readiness, Show};
+use engine_core::{GroupStage, Readiness, Show};
 use engine_render::Picture;
 
 use super::now_ms;
@@ -142,5 +142,9 @@ pub(crate) fn in_flight<G: Game>(host: &GameHost<G>, readiness: &Readiness) -> b
     let files = world
         .get_resource::<engine_core::Files>()
         .is_some_and(|files| files.census().asked > 0);
-    readiness.loading.total > 0 || readiness.compiling > 0 || files
+    let first = readiness
+        .groups
+        .first()
+        .is_some_and(|group| group.stage != GroupStage::Ready);
+    readiness.loading.total > 0 || readiness.compiling > 0 || files || first
 }

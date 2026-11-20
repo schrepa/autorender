@@ -1,15 +1,10 @@
-#![expect(
-    clippy::expect_used,
-    reason = "residency admits a material only while the library holds its textures"
-)]
-
 use engine_core::collections::HashMap;
 use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
+use engine_core::collections::{Cursor, Since};
 use engine_core::{
-    AssetLibrary, AssetResidency, ColorSpace, Compare, Error, Filter, Sampler, Texture,
-    TextureFormat, TextureHandle, Wrap,
+    Asset, Assets, ColorSpace, Compare, Error, Filter, Sampler, Texture, TextureFormat, Wrap,
 };
 
 use crate::gpu_data::{level_copy, mip_levels};
@@ -19,17 +14,15 @@ pub(crate) struct GpuTexture {
     view: wgpu::TextureView,
     pub byte_len: u64,
     target: bool,
-    revision: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct TextureStore {
     samplers: HashMap<Sampler, wgpu::Sampler>,
-    textures: BTreeMap<TextureHandle, GpuTexture>,
+    textures: BTreeMap<Asset<Texture>, GpuTexture>,
     generation: u64,
-    synced: Option<u64>,
+    cursor: Cursor,
     refused: Vec<Error>,
-    declined: BTreeMap<TextureHandle, u64>,
 }
 
 impl TextureStore {
@@ -43,63 +36,44 @@ impl TextureStore {
         queue: &crate::gpu_calls::Queue,
         world: &World,
     ) -> u64 {
-        let (Some(residency), Some(library)) = (
-            world.get_resource::<AssetResidency>(),
-            world.get_resource::<AssetLibrary>(),
-        ) else {
+        let Some(assets) = world.get_resource::<Assets>() else {
             return 0;
         };
-        let generation = residency.revision();
-        if self.synced == Some(generation) {
-            return 0;
-        }
-        let before = self.textures.len();
-        let kept = |handle: &TextureHandle, revision: u64| {
-            residency.texture_resident(*handle) && library.revision_of(*handle) == Some(revision)
+        let mut listed: Vec<Asset<Texture>> = match assets.changed(&mut self.cursor) {
+            Since::Same => return 0,
+            Since::Listed(ids) => ids
+                .iter()
+                .filter_map(|&id| assets.asset::<Texture>(id))
+                .collect(),
+            Since::All => self
+                .textures
+                .keys()
+                .copied()
+                .chain(assets.each::<Texture>().map(|(handle, _)| handle))
+                .collect(),
         };
-        self.textures.retain(|handle, gpu| kept(handle, gpu.revision));
-        self.declined.retain(|handle, revision| kept(handle, *revision));
-        if self.textures.len() != before {
-            self.generation += 1;
-        }
+        listed.sort_unstable();
+        listed.dedup();
         let mut bytes = 0;
-        let named: Vec<TextureHandle> = residency
-            .materials()
-            .filter_map(|(handle, _)| library.material(handle))
-            .flat_map(|material| material.textures())
-            .collect();
-        for texture in &named {
-            library
-                .texture(*texture)
-                .expect("material_textures_validated");
+        for handle in listed {
+            if self.textures.remove(&handle).is_some() {
+                self.generation += 1;
+            }
+            if let Ok(source) = assets.get(handle) {
+                bytes += self.upload_texture(device, queue, handle, source);
+            }
         }
-        let wanted: Vec<TextureHandle> = named.into_iter().chain(residency.textures()).collect();
-        for texture in wanted {
-            let Some(source) = library.texture(texture) else {
-                continue;
-            };
-            let revision = library.revision_of(texture).unwrap_or_default();
-            bytes += self.upload_texture(device, queue, (texture, revision), source);
-        }
-        self.synced = Some(generation);
         bytes
     }
 
-    pub(crate) fn forget_sync(&mut self) {
-        self.synced = None;
-    }
-
-    pub(crate) fn upload_texture(
+    fn upload_texture(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
-        (handle, revision): (TextureHandle, u64),
+        handle: Asset<Texture>,
         source: &Texture,
     ) -> u64 {
-        if self.textures.contains_key(&handle) || self.declined.get(&handle) == Some(&revision) {
-            return 0;
-        }
-        match create_texture(device, queue, (handle, source, revision)) {
+        match create_texture(device, queue, (handle, source)) {
             Ok(gpu) => {
                 let bytes = gpu.byte_len;
                 self.textures.insert(handle, gpu);
@@ -108,19 +82,18 @@ impl TextureStore {
             }
             Err(error) => {
                 self.refused.push(error);
-                self.declined.insert(handle, revision);
                 0
             }
         }
     }
 
-    pub(crate) fn texture_view(&self, handle: TextureHandle) -> Option<&wgpu::TextureView> {
+    pub(crate) fn texture_view(&self, handle: Asset<Texture>) -> Option<&wgpu::TextureView> {
         self.textures.get(&handle).map(|texture| &texture.view)
     }
 
     pub(crate) fn target(
         &self,
-        handle: TextureHandle,
+        handle: Asset<Texture>,
     ) -> Option<(&wgpu::Texture, &wgpu::TextureView)> {
         self.textures
             .get(&handle)
@@ -136,7 +109,7 @@ impl TextureStore {
         self.generation
     }
 
-    pub(crate) fn is_texture_resident(&self, handle: TextureHandle) -> bool {
+    pub(crate) fn is_texture_resident(&self, handle: Asset<Texture>) -> bool {
         self.textures.contains_key(&handle)
     }
 
@@ -285,7 +258,8 @@ fn write_level(
     );
 }
 
-fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuTexture {
+#[expect(clippy::expect_used, reason = "a target texture is rgba8")]
+fn create_target(device: &wgpu::Device, source: &Texture) -> GpuTexture {
     let (format, _) =
         gpu_format(source.format(), source.color_space()).expect("targets_are_rgba8");
     let texture = crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
@@ -311,14 +285,13 @@ fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuT
         texture,
         view,
         target: true,
-        revision,
     }
 }
 
 fn create_texture(
     device: &wgpu::Device,
     queue: &crate::gpu_calls::Queue,
-    (handle, source, revision): (TextureHandle, &Texture, u64),
+    (handle, source): (Asset<Texture>, &Texture),
 ) -> Result<GpuTexture, Error> {
     let path = format!("$.textures.{}", handle.slot());
     let most = device.limits().max_texture_dimension_2d;
@@ -328,7 +301,7 @@ fn create_texture(
             .got([source.width(), source.height()]));
     }
     if source.is_target() {
-        return Ok(create_target(device, source, revision));
+        return Ok(create_target(device, source));
     }
     let (width, height) = (source.width(), source.height());
     let (levels, chain) = (source.levels().len() as u32, mip_levels(width, height));
@@ -367,7 +340,7 @@ fn create_texture(
         format,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
     );
-    for (level, bytes) in source.levels().iter().enumerate() {
+    for (level, bytes) in source.levels().enumerate() {
         write_level(queue, &texture, level as u32, (width, height), source.format(), bytes);
     }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -376,6 +349,5 @@ fn create_texture(
         view,
         byte_len: source.byte_len() as u64,
         target: false,
-        revision,
     })
 }

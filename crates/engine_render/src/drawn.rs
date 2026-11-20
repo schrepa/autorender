@@ -1,13 +1,15 @@
 use std::ops::Range;
-use std::sync::Arc;
 
-use bevy_ecs::system::{Res, SystemParamItem};
+use bevy_ecs::query::With;
+use bevy_ecs::system::{Query, Res, SystemParamItem};
 use engine_core::{
-    DrawnRecord, DrawnTable, Entry, Error, GeometryHandle, Layers, MaterialHandle, PassBit,
-    PassMask, Var, ViewFacts,
+    Asset, Assets, Drawn, DrawnRecord, DrawnTable, Entry, Error, Layers, Material, MeshFile,
+    PassBit, PassMask, Var, ViewFacts,
 };
 use engine_place::{Changed, DrawnPoses, PoseEntry, PoseFrame, PoseRows};
 
+use crate::BatchOf;
+use crate::encode::DrawRecord;
 use crate::shaders::core_module;
 use crate::uploads::{UploadRange, listed_ranges};
 use crate::{
@@ -19,7 +21,6 @@ pub(crate) const DRAWN_MODULE: &str = "engine::drawn";
 pub(crate) const POSES_MODULE: &str = "engine::poses";
 pub(crate) const DRAWN_POSE_MODULE: &str = "engine::drawn_pose";
 const POSE_GROUP: u32 = 64;
-const FIRST_SLOTS: u64 = 64;
 const MIN_STORAGE_BYTES: u64 = 256;
 const WRITE_CALL_BYTES: usize = 4_096;
 
@@ -83,44 +84,135 @@ pub(crate) fn pose_source() -> String {
     format!("{POSE}\nconst POSE_GROUP: u32 = {POSE_GROUP}u;\n")
 }
 
+#[derive(Clone)]
 pub(crate) struct KindBatch {
     pub(crate) instances: Range<u32>,
-    pub(crate) geometry: Option<GeometryHandle>,
-    pub(crate) material: Option<MaterialHandle>,
+    pub(crate) geometry: Option<Asset<MeshFile>>,
+    pub(crate) material: Option<Asset<Material>>,
+    pub(crate) held: bool,
     passes: Option<PassMask>,
     layers: Layers,
+    pub(crate) records: Vec<DrawRecord>,
+}
+
+impl KindBatch {
+    fn shown(&self, layers: Layers, pass: Option<PassBit>) -> bool {
+        self.layers.overlaps(layers)
+            && self
+                .passes
+                .is_none_or(|mask| pass.is_some_and(|bit| mask.has(bit)))
+    }
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct Batches {
-    listed: Arc<[KindBatch]>,
+    pub(crate) listed: Vec<KindBatch>,
     layers: Layers,
     filled: bool,
+    pub(crate) holds: bool,
+    pub(crate) judged: Option<(u64, u32)>,
+}
+
+#[derive(Default)]
+pub(crate) struct Verdicts {
+    order: Vec<u32>,
+    numbers: Vec<Option<u32>>,
+}
+
+impl Verdicts {
+    pub(crate) fn judge(
+        &mut self,
+        batch: &KindBatch,
+        verdict: &mut dyn FnMut(BatchOf<'_>, u32) -> Option<u32>,
+    ) {
+        for at in batch.instances.clone() {
+            let Some(&slot) = self.order.get(at as usize) else {
+                continue;
+            };
+            if let Some(number) = self.numbers.get_mut(slot as usize) {
+                *number = verdict(BatchOf::of(batch), slot);
+            }
+        }
+    }
+
+    pub(crate) fn runs(&self, instances: &Range<u32>, mut kept: impl FnMut(Range<u32>, u32)) {
+        let mut open = None;
+        for at in instances.clone() {
+            let number = (self.order.get(at as usize))
+                .and_then(|&slot| self.numbers.get(slot as usize).copied().flatten());
+            match (open, number) {
+                (None, Some(number)) => open = Some((at, number)),
+                (Some((start, first)), None) => {
+                    kept(start..at, first);
+                    open = None;
+                }
+                (Some(_), Some(_)) | (None, None) => {}
+            }
+        }
+        if let Some((start, first)) = open {
+            kept(start..instances.end, first);
+        }
+    }
 }
 
 impl Batches {
     pub(crate) fn drawn(&self, pass: Option<PassBit>) -> impl Iterator<Item = &KindBatch> + '_ {
         let layers = self.layers;
-        self.listed.iter().filter(move |batch| {
-            batch.layers.overlaps(layers)
-                && batch
-                    .passes
-                    .is_none_or(|mask| pass.is_some_and(|bit| mask.has(bit)))
-        })
+        self.listed.iter().filter(move |batch| batch.shown(layers, pass))
+    }
+
+    pub(crate) fn drawn_mut(
+        &mut self,
+        pass: Option<PassBit>,
+    ) -> impl Iterator<Item = (usize, &mut KindBatch)> + '_ {
+        let layers = self.layers;
+        (self.listed.iter_mut().enumerate()).filter(move |(_, batch)| batch.shown(layers, pass))
+    }
+
+    pub(crate) fn forget(&mut self, key: Option<Asset<Material>>) {
+        for batch in &mut self.listed {
+            if batch.material == key {
+                batch.records.clear();
+            }
+        }
+    }
+
+    pub(crate) fn forget_all(&mut self) {
+        for batch in &mut self.listed {
+            batch.records.clear();
+        }
     }
 
     fn fill(&mut self, table: &DrawnTable, kind: engine_core::DrawKind) {
-        self.listed = table
-            .batches(kind)
-            .map(|batch| KindBatch {
-                instances: batch.instances.clone(),
-                geometry: batch.geometry,
-                material: batch.material,
-                passes: batch.passes,
-                layers: batch.layers,
-            })
-            .collect();
+        let mut count = 0;
+        for batch in table.batches(kind) {
+            match self.listed.get_mut(count) {
+                Some(known) => {
+                    if known.geometry != batch.geometry || known.material != batch.material {
+                        known.records.clear();
+                        known.geometry = batch.geometry;
+                        known.material = batch.material;
+                    }
+                    known.instances.clone_from(&batch.instances);
+                    known.held = batch.held;
+                    known.passes = batch.passes;
+                    known.layers = batch.layers;
+                }
+                None => self.listed.push(KindBatch {
+                    instances: batch.instances.clone(),
+                    geometry: batch.geometry,
+                    material: batch.material,
+                    held: batch.held,
+                    passes: batch.passes,
+                    layers: batch.layers,
+                    records: Vec::new(),
+                }),
+            }
+            count += 1;
+        }
+        self.listed.truncate(count);
         self.filled = true;
+        self.holds = self.listed.iter().any(|batch| batch.held);
     }
 }
 
@@ -137,6 +229,7 @@ pub(crate) struct DrawnGpu {
     frame_sent: PoseFrame,
     entries_sent: Vec<PoseEntry>,
     owed: bool,
+    seen: Option<(u64, u64)>,
 }
 
 fn var(module: &str, name: &'static str) -> Var {
@@ -204,9 +297,13 @@ fn write_ranges<T: bytemuck::Pod>(
 }
 
 impl DrawnGpu {
-    fn upload_slots(&mut self, table: &DrawnTable, cx: &mut Prepare<'_, Self>) -> bool {
+    fn upload_slots(
+        &mut self,
+        (table, entities): (&DrawnTable, usize),
+        cx: &mut Prepare<'_, Self>,
+    ) -> bool {
         let count = table.slots();
-        let room = (count as u64).next_power_of_two().max(FIRST_SLOTS);
+        let room = (count.max(entities) as u64).next_power_of_two();
         let stride = table.value_vec4s();
         let record_bytes = room * size_of::<DrawnRecord>() as u64;
         let value_bytes = room * (stride * size_of::<[f32; 4]>()) as u64;
@@ -270,7 +367,12 @@ impl DrawnGpu {
 }
 
 impl GpuPart for DrawnGpu {
-    type Reads = (Res<'static, DrawnTable>, Res<'static, DrawnPoses>);
+    type Reads = (
+        Res<'static, DrawnTable>,
+        Res<'static, DrawnPoses>,
+        Option<Res<'static, Assets>>,
+        Query<'static, 'static, (), With<Drawn>>,
+    );
     const NAME: &'static str = "drawn";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -314,21 +416,30 @@ impl GpuPart for DrawnGpu {
             frame_sent: PoseFrame::default(),
             entries_sent: Vec::new(),
             owed: true,
+            seen: None,
         })
     }
 
     fn prepare(
         &mut self,
-        (table, poses): SystemParamItem<'_, '_, Self::Reads>,
+        (table, poses, assets, drawn): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.owed |= self.upload_slots(&table, cx);
+        self.owed |= self.upload_slots((&table, drawn.iter().len()), cx);
         let moved = self.upload_order(&table, cx);
+        let verdicts = &mut cx.core.verdicts;
+        if moved {
+            verdicts.order.clear();
+            verdicts.order.extend_from_slice(table.order());
+        }
+        verdicts.numbers.resize(table.slots(), None);
         for member in &mut cx.core.installs.draw_entries {
-            if moved || !member.batches.filled {
+            if moved || !member.batches.filled || member.batches.holds {
                 member.batches.fill(&table, member.decl.kind);
             }
         }
+        let revision = assets.map_or(0, |assets| assets.revision());
+        cx.core.settle_records(&mut self.seen, revision);
         self.owed |= self.upload_entries(poses.entries(), cx);
         self.owed |= self.upload_frame(poses.frame(), cx);
         if self.owed && !self.entries_sent.is_empty() {

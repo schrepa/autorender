@@ -15,7 +15,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[doc(hidden)]
 pub mod surface;
-pub use game::{Arrival, DefaultScene, Game, GameEntry, LoadedScene, Start};
+pub use game::{Game, GameEntry, LoadedScene, Start};
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,14 +26,14 @@ pub use engine_core::collections;
 
 mod games {
     pub use engine_core::{
-        AlphaMode, AssetLibrary, Attribute, Attributes, Brick, BrickList, Bricks, Camera, Clear,
-        Clock, Compare, ComponentKind, Cull, CursorMode, DepthBias, DevSetting, Devices, DrawKind,
-        Drawn, DrawnTable, Engine, Filter, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
-        Host, InstanceValues, KindDecl, Layers, LightingModel, Listing, Material, MaterialHandle,
-        Mesh, Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, Poses, Present,
-        Projection, Rect, RenderState, Sampler, SceneComponents, Schedule, Show, Source, Spawner,
-        Stats, Target, Teleport, Texture, TextureHandle, TextureRef, TouchPhase, Transform,
-        UvTransform, View, ViewFacts, ViewSkip, Views, math, set_parent,
+        AlphaMode, Asset, AssetId, AssetKind, AssetKinds, Assets, Brick, BrickList, Bricks, Camera,
+        Clear, Clock, Compare, ComponentKind, Cull, CursorMode, DepthBias, DevSetting, Devices,
+        DrawKind, Drawn, DrawnTable, Engine, Filter, FixedTime, FrameTime, GlobalTransforms,
+        GroupReport, GroupStage, Host, InstanceValues, KindDecl, Layers, LightingModel, Listing,
+        Material, MeshFile, Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, Poses,
+        Present, Projection, Rect, RenderState, Sampler, SceneComponents, Schedule, Show, Source,
+        Spawner, Stats, Target, Teleport, Texture, TextureRef, TouchPhase, Transform, UvTransform,
+        VertexStream, View, ViewFacts, ViewSkip, Views, math, set_parent,
     };
 }
 pub use games::*;
@@ -120,7 +120,7 @@ macro_rules! __if_dev {
 pub mod prelude {
     pub use crate::games::*;
     pub use crate::host::TypedSettings;
-    pub use crate::{Arrival, Game, LoadedScene};
+    pub use crate::{Game, LoadedScene};
     pub use bevy_ecs::{
         bundle::Bundle,
         change_detection::{DetectChanges, DetectChangesMut, Mut, Ref},

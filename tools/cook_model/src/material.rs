@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
 use cook::{Refusal, Step};
+use cook_texture::texture_item;
+use engine_scene::SceneCull;
 use gltf::material::AlphaMode;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use serde::Serialize;
@@ -8,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::geometry::Built;
 use crate::maps::{self, Map, MapKind, Sampling, wrap};
-use crate::params::{MaterialNames, SharedMaps, TextureVariant};
+use crate::params::{MaterialNames, TextureVariant};
 use crate::source::Source;
 
 #[derive(Clone, Serialize)]
@@ -24,7 +26,7 @@ pub struct Material {
     pub alpha_mode: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alpha_cutoff: Option<f32>,
-    pub cull: &'static str,
+    pub cull: SceneCull,
     pub slots: BTreeMap<String, Slot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub values: Option<BTreeMap<String, f32>>,
@@ -43,24 +45,31 @@ struct MapRef {
     id: String,
     wrap_u: &'static str,
     wrap_v: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mag_filter: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    min_filter: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mipmap_filter: Option<&'static str>,
+    mag_filter: &'static str,
+    min_filter: &'static str,
+    mipmap_filter: &'static str,
     tex_coord: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct MapPlan<'a> {
+    pub size: u32,
+    pub sizes: &'a BTreeMap<String, u32>,
+    pub material_sizes: Option<&'a BTreeMap<String, BTreeMap<String, u32>>>,
+    pub textures: &'a [TextureVariant],
+    pub exact_alpha: &'a [String],
+}
+
+#[derive(Clone, Copy)]
+pub enum Maps<'a> {
+    Own(MapPlan<'a>),
+    Of(&'a str),
 }
 
 pub struct MaterialPlan<'a> {
     pub names: &'a MaterialNames,
-    pub size: u32,
-    pub sizes: &'a BTreeMap<String, u32>,
     pub kinds: Vec<MapKind>,
-    pub textures: &'a [TextureVariant],
-    pub material_sizes: Option<&'a BTreeMap<String, BTreeMap<String, u32>>>,
-    pub exact_alpha: &'a [String],
-    pub shared: Option<&'a SharedMaps>,
+    pub maps: Maps<'a>,
 }
 
 pub struct Materials {
@@ -82,8 +91,8 @@ pub fn item<T: Serialize>(value: &T) -> Value {
     serde_json::from_str(&text).expect("items_parse")
 }
 
-impl MaterialPlan<'_> {
-    fn size(&self, material: Option<&str>, kind: MapKind) -> u32 {
+impl MapPlan<'_> {
+    pub fn size(&self, material: Option<&str>, kind: MapKind) -> u32 {
         material
             .and_then(|name| self.material_sizes?.get(name)?.get(kind.name()).copied())
             .or_else(|| self.sizes.get(kind.name()).copied())
@@ -100,23 +109,25 @@ const fn wrap_name(mode: WrappingMode) -> &'static str {
 }
 
 fn map_ref(id: String, sampling: &Sampling) -> Value {
-    let (min_filter, mipmap_filter) = match sampling.min {
-        None => (None, None),
-        Some(MinFilter::Nearest) => (Some("nearest"), Some("none")),
-        Some(MinFilter::Linear) => (Some("linear"), Some("none")),
-        Some(MinFilter::NearestMipmapNearest) => (Some("nearest"), Some("nearest")),
-        Some(MinFilter::LinearMipmapNearest) => (Some("linear"), Some("nearest")),
-        Some(MinFilter::NearestMipmapLinear) => (Some("nearest"), Some("linear")),
-        Some(MinFilter::LinearMipmapLinear) => (Some("linear"), Some("linear")),
+    let (Some(mag), Some(min)) = (sampling.mag, sampling.min) else {
+        return json!({"id": id, "tex_coord": sampling.tex_coord});
+    };
+    let (min_filter, mipmap_filter) = match min {
+        MinFilter::Nearest => ("nearest", "none"),
+        MinFilter::Linear => ("linear", "none"),
+        MinFilter::NearestMipmapNearest => ("nearest", "nearest"),
+        MinFilter::LinearMipmapNearest => ("linear", "nearest"),
+        MinFilter::NearestMipmapLinear => ("nearest", "linear"),
+        MinFilter::LinearMipmapLinear => ("linear", "linear"),
     };
     item(&MapRef {
         id,
         wrap_u: wrap_name(sampling.wrap_u),
         wrap_v: wrap_name(sampling.wrap_v),
-        mag_filter: sampling.mag.map(|filter| match filter {
+        mag_filter: match mag {
             MagFilter::Nearest => "nearest",
             MagFilter::Linear => "linear",
-        }),
+        },
         min_filter,
         mipmap_filter,
         tex_coord: sampling.tex_coord,
@@ -185,7 +196,11 @@ fn material(
         emissive: (emissive != [0.0; 3]).then_some(emissive),
         alpha_mode,
         alpha_cutoff,
-        cull: if held.double_sided() { "none" } else { "back" },
+        cull: names.cull.unwrap_or(if held.double_sided() {
+            SceneCull::None
+        } else {
+            SceneCull::Back
+        }),
         slots,
         values,
         lighting: names.lighting.clone(),
@@ -211,6 +226,20 @@ fn extras_values(source: &Source, index: usize) -> Result<BTreeMap<String, f32>,
     }
 }
 
+fn borrow(
+    source: &Source,
+    (held, item): (&gltf::Material<'_>, &str),
+    kind: MapKind,
+    owner: &str,
+) -> Result<(MapKind, String, Sampling), Refusal> {
+    let (texture, tex_coord) = maps::texture_of(held, kind).ok_or_else(|| {
+        let at = format!("{item} {}", kind.name());
+        source.refuse("MissingMap", at, "the asset's material has no such texture")
+    })?;
+    let sampling = maps::sampling(&texture, tex_coord);
+    Ok((kind, format!("{owner}_{}", kind.name()), sampling))
+}
+
 fn cook_one(
     step: &mut Step<'_>,
     source: &Source,
@@ -227,7 +256,7 @@ fn cook_one(
     if held.occlusion_texture().is_some() {
         step.note(json!({"note": "OcclusionIgnored", "file": source.file, "item": item, "detail": "ORM red is written as 1"}));
     }
-    if held.double_sided() {
+    if held.double_sided() && plan.names.cull.is_none() {
         step.note(json!({"warning": "DoubleSided", "file": source.file, "item": item, "detail": "doubleSided true: cull none"}));
     }
     let plain = plan
@@ -243,29 +272,22 @@ fn cook_one(
         borrowed: Vec::new(),
     };
     for &kind in plan.kinds.iter().filter(|_| !plain) {
-        let size = plan.size(held.name(), kind);
-        let key = maps::key(&held, kind, size);
-        let owner = match plan.shared {
-            Some(SharedMaps::Use(owner)) => Some(owner),
-            Some(SharedMaps::Make(_)) | None => key.and_then(|key| shared.get(&key)),
+        let own = match plan.maps {
+            Maps::Own(own) => own,
+            Maps::Of(owner) => {
+                cooked.borrowed.push(borrow(source, (&held, &item), kind, owner)?);
+                continue;
+            }
         };
-        if let Some(owner) = owner {
-            let (texture, tex_coord) = maps::texture_of(&held, kind).ok_or_else(|| {
-                let at = format!("{item} {}", kind.name());
-                source.refuse("MissingMap", at, "the asset's material has no such texture")
-            })?;
-            let borrowed = format!("{owner}_{}", kind.name());
-            let sampling = maps::sampling(&texture, tex_coord);
-            cooked.borrowed.push((kind, borrowed, sampling));
+        let size = own.size(held.name(), kind);
+        let key = maps::key(&held, kind, size);
+        if let Some(owner) = key.and_then(|key| shared.get(&key)) {
+            cooked.borrowed.push(borrow(source, (&held, &item), kind, owner)?);
             continue;
         }
-        let map_stem = match plan.shared {
-            Some(SharedMaps::Make(stem)) => stem.clone(),
-            Some(SharedMaps::Use(_)) | None => cooked.stem.clone(),
-        };
-        let map = maps::map(source, &held, kind, &map_stem, size)?;
+        let map = maps::map(source, &held, kind, &cooked.stem, size)?;
         if let Some(key) = key {
-            shared.insert(key, map_stem);
+            shared.insert(key, cooked.stem.clone());
         }
         cooked.maps.push(map);
     }
@@ -313,27 +335,29 @@ pub fn materials(
         maps.extend(cooked.maps);
         materials.push(material);
     }
-    let named: Vec<&str> = used
-        .iter()
-        .filter_map(|&index| source.gltf.materials().nth(index)?.name())
-        .collect();
-    let sized = plan.material_sizes.into_iter().flat_map(BTreeMap::keys);
-    let per_variant = plan
-        .textures
-        .iter()
-        .flat_map(|variant| variant.material_sizes.keys());
-    if let Some(wanted) = sized
-        .chain(per_variant)
-        .find(|wanted| !named.contains(&wanted.as_str()))
-    {
-        let at = format!("material_sizes.{wanted}");
-        return Err(source.refuse("MaterialSizes", at, "no drawn material has this name"));
+    if let Maps::Own(own) = plan.maps {
+        let named: Vec<&str> = used
+            .iter()
+            .filter_map(|&index| source.gltf.materials().nth(index)?.name())
+            .collect();
+        let sized = own.material_sizes.into_iter().flat_map(BTreeMap::keys);
+        let per_variant = own
+            .textures
+            .iter()
+            .flat_map(|variant| variant.material_sizes.keys());
+        if let Some(wanted) = sized
+            .chain(per_variant)
+            .find(|wanted| !named.contains(&wanted.as_str()))
+        {
+            let at = format!("material_sizes.{wanted}");
+            return Err(source.refuse("MaterialSizes", at, "no drawn material has this name"));
+        }
     }
     let of_mesh: BTreeMap<String, String> = meshes
         .iter()
         .map(|mesh| (mesh.stem.clone(), stem(mesh.material)))
         .collect();
-    step.note(json!({"mesh_materials": of_mesh, "materials": used.len(), "shared_maps": borrowed}));
+    step.note(json!({"mesh_materials": of_mesh, "materials": used.len(), "borrowed_maps": borrowed}));
     Ok(Materials {
         maps,
         materials,
@@ -345,13 +369,13 @@ pub fn write_textures(
     step: &mut Step<'_>,
     source: &Source,
     maps: &[Map],
-    plan: &MaterialPlan<'_>,
+    plan: &MapPlan<'_>,
 ) -> Result<(), Refusal> {
     for map in maps {
         let wraps = [wrap(map.sampling.wrap_u), wrap(map.sampling.wrap_v)];
         let chain = cook_texture::chain(map.kind.texels(), &map.decoded, wraps);
         let exact = plan.exact_alpha.iter().any(|name| name == map.kind.name());
-        let mut variants = serde_json::Map::new();
+        let mut variants = BTreeMap::new();
         for variant in plan.textures {
             let encoding = variant.encoding(map.kind).expect("variant_maps_checked");
             if encoding.srgb() != (map.kind == MapKind::BaseColor) {
@@ -373,16 +397,12 @@ pub fn write_textures(
                     let at = format!("{} {}", map.stem, encoding.name());
                     source.refuse("TextureEncode", at, error)
                 })?;
-            step.note(json!({"map": map.stem, "variant": variant.name, "encoding": encoding.name(), "levels": levels.len(), "file_bytes": encoded.file.len(), "gpu_bytes": encoded.gpu_bytes, "encode_seconds": encoded.seconds, "quality": encoded.quality}));
+            step.note(json!({"map": map.stem, "variant": variant.name, "encoding": encoding.name(), "levels": levels.len(), "file_bytes": encoded.file.len(), "gpu_bytes": encoded.gpu_bytes, "quality": encoded.quality}));
             let file = format!("{}.{}.ktx2", map.stem, variant.name);
             step.write(&file, encoded.file);
-            variants.insert(variant.name.clone(), Value::String(file));
+            variants.insert(variant.name.clone(), file);
         }
-        step.item(
-            "textures",
-            &map.stem,
-            json!({"id": map.stem, "variants": variants}),
-        );
+        step.item("textures", &map.stem, texture_item(&map.stem, variants));
     }
     Ok(())
 }
@@ -396,8 +416,7 @@ pub fn write_materials(step: &mut Step<'_>, materials: &[Material]) {
 pub fn write_meshes(step: &mut Step<'_>, meshes: &[Built]) {
     for mesh in meshes {
         let file = format!("{}.emb", mesh.stem);
-        let entry = json!({"id": mesh.stem, "source": {"kind": "buffer", "uri": file}});
-        step.item("meshes", &mesh.stem, entry);
+        step.item("meshes", &mesh.stem, json!({"id": mesh.stem, "uri": file}));
         step.write(&file, mesh.bytes.clone());
     }
 }

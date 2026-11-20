@@ -1,9 +1,9 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
-use engine_assets::{Attributes, StreamShape};
+use engine_assets::{Asset, Material, MeshFile};
 use serde::{Deserialize, Serialize};
 
-use crate::{GeometryHandle, MaterialHandle, PassMask};
+use crate::PassMask;
 
 pub type NodeId = Entity;
 
@@ -19,8 +19,6 @@ impl DrawKind {
 #[derive(Clone, Copy, Debug)]
 pub struct KindDecl {
     pub kind: DrawKind,
-    pub needs: Attributes,
-    pub streams: &'static [StreamShape],
     pub passes: &'static [&'static str],
 }
 
@@ -73,8 +71,8 @@ impl Default for InstanceValues {
 #[component(immutable)]
 pub struct Drawn {
     pub kind: DrawKind,
-    pub geometry: Option<GeometryHandle>,
-    pub material: Option<MaterialHandle>,
+    pub geometry: Option<Asset<MeshFile>>,
+    pub material: Option<Asset<Material>>,
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub order: i16,
@@ -82,7 +80,7 @@ pub struct Drawn {
 }
 
 impl Drawn {
-    pub fn new(kind: DrawKind, geometry: GeometryHandle, material: MaterialHandle) -> Self {
+    pub fn new(kind: DrawKind, geometry: Asset<MeshFile>, material: Asset<Material>) -> Self {
         Self {
             geometry: Some(geometry),
             material: Some(material),

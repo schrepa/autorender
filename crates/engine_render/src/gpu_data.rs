@@ -18,22 +18,18 @@ pub(crate) fn level_copy(
     (width, height): (u32, u32),
     level: u32,
 ) -> (wgpu::TexelCopyBufferLayout, wgpu::Extent3d) {
-    let (width, height) = ((width >> level).max(1), (height >> level).max(1));
-    let (bytes_per_row, rows, extent) = if format.is_compressed() {
-        let blocks = [width.div_ceil(4), height.div_ceil(4)];
-        (blocks[0] * 16, blocks[1], (blocks[0] * 4, blocks[1] * 4))
-    } else {
-        (width * 4, height, (width, height))
-    };
+    let (side, bytes) = format.block();
+    let columns = (width >> level).max(1).div_ceil(side);
+    let rows = (height >> level).max(1).div_ceil(side);
     (
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(bytes_per_row),
+            bytes_per_row: Some(columns * bytes),
             rows_per_image: Some(rows),
         },
         wgpu::Extent3d {
-            width: extent.0,
-            height: extent.1,
+            width: columns * side,
+            height: rows * side,
             depth_or_array_layers: 1,
         },
     )

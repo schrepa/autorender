@@ -48,6 +48,14 @@ impl Submission {
             threads.settle();
         }
     }
+
+    pub(super) fn finishers(&self) -> usize {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(threads) = &self.threads {
+            return threads.workers.len();
+        }
+        1
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

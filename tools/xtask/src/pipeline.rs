@@ -9,13 +9,15 @@ const PROFILING: &str = "profiling";
 
 const PROFILING_FEATURES: &str = "dev,profiling";
 
+const PACKAGES: &str = "web/pkg";
+
 pub fn build(root: &Path, profiling: bool) -> Result<(), String> {
     build_clients(
         root,
         &clients().iter().collect::<Vec<_>>(),
         false,
         true,
-        "web/pkg-ship",
+        PACKAGES,
     )?;
     let mut arguments = vec!["run", "build", "--prefix", "web"];
     if profiling {
@@ -33,6 +35,17 @@ pub fn build(root: &Path, profiling: bool) -> Result<(), String> {
         println!("{record}");
     }
     Ok(())
+}
+
+pub fn build_page(root: &Path, client: &Client) -> Result<(), String> {
+    build_clients(root, &[client], false, true, PACKAGES)?;
+    install_web_dependencies(root)?;
+    run_with(
+        root,
+        NPM,
+        &["run", "build", "--prefix", "web"],
+        &[("ENGINE_GAME", client.game.as_str())],
+    )
 }
 
 pub fn build_profiling_wasm(root: &Path) -> Result<(), String> {
@@ -132,7 +145,7 @@ pub fn build_wasm(root: &Path) -> Result<(), String> {
         &clients().iter().collect::<Vec<_>>(),
         false,
         false,
-        "web/pkg",
+        PACKAGES,
     )
 }
 

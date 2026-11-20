@@ -12,6 +12,8 @@ const KINDS: &[&str] = &[
     "core",
     "core-internal",
     "host",
+    "shelf",
+    "brick",
     "game",
     "cook",
     "tool",
@@ -286,14 +288,14 @@ fn implementors(root: &Path, members: &[Member], problems: &mut Vec<String>) -> 
     for member in members {
         let kind = member.kind.as_deref().unwrap_or("no kind");
         let source = member.dir.join("src");
-        if kind == "game" || !source.is_dir() {
+        if matches!(kind, "game" | "brick") || !source.is_dir() {
             continue;
         }
         let mut files = Vec::new();
         matching_files(&source, implements_brick, &mut files)?;
         for file in files {
             problems.push(format!(
-                "{}: a {kind} crate implements Brick in {}; only a game may",
+                "{}: a {kind} crate implements Brick in {}; only a game or a brick may",
                 member.label(),
                 relative(root, &file)
             ));
@@ -389,19 +391,24 @@ fn allowed(kind: &str, target: &Member, table: &str) -> bool {
             matches!(target_kind, "support" | "core" | "core-internal")
         }
         "host" => matches!(target_kind, "support" | "core" | "core-internal" | "host"),
+        "shelf" => matches!(target_kind, "support" | "core" | "shelf"),
+        "brick" => matches!(target_kind, "support" | "core" | "host" | "shelf"),
         "game" => {
-            matches!(target_kind, "host" | "core" | "support")
+            matches!(target_kind, "host" | "core" | "support" | "shelf" | "brick")
                 || target_kind == "cook" && table.contains("not(target_arch = \"wasm32\")")
         }
-        "cook" => matches!(target_kind, "support" | "core" | "core-internal" | "cook"),
-        "tool" => true,
+        "cook" => matches!(
+            target_kind,
+            "support" | "core" | "core-internal" | "cook" | "shelf"
+        ),
+        "tool" => target_kind != "brick",
         _ => false,
     }
 }
 
 fn external(kind: &str, package: &str) -> Option<String> {
     match kind {
-        "support" if engine_only(package) => Some(format!("{package} is engine-only")),
+        "support" | "shelf" | "brick" if engine_only(package) => Some(format!("{package} is engine-only")),
         "game" if engine_only(package) && !page_bindings(package) => {
             Some(format!("{package} is engine-only"))
         }

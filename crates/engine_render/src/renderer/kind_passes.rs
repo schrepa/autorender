@@ -1,7 +1,6 @@
 use bevy_ecs::world::World;
 use engine_core::{
-    Asset, AssetResidency, DrawReports, DropReason, DroppedDraws, Error, ErrorCode, KindPass,
-    KindPassState, Request,
+    Assets, DrawReports, DropReason, DroppedDraws, Error, ErrorCode, KindPass, KindPassState,
 };
 use engine_registry::CORE_ROW;
 
@@ -77,12 +76,11 @@ fn state_of(run: &Run, at: usize) -> Option<KindPassState> {
             .scenes
             .get(scene as usize)
             .map_or(u32::MAX, |scene| scene.1);
-        return Some(match (cell.skipped, cell.reached) {
-            (Some(reason), _) => KindPassState::Skipped { reason },
-            (None, 0) => {
-                dropped_state(&kinds.dropped, kind, pass).unwrap_or(KindPassState::Silent)
-            }
-            (None, draws) => KindPassState::Drew { draws },
+        return Some(match cell.reached {
+            0 => dropped_state(&kinds.dropped, kind, pass)
+                .or(cell.skipped.map(|reason| KindPassState::Skipped { reason }))
+                .unwrap_or(KindPassState::Silent),
+            draws => KindPassState::Drew { draws },
         });
     }
     let mut parts = run
@@ -129,34 +127,29 @@ fn kind_fault(pair: &KindPass) -> Option<Error> {
     }
 }
 
-fn held_reason(residency: &AssetResidency, dropped: &DroppedTally) -> DropReason {
+fn held_reason(assets: &Assets, dropped: &DroppedTally) -> DropReason {
     let Some(asset) = dropped.asset else {
         return dropped.reason;
     };
-    let state = residency.state(asset);
-    match asset {
-        Asset::Mesh(_) => match state {
-            None | Some(Request::Missing) => DropReason::GeometryNotHeld,
-            Some(Request::Asked(_)) => DropReason::GeometryWaiting,
-            Some(Request::Failed(_)) => DropReason::GeometryFailed,
-            Some(Request::Ready(_)) => dropped.reason,
-        },
-        Asset::Material(_) => match state {
-            None | Some(Request::Missing) => DropReason::MaterialNotHeld,
-            Some(Request::Asked(_)) => DropReason::MaterialWaiting,
-            Some(Request::Failed(_)) => DropReason::MaterialFailed,
-            Some(Request::Ready(_)) => dropped.reason,
-        },
-        Asset::Texture(_) => dropped.reason,
+    let mesh = dropped.reason == DropReason::GeometryNotResident;
+    let named = |geometry, material| if mesh { geometry } else { material };
+    if assets.name(asset).is_none() {
+        named(DropReason::GeometryNotInLoad, DropReason::MaterialNotInLoad)
+    } else if assets.refusal(asset).is_some() {
+        named(DropReason::GeometryFailed, DropReason::MaterialFailed)
+    } else if !assets.ready(asset) {
+        named(DropReason::GeometryWaiting, DropReason::MaterialWaiting)
+    } else {
+        dropped.reason
     }
 }
 
 fn name_asset_drops(run: &mut Run, world: &World) {
-    let Some(residency) = world.get_resource::<AssetResidency>() else {
+    let Some(assets) = world.get_resource::<Assets>() else {
         return;
     };
     for dropped in &mut run.tallies.kinds.dropped {
-        dropped.reason = held_reason(residency, dropped);
+        dropped.reason = held_reason(assets, dropped);
     }
 }
 
@@ -192,6 +185,25 @@ fn reason_name(reason: DropReason) -> String {
     }
 }
 
+fn uncounted(state: Option<KindPassState>) -> Option<KindPassState> {
+    state.map(|state| match state {
+        KindPassState::Drew { .. } => KindPassState::Drew { draws: 0 },
+        KindPassState::Dropped { reason, .. } => KindPassState::Dropped { reason, draws: 0 },
+        KindPassState::Skipped { .. } | KindPassState::Silent => state,
+    })
+}
+
+fn same_states(now: &[Option<KindPassState>], last: &[Option<KindPassState>]) -> bool {
+    now.len() == last.len()
+        && (now.iter().zip(last)).all(|(now, last)| uncounted(*now) == uncounted(*last))
+}
+
+fn same_drops(now: &[DroppedTally], last: &[DroppedTally]) -> bool {
+    now.len() == last.len()
+        && (now.iter().zip(last))
+            .all(|(now, last)| DroppedTally { count: 0, ..*now } == DroppedTally { count: 0, ..*last })
+}
+
 pub(super) fn settle(run: &mut Run, world: &World) {
     name_asset_drops(run, world);
     add_totals(run);
@@ -201,7 +213,9 @@ pub(super) fn settle(run: &mut Run, world: &World) {
     }
     let kinds = &mut run.tallies.kinds;
     kinds.states = states;
-    if kinds.settled && kinds.states == kinds.last_states && kinds.dropped == kinds.last_dropped
+    if kinds.settled
+        && same_states(&kinds.states, &kinds.last_states)
+        && same_drops(&kinds.dropped, &kinds.last_dropped)
     {
         return;
     }

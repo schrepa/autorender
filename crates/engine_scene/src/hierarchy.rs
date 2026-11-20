@@ -2,11 +2,12 @@ use engine_settings::{ErrorCode, Expected};
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
-    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix,
+    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, SceneEntity, Transform, glam::Mat4,
+    valid_global_matrix,
 };
 
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
-use crate::{SceneDocument, SceneKinds, SceneObject, ScenePrefab};
+use crate::{SceneDocument, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -31,6 +32,22 @@ fn listed<'a>(list: &'a [SceneObject], list_path: &str) -> Vec<Listed<'a>> {
         .collect()
 }
 
+impl ExpandedObject {
+    pub(crate) fn scene_entity(&self, scene_id: &str) -> SceneEntity {
+        let source = &self.source;
+        SceneEntity {
+            scene_id: scene_id.to_owned(),
+            authored_id: source.id.clone(),
+            name: source.name.clone(),
+            tags: source.tags.clone(),
+            authored_parent: source.parent.clone(),
+            prefab_id: self.prefab_id.clone(),
+            prefab_instance: self.prefab_instance.clone(),
+            prefab_local_id: self.prefab_local_id.clone(),
+        }
+    }
+}
+
 pub(crate) struct ExpandedScene {
     pub entities: Vec<ExpandedObject>,
     pub transforms: Vec<Transform>,
@@ -39,26 +56,12 @@ pub(crate) struct ExpandedScene {
 type Prefabs<'a> = BTreeMap<&'a str, (usize, &'a ScenePrefab)>;
 
 impl SceneDocument {
-    pub fn expanded_entities(&self) -> Result<Vec<SceneObject>, Error> {
-        Ok(self
-            .prepare(None, &SceneKinds::default())?
-            .entities
-            .into_iter()
-            .map(|entity| entity.source)
-            .collect())
+    pub(crate) fn expand(&self) -> Result<ExpandedScene, Error> {
+        let (prefab_ids, prefabs) = self.validate_prefabs()?;
+        expand_list(&listed(&self.entities, "$.entities"), &prefab_ids, &prefabs)
     }
 
-    pub(crate) fn expand(&self, kinds: &SceneKinds) -> Result<ExpandedScene, Error> {
-        let (prefab_ids, prefabs) = self.validate_prefabs(kinds)?;
-        expand_list(
-            &listed(&self.entities, "$.entities"),
-            &prefab_ids,
-            &prefabs,
-            kinds,
-        )
-    }
-
-    fn validate_prefabs(&self, kinds: &SceneKinds) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {
+    fn validate_prefabs(&self) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {
         let prefab_ids = unique_ids(
             self.prefabs.iter().map(|prefab| prefab.id.as_str()),
             "$.prefabs",
@@ -82,7 +85,7 @@ impl SceneDocument {
                             .got(nested),
                     );
                 }
-                transforms.push(validate_object(entity, &path, &prefab_ids, kinds)?);
+                transforms.push(validate_object(entity, &path, &prefab_ids)?);
             }
             validate_graph(
                 prefab
@@ -108,7 +111,6 @@ fn expand_list(
     list: &[Listed<'_>],
     prefab_ids: &BTreeSet<&str>,
     prefab_lookup: &Prefabs<'_>,
-    kinds: &SceneKinds,
 ) -> Result<ExpandedScene, Error> {
     let mut known = BTreeSet::new();
     for entry in list {
@@ -122,7 +124,7 @@ fn expand_list(
     }
     let mut expanded_count = list.len();
     for entry in list {
-        validate_object(entry.object, &entry.path, prefab_ids, kinds)?;
+        validate_object(entry.object, &entry.path, prefab_ids)?;
         if let Some(id) = &entry.object.prefab {
             expanded_count += prefab_lookup[id.as_str()].1.entities.len();
         }
@@ -189,9 +191,7 @@ pub(crate) fn validate_object(
     entity: &SceneObject,
     path: &str,
     prefab_ids: &BTreeSet<&str>,
-    kinds: &SceneKinds,
 ) -> Result<Transform, Error> {
-    kinds.check(entity, path)?;
     if let Some(prefab) = &entity.prefab {
         reference(prefab, prefab_ids, &format!("{path}.prefab"))?;
     }

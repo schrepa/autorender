@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use cook::{Refusal, Step};
-use engine_assets::{
-    AttributeFormat, Mesh, MeshStreams, MeshVertex, NamedStream, encode_mesh_buffer_with,
-};
+use engine_assets::MeshFile;
+use engine_meshpack::{MeshVertex, Unpacked, pack, shape};
 use glam::{Mat3, Mat4, Vec3};
 use gltf::mesh::Mode;
 use serde_json::json;
@@ -24,21 +24,18 @@ pub struct Built {
 }
 
 pub struct Part {
-    pub material: Option<usize>,
+    pub material: usize,
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
     pub uv1: Option<Vec<[f32; 2]>>,
     pub colors: Option<Vec<[f32; 4]>>,
-    pub skin: Option<(Vec<u8>, Vec<u8>)>,
+    pub skin: Option<Vec<([u32; 4], [u16; 4])>>,
     pub influences: usize,
-    pub normals: &'static str,
-    pub uv: &'static str,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Reading {
-    Drawn,
-    Shape,
+pub struct Shape {
+    pub positions: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
 }
 
 struct Skin<'a> {
@@ -47,13 +44,10 @@ struct Skin<'a> {
     weights: Vec<[f32; 4]>,
 }
 
-fn skin_bytes(
-    source: &Source,
-    item: &str,
-    skin: &Skin<'_>,
-) -> Result<(Vec<u8>, Vec<u8>, usize), Refusal> {
-    let mut joint_bytes = Vec::with_capacity(skin.joints.len() * 16);
-    let mut weight_bytes = Vec::with_capacity(skin.joints.len() * 8);
+type Influences = (Vec<([u32; 4], [u16; 4])>, usize);
+
+fn quantised_skin(source: &Source, item: &str, skin: &Skin<'_>) -> Result<Influences, Refusal> {
+    let mut held = Vec::with_capacity(skin.joints.len());
     let mut influences = 0;
     for (vertex, (joints, weights)) in skin.joints.iter().zip(&skin.weights).enumerate() {
         let total: f32 = weights.iter().sum();
@@ -71,40 +65,22 @@ fn skin_bytes(
             .expect("four_lanes");
         quantised[largest] = (quantised[largest] + 65535).saturating_sub(sum);
         influences = influences.max(quantised.iter().filter(|&&weight| weight > 0).count());
-        for (joint, weight) in joints.iter().zip(quantised) {
-            let mapped = skin.rig.of_skin.get(usize::from(*joint)).ok_or_else(|| {
+        let mut mapped = [0_u32; 4];
+        for (lane, joint) in joints.iter().enumerate() {
+            mapped[lane] = *skin.rig.of_skin.get(usize::from(*joint)).ok_or_else(|| {
                 source.refuse(
                     "JointIndex",
                     format!("{item} vertex {vertex}"),
                     format!("joint {joint} of {}", skin.rig.of_skin.len()),
                 )
             })?;
-            joint_bytes.extend_from_slice(&mapped.to_le_bytes());
-            weight_bytes.extend_from_slice(
-                &u16::try_from(weight)
-                    .expect("weight_fits_u16")
-                    .to_le_bytes(),
-            );
         }
+        held.push((
+            mapped,
+            quantised.map(|weight| u16::try_from(weight).expect("weight_fits_u16")),
+        ));
     }
-    Ok((joint_bytes, weight_bytes, influences))
-}
-
-fn computed_normals(positions: &[Vec3], indices: &[u32]) -> Vec<[f32; 3]> {
-    let mut sums = vec![Vec3::ZERO; positions.len()];
-    for triangle in indices.as_chunks::<3>().0 {
-        let [a, b, c] = triangle.map(|index| index as usize);
-        if a.max(b).max(c) >= positions.len() {
-            continue;
-        }
-        let face = (positions[b] - positions[a]).cross(positions[c] - positions[a]);
-        for corner in [a, b, c] {
-            sums[corner] += face;
-        }
-    }
-    sums.into_iter()
-        .map(|sum| sum.normalize_or_zero().to_array())
-        .collect()
+    Ok((held, influences))
 }
 
 fn read_skin<'a, 's, F>(
@@ -113,7 +89,7 @@ fn read_skin<'a, 's, F>(
     reader: &gltf::mesh::Reader<'a, 's, F>,
     rig: &Rig,
     count: usize,
-) -> Result<(Vec<u8>, Vec<u8>, usize), Refusal>
+) -> Result<Influences, Refusal>
 where
     F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
 {
@@ -145,7 +121,35 @@ where
             "skin attributes differ in vertex count",
         ));
     }
-    skin_bytes(source, item, &skin)
+    quantised_skin(source, item, &skin)
+}
+
+pub fn read_shape(
+    source: &Source,
+    item: &str,
+    held: &gltf::Primitive<'_>,
+    place: Mat4,
+) -> Result<Shape, Refusal> {
+    if held.mode() != Mode::Triangles {
+        return Err(source.refuse("PrimitiveMode", item, format!("{:?}", held.mode())));
+    }
+    if held.morph_targets().next().is_some() {
+        return Err(source.refuse("MorphTargets", item, "morph targets are refused"));
+    }
+    let reader = held.reader(|buffer| source.data(&buffer));
+    let positions: Vec<[f32; 3]> = reader
+        .read_positions()
+        .ok_or_else(|| source.refuse("MissingAttribute", item, "POSITION"))?
+        .map(|position| place.transform_point3(Vec3::from_array(position)).to_array())
+        .collect();
+    let indices: Vec<u32> = match reader.read_indices() {
+        Some(indices) => indices.into_u32().collect(),
+        None => (0..u32::try_from(positions.len()).expect("vertex_count_fits_u32")).collect(),
+    };
+    if indices.is_empty() || !indices.len().is_multiple_of(3) {
+        return Err(source.refuse("Indices", item, format!("{} indices", indices.len())));
+    }
+    Ok(Shape { positions, indices })
 }
 
 pub fn read_part(
@@ -154,54 +158,29 @@ pub fn read_part(
     held: &gltf::Primitive<'_>,
     place: Mat4,
     rig: Option<&Rig>,
-    reading: Reading,
 ) -> Result<Part, Refusal> {
-    if held.mode() != Mode::Triangles {
-        return Err(source.refuse("PrimitiveMode", item, format!("{:?}", held.mode())));
-    }
-    if held.morph_targets().next().is_some() {
-        return Err(source.refuse("MorphTargets", item, "morph targets are refused"));
-    }
-    let material = held.material().index();
-    if material.is_none() && reading == Reading::Drawn {
-        return Err(source.refuse("NoMaterial", item, "a primitive needs a material with maps"));
-    }
+    let Shape { positions, indices } = read_shape(source, item, held, place)?;
+    let material = held.material().index().ok_or_else(|| {
+        source.refuse("NoMaterial", item, "a primitive needs a material with maps")
+    })?;
     let reader = held.reader(|buffer| source.data(&buffer));
     let missing = |name: &str| source.refuse("MissingAttribute", item, name);
-    let positions: Vec<Vec3> = reader
-        .read_positions()
-        .ok_or_else(|| missing("POSITION"))?
-        .map(|position| place.transform_point3(Vec3::from_array(position)))
-        .collect();
     let count = positions.len();
-    let indices: Vec<u32> = match reader.read_indices() {
-        Some(indices) => indices.into_u32().collect(),
-        None => (0..u32::try_from(count).expect("vertex_count_fits_u32")).collect(),
-    };
-    if indices.is_empty() || !indices.len().is_multiple_of(3) {
-        return Err(source.refuse("Indices", item, format!("{} indices", indices.len())));
-    }
     let turn = Mat3::from_mat4(place).inverse().transpose();
-    let (normals, normals_from): (Vec<[f32; 3]>, &'static str) =
-        match (reader.read_normals(), reading) {
-            (Some(normals), _) => (
-                normals
-                    .map(|normal| {
-                        (turn * Vec3::from_array(normal))
-                            .normalize_or_zero()
-                            .to_array()
-                    })
-                    .collect(),
-                "source",
-            ),
-            (None, Reading::Shape) => (computed_normals(&positions, &indices), "computed"),
-            (None, Reading::Drawn) => return Err(missing("NORMAL")),
-        };
-    let (uvs, uv_from): (Vec<[f32; 2]>, &'static str) = match (reader.read_tex_coords(0), reading) {
-        (Some(uvs), _) => (uvs.into_f32().collect(), "source"),
-        (None, Reading::Shape) => (vec![[0.0; 2]; count], "zero"),
-        (None, Reading::Drawn) => return Err(missing("TEXCOORD_0")),
-    };
+    let normals: Vec<[f32; 3]> = reader
+        .read_normals()
+        .ok_or_else(|| missing("NORMAL"))?
+        .map(|normal| {
+            (turn * Vec3::from_array(normal))
+                .normalize_or_zero()
+                .to_array()
+        })
+        .collect();
+    let uvs: Vec<[f32; 2]> = reader
+        .read_tex_coords(0)
+        .ok_or_else(|| missing("TEXCOORD_0"))?
+        .into_f32()
+        .collect();
     let uv1: Option<Vec<[f32; 2]>> = reader
         .read_tex_coords(1)
         .map(|uvs| uvs.into_f32().collect());
@@ -217,75 +196,37 @@ pub fn read_part(
     }
     let (skin, influences) = match rig {
         Some(rig) => {
-            let (joints, weights, influences) = read_skin(source, item, &reader, rig, count)?;
-            (Some((joints, weights)), influences)
+            let (skin, influences) = read_skin(source, item, &reader, rig, count)?;
+            (Some(skin), influences)
         }
         None => (None, 0),
     };
     let vertices = positions
-        .iter()
-        .zip(&normals)
-        .zip(&uvs)
+        .into_iter()
+        .zip(normals)
+        .zip(uvs)
         .map(|((position, normal), uv)| MeshVertex {
-            position: position.to_array(),
-            normal: *normal,
-            uv: *uv,
+            position,
+            normal,
+            uv,
         })
         .collect();
     Ok(Part {
         material,
         vertices,
         indices,
-        uv1: if reading == Reading::Drawn { uv1 } else { None },
-        colors: if reading == Reading::Drawn {
-            colors
-        } else {
-            None
-        },
+        uv1,
+        colors,
         skin,
         influences,
-        normals: normals_from,
-        uv: uv_from,
     })
 }
 
-fn read_back(
-    source: &Source,
-    item: &str,
-    bytes: &[u8],
-    vertices: usize,
-    indices: usize,
-    streams: usize,
-    uv1: bool,
-) -> Result<(), Refusal> {
-    let mesh =
-        Mesh::from_record(bytes).map_err(|error| source.refuse("MeshReadBack", item, error))?;
-    if mesh.vertices().len() != vertices
-        || mesh.indices().len() != indices
-        || mesh.streams().len() != streams
-        || mesh.uv1().is_some() != uv1
-    {
-        return Err(source.refuse(
-            "MeshReadBack",
-            item,
-            format!(
-                "read {} vertices, {} indices, {} streams, uv1 {}",
-                mesh.vertices().len(),
-                mesh.indices().len(),
-                mesh.streams().len(),
-                mesh.uv1().is_some()
-            ),
-        ));
-    }
-    Ok(())
+fn reordered<T: Copy>(held: usize, values: &[T], old_of: &[u32]) -> Option<Vec<T>> {
+    (held != 0).then(|| order::permuted(values, old_of))
 }
 
-pub fn encode_mesh(
-    source: &Source,
-    item: &str,
-    parts: &[Part],
-    ordered: bool,
-) -> Result<Built, Refusal> {
+pub fn encode_mesh(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Refusal> {
     let with_uv1 = parts.iter().filter(|part| part.uv1.is_some()).count();
     let with_skin = parts.iter().filter(|part| part.skin.is_some()).count();
     let with_colors = parts.iter().filter(|part| part.colors.is_some()).count();
@@ -299,90 +240,37 @@ pub fn encode_mesh(
     }
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    let mut uv1: Vec<[f32; 2]> = Vec::new();
-    let mut joints = Vec::new();
-    let mut weights = Vec::new();
+    let mut uv1 = Vec::new();
     let mut colors = Vec::new();
+    let mut skin = Vec::new();
     for part in parts {
         let base = u32::try_from(vertices.len()).expect("vertex_count_fits_u32");
         indices.extend(part.indices.iter().map(|index| index + base));
         vertices.extend_from_slice(&part.vertices);
         uv1.extend(part.uv1.iter().flatten().copied());
-        for (vertex, color) in part.colors.iter().flatten().enumerate() {
-            if color.iter().any(|lane| !(0.0..=1.0).contains(lane)) {
-                return Err(source.refuse(
-                    "Colors",
-                    format!("{item} vertex {vertex}"),
-                    format!("COLOR_0 {color:?} is outside 0..1"),
-                ));
-            }
-            for lane in color {
-                let value = (lane * 65535.0).round() as u16;
-                colors.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        if let Some((joint_bytes, weight_bytes)) = &part.skin {
-            joints.extend_from_slice(joint_bytes);
-            weights.extend_from_slice(weight_bytes);
-        }
+        colors.extend(part.colors.iter().flatten().copied());
+        skin.extend(part.skin.iter().flatten().copied());
     }
-    if ordered {
-        indices = order::triangles(&indices, vertices.len());
-        let old_of = order::first_use(&mut indices, vertices.len());
-        vertices = order::permuted(&vertices, &old_of);
-        if !uv1.is_empty() {
-            uv1 = order::permuted(&uv1, &old_of);
-        }
-        if !colors.is_empty() {
-            colors = order::permuted_bytes(&colors, 8, &old_of);
-        }
-        if !joints.is_empty() {
-            joints = order::permuted_bytes(&joints, joints.len() / old_of.len(), &old_of);
-            weights = order::permuted_bytes(&weights, weights.len() / old_of.len(), &old_of);
-        }
-    }
-    let mut named = Vec::new();
-    if with_skin != 0 {
-        named.push(NamedStream::new(
-            "joints",
-            AttributeFormat::Uint32x4,
-            joints,
-        ));
-        named.push(NamedStream::new(
-            "weights",
-            AttributeFormat::Unorm16x4,
-            weights,
-        ));
-    }
-    if with_colors != 0 {
-        named.push(NamedStream::new(
-            "color",
-            AttributeFormat::Unorm16x4,
-            colors,
-        ));
-    }
-    let bytes = encode_mesh_buffer_with(
-        &vertices,
-        &indices,
-        MeshStreams {
-            colors: None,
-            uv1: (with_uv1 != 0).then_some(uv1.as_slice()),
-            named: &named,
-        },
+    indices = order::triangles(&indices, vertices.len());
+    let old_of = order::first_use(&mut indices, vertices.len());
+    let (uv1, colors, skin) = (
+        reordered(with_uv1, &uv1, &old_of),
+        reordered(with_colors, &colors, &old_of),
+        reordered(with_skin, &skin, &old_of),
     );
-    read_back(
-        source,
-        item,
-        &bytes,
-        vertices.len(),
-        indices.len(),
-        named.len(),
-        with_uv1 != 0,
-    )?;
+    vertices = order::permuted(&vertices, &old_of);
+    let bytes = pack(&Unpacked {
+        vertices: &vertices,
+        indices: &indices,
+        uv1: uv1.as_deref(),
+        colors: colors.as_deref(),
+        skin: skin.as_deref(),
+    })
+    .map_err(|error| source.refuse("MeshPack", item, error))?;
     Ok(Built {
         stem: String::new(),
-        bytes,
-        material: parts[0].material.unwrap_or_default(),
+        bytes: read_back(source, item, bytes)?,
+        material: parts[0].material,
         vertices: vertices.len(),
         triangles: indices.len() / 3,
         influences: parts
@@ -393,6 +281,25 @@ pub fn encode_mesh(
         colored: with_colors != 0,
         uv1: with_uv1 != 0,
     })
+}
+
+pub fn encode_shape(source: &Source, item: &str, shapes: &[Shape]) -> Result<Vec<u8>, Refusal> {
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    for held in shapes {
+        let base = u32::try_from(positions.len()).expect("vertex_count_fits_u32");
+        indices.extend(held.indices.iter().map(|index| index + base));
+        positions.extend_from_slice(&held.positions);
+    }
+    let bytes =
+        shape(&positions, &indices).map_err(|error| source.refuse("MeshPack", item, error))?;
+    read_back(source, item, bytes)
+}
+
+fn read_back(source: &Source, item: &str, bytes: Vec<u8>) -> Result<Vec<u8>, Refusal> {
+    MeshFile::read(Arc::from(bytes.as_slice()), item)
+        .map_err(|error| source.refuse("MeshReadBack", item, error))?;
+    Ok(bytes)
 }
 
 fn named(name: &str, mut built: Vec<Built>) -> Vec<Built> {
@@ -425,8 +332,8 @@ pub fn character(source: &Source, rig: &Rig, name: &str) -> Result<Vec<Built>, R
         }
         for held in mesh.primitives() {
             let item = primitive_item(&node, &held);
-            let part = read_part(source, &item, &held, place, Some(rig), Reading::Drawn)?;
-            built.push(encode_mesh(source, &item, &[part], true)?);
+            let part = read_part(source, &item, &held, place, Some(rig))?;
+            built.push(encode_mesh(source, &item, &[part])?);
         }
     }
     if built.is_empty() {
@@ -477,8 +384,8 @@ pub fn fixed(
         let place = placed(source, &node, scale, tolerance)?;
         for held in mesh.primitives() {
             let item = primitive_item(&node, &held);
-            let part = read_part(source, &item, &held, place, None, Reading::Drawn)?;
-            built.push(encode_mesh(source, &item, &[part], true)?);
+            let part = read_part(source, &item, &held, place, None)?;
+            built.push(encode_mesh(source, &item, &[part])?);
         }
     }
     if built.is_empty() {

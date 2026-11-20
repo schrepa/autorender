@@ -43,7 +43,7 @@ pub struct Registry {
     #[cfg(feature = "dev")]
     table: Vec<std::sync::Arc<NameEntry>>,
     pub(crate) despawn: Option<Despawn>,
-    problems: Vec<Error>,
+    problems: Vec<(Error, u32)>,
     notices: Vec<Error>,
 }
 
@@ -56,13 +56,13 @@ pub struct RegistryBuilder {
 impl RegistryBuilder {
     pub fn add(&mut self, mut record: BrickRecord, systems: BrickSystems) {
         let registry = &mut self.registry;
-        registry.problems.append(&mut record.take_problems());
+        for problem in record.take_problems() {
+            registry.report(problem);
+        }
         let package = record.package;
         if registry.has(package) {
             let path = format!("$.bricks.{package}");
-            registry
-                .problems
-                .push(Error::new(ErrorCode::NameTwice, path).got(package));
+            registry.report(Error::new(ErrorCode::NameTwice, path).got(package));
             return;
         }
         registry.check_names(&record);
@@ -101,8 +101,9 @@ impl RegistryBuilder {
         world.insert_resource(attributed);
         #[cfg(feature = "dev")]
         registry.system_names();
-        let mut refused = build(world, schedules);
-        registry.problems.append(&mut refused);
+        for refused in build(world, schedules) {
+            registry.report(refused);
+        }
         let switches = registry.bricks.iter().map(BrickRecord::switch_fn).collect();
         world.insert_resource(registry);
         Switches::new(switches)
@@ -118,7 +119,7 @@ impl Registry {
             .or_else(|| self.stats_section(entry.key).map(|known| known.brick));
         if let Some(owner) = owner {
             let path = format!("$.sections.{}", entry.key);
-            self.problems.push(
+            self.report(
                 Error::new(ErrorCode::NameTwice, path)
                     .got(owner)
                     .nearest(CORE_ROW),
@@ -135,7 +136,7 @@ impl Registry {
         }
         if let Some(owner) = self.entry(&entry.name).map(|known| known.owner) {
             let path = format!("$.names.{}", entry.name);
-            self.problems.push(
+            self.report(
                 Error::new(ErrorCode::NameTwice, path)
                     .got(owner)
                     .nearest(entry.owner),
@@ -156,7 +157,10 @@ impl Registry {
     }
 
     pub fn report(&mut self, error: Error) {
-        self.problems.push(error);
+        match self.problems.iter_mut().find(|(known, _)| *known == error) {
+            Some((_, times)) => *times += 1,
+            None => self.problems.push((error, 1)),
+        }
     }
 
     pub fn report_notice(&mut self, error: Error) {
@@ -169,7 +173,7 @@ impl Registry {
         &self.notices
     }
 
-    pub fn problems(&self) -> &[Error] {
+    pub fn problems(&self) -> &[(Error, u32)] {
         &self.problems
     }
 
@@ -252,7 +256,7 @@ impl Registry {
                 .or_else(|| self.stats_section(key).map(|entry| entry.brick));
             if let Some(owner) = owner {
                 let path = format!("$.sections.{key}");
-                self.problems.push(
+                self.report(
                     Error::new(ErrorCode::NameTwice, path)
                         .got(owner)
                         .nearest(package),
@@ -266,7 +270,7 @@ impl Registry {
                 .find(|known| known.prefix() == Some(prefix))
         {
             let path = format!("$.modules.{prefix}");
-            self.problems.push(
+            self.report(
                 Error::new(ErrorCode::NameTwice, path)
                     .got(owner.package)
                     .nearest(package),
@@ -276,12 +280,13 @@ impl Registry {
 
     fn check_owned(&mut self) {
         let mut seen: Vec<(TypeId, &'static str)> = Vec::new();
+        let mut problems = Vec::new();
         for record in &self.bricks {
             for owned in record.owned() {
                 match seen.iter().find(|(known, _)| *known == owned.type_id) {
                     Some(&(_, first)) => {
                         let path = format!("$.bricks.{}.registers.{}", record.package, owned.name);
-                        self.problems.push(
+                        problems.push(
                             Error::new(ErrorCode::NameTwice, path)
                                 .got(first)
                                 .nearest(record.package),
@@ -290,6 +295,9 @@ impl Registry {
                     None => seen.push((owned.type_id, record.package)),
                 }
             }
+        }
+        for problem in problems {
+            self.report(problem);
         }
     }
 

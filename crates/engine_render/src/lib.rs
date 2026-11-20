@@ -10,8 +10,7 @@ use std::ops::Range;
 
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Entry, Error, GeometryHandle, MaterialHandle, PassBit, Read, TargetName, TextureHandle, Var,
-    gpu_struct,
+    Asset, Entry, Error, Material, MeshFile, PassBit, Read, TargetName, Var, gpu_struct,
 };
 
 use crate::draws::RawDraw;
@@ -50,18 +49,19 @@ mod whatif;
 pub use profiling::INSTRUMENTS as GPU_INSTRUMENTS;
 #[doc(hidden)]
 pub use platform::{AdapterInfo, RenderTarget};
+pub use linker::LinkedShaders;
 pub use platform::{GpuAsk, GpuRequest, SurfaceForm};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use platform::{NativeWindow, keep_pipeline_cache_in};
-pub use registration::{Entries, Made};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
 #[cfg(feature = "dev")]
 pub use gpu_calls::unchanged_writes;
-pub use renderer::{
-    Ahead, DeviceHealth, Installation, Renderer, StartingRenderer, device_limits, install_noop,
-};
+pub use renderer::{Ahead, DeviceHealth, Renderer, StartingRenderer, device_limits};
+#[doc(hidden)]
+#[cfg(feature = "dev")]
+pub use renderer::install_noop;
 #[cfg(feature = "dev")]
 pub use renderer::gpu_names;
 pub use shaders::FULLSCREEN;
@@ -210,7 +210,7 @@ pub enum GroupEntry<P> {
         size: u64,
     },
     Texture(Texture<P>),
-    Asset(TextureHandle),
+    Asset(Asset<engine_core::Texture>),
     AssetSampler(engine_core::Sampler),
 }
 
@@ -218,11 +218,11 @@ pub enum Shape {
     Pulled {
         vertices: Range<u32>,
         instances: Range<u32>,
-        key: Option<MaterialHandle>,
+        key: Option<Asset<Material>>,
     },
     Mesh {
-        mesh: GeometryHandle,
-        key: Option<MaterialHandle>,
+        mesh: Asset<MeshFile>,
+        key: Option<Asset<Material>>,
         instances: Range<u32>,
     },
 }
@@ -240,7 +240,7 @@ pub enum DepthUse {
 pub struct RenderPipeline<'a> {
     pub vertex: Entry,
     pub fragment: Option<Entry>,
-    pub vertices: &'a [engine_core::GeometryStream],
+    pub vertices: &'a [engine_core::VertexStream],
     pub primitive: wgpu::PrimitiveState,
     pub depth: DepthUse,
     pub stencil: wgpu::StencilState,
@@ -392,7 +392,6 @@ impl<P: GpuPart> Install<'_, P> {
         buffers: &[(Var, Buffer<P>)],
     ) -> Result<BatchGroup<P>, Error> {
         let core = &mut *self.core;
-        core.linker.add_source(module.source());
         let (path, _) = linker::path_of((module, ""));
         let at = format!("$.batch_groups.{path}.{index}");
         if index == 0 {
@@ -406,11 +405,11 @@ impl<P: GpuPart> Install<'_, P> {
             return Err(Error::new(engine_core::ErrorCode::NameTwice, at));
         }
         for (var, buffer) in buffers {
-            let declared = core.linker.declared(*var);
+            let declared = core.linked.declared(*var);
             if var.module() != module || declared.is_none_or(|found| found.group != index) {
                 return Err(Error::new(engine_core::ErrorCode::UnknownVariable, at).got(var.name()));
             }
-            let usage = core.linker.buffer_usage(*var);
+            let usage = core.linked.buffer_usage(*var);
             core.use_buffer(buffer.0, usage);
         }
         core.declared.batch_groups.push(install::BatchDecl { module, index });
@@ -418,10 +417,6 @@ impl<P: GpuPart> Install<'_, P> {
             (core.declared.batch_groups.len() - 1) as u32,
             PhantomData,
         ))
-    }
-
-    pub fn passes(&self) -> &engine_core::ScenePasses {
-        &self.core.passes
     }
 }
 
@@ -482,7 +477,7 @@ impl<P: GpuPart> Prepare<'_, P> {
     pub fn set_batch(
         &mut self,
         group: BatchGroup<P>,
-        key: Option<MaterialHandle>,
+        key: Option<Asset<Material>>,
         entries: &[(Var, GroupEntry<P>)],
         variant: Option<Variant>,
     ) -> Result<(), Error> {
@@ -511,11 +506,19 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.set_batch(group.0, key, &raw, variant)
     }
 
-    pub fn clear_batch(&mut self, group: BatchGroup<P>, key: Option<MaterialHandle>) {
+    pub fn clear_batch(&mut self, group: BatchGroup<P>, key: Option<Asset<Material>>) {
         self.core.clear_batch(group.0, key);
     }
 
-    pub fn texture_resident(&self, texture: TextureHandle) -> bool {
+    pub fn judge(
+        &mut self,
+        kind: engine_core::DrawKind,
+        mut verdict: impl FnMut(BatchOf<'_>, u32) -> Option<u32>,
+    ) {
+        self.core.judge(kind, &mut verdict);
+    }
+
+    pub fn texture_resident(&self, texture: Asset<engine_core::Texture>) -> bool {
         self.core.assets.textures.is_texture_resident(texture)
     }
 
@@ -546,7 +549,7 @@ impl<P: GpuPart> Prepare<'_, P> {
     pub fn fill<S>(
         &mut self,
         pipeline: &Pipeline<P, S>,
-        textures: &[TextureHandle],
+        textures: &[Asset<engine_core::Texture>],
     ) -> Pipeline<P, S> {
         Pipeline(self.core.fill(pipeline.0, textures), PhantomData)
     }
@@ -623,39 +626,15 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawOrder {
+    Grouped,
+    Sorted,
+}
+
 impl<P: GpuPart> Draw<'_, P, Scene> {
-    pub fn batches(
-        &mut self,
-        pipeline: &Pipeline<P, Scene>,
-        vertices: Range<u32>,
-        mut keep: impl FnMut(BatchOf<'_>) -> Option<u32>,
-    ) {
-        let mut kept = std::mem::take(&mut self.raw.run().spare.shapes);
-        for batch in self.raw.batches() {
-            let Some(order) = keep(BatchOf::of(batch)) else {
-                continue;
-            };
-            let shape = match batch.geometry {
-                Some(mesh) => Shape::Mesh {
-                    mesh,
-                    key: batch.material,
-                    instances: batch.instances.clone(),
-                },
-                None => Shape::Pulled {
-                    vertices: vertices.clone(),
-                    instances: batch.instances.clone(),
-                    key: batch.material,
-                },
-            };
-            kept.push((order, shape));
-        }
-        if !kept.is_sorted_by_key(|(order, _)| *order) {
-            kept.sort_by_key(|(order, _)| *order);
-        }
-        for (_, shape) in kept.drain(..) {
-            self.draw(pipeline, shape);
-        }
-        self.raw.run().spare.shapes = kept;
+    pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>, order: DrawOrder) {
+        self.raw.batches((pipeline.0, vertices, order));
     }
 
     pub fn pass(&mut self) -> Option<PassBit> {
@@ -674,11 +653,11 @@ impl<P: GpuPart> Draw<'_, P, Own> {
         let Some(listed) = run.installs.members.get_mut(scene as usize).map(std::mem::take) else {
             return;
         };
-        let entries = std::mem::take(&mut run.installs.draw_entries);
+        let mut entries = std::mem::take(&mut run.installs.draw_entries);
         run.point = Some(bit);
         let encoding = self.raw.part();
         for &at in &listed {
-            let Some(member) = entries.get(at as usize) else {
+            let Some(member) = entries.get_mut(at as usize) else {
                 continue;
             };
             let run = self.raw.run();
@@ -698,7 +677,7 @@ impl<P: GpuPart> Draw<'_, P, Own> {
             };
             run.tallies.kinds.begin(scene, member.kind);
             let part = held.as_ref().map_or(own as &dyn std::any::Any, |held| held.part());
-            let batches = (&member.batches, Some(bit));
+            let batches = (&mut member.batches, Some(bit));
             (member.call)(part, &mut self.raw.member(member.part, batches));
             let run = self.raw.run();
             run.tallies.kinds.end();

@@ -12,5 +12,5 @@ mod skeleton;
 
 pub use bound::{Bound, PaletteRow, bind, model_matrices, palette};
 pub use clip::{Clip, Keys, RootTrack, RotationTrack, TranslationTrack};
-pub use pose::{Reach, blend, reach, shift, turn};
+pub use pose::blend;
 pub use skeleton::{Joint, Posed, Skeleton};

@@ -9,8 +9,6 @@ use crate::{
     rules::{RULES, repository, warnings_allowed},
 };
 
-const TOOLS: &str = "xtask_engine";
-
 const KINDS: &str = "kinds";
 
 struct Lint {
@@ -54,8 +52,8 @@ const LINT: &[Stage<Lint>] = &[
     },
     Stage {
         name: "shader link",
-        needs: &[],
-        covers: |lint| lint.changes.affects(TOOLS),
+        needs: &["generated"],
+        covers: |lint| !lint.changes.affected.is_empty(),
         run: shader_link,
     },
     Stage {

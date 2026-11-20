@@ -1,13 +1,14 @@
 use bevy_ecs::component::Component;
+use engine_assets::{Asset, Texture};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, ErrorCode, Layers, NodeId, TextureHandle};
+use crate::{Error, ErrorCode, Layers, NodeId};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Target {
     #[default]
     Surface,
-    Texture(TextureHandle),
+    Texture(Asset<Texture>),
 }
 
 impl Target {

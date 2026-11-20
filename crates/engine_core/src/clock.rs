@@ -3,18 +3,7 @@ use std::collections::BTreeSet;
 use bevy_ecs::prelude::Resource;
 use serde::Serialize;
 
-use crate::{Error, ErrorCode, settings};
-
-settings! {
-    #[section("frame_limits")]
-    #[derive(Copy)]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneFrameLimits")]
-    pub struct FrameLimits {
-        pub max_fixed_steps: u32 = 5 => range(1, 1000),
-        pub max_frame_seconds: f64 = 0.25 => above(0.0),
-    }
-}
+use crate::{Error, ErrorCode, Expected};
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Serialize)]
 #[component(immutable)]
@@ -26,7 +15,6 @@ pub struct FrameTime {
     pub real_seconds: f64,
     pub elapsed: f64,
     pub real_elapsed: f64,
-    pub dropped_seconds: f64,
     pub cut_seconds: f64,
 }
 
@@ -92,24 +80,31 @@ impl Interval {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Advanced {
     pub(crate) ticks: u32,
-    pub(crate) dropped_seconds: f64,
     pub(crate) alpha: f32,
 }
 
 pub(crate) struct FixedClock {
     step_seconds: f64,
+    catch_up_seconds: f64,
     accumulator_seconds: f64,
 }
 
 impl FixedClock {
-    pub(crate) fn new(ticks_per_second: u32) -> Result<Self, Error> {
+    pub(crate) fn new(ticks_per_second: u32, catch_up_seconds: f64) -> Result<Self, Error> {
         if ticks_per_second == 0 {
             return Err(Error::new(ErrorCode::OutOfRange, "$.ticks_per_second")
                 .at_least(1)
                 .got(ticks_per_second));
         }
+        if !catch_up_seconds.is_finite() || catch_up_seconds <= 0.0 {
+            return Err(Error::new(ErrorCode::OutOfRange, "$.catch_up_seconds")
+                .expected(Expected::Above)
+                .range(0.0, f64::MAX)
+                .got(catch_up_seconds));
+        }
         Ok(Self {
             step_seconds: 1.0 / f64::from(ticks_per_second),
+            catch_up_seconds,
             accumulator_seconds: 0.0,
         })
     }
@@ -118,34 +113,28 @@ impl FixedClock {
         self.step_seconds
     }
 
+    pub(crate) fn capped(&self, real_seconds: f64) -> f64 {
+        real_seconds.min(self.catch_up_seconds)
+    }
+
     pub(crate) fn reset(&mut self) {
         self.accumulator_seconds = 0.0;
     }
 
-    pub(crate) fn advance(&mut self, delta_seconds: f64, max_fixed_steps: u32) -> Advanced {
-        let previous_remainder = self.accumulator_seconds;
+    pub(crate) fn advance(&mut self, delta_seconds: f64) -> Advanced {
         let incoming_steps = delta_seconds / self.step_seconds;
         let fractional_seconds = if incoming_steps.is_finite() {
             incoming_steps.fract() * self.step_seconds
         } else {
             delta_seconds % self.step_seconds
         };
-        let accumulated_fraction = previous_remainder + fractional_seconds;
-        let available_steps =
-            incoming_steps.floor() + (accumulated_fraction / self.step_seconds).floor();
-        let ticks = available_steps.min(f64::from(max_fixed_steps)) as u32;
+        let accumulated_fraction = self.accumulator_seconds + fractional_seconds;
+        let ticks =
+            (incoming_steps.floor() + (accumulated_fraction / self.step_seconds).floor()) as u32;
         self.accumulator_seconds = accumulated_fraction % self.step_seconds;
-        let dropped_seconds = if available_steps > f64::from(ticks) {
-            (delta_seconds - f64::from(ticks) * self.step_seconds + previous_remainder
-                - self.accumulator_seconds)
-                .max(0.0)
-        } else {
-            0.0
-        };
         let alpha = (self.accumulator_seconds / self.step_seconds) as f32;
         Advanced {
             ticks,
-            dropped_seconds,
             alpha: crate::math::min(alpha, f32::from_bits(1.0_f32.to_bits() - 1)),
         }
     }

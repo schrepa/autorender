@@ -17,8 +17,8 @@ use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    DevOnly, Error, ErrorCode, KindDecl, List, Mover, MoverId, Pace, Parent, SceneContext,
-    Schedule, Section, Source, Switch,
+    DevOnly, Error, ErrorCode, KindDecl, List, Mover, MoverId, Pace, SceneContext, Schedule,
+    Section, Source, Switch,
 };
 
 pub trait Brick: 'static {
@@ -124,8 +124,11 @@ fn set_of<S: Section, R: Resource + From<S>>(
     path: &str,
 ) -> Result<(), Error> {
     let section = checked::<S>(value, path)?;
-    if let Some(scene) = world.get_resource::<SceneContext>() {
-        scene
+    if let (Some(scene), Some(assets)) = (
+        world.get_resource::<SceneContext>(),
+        world.get_resource::<crate::Assets>(),
+    ) {
+        assets
             .scope(|| section.check_scene(scene))
             .map_err(|error| error.within(path))?;
     }
@@ -137,12 +140,10 @@ fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<()
     let Some(scene) = scene.downcast_ref::<SceneContext>() else {
         return Ok(());
     };
-    scene.scope(|| {
-        let section: S = engine_settings::parse_value_at(value, path)?;
-        section
-            .check_scene(scene)
-            .map_err(|error| error.within(path))
-    })
+    let section: S = engine_settings::parse_value_at(value, path)?;
+    section
+        .check_scene(scene)
+        .map_err(|error| error.within(path))
 }
 
 pub trait Listing: Sized {
@@ -170,6 +171,7 @@ fn record_of<B: Brick>() -> (BrickRecord, BrickSystems) {
         let path = first.path();
         record.shader_prefix(path.split("::").next().unwrap_or(path));
     }
+    record.render.push(Arc::new(source));
     let mut systems = BrickSystems::default();
     B::register(&mut Bricks {
         record: &mut record,
@@ -266,9 +268,11 @@ impl<B: Brick> Spawner<'_, '_, B> {
     }
 
     pub fn insert(&mut self, entity: Entity, bundle: impl Bundle) {
-        let package = B::SOURCE.package();
-        self.commands
-            .queue(move |world: &mut World| inserted(world, entity, bundle, package));
+        self.commands.queue(move |world: &mut World| {
+            if let Ok(mut held) = world.get_entity_mut(entity) {
+                held.insert(bundle);
+            }
+        });
     }
 
     pub fn remove<T: Bundle>(&mut self, entity: Entity) {
@@ -308,47 +312,13 @@ fn spawned<T: Bundle>(
         let unlisted = Error::new(ErrorCode::UnknownReference, "$").got(package);
         return refused(world, package, "spawn", unlisted);
     };
-    let Ok(mut spawned) = world.get_entity_mut(entity) else {
-        return;
-    };
-    spawned.insert((bundle, SpawnedBy(by)));
-    if let Err(error) = crate::admit(world, entity, None, "$") {
-        let _ = world.try_despawn(entity);
-        refused(world, package, "spawn", error);
-    }
-}
-
-fn inserted<T: Bundle>(world: &mut World, entity: Entity, bundle: T, package: &'static str) {
-    let Ok(mut held) = world.get_entity_mut(entity) else {
-        return;
-    };
-    held.insert(bundle);
-    let parts = world
-        .register_bundle::<T>()
-        .contributed_components()
-        .to_vec();
-    if let Err(error) = crate::admit(world, entity, Some(&parts), "$") {
-        if let Ok(mut held) = world.get_entity_mut(entity) {
-            held.remove::<T>();
-        }
-        refused(world, package, "insert", error);
+    if let Ok(mut spawned) = world.get_entity_mut(entity) {
+        spawned.insert((bundle, SpawnedBy(by)));
     }
 }
 
 fn parented(world: &mut World, changes: &[(Entity, Option<Entity>)], package: &'static str) {
-    let before: Vec<(Entity, Option<Entity>)> = changes
-        .iter()
-        .map(|&(child, _)| (child, world.get::<Parent>(child).map(Parent::parent)))
-        .collect();
     if let Err(error) = crate::set_parents(world, changes) {
-        refused(world, package, "parent", error);
-        return;
-    }
-    let admitted = changes
-        .iter()
-        .try_for_each(|&(child, _)| crate::admit(world, child, None, "$"));
-    if let Err(error) = admitted {
-        let _ = crate::set_parents(world, &before);
         refused(world, package, "parent", error);
     }
 }

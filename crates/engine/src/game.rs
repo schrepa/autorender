@@ -1,18 +1,24 @@
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_core::{
-    BrickList, Bricks, Camera, Engine, Error, Present, Show, Transform, main_camera, place_camera,
+    AssetKind, Assets, BrickList, Bricks, Camera, Engine, Error, MeshFile, Present,
+    Show, Texture, Transform, main_camera, place_camera,
 };
 use engine_render::{GpuAsk, GpuRequest, RenderSettings, SurfaceForm, wgpu};
-use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
+use engine_scene::SceneInstance;
 
-pub fn engine(bricks: BrickList, ticks_per_second: u32) -> crate::Result<Engine> {
-    let mut engine = Engine::listed(bricks, ticks_per_second)?;
+pub fn engine(bricks: BrickList, start: &Start) -> crate::Result<Engine> {
+    let mut engine = Engine::listed(bricks, start.ticks_per_second, start.catch_up_seconds)?;
     engine.settings::<RenderSettings>();
-    engine
-        .app
-        .world_mut()
-        .insert_resource(engine_render::device_limits(&wgpu::Limits::default()));
+    let world = engine.app.world_mut();
+    world.insert_resource(engine_render::device_limits(&wgpu::Limits::default()));
+    let mut assets = world.resource_mut::<Assets>();
+    assets.kind(AssetKind::declared::<MeshFile>("mesh", MeshFile::read))?;
+    assets.kind(AssetKind::declared::<Texture>(
+        "texture",
+        engine_textures::read_texture,
+    ))?;
+    assets.name_groups(start.groups.iter().map(|name| (*name).to_owned()).collect());
     Ok(engine)
 }
 
@@ -23,15 +29,6 @@ pub trait Game: Resource + Default {
         Start::default()
     }
 
-    fn load_scene(
-        engine: &mut Engine,
-        document: &SceneDocument,
-        files: &SceneFiles,
-        _arrival: Arrival,
-    ) -> Result<SceneInstance, Error> {
-        document.instantiate_with(engine.app.world_mut(), files)
-    }
-
     fn reset_camera(engine: &mut Engine, scene: &LoadedScene) {
         scene.place_camera(engine.app.world_mut());
     }
@@ -39,10 +36,13 @@ pub trait Game: Resource + Default {
 
 pub struct Start {
     pub ticks_per_second: u32,
+    pub catch_up_seconds: f64,
     pub gpu: GpuRequest,
     pub surface: SurfaceForm,
     pub present: Present,
     pub show: Show,
+    pub groups: &'static [&'static str],
+    pub variant: Option<fn(wgpu::Features) -> &'static str>,
 }
 
 impl Default for Start {
@@ -50,6 +50,7 @@ impl Default for Start {
         let floor = wgpu::Limits::downlevel_defaults();
         Self {
             ticks_per_second: 60,
+            catch_up_seconds: 5.0 / 60.0,
             gpu: GpuRequest {
                 power: wgpu::PowerPreference::HighPerformance,
                 need: GpuAsk {
@@ -78,14 +79,10 @@ impl Default for Start {
                 latency: 2,
             },
             show: Show::WhenReady,
+            groups: &[],
+            variant: None,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Arrival {
-    Opening,
-    Reload,
 }
 
 #[derive(Default)]
@@ -116,27 +113,33 @@ impl LoadedScene {
         if let Some(previous) = self.instance.replace(instance) {
             previous.despawn(world);
         }
-        self.start = main_camera(world).and_then(|camera| {
-            Some((
-                *world.get::<Transform>(camera)?,
-                *world.get::<Camera>(camera)?,
-            ))
-        });
+        self.start = None;
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-pub struct DefaultScene {
-    pub name: &'static str,
-    pub path: &'static str,
-    pub text: &'static str,
+    pub(crate) fn land(&mut self, world: &mut World) -> Result<bool, Error> {
+        let Some(instance) = self.instance.as_mut() else {
+            return Ok(false);
+        };
+        let first = instance.land(world)?;
+        if first {
+            self.start = main_camera(world).and_then(|camera| {
+                Some((
+                    *world.get::<Transform>(camera)?,
+                    *world.get::<Camera>(camera)?,
+                ))
+            });
+        }
+        Ok(first)
+    }
 }
 
 #[derive(Clone, Copy)]
 pub struct GameEntry {
     pub name: &'static str,
     pub title: &'static str,
+    #[cfg(feature = "dev")]
     pub folder: &'static str,
     pub bricks: fn(BrickList) -> BrickList,
-    pub scene: DefaultScene,
+    pub scene: &'static str,
+    pub linked: Option<&'static str>,
 }

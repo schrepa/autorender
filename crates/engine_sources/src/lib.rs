@@ -7,11 +7,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use sha2::{Digest, Sha256};
 use toml_edit::{Document, Item};
 use wgsl_parse::syntax::TranslationUnit;
 
 const RESERVED: &[&str] = &["engine", "generated"];
+const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const PRIME: u64 = 0x0100_0000_01b3;
 
 const KEYWORDS: &[&str] = &[
     "as", "async", "await", "box", "break", "const", "continue", "dyn", "else", "enum", "extern",
@@ -83,17 +84,6 @@ pub fn emit() {
     println!("cargo:rerun-if-changed={}", src.display());
     println!("cargo:rerun-if-changed={}", cargo_toml.display());
     let game = read(&cargo_toml).is_some_and(|item| kind(&item) == Some("game"));
-    let mut code = String::new();
-    code.push_str("extern crate engine_ecs as bevy_ecs;\n");
-    code.push_str(&source_code(
-        &package,
-        game,
-        &src,
-        Some(&bricks),
-        "crate::SOURCE",
-    ));
-    fs::write(out.join("brick.rs"), code).expect("OUT_DIR is writable");
-
     let mut modules: Vec<String> = fs::read_dir(&bricks)
         .into_iter()
         .flatten()
@@ -108,9 +98,8 @@ pub fn emit() {
         shaders.extend(shader_files(&bricks.join(module).join("shaders")));
     }
     parse_shaders(&root, &out, &shaders);
-    if modules.is_empty() {
-        return;
-    }
+    let own = source_code(&package, game, &src, "crate::SOURCE");
+    let mut owned = vec![(package.clone(), src)];
     let folder = out.join("bricks");
     fs::create_dir_all(&folder).expect("OUT_DIR is writable");
     let crate_name = package.replace('-', "_");
@@ -121,11 +110,98 @@ pub fn emit() {
             &named,
             game,
             &inside,
-            None,
             &format!("crate::bricks::{module}::SOURCE"),
         );
         fs::write(folder.join(format!("{module}.rs")), code).expect("OUT_DIR is writable");
+        owned.push((named, inside));
     }
+    let mut code = String::new();
+    code.push_str("extern crate engine_ecs as bevy_ecs;\n");
+    code.push_str(&own);
+    if game {
+        code.push_str(&linked(&manifest, &root, &package, &owned));
+    }
+    fs::write(out.join("brick.rs"), code).expect("OUT_DIR is writable");
+}
+
+fn linked(manifest: &Path, root: &Path, package: &str, owned: &[(String, PathBuf)]) -> String {
+    if std::env::var_os("CARGO_FEATURE_DEV").is_some() {
+        return "pub(crate) const LINKED: Option<&str> = None;\n".to_owned();
+    }
+    let file = manifest.join("generated").join("shaders.json");
+    println!("cargo:rerun-if-changed={}", file.display());
+    let shown = format!("{package}/generated/shaders.json");
+    match fs::read_to_string(&file) {
+        Err(_) => println!("cargo::error={shown} is missing: run cargo xtask generate"),
+        Ok(text) => {
+            let recorded = recorded(&text);
+            let workspace = read(&root.join("Cargo.toml"));
+            let mut stale: Vec<&str> = (owned.iter())
+                .filter(|(name, _)| !recorded.iter().any(|(known, _)| known == name))
+                .map(|(name, _)| name.as_str())
+                .collect();
+            for (name, hash) in &recorded {
+                let folder = (owned.iter().find(|(own, _)| own == name))
+                    .map(|(_, folder)| folder.clone())
+                    .or_else(|| Some(root.join(member(workspace.as_ref()?, name)?).join("src")));
+                let Some(folder) = folder else {
+                    stale.push(name);
+                    continue;
+                };
+                println!("cargo:rerun-if-changed={}", folder.display());
+                if folder_hash(&folder) != *hash {
+                    stale.push(name);
+                }
+            }
+            if !stale.is_empty() {
+                println!(
+                    "cargo::error={shown} is stale for {}: run cargo xtask generate",
+                    stale.join(", ")
+                );
+            }
+        }
+    }
+    format!(
+        "pub(crate) const LINKED: Option<&str> = Some(include_str!({:?}));\n",
+        file.display().to_string()
+    )
+}
+
+fn recorded(text: &str) -> Vec<(String, u64)> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|mut file| file.get_mut("sources").map(serde_json::Value::take))
+        .and_then(|sources| serde_json::from_value(sources).ok())
+        .unwrap_or_default()
+}
+
+fn member<'a>(workspace: &'a Item, package: &str) -> Option<&'a str> {
+    workspace
+        .get("workspace")?
+        .get("dependencies")?
+        .get(package)?
+        .get("path")?
+        .as_str()
+}
+
+fn entry_hash(key: &str, text: &str) -> u64 {
+    [key.as_bytes(), &[0], text.as_bytes()]
+        .concat()
+        .iter()
+        .fold(OFFSET, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(PRIME))
+}
+
+fn folder_hash(folder: &Path) -> u64 {
+    let mut hash = 0_u64;
+    for file in &owned_files(folder, "wgsl") {
+        let text = fs::read_to_string(file).expect("a WGSL file");
+        hash = hash.wrapping_add(entry_hash(&relative(folder, file), &text));
+    }
+    if let Some(prefix) = prefix(&folder.join("shaders")) {
+        let generated = generated_wgsl(folder);
+        hash = hash.wrapping_add(entry_hash(&format!("generated::{prefix}"), &generated));
+    }
+    hash
 }
 
 fn shader_files(shaders: &Path) -> Vec<PathBuf> {
@@ -147,14 +223,9 @@ fn parse_shaders(root: &Path, out: &Path, files: &[PathBuf]) {
             (relative(root, file), text)
         })
         .collect();
-    let mut hash = Sha256::new();
-    for (path, text) in &texts {
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(text.as_bytes());
-        hash.update([0]);
-    }
-    let hash: [u8; 32] = hash.finalize().into();
+    let hash = (texts.iter())
+        .fold(0_u64, |sum, (path, text)| sum.wrapping_add(entry_hash(path, text)))
+        .to_le_bytes();
     let stamp = out.join("shaders.parsed");
     if fs::read(&stamp).is_ok_and(|parsed| parsed == hash) {
         return;
@@ -182,13 +253,7 @@ fn line_column(text: &str, at: usize) -> (usize, usize) {
     (lines + 1, before.len() - start + 1)
 }
 
-fn source_code(
-    package: &str,
-    game: bool,
-    folder: &Path,
-    skipped: Option<&Path>,
-    source: &str,
-) -> String {
+fn source_code(package: &str, game: bool, folder: &Path, source: &str) -> String {
     let shaders = folder.join("shaders");
     let prefix = prefix(&shaders);
     let wgsl = shader_files(&shaders);
@@ -214,19 +279,20 @@ fn source_code(
         node.variables = variables(&text);
     }
     if let Some(prefix) = prefix.as_ref().filter(|_| !wgsl.is_empty()) {
-        let generated = generated_wgsl(folder, skipped);
+        let generated = generated_wgsl(folder);
         if !generated.is_empty() {
+            let path = format!("generated::{prefix}");
             texts.push_str(&format!(
-                "    ::engine_core::ShaderText::generated({:?}, {generated:?}, \"\"),\n",
-                format!("generated::{prefix}")
+                "    ::engine_core::ShaderText::generated({path:?}, {generated:?}, \"\"),\n"
             ));
         }
     }
+    let hash = folder_hash(folder);
 
     let mut code = String::new();
     code.push_str(&format!(
         "pub(crate) static SOURCE: ::engine_core::Source = \
-         ::engine_core::Source::generated({package:?}, {game}, &[\n{texts}]);\n"
+         ::engine_core::Source::generated({package:?}, {game}, {hash}, &[\n{texts}]);\n"
     ));
     code.push_str("pub(crate) mod shaders {\n");
     code.push_str(
@@ -405,16 +471,20 @@ fn variables(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn generated_wgsl(folder: &Path, skipped: Option<&Path>) -> String {
+fn owned_files(folder: &Path, extension: &str) -> Vec<PathBuf> {
+    let bricks = folder.join("bricks");
     let mut files = Vec::new();
     list(folder, &mut files);
     files.retain(|file| {
-        file.extension().is_some_and(|extension| extension == "rs")
-            && skipped.is_none_or(|skipped| !file.starts_with(skipped))
+        file.extension().is_some_and(|found| found == extension) && !file.starts_with(&bricks)
     });
     files.sort();
+    files
+}
+
+fn generated_wgsl(folder: &Path) -> String {
     let mut wgsl = String::new();
-    for file in &files {
+    for file in &owned_files(folder, "rs") {
         let text = fs::read_to_string(file).expect("a Rust file");
         for at in words(&text, "gpu_struct") {
             let Some(body) = text[at + "gpu_struct".len()..]

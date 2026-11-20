@@ -5,6 +5,7 @@ use super::*;
 use crate::CameraUniform;
 use crate::encode::Recording;
 use crate::gpu_calls::Handover;
+use crate::graph::Bits;
 use crate::machine::Target;
 use crate::profiling::{GpuProfiler, Span};
 use crate::readback::Reader;
@@ -263,9 +264,16 @@ impl Renderer {
         mark_between(encoder, span(end), span(begin));
     }
 
-    fn frame_encoder(&self, device: &wgpu::Device, batch: u8) -> wgpu::CommandEncoder {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("engine/frame-encoder"),
+    fn frame_encoder(
+        &self,
+        device: &wgpu::Device,
+        kept: Option<wgpu::CommandEncoder>,
+        batch: u8,
+    ) -> wgpu::CommandEncoder {
+        let mut encoder = kept.unwrap_or_else(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/frame-encoder"),
+            })
         });
         let busy = |batch: u8| self.core.profiler.busy(BATCHES.get(usize::from(batch))?);
         mark_between(&mut encoder, None, busy(batch));
@@ -312,6 +320,9 @@ impl Renderer {
         self.check_health()?;
         drop(self.surface.take());
         self.hidden.asked = false;
+        if let Some(run) = self.run.as_mut() {
+            run.tallies.held = None;
+        }
         if self.core.display.suspended() || self.run.is_none() || !self.usable() {
             return Ok(false);
         }
@@ -361,10 +372,11 @@ impl Renderer {
             .map_or(run.frames.current, |time| time.frame);
         let profile_upload = engine_profile::span("render", "asset_uploads");
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
-        let mut texture_bytes = run.assets.textures.sync(&device, &self.core.queue, world);
+        let texture_bytes = run.assets.textures.sync(&device, &self.core.queue, world);
         drop(profile_upload);
         let drawn_before = run.tallies.drawn.total;
         run.tallies.kinds.start_frame();
+        run.tallies.held = Some(false);
         let defaults;
         let settings = match world.get_resource::<crate::RenderSettings>() {
             Some(settings) => settings,
@@ -416,23 +428,10 @@ impl Renderer {
             }
         }
         run.warm_running();
-        if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
-            for texture in std::mem::take(&mut run.bindings.wanted_textures) {
-                if let Some(source) = library.texture(texture) {
-                    let revision = library.revision_of(texture).unwrap_or_default();
-                    texture_bytes += run.assets.textures.upload_texture(
-                        &device,
-                        &self.core.queue,
-                        (texture, revision),
-                        source,
-                    );
-                }
-            }
-        }
         if let Some(error) = run.refused.take() {
             return Err(error);
         }
-        run.write_cameras();
+        run.write_cameras(views.map_or(0, engine_core::Views::slots));
         run.refresh_groups();
         drop(profile_writes);
         self.core.profiler.begin_frame(&device, settings);
@@ -457,14 +456,13 @@ impl Renderer {
         let mut order = std::mem::take(&mut scratch.order);
         drawn_order(listed, &mut order);
         let profile_encoding = engine_profile::span("render", "command_encoding");
-        let mut encoder = self.frame_encoder(&device, 0);
-        if !hidden {
-            self.core.display.time_begin(&mut encoder);
-        }
+        let mut encoder = self.frame_encoder(&device, None, 0);
+        let stamped = !hidden && self.core.display.time_begin(&mut encoder);
         let Some(run) = self.run.as_mut() else {
             return Ok(self.answer_picture(surface));
         };
         run.recording = Recording::Encoding(encoder);
+        let (finishers, mut encoders) = (self.core.queue.finishers(), 1);
         let mut batch = 0;
         let mut timed: Option<&'static str> = None;
         let mut parted: Option<(&'static str, u32)> = None;
@@ -512,9 +510,7 @@ impl Renderer {
             }
             run.forget_viewed();
             keep_eligible(run, &facts, (first, index == 0));
-            if world.get::<engine_core::ViewSkip>(facts.view).is_some() {
-                skip_scenes(run);
-            }
+            let skipped = skip_scenes(run, world, facts.view);
             #[cfg(feature = "dev")]
             {
                 run.sets.scratch.skips =
@@ -587,11 +583,16 @@ impl Renderer {
                     run.leave();
                     let mut ended = run.take_encoder();
                     self.mark(ended.as_mut(), timed.take(), None);
-                    if let Some(mut encoder) = ended {
-                        self.close_batch(&mut encoder, batch);
-                        self.core.queue.hand(Handover::from(encoder));
+                    if let Some(encoder) = ended.as_mut() {
+                        self.close_batch(encoder, batch);
                     }
-                    let encoder = self.frame_encoder(&device, planned.batch);
+                    if encoders < finishers
+                        && let Some(encoder) = ended.take()
+                    {
+                        self.core.queue.hand(Handover::from(encoder));
+                        encoders += 1;
+                    }
+                    let encoder = self.frame_encoder(&device, ended, planned.batch);
                     let Some(run) = self.run.as_mut() else { break };
                     run.recording = Recording::Encoding(encoder);
                     batch = planned.batch;
@@ -663,6 +664,7 @@ impl Renderer {
                     true,
                 );
             }
+            walk_held(run, &self.core.profiler, skipped);
             if run.canvas.rect.is_some() {
                 run.copy_canvas(false);
             }
@@ -700,7 +702,7 @@ impl Renderer {
             })
         });
         let (written, slots) = (run.written(), run.reading.slots);
-        if !hidden {
+        if stamped {
             self.core.display.time_end(
                 (&device, &mut encoder),
                 (&mut run.reading.list, written, slots),
@@ -726,7 +728,9 @@ impl Renderer {
         if let Some(picture) = picture {
             self.picture.reading = Some(picture.map(Reading::map));
         }
-        self.hidden.submitted(&self.core.queue);
+        if hidden {
+            self.hidden.submitted(&self.core.queue);
+        }
         if let Some(surface) = surface {
             surface.present(&self.core.queue);
         }
@@ -847,18 +851,54 @@ fn keep_eligible(
     }
 }
 
-fn skip_scenes(run: &mut Run) {
+fn skip_scenes(run: &mut Run, world: &World, view: bevy_ecs::entity::Entity) -> bool {
+    let skipped = world.get::<engine_core::ViewSkip>(view).is_some();
     for (index, pass) in run.machine.declared.passes.iter().enumerate() {
-        if pass.scene.is_some_and(|scene| scene.core) {
+        if skipped && pass.scene.is_some_and(|scene| scene.core) {
             run.planning.runs.remove(index);
         }
+    }
+    skipped
+}
+
+fn walk_held(run: &mut Run, timer: &GpuProfiler, skipped: bool) {
+    if !skipped || !run.installs.draw_entries.iter().any(|member| member.batches.holds) {
+        return;
+    }
+    let graph = &run.machine.graph;
+    let (mut scenes, mut outputs) = (Bits::of(graph.passes()), Bits::of(graph.resources()));
+    let mut written = outputs.clone();
+    for (index, pass) in run.machine.declared.passes.iter().enumerate() {
+        if pass.scene.is_some_and(|scene| scene.core) && run.sets.scratch.base.contains(index) {
+            scenes.insert(index);
+            outputs.union_with(graph.writes(index));
+        }
+    }
+    (0..graph.resources()).for_each(|resource| written.insert(resource));
+    let plan = std::sync::Arc::new(graph.plan(&scenes, &outputs, &written).unwrap_or_default());
+    run.planning.plan = Some(std::sync::Arc::clone(&plan));
+    for (at, planned) in plan.passes.iter().enumerate() {
+        let index = planned.pass.index();
+        let part = run.machine.declared.passes[index].part;
+        if !run.drawable(part) {
+            continue;
+        }
+        let Some(mut held) = run.parts[part as usize].take() else {
+            continue;
+        };
+        run.part = part;
+        run.pass = index as u32;
+        run.planning.planned_at = at;
+        run.collect();
+        held.encode(index as u32, run, timer);
+        run.record();
+        run.parts[part as usize] = Some(held);
     }
 }
 
 #[cfg(feature = "dev")]
 pub(super) mod names {
     use bevy_ecs::world::World;
-    use engine_core::AssetResidency;
     use engine_registry::{Kind, NameEntry, register, unavailable};
     use serde_json::{Map, Value, json};
 
@@ -1073,20 +1113,9 @@ pub(super) mod names {
         json!({"meshes": run.assets.meshes.len(), "textures": textures, "texture_formats": formats})
     }
 
-    fn asset_bytes(_: &Renderer, run: &Run, world: &World) -> Value {
+    fn asset_bytes(_: &Renderer, run: &Run, _: &World) -> Value {
         let (_, textures) = run.assets.textures.texture_totals();
-        let meshes = world.get_resource::<AssetResidency>().map_or_else(
-            || unavailable("no_asset_residency"),
-            |residency| {
-                let bytes: u64 = residency
-                    .meshes()
-                    .filter(|(handle, _)| run.assets.meshes.contains(*handle))
-                    .map(|(_, mesh)| mesh.byte_len())
-                    .sum();
-                json!(bytes)
-            },
-        );
-        json!({"meshes": meshes, "textures": textures})
+        json!({"meshes": run.assets.meshes.bytes(), "textures": textures})
     }
 
     fn kinds(_: &Renderer, run: &Run, _: &World) -> Value {

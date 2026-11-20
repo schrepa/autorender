@@ -1,12 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use engine_assets::MeshBuffer;
-use engine_core::{Error, Mesh, MeshVertex, Transform, glam};
+use engine_core::{Error, Transform, glam};
 use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, valid_uri};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{SceneEnvironment, SceneFiles, SceneMaterial, SceneTexture};
+use crate::validation::{identifier, unique_ids};
+use crate::{SceneEnvironment, SceneMaterial, SceneTexture};
 
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -21,6 +21,15 @@ pub struct SceneDocument {
     pub id: String,
     pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "dev",
+        schemars(
+            length(min = 1, max = 256),
+            regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
+        )
+    )]
+    cooked: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<SceneEnvironment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub textures: Vec<SceneTexture>,
@@ -31,18 +40,110 @@ pub struct SceneDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
     pub entities: Vec<SceneObject>,
+    #[serde(skip)]
+    pub(crate) folder: String,
+}
+
+#[derive(Deserialize)]
+struct Cooked {
+    items: CookedItems,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CookedItems {
+    textures: Vec<SceneTexture>,
+    materials: Vec<SceneMaterial>,
+    meshes: Vec<SceneMesh>,
+    prefabs: Vec<ScenePrefab>,
+    entities: Vec<SceneObject>,
 }
 
 impl SceneDocument {
     pub fn from_json(source: &str) -> Result<Self, Error> {
-        if source.len() > MAX_SOURCE_BYTES {
-            return Err(Error::new(ErrorCode::SourceTooLarge, "$")
-                .at_most(MAX_SOURCE_BYTES as u64)
-                .got(source.len()));
-        }
+        sized(source, "$")?;
         let document: Self = engine_settings::parse_json(source)?;
-        document.structure()?;
+        document.ids()?;
         Ok(document)
+    }
+
+    pub fn cooked(&self) -> Option<&str> {
+        self.cooked.as_deref()
+    }
+
+    pub fn append_cooked(&mut self, source: &str) -> Result<(), Error> {
+        let uri = self.cooked.as_deref().ok_or_else(|| {
+            Error::new(ErrorCode::MissingField, "$.cooked").expected(Expected::Present)
+        })?;
+        valid_uri(uri, "$.cooked")?;
+        sized(source, "$.cooked")?;
+        let folder = uri.rfind('/').map_or("", |at| &uri[..=at]).to_owned();
+        let Cooked { items } =
+            engine_settings::parse_json(source).map_err(|error| error.within("$.cooked"))?;
+        let ids = |section: &str| format!("$.cooked.items.{section}");
+        fresh(
+            self.textures.iter().map(|texture| texture.id.as_str()),
+            items.textures.iter().map(|texture| texture.id.as_str()),
+            &ids("textures"),
+        )?;
+        fresh(
+            self.materials.iter().map(|material| material.id.as_str()),
+            items.materials.iter().map(|material| material.id.as_str()),
+            &ids("materials"),
+        )?;
+        fresh(
+            self.meshes.iter().map(|mesh| mesh.id.as_str()),
+            items.meshes.iter().map(|mesh| mesh.id.as_str()),
+            &ids("meshes"),
+        )?;
+        fresh(
+            self.prefabs.iter().map(|prefab| prefab.id.as_str()),
+            items.prefabs.iter().map(|prefab| prefab.id.as_str()),
+            &ids("prefabs"),
+        )?;
+        fresh(
+            self.entities.iter().map(|entity| entity.id.as_str()),
+            items.entities.iter().map(|entity| entity.id.as_str()),
+            &ids("entities"),
+        )?;
+        self.textures
+            .extend(items.textures.into_iter().map(|mut texture| {
+                texture.within(&folder);
+                texture
+            }));
+        self.meshes.extend(items.meshes.into_iter().map(|mesh| SceneMesh {
+            uri: format!("{folder}{}", mesh.uri),
+            ..mesh
+        }));
+        self.materials.extend(items.materials);
+        self.prefabs.extend(items.prefabs.into_iter().map(|mut prefab| {
+            prefab.entities.iter_mut().for_each(|entity| entity.cooked = true);
+            prefab
+        }));
+        self.entities.extend(items.entities.into_iter().map(|mut entity| {
+            entity.cooked = true;
+            entity
+        }));
+        self.folder = folder;
+        Ok(())
+    }
+
+    pub(crate) fn ids(&self) -> Result<(), Error> {
+        identifier(&self.id, "$.id")?;
+        unique_ids(
+            self.textures.iter().map(|texture| texture.id.as_str()),
+            "$.textures",
+        )?;
+        unique_ids(
+            self.materials.iter().map(|material| material.id.as_str()),
+            "$.materials",
+        )?;
+        unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
+        unique_ids(
+            self.prefabs.iter().map(|prefab| prefab.id.as_str()),
+            "$.prefabs",
+        )?;
+        Ok(())
     }
 
     #[cfg(feature = "dev")]
@@ -81,6 +182,33 @@ impl SceneDocument {
     }
 }
 
+fn sized(source: &str, path: &str) -> Result<(), Error> {
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(Error::new(ErrorCode::SourceTooLarge, path)
+            .at_most(MAX_SOURCE_BYTES as u64)
+            .got(source.len()));
+    }
+    Ok(())
+}
+
+fn fresh<'a>(
+    held: impl Iterator<Item = &'a str>,
+    added: impl Iterator<Item = &'a str>,
+    section: &str,
+) -> Result<(), Error> {
+    let mut known: BTreeSet<&str> = held.collect();
+    for (index, id) in added.enumerate() {
+        let path = format!("{section}[{index}].id");
+        identifier(id, &path)?;
+        if !known.insert(id) {
+            return Err(Error::new(ErrorCode::DuplicateId, path)
+                .expected(Expected::Unique)
+                .got(id));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -90,114 +218,14 @@ pub struct SceneMesh {
         schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
-    pub source: MeshSource,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum MeshSource {
-    Cube {},
-    Plane {},
-    Inline {
-        #[cfg_attr(feature = "dev", schemars(length(min = 1)))]
-        vertices: Vec<SceneVertex>,
-        #[cfg_attr(feature = "dev", schemars(length(min = 3)))]
-        indices: Vec<u32>,
-    },
-    Buffer {
-        #[cfg_attr(
-            feature = "dev",
-            schemars(
-                length(min = 1, max = 256),
-                regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
-            )
-        )]
-        uri: String,
-    },
-}
-
-impl MeshSource {
-    pub(crate) fn mesh(
-        &self,
-        path: &str,
-        files: Option<&SceneFiles>,
-    ) -> Result<Option<Mesh>, Error> {
-        match self {
-            Self::Cube {} => Ok(Some(Mesh::cube())),
-            Self::Plane {} => Ok(Some(Mesh::plane())),
-            Self::Buffer { uri } => {
-                let uri_path = format!("{path}.uri");
-                valid_uri(uri, &uri_path)?;
-                let Some(files) = files else {
-                    return Ok(None);
-                };
-                files.mesh(uri, &uri_path)?.mesh(path).map(Some)
-            }
-            Self::Inline { vertices, indices } => {
-                let extras = |present: &dyn Fn(&SceneVertex) -> bool, field: &str| {
-                    let count = vertices.iter().filter(|vertex| present(vertex)).count();
-                    match vertices.iter().position(|vertex| !present(vertex)) {
-                        Some(lacking) if count != 0 => Err(Error::new(
-                            ErrorCode::InvalidMesh,
-                            format!("{path}.vertices[{lacking}].{field}"),
-                        )
-                        .expected(Expected::Present)),
-                        Some(_) | None => Ok(count != 0),
-                    }
-                };
-                let colored = extras(&|vertex| vertex.color.is_some(), "color")?;
-                let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
-                MeshBuffer {
-                    vertices: vertices.iter().copied().map(MeshVertex::from).collect(),
-                    indices: indices.clone(),
-                    colors: colored.then(|| {
-                        vertices
-                            .iter()
-                            .map(|vertex| vertex.color.unwrap_or([1.0; 4]))
-                            .collect()
-                    }),
-                    uv1: second.then(|| {
-                        vertices
-                            .iter()
-                            .map(|vertex| vertex.uv1.unwrap_or([0.0; 2]))
-                            .collect()
-                    }),
-                    named: Vec::new(),
-                }
-                .mesh(path)
-                .map(Some)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "dev", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneVertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    #[serde(default, skip_serializing_if = "zero_uv")]
-    pub uv: [f32; 2],
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<[f32; 4]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uv1: Option<[f32; 2]>,
-}
-
-impl From<SceneVertex> for MeshVertex {
-    fn from(vertex: SceneVertex) -> Self {
-        Self {
-            position: vertex.position,
-            normal: vertex.normal,
-            uv: vertex.uv,
-        }
-    }
-}
-
-fn zero_uv(uv: &[f32; 2]) -> bool {
-    *uv == [0.0; 2]
+    #[cfg_attr(
+        feature = "dev",
+        schemars(
+            length(min = 1, max = 256),
+            regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
+        )
+    )]
+    pub uri: String,
 }
 
 engine_settings::fields! {
@@ -232,6 +260,8 @@ pub struct SceneObject {
     pub transform: SceneTransform,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(skip)]
+    pub(crate) cooked: bool,
 }
 
 fn state_object_rules(schema: &mut schemars::Schema) {

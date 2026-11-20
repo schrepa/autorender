@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine_core::{AssetLibrary, Mesh, Mover, Pace, Reach, Texture, content_hash};
+use engine_core::{Assets, Material, MeshFile, Mover, Pace, Reach, Texture, content_hash};
 use serde_json::{Map, Value, json};
 
 pub fn digest(reach: &Reach<'_>) -> Value {
@@ -28,7 +28,7 @@ pub fn digest(reach: &Reach<'_>) -> Value {
         );
     }
     let assets = world
-        .get_resource::<AssetLibrary>()
+        .get_resource::<Assets>()
         .map_or(Value::Null, assets);
     let hash = hash(
         json!({"components": components, "assets": assets})
@@ -47,7 +47,7 @@ fn hash(bytes: &[u8]) -> String {
     format!("{:016x}", content_hash(bytes) as u64)
 }
 
-fn assets(library: &AssetLibrary) -> Value {
+fn assets(assets: &Assets) -> Value {
     let kind = |entries: Vec<(usize, Vec<u8>)>| {
         let mut bytes = Vec::new();
         for (slot, content) in &entries {
@@ -58,46 +58,34 @@ fn assets(library: &AssetLibrary) -> Value {
         json!({"count": entries.len(), "hash": hash(&bytes)})
     };
     json!({
-        "meshes": kind(library.meshes().map(|(slot, mesh)| (slot, mesh_bytes(mesh))).collect()),
+        "meshes": kind(
+            assets
+                .each::<MeshFile>()
+                .map(|(mesh, held)| (mesh.slot(), mesh_bytes(held)))
+                .collect()
+        ),
         "materials": kind(
-            library
-                .materials()
-                .map(|(slot, material)| (slot, without_libraries(&format!("{material:?}"))))
+            assets
+                .each::<Material>()
+                .map(|(material, held)| (material.slot(), without_loads(&format!("{held:?}"))))
                 .collect()
         ),
         "textures": kind(
-            library
-                .textures()
-                .map(|(slot, texture)| (slot, texture_bytes(texture)))
+            assets
+                .each::<Texture>()
+                .map(|(texture, held)| (texture.slot(), texture_bytes(held)))
                 .collect()
         ),
     })
 }
 
-fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(mesh.byte_len());
-    let mut floats = |values: &[f32]| {
-        for value in values {
-            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
-        }
-    };
-    for vertex in mesh.vertices() {
-        floats(&vertex.position);
-        floats(&vertex.normal);
-        floats(&vertex.uv);
+fn mesh_bytes(mesh: &MeshFile) -> Vec<u8> {
+    let description = mesh.description();
+    let mut bytes = format!("{description:?}").into_bytes();
+    for at in 0..description.streams.len() {
+        bytes.extend_from_slice(mesh.stream(at));
     }
-    for color in mesh.colors().into_iter().flatten() {
-        floats(color);
-    }
-    for uv in mesh.uv1().into_iter().flatten() {
-        floats(uv);
-    }
-    let bounds = mesh.bounds();
-    floats(&bounds.min().to_array());
-    floats(&bounds.max().to_array());
-    for index in mesh.indices() {
-        bytes.extend_from_slice(&index.to_le_bytes());
-    }
+    bytes.extend_from_slice(mesh.indices());
     bytes
 }
 
@@ -115,8 +103,8 @@ fn texture_bytes(texture: &Texture) -> Vec<u8> {
     bytes
 }
 
-fn without_libraries(debug: &str) -> Vec<u8> {
-    const LIBRARY: &str = "library: ";
+fn without_loads(debug: &str) -> Vec<u8> {
+    const LIBRARY: &str = "generation: ";
     let mut kept = String::with_capacity(debug.len());
     let mut rest = debug;
     while let Some(at) = rest.find(LIBRARY) {

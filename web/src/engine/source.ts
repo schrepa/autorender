@@ -1,5 +1,5 @@
 import { engineFailure } from "../generated/errors";
-import type { Fetched } from "./host";
+import { parseJson, type Runtime } from "../generated/runtime";
 
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(url, { cache: "no-cache", signal });
@@ -33,43 +33,34 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
   } finally { reader.releaseLock(); }
 }
 
-interface SceneLoad<Files> {
-  take_reads(): { uri: string }[];
-  read(uri: string, bytes: Uint8Array): void;
-  finish(): Files;
-  free(): void;
-}
-
-export interface SceneFileBindings<Files = unknown> {
-  SceneLoad: new (source: string) => SceneLoad<Files>;
-}
-
-export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal, fetched?: (fetched: Fetched) => void): Promise<Files> {
-  const load = new bindings.SceneLoad(source);
+export async function feedSceneFiles(game: Runtime, sceneUrl: string, signal: AbortSignal): Promise<void> {
   const base = new URL(sceneUrl, location.href);
-  try {
-    const reads = load.take_reads();
-    const files = { done: 0, total: reads.length };
-    let bytes = 0;
-    fetched?.({ files: { ...files }, bytes });
-    await Promise.all(reads.map(async ({ uri }) => {
-      const read = await fetchBytes(new URL(uri, base).href, signal);
-      load.read(uri, read);
-      files.done++;
-      bytes += read.byteLength;
-      fetched?.({ files: { ...files }, bytes });
-    }));
-    return load.finish();
-  } finally {
-    load.free();
+  for (let files = parseJson(game.files()); files.length; files = parseJson(game.files())) {
+    const groups = new Map<string, string[]>();
+    for (const { uri, group } of files) {
+      const uris = groups.get(group);
+      if (uris) uris.push(uri);
+      else groups.set(group, [uri]);
+    }
+    for (const uris of groups.values()) {
+      await Promise.all(uris.map(async uri => {
+        const read = await fetchBytes(new URL(uri, base).href, signal);
+        signal.throwIfAborted();
+        if (typeof read === "string") game.file_failed(uri, read);
+        else game.file(uri, read);
+      }));
+    }
   }
 }
 
-async function fetchBytes(url: string, signal: AbortSignal): Promise<Uint8Array> {
-  const response = await fetch(url, { signal });
-  if (!response.ok) {
+async function fetchBytes(url: string, signal: AbortSignal): Promise<Uint8Array | string> {
+  try {
+    const response = await fetch(url, { signal });
+    if (response.ok) return new Uint8Array(await response.arrayBuffer());
     await response.body?.cancel().catch(() => {});
-    throw engineFailure({ code: "missing_file", path: "$", got: { url, status: response.status } });
+    return JSON.stringify({ code: "missing_file", path: "$", got: { url, status: response.status } });
+  } catch (error) {
+    signal.throwIfAborted();
+    return JSON.stringify({ code: "source_io", path: "$", got: { url, error: String(error) } });
   }
-  return new Uint8Array(await response.arrayBuffer());
 }

@@ -140,6 +140,40 @@ pub fn clamp(x: f32, low: f32, high: f32) -> f32 {
 }
 
 #[inline]
+pub fn wrap_angle(angle: f32) -> f32 {
+    use core::f32::consts::{PI, TAU};
+    (angle + PI).rem_euclid(TAU) - PI
+}
+
+#[inline]
+pub fn ticks(seconds: f32, rate: u32) -> u32 {
+    (seconds * rate as f32).round() as u32
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Random {
+    state: u64,
+}
+
+impl Random {
+    pub const fn new(state: u64) -> Self {
+        Self { state }
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    pub fn unit(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 * (1.0 / 16_777_216.0)
+    }
+}
+
+#[inline]
 pub fn exp(x: f32) -> f32 {
     libm::expf(x)
 }

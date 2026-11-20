@@ -7,9 +7,7 @@ publish.workspace = true
 
 [dependencies]
 engine_command_line.workspace = true
-engine.workspace = true
 engine_core.workspace = true
-engine_render.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
 

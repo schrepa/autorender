@@ -1,7 +1,6 @@
 pub mod comments;
 pub mod files;
 pub mod generated;
-pub mod install;
 pub mod policy;
 pub mod stages;
 pub mod structure;
@@ -42,6 +41,6 @@ pub struct Exceptions {
 
 #[derive(Clone, Copy)]
 pub struct Errors {
-    pub within: &'static str,
+    pub within: &'static [&'static str],
     pub file: &'static str,
 }

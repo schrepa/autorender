@@ -1,4 +1,5 @@
 use bevy_ecs::resource::Resource;
+use engine_assets::GroupReport;
 use serde::Serialize;
 
 use crate::{Error, Progress};
@@ -19,6 +20,7 @@ pub struct Readiness {
     pub settling: u32,
     pub unsettled: Vec<Unsettled>,
     pub failed: Vec<(String, Error)>,
+    pub groups: Vec<GroupReport>,
 }
 
 impl Readiness {

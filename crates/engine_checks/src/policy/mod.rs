@@ -38,7 +38,10 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
             package
                 .path
                 .as_deref()
-                .and_then(|path| path.strip_prefix("crates/"))
+                .and_then(|path| {
+                    path.strip_prefix("crates/")
+                        .or_else(|| path.strip_prefix("bricks/"))
+                })
                 .is_some_and(|name| !name.contains('/'))
         })
         .filter_map(|package| package.file("src/lib.rs"))

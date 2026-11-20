@@ -23,15 +23,6 @@ impl Run {
         self.planning.runs.clear();
     }
 
-    pub(crate) fn forget_ran(&mut self, part: u32) {
-        let sets = &mut self.sets;
-        for &pass in sets.fixed.part_passes.get(part as usize).into_iter().flatten() {
-            for set in &mut sets.list {
-                set.ran.remove(pass as usize);
-            }
-        }
-    }
-
     pub(crate) fn forget_global(&mut self, part: u32) {
         let sets = &mut self.sets;
         for &pass in sets.fixed.part_globals.get(part as usize).into_iter().flatten() {

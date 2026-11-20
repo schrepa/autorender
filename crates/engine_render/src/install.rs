@@ -1,8 +1,9 @@
 use std::any::TypeId;
+use std::sync::Arc;
 
-use engine_core::{Entry, Error, ErrorCode, GeometryStream, PassBit, PassViews, TargetName, Var};
+use engine_core::{Entry, Error, ErrorCode, PassBit, PassViews, TargetName, Var, VertexStream};
 
-use crate::linker::Linker;
+use crate::linker::Shaders;
 use crate::registration::KindMember;
 use crate::{Access, DepthUse, Lifetime};
 
@@ -62,7 +63,7 @@ pub(crate) struct PassDecl {
 pub(crate) struct RenderDecl {
     pub(crate) vertex: Entry,
     pub(crate) fragment: Option<Entry>,
-    pub(crate) vertices: Vec<GeometryStream>,
+    pub(crate) vertices: Vec<VertexStream>,
     pub(crate) primitive: wgpu::PrimitiveState,
     pub(crate) depth: DepthUse,
     pub(crate) stencil: wgpu::StencilState,
@@ -205,21 +206,19 @@ pub(crate) struct InstallCore {
     pub(crate) declared: Declared,
     pub(crate) draws: Vec<KindMember>,
     pub(crate) passes: engine_core::ScenePasses,
-    pub(crate) entries: crate::registration::Entries,
-    pub(crate) linker: Linker,
+    pub(crate) linked: Arc<Shaders>,
     pub(crate) problems: Vec<Error>,
 }
 
 impl InstallCore {
-    pub(crate) fn new(linker: Linker) -> Self {
+    pub(crate) fn new(linked: Arc<Shaders>) -> Self {
         Self {
             part: 0,
             package: "",
             declared: Declared::default(),
             draws: Vec::new(),
             passes: engine_core::ScenePasses::default(),
-            entries: crate::registration::Entries::default(),
-            linker,
+            linked,
             problems: Vec::new(),
         }
     }
@@ -281,8 +280,7 @@ impl InstallCore {
 
     pub(crate) fn frame(&mut self, var: Var, bound: Bound) -> Result<(), Error> {
         let path = self.path(&format!("frame.{}", var.name()));
-        self.linker.add_source(var.module().source());
-        match self.linker.declared(var) {
+        match self.linked.declared(var) {
             Some(declared) if declared.group == 0 => {}
             Some(_) | None => {
                 return Err(Error::new(ErrorCode::UnknownVariable, path).got(var.name()));
@@ -292,7 +290,7 @@ impl InstallCore {
             return Err(Error::new(ErrorCode::UnknownVariable, path).got("asset"));
         }
         if let Bound::Buffer(buffer) = bound {
-            let usage = self.linker.buffer_usage(var);
+            let usage = self.linked.buffer_usage(var);
             self.use_buffer(buffer, usage);
         }
         self.declared.frame.push(FrameBind { var, bound });
@@ -346,20 +344,19 @@ impl InstallCore {
             constants: Vec::new(),
         };
         for entry in decl.entries() {
-            self.linker.add_source(entry.module().source());
-            if !self.linker.has_entry(entry) {
+            if !self.linked.has_entry(entry) {
                 return Err(Error::new(ErrorCode::UnknownModule, path).got(entry.name()));
             }
         }
         for (var, bound) in &decl.bound {
-            match self.linker.declared(*var) {
+            match self.linked.declared(*var) {
                 Some(declared) if declared.group > 0 => {}
                 Some(_) | None => {
                     return Err(Error::new(ErrorCode::UnknownVariable, path).got(var.name()));
                 }
             }
             if let Bound::Buffer(buffer) = bound {
-                let usage = self.linker.buffer_usage(*var);
+                let usage = self.linked.buffer_usage(*var);
                 self.use_buffer(*buffer, usage);
             }
         }
@@ -367,10 +364,8 @@ impl InstallCore {
         Ok((self.declared.pipelines.len() - 1) as u32)
     }
 
-    pub(crate) fn reaches(&mut self, entry: Entry, var: Var) -> bool {
-        self.linker.add_source(entry.module().source());
-        self.linker.add_source(var.module().source());
-        self.linker.reaches(entry, var)
+    pub(crate) fn reaches(&self, entry: Entry, var: Var) -> bool {
+        self.linked.reaches(entry, var)
     }
 
     pub(crate) fn draws_scene(&mut self, pass: u32, name: &'static str, listed: engine_core::Pass) {

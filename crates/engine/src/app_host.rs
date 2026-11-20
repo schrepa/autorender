@@ -51,7 +51,7 @@ pub(crate) struct AppHost {
     gpu_ms: GpuTime,
 }
 
-fn log_notice(error: &engine_core::Error) {
+pub(crate) fn log_notice(error: &engine_core::Error) {
     let record = serde_json::json!({"event": "notice", "error": error});
     #[cfg(target_arch = "wasm32")]
     web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
@@ -69,24 +69,21 @@ impl AppHost {
         target: RenderTarget,
         start: Start,
         bricks: BrickList,
+        linked: Option<&'static str>,
         game: impl Resource,
     ) -> Result<Self> {
         #[cfg(feature = "dev")]
         engine_profile::install_clock(now_ms);
-        let Start {
-            ticks_per_second,
-            gpu,
-            surface,
-            present,
-            show,
-        } = start;
         let mut engine = built(|| {
-            let mut engine = crate::game::engine(bricks, ticks_per_second)?;
+            let mut engine = crate::game::engine(bricks, &start)?;
             engine
                 .app
                 .insert_resource(game)
-                .insert_resource(present)
-                .insert_resource(show);
+                .insert_resource(start.present)
+                .insert_resource(start.show);
+            if let Some(text) = linked {
+                engine.app.insert_resource(engine_render::LinkedShaders(text));
+            }
             engine.report_host(Host {
                 focused: true,
                 hidden: false,
@@ -94,6 +91,13 @@ impl AppHost {
             });
             Ok(engine)
         })?;
+        let Start {
+            ticks_per_second,
+            gpu,
+            surface,
+            present,
+            ..
+        } = start;
         let mut start = std::pin::pin!(Renderer::start(target, gpu, surface, present));
         let started = std::future::poll_fn(|cx| {
             std::task::Poll::Ready(std::future::Future::poll(start.as_mut(), cx))
@@ -281,6 +285,17 @@ impl AppHost {
         } else {
             (0.0, 0.0, RenderStats::default())
         };
+        let mut readiness = std::mem::take(
+            &mut self
+                .engine
+                .app
+                .world_mut()
+                .resource_mut::<FrameStats>()
+                .readiness,
+        );
+        if readiness != *self.engine.readiness() {
+            readiness.clone_from(self.engine.readiness());
+        }
         let world = self.engine.app.world();
         let summary = FrameStats {
             frame: time.frame,
@@ -290,9 +305,8 @@ impl AppHost {
             render_ms: acquire_ms + draw_ms,
             fixed_steps,
             preparation_ms: self.preparation_ms,
-            dropped_seconds: time.dropped_seconds,
             cut_seconds: time.cut_seconds,
-            readiness: self.engine.readiness().clone(),
+            readiness,
             resolution: self.resolution_stats((width, height)),
             refused_views: world
                 .get_resource::<engine_core::Views>()
@@ -335,6 +349,7 @@ impl AppHost {
         let frame = self.engine.extract_frame()?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
+        self.engine.report_held(self.renderer.held_ready());
         if let Some(reports) = self.renderer.take_draw_reports() {
             self.engine.report_drawing(reports);
         }

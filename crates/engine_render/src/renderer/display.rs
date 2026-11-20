@@ -211,10 +211,18 @@ impl Display {
         self.timer.as_ref()?.read.take()
     }
 
-    pub(crate) fn time_begin(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub(crate) fn time_frame(&self) {
         if let Some(timer) = &self.timer {
-            timer.begin(encoder);
+            timer.asked.set(true);
         }
+    }
+
+    pub(crate) fn time_begin(&self, encoder: &mut wgpu::CommandEncoder) -> bool {
+        let Some(timer) = self.timer.as_ref().filter(|timer| timer.asked.take()) else {
+            return false;
+        };
+        timer.begin(encoder);
+        true
     }
 
     pub(crate) fn time_end(
@@ -329,6 +337,7 @@ pub(crate) struct FrameTimer {
     period: f64,
     sizes: Vec<(FrameId, (u32, u32))>,
     read: Cell<Option<ReadFrame>>,
+    asked: Cell<bool>,
 }
 
 type ReadFrame = (f64, (u32, u32));
@@ -355,6 +364,7 @@ impl FrameTimer {
             period: f64::from(period),
             sizes: Vec::new(),
             read: Cell::new(None),
+            asked: Cell::new(false),
         })
     }
 

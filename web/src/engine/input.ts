@@ -74,7 +74,8 @@ export class BrowserInput {
     }, { signal: this.abort.signal, passive: true });
     canvas.addEventListener("click", () => {
       if (!this.game || this.mode !== CURSOR_MODES.captured || this.locked) return;
-      void Promise.resolve(canvas.requestPointerLock()).catch(() => undefined);
+      void Promise.resolve(canvas.requestPointerLock({ unadjustedMovement: true }))
+        .catch(() => canvas.requestPointerLock()).catch(() => undefined);
     }, options);
     document.addEventListener("pointerlockchange", () => {
       const locked = document.pointerLockElement === canvas;

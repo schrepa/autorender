@@ -30,10 +30,10 @@ pub struct SaveReport {
     pub persisted: bool,
 }
 
-pub fn validate_scene(source: &str, kinds: &SceneKinds) -> Result<ValidationReport, Error> {
-    let scene = SceneDocument::from_json(source)?;
-    scene.validate(kinds)?;
-    let expanded_entities = scene.expanded_entities()?.len();
+pub fn validate_scene(path: &Path, kinds: &SceneKinds) -> Result<ValidationReport, Error> {
+    let source = read_scene_source(path)?;
+    let scene = opened(&source, path)?;
+    let expanded_entities = scene.validate(kinds)?;
     Ok(ValidationReport {
         id: scene.id,
         revision: scene.revision.to_string(),
@@ -42,6 +42,15 @@ pub fn validate_scene(source: &str, kinds: &SceneKinds) -> Result<ValidationRepo
         expanded_entities,
         source_bytes: source.len(),
     })
+}
+
+fn opened(source: &str, path: &Path) -> Result<SceneDocument, Error> {
+    let mut scene = SceneDocument::from_json(source)?;
+    if let Some(cooked) = scene.cooked() {
+        let cooked = read_scene_source(&path.with_file_name(cooked))?;
+        scene.append_cooked(&cooked)?;
+    }
+    Ok(scene)
 }
 
 pub fn read_scene_source(path: &Path) -> Result<String, Error> {
@@ -79,7 +88,7 @@ pub fn save_scene(
     kinds: &SceneKinds,
     alive: impl Fn(u64) -> bool,
 ) -> Result<SaveReport, Error> {
-    let candidate_scene = SceneDocument::from_json(candidate)?;
+    let candidate_scene = opened(candidate, path)?;
     candidate_scene.validate(kinds)?;
     let next = expected_revision.checked_add(1).ok_or_else(|| {
         Error::new(ErrorCode::RevisionExhausted, "$.revision").got(expected_revision.to_string())
@@ -101,7 +110,7 @@ pub fn save_scene(
         alive,
     )?;
     let original = read_scene_source(&path)?;
-    let current = SceneDocument::from_json(&original)?;
+    let current = opened(&original, &path)?;
     current.validate(kinds)?;
     if current.revision != expected_revision {
         return Err(Error::new(ErrorCode::RevisionConflict, "$.revision")

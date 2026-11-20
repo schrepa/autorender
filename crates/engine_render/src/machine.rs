@@ -10,7 +10,7 @@ use crate::graph::{
     ResourceEntry, ResourceId, StaticGraph,
 };
 use crate::install::{Bound, Declared, PassDecl, PipelineDecl, Program, Scoped};
-use crate::linker::{Composed, Linker, Ty};
+use crate::linker::{Composed, Shaders, Ty};
 use crate::{Access, DepthUse, Lifetime, SharedTarget};
 
 mod composing;
@@ -181,13 +181,6 @@ pub(crate) struct OwnGroup {
     pub(crate) entries: Vec<(u32, Bound, Ty)>,
 }
 
-pub(crate) struct Ready {
-    pub(crate) layout: u32,
-    pub(crate) variant: u64,
-    pub(crate) made: wgpu::RenderPipeline,
-    pub(crate) exact: bool,
-}
-
 pub(crate) struct BuiltPipeline {
     pub(crate) decl: PipelineDecl,
     pub(crate) stages: Vec<Stage>,
@@ -200,9 +193,9 @@ pub(crate) struct BuiltPipeline {
     pub(crate) writes: Vec<Bound>,
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
     pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
-    pub(crate) ready: Vec<Ready>,
+    pub(crate) plain: crate::encode::Resolve,
     pub(crate) compute_ready: Option<wgpu::ComputePipeline>,
-    pub(crate) geometry: Vec<engine_core::GeometryStream>,
+    pub(crate) geometry: Vec<engine_core::VertexStream>,
     pub(crate) holes: bool,
     pub(crate) batches: Vec<(u32, u32)>,
     pub(crate) home: u32,
@@ -272,7 +265,7 @@ pub(crate) struct Machine {
     pub(crate) layouts: Layouts,
     pub(crate) passes: Vec<crate::encode::PassLayout>,
     pub(crate) limits: Limits,
-    pub(crate) linker: Linker,
+    pub(crate) linked: Arc<Shaders>,
 }
 
 fn layout_entries(entries: &[(u32, Ty, ShaderStages)]) -> Vec<wgpu::BindGroupLayoutEntry> {
@@ -443,7 +436,7 @@ impl Machine {
         problems: &mut Vec<Error>,
     ) -> Option<Self> {
         let Composing {
-            linker,
+            linked,
             declared,
             core_frame,
             numbers,
@@ -622,12 +615,11 @@ impl Machine {
             let mut writes = Vec::new();
             for (module, found, _) in &reached {
                 if found.group == 0 {
-                    let number = linker.binding_of(module, &found.name);
-                    match number.and_then(|number| frame_bound.get(&number)) {
+                    match frame_bound.get(&found.binding) {
                         Some(bound) => reads.push(bound.clone()),
-                        None if number != Some(0)
+                        None if found.binding != 0
                             && matches!(found.ty, Ty::Uniform | Ty::Storage { .. })
-                            && !(linker.is_core(module) && found.name == crate::shared::POST) =>
+                            && !(linked.is_core(module) && found.name == crate::shared::POST) =>
                         {
                             let label = reaches.get(index).map_or("$", |(label, ..)| label.as_str());
                             unbound.push(
@@ -753,7 +745,7 @@ impl Machine {
                 writes,
                 made: Vec::new(),
                 computed: Vec::new(),
-                ready: Vec::new(),
+                plain: crate::encode::Resolve::plain(index as u32, program_key),
                 compute_ready: None,
                 geometry,
                 holes,
@@ -777,10 +769,10 @@ impl Machine {
         };
         let frame_slots = core_frame
             .iter()
-            .filter_map(|(path, name, ty)| {
-                let number = linker.binding_of(path, name)?;
-                let post = linker.is_core(path) && name == crate::shared::POST;
-                Some((number, FrameSlot { ty: *ty, post }))
+            .zip(&numbers)
+            .map(|((path, name, ty), &number)| {
+                let post = linked.is_core(path) && name == crate::shared::POST;
+                (number, FrameSlot { ty: *ty, post })
             })
             .collect();
         Some(Self {
@@ -797,7 +789,7 @@ impl Machine {
             layouts,
             passes: Vec::new(),
             limits,
-            linker,
+            linked,
         })
     }
 }

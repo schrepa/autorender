@@ -153,11 +153,3 @@ pub fn first_use(indices: &mut [u32], vertices: usize) -> Vec<u32> {
 pub fn permuted<T: Copy>(values: &[T], old_of: &[u32]) -> Vec<T> {
     old_of.iter().map(|&old| values[old as usize]).collect()
 }
-
-pub fn permuted_bytes(bytes: &[u8], stride: usize, old_of: &[u32]) -> Vec<u8> {
-    old_of
-        .iter()
-        .flat_map(|&old| &bytes[old as usize * stride..old as usize * stride + stride])
-        .copied()
-        .collect()
-}

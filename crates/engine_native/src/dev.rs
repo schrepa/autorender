@@ -7,7 +7,6 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use std::time::Duration;
 
 use engine::host::{AdapterStatus, Shot};
-use engine::scene::{SceneFiles, SceneKinds};
 use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use engine_registry::ReachMut;
 use serde_json::json;
@@ -120,10 +119,14 @@ impl Session {
             }
         }
         if take.reload {
-            match read_source(host) {
-                Ok((source, files)) => host.dev_reloaded(&source, &files),
-                Err(error) => host.dev_reload_failed(error),
+            let outcome = read_source(host).and_then(|(source, path)| {
+                host.dev_reloaded(&source);
+                fed(host, &path)
+            });
+            if let Err(error) = &outcome {
+                eprintln!("{}", json!({"event": "source_changed", "error": error}));
             }
+            host.dev_reload_ended(outcome);
         }
         #[cfg(feature = "profiling")]
         if let Err(error) = self.follow_deep(host) {
@@ -196,24 +199,30 @@ impl Session {
 
 pub fn follow_source<G: Game>(host: &mut GameHost<G>) {
     if host.follow_source()
-        && let Err(error) =
-            read_source(host).and_then(|(source, files)| host.reload_scene(&source, &files))
+        && let Err(error) = read_source(host).and_then(|(source, path)| {
+            host.open_scene(&source)?;
+            fed(host, &path)
+        })
     {
         let record = json!({"event": "source_changed", "error": error});
         eprintln!("{record}");
     }
 }
 
-fn read_source<G: Game>(host: &mut GameHost<G>) -> engine::Result<(String, SceneFiles)> {
+fn fed<G: Game>(host: &mut GameHost<G>, path: &Path) -> engine::Result<()> {
+    let fed = crate::io::feed(host, path);
+    host.watch_source(path);
+    fed
+}
+
+fn read_source<G: Game>(host: &mut GameHost<G>) -> engine::Result<(String, PathBuf)> {
     let Some(path) = host.source().map(Path::to_owned) else {
         return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
     };
     host.watch_source(&path);
     let source =
         std::fs::read_to_string(&path).map_err(|error| file_error("$.source", &path, &error))?;
-    let kinds = SceneKinds::of(host.engine().app.world());
-    let (_, files) = crate::io::scene_opened(&path, &source, &kinds)?;
-    Ok((source, files))
+    Ok((source, path))
 }
 
 fn run_folder(path: &str, name: &str) -> engine::Result<PathBuf> {

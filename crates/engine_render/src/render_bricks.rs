@@ -4,7 +4,7 @@ use std::sync::Arc;
 use engine_core::{Bricks, DrawKind, PassEntry, PassName};
 use engine_registry::RecordExt;
 
-use crate::registration::{self, Entries, Made};
+use crate::registration;
 use crate::{Draw, GpuPart, Scene};
 
 pub trait RenderBricks {
@@ -17,7 +17,6 @@ pub trait RenderBricks {
     ) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn entry<T: Any + Send + Sync>(&mut self, entry: T) -> &mut Self;
-    fn modules(&mut self, make: fn(&Entries) -> Made) -> &mut Self;
 }
 
 impl RenderBricks for Bricks<'_> {
@@ -52,9 +51,5 @@ impl RenderBricks for Bricks<'_> {
     fn entry<T: Any + Send + Sync>(&mut self, entry: T) -> &mut Self {
         self.record().render.push(Arc::new(entry));
         self
-    }
-
-    fn modules(&mut self, make: fn(&Entries) -> Made) -> &mut Self {
-        self.entry(registration::Modules(make))
     }
 }

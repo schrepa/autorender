@@ -13,12 +13,13 @@ impl<G: Game> Offscreen<G> {
         size: (u32, u32),
         start: Start,
         bricks: BrickList,
+        linked: Option<&'static str>,
     ) -> engine::Result<Self> {
         #[cfg(feature = "profiling")]
         engine_profiler::sampler::listen_for_threads();
         let target = RenderTarget::Offscreen { size };
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
-            target, start, bricks,
+            target, start, bricks, linked,
         )))?);
         host.offer_close();
         Ok(Self {

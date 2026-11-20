@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use engine::host::SceneLoad;
-use engine::scene::{SceneDocument, SceneFiles, SceneKinds};
 use engine::{Game, GameHost};
 use engine_core::{IoAct, IoOrder, IoReply, Ticket};
 
@@ -91,19 +89,19 @@ impl Io {
     }
 }
 
-pub(crate) fn scene_opened(
-    path: &Path,
-    source: &str,
-    kinds: &SceneKinds,
-) -> engine::Result<(SceneDocument, SceneFiles)> {
-    let mut load = SceneLoad::new(source, kinds)?;
-    let folder = path.parent().unwrap_or(Path::new("."));
-    for read in load.take_reads() {
-        let path = folder.join(&read.uri);
-        let bytes = std::fs::read(&path).map_err(|error| crate::file_error("$", &path, &error))?;
-        load.read(&read.uri, bytes)?;
+pub(crate) fn feed<G: Game>(host: &mut GameHost<G>, scene: &Path) -> engine::Result<()> {
+    let folder = scene.parent().unwrap_or(Path::new("."));
+    loop {
+        let files = host.files();
+        if files.is_empty() {
+            return Ok(());
+        }
+        for (uri, _) in files {
+            let path = folder.join(&uri);
+            let read = std::fs::read(&path).map_err(|error| crate::file_error("$", &path, &error));
+            host.file(&uri, read)?;
+        }
     }
-    load.opened()
 }
 
 fn answer(IoOrder { id, act }: IoOrder) -> IoReply {

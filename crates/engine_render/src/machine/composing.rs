@@ -27,7 +27,7 @@ pub(crate) struct BatchLayout {
 }
 
 pub(crate) struct Composing {
-    pub(super) linker: Linker,
+    pub(super) linked: Arc<Shaders>,
     pub(super) declared: Declared,
     pub(super) core_frame: Vec<(String, String, Ty)>,
     pub(super) numbers: Vec<u32>,
@@ -39,20 +39,17 @@ pub(crate) struct Composing {
 }
 
 pub(crate) fn compose(
-    mut linker: Linker,
+    linked: Arc<Shaders>,
     declared: Declared,
     problems: &mut Vec<Error>,
 ) -> Composing {
-    let core_frame = linker.number();
-    let numbers: Vec<u32> = core_frame
-        .iter()
-        .filter_map(|(path, name, _)| linker.binding_of(path, name))
-        .collect();
+    let (core_frame, numbers): (Vec<(String, String, Ty)>, Vec<u32>) = (linked.frame().into_iter())
+        .map(|(path, name, ty, number)| ((path, name, ty), number))
+        .unzip();
     let mut frame_bound = BTreeMap::new();
     for bind in &declared.frame {
-        let (path, name) = crate::linker::path_of((bind.var.module(), bind.var.name()));
-        if let Some(number) = linker.binding_of(path, &name) {
-            frame_bound.insert(number, bind.bound.clone());
+        if let Some(found) = linked.declared(bind.var).filter(|found| found.group == 0) {
+            frame_bound.insert(found.binding, bind.bound.clone());
         }
     }
     let depth_writes = depth_writes_of(&declared);
@@ -68,9 +65,9 @@ pub(crate) fn compose(
                 .collect::<Vec<_>>()
                 .join("+")
         );
-        let Some((stages, reached)) = linked(
+        let Some((stages, reached)) = stages_of(
             (&declared.batch_groups, decl),
-            &mut linker,
+            &linked,
             (&named, &mut *problems),
         ) else {
             continue;
@@ -78,9 +75,8 @@ pub(crate) fn compose(
         let mut frame_reached: Vec<(u32, ShaderStages)> = reached
             .iter()
             .filter(|(_, found, _)| found.group == 0)
-            .filter_map(|(module, found, stages)| {
-                let number = linker.binding_of(module, &found.name)?;
-                let at = numbers.iter().position(|known| *known == number)?;
+            .filter_map(|(_, found, stages)| {
+                let at = numbers.iter().position(|known| *known == found.binding)?;
                 Some((at as u32, *stages))
             })
             .collect();
@@ -89,9 +85,9 @@ pub(crate) fn compose(
         reaches.push((named, alone, frame_reached));
         staged.push((decl.clone(), stages, reached));
     }
-    let batch_entries = batch_entries(&declared, &linker, &staged);
+    let batch_entries = batch_entries(&declared, &linked, &staged);
     Composing {
-        linker,
+        linked,
         declared,
         core_frame,
         numbers,
@@ -109,7 +105,7 @@ pub(crate) fn batch_path(batch: &crate::install::BatchDecl) -> &'static str {
 
 fn batch_entries(
     declared: &Declared,
-    linker: &Linker,
+    linked: &Shaders,
     staged: &[(PipelineDecl, Vec<Stage>, Reached)],
 ) -> Vec<Vec<BatchEntry>> {
     declared
@@ -117,7 +113,7 @@ fn batch_entries(
         .iter()
         .map(|batch| {
             let path = batch_path(batch);
-            (linker.declarations(path).iter())
+            (linked.declarations(path).iter())
                 .filter(|found| found.group == batch.index)
                 .map(|found| {
                     let stages = staged
@@ -145,22 +141,22 @@ fn batch_entries(
         .collect()
 }
 
-fn linked(
+fn stages_of(
     (batches, decl): (&[crate::install::BatchDecl], &PipelineDecl),
-    linker: &mut Linker,
+    linked: &Shaders,
     (named, problems): (&str, &mut Vec<Error>),
 ) -> Option<(Vec<Stage>, Reached)> {
     let (mut stages, mut reached, mut failed) = (Vec::new(), Reached::new(), false);
     for entry in decl.entries() {
-        match linker.compose_in(entry) {
+        match linked.entry(entry) {
             Ok(composed) => {
-                let at = linker.stage(entry);
-                for (module, declaration) in linker.reached(&composed) {
+                let at = composed.stage;
+                for (module, declaration) in &composed.reached {
                     match reached.iter_mut().find(|(known, found, _)| {
-                        *known == module && found.name == declaration.name
+                        known == module && found.name == declaration.name
                     }) {
                         Some((_, _, stages)) => *stages |= at,
-                        None => reached.push((module, declaration, at)),
+                        None => reached.push((module.clone(), declaration.clone(), at)),
                     }
                 }
                 stages.push(Stage { entry, composed });
@@ -185,7 +181,7 @@ fn linked(
         }
     }
     for (module, found, _) in &reached {
-        let core = linker.is_core(module);
+        let core = linked.is_core(module);
         let bound = decl.bound.iter().any(|(var, _)| {
             let (known, name) = crate::linker::path_of((var.module(), var.name()));
             known == module && name == found.name

@@ -1,12 +1,14 @@
+use std::sync::Arc;
+
 use bevy_ecs::world::World;
 use engine_core::Error;
 use engine_registry::{BrickId, BrickStates, Registry};
 
 use super::*;
-use crate::install::{InstallCore, PartInfo, Reinstall, Scoped};
-use crate::linker::{CORE_PACKAGE, Linker, Part};
+use crate::install::{InstallCore, PartInfo, Reinstall};
+use crate::linker::{CORE_PACKAGE, Shaders};
 use crate::machine::Machine;
-use crate::registration::{Entries, Generated, Installed, KindDraw, KindMember, Modules, PartRecord};
+use crate::registration::{Installed, KindDraw, KindMember, PartRecord};
 
 struct Listed {
     record: PartRecord,
@@ -24,98 +26,8 @@ pub(crate) struct Built {
     pub(crate) passes: Vec<&'static str>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Installation {
-    pub modules: Vec<String>,
-    pub texts: Vec<String>,
-    pub stages: Vec<(&'static str, Vec<&'static str>, String)>,
-}
-
-fn stage_texts(machine: &Machine) -> Vec<(&'static str, Vec<&'static str>, String)> {
-    let mut seen = std::collections::BTreeMap::new();
-    let mut stages: Vec<(&'static str, Vec<&'static str>, String)> = Vec::new();
-    for built in &machine.pipelines {
-        let pass = match built.decl.scope {
-            Scoped::Scene(bit) => machine.declared.scene_name(bit),
-            Scoped::Outside(name) => name,
-            Scoped::Pass(pass) => machine
-                .declared
-                .passes
-                .get(pass as usize)
-                .map_or("", |declared| declared.name),
-        };
-        for stage in &built.stages {
-            let at = *seen.entry(stage.text_key()).or_insert_with(|| {
-                stages.push((stage.entry.name(), Vec::new(), stage.composed.text.clone()));
-                stages.len() - 1
-            });
-            if !stages[at].1.contains(&pass) {
-                stages[at].1.push(pass);
-            }
-        }
-    }
-    stages
-}
-
-fn listing(built: &mut Built) -> Installation {
-    let modules = built.machine.linker.paths();
-    let texts = modules
-        .iter()
-        .map(|path| match built.machine.linker.compose_module(path) {
-            Ok(composed) => composed.text.clone(),
-            Err(error) => error.to_string(),
-        })
-        .collect();
-    Installation {
-        modules,
-        texts,
-        stages: Vec::new(),
-    }
-}
-
 fn core_part<P: crate::GpuPart>() -> PartRecord {
     PartRecord::of::<P>()
-}
-
-fn prefix_of(
-    registry: &Registry,
-    linker: &Linker,
-    brick: engine_registry::BrickId,
-) -> Option<&'static str> {
-    let record = registry.record(brick)?;
-    if let Some(prefix) = record.prefix() {
-        return Some(prefix);
-    }
-    linker
-        .sources()
-        .iter()
-        .find(|source| source.package() == record.package)
-        .and_then(|source| {
-            let first = source.modules().first()?.path();
-            Some(first.split("::").next().unwrap_or(first))
-        })
-}
-
-type Handed = Vec<(&'static str, &'static str, Vec<Part>)>;
-
-fn hand_generated(registry: &Registry, linker: &mut Linker) {
-    let mut handed_over: Handed = Vec::new();
-    for (brick, record) in registry.iter() {
-        let texts: Vec<Part> = record
-            .render_entries::<Generated>()
-            .flat_map(|entry| entry.0.iter().map(|text| (None, *text)))
-            .collect();
-        if texts.is_empty() {
-            continue;
-        }
-        let Some(prefix) = prefix_of(registry, linker, brick) else {
-            continue;
-        };
-        handed_over.push((prefix, record.package, texts));
-    }
-    for (prefix, package, texts) in handed_over {
-        linker.hand(format!("generated::{prefix}"), package, texts);
-    }
 }
 
 fn pass_gates(registry: &Registry, passes: &[crate::install::PassDecl]) -> Vec<(u32, BrickId)> {
@@ -149,18 +61,35 @@ fn scene_passes(world: &World) -> engine_core::ScenePasses {
         .unwrap_or_default()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Lint {
-    Launch,
-    Check,
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct Linking {
+    #[cfg(feature = "dev")]
+    pub(crate) edited: std::collections::BTreeMap<String, String>,
+    #[cfg(feature = "dev")]
+    pub(crate) check: bool,
 }
 
+impl Linking {
+    #[cfg(feature = "dev")]
+    fn shaders(&self, world: &World) -> Result<Shaders, Vec<Error>> {
+        let inputs = crate::linker::ShaderInputs::of(world.resource::<Registry>(), &self.edited);
+        Shaders::link(inputs, self.check)
+    }
+
+    #[cfg(not(feature = "dev"))]
+    fn shaders(&self, world: &World) -> Result<Shaders, Vec<Error>> {
+        let code = engine_core::ErrorCode::MissingResource;
+        let missing = || vec![Error::new(code, "$.shaders").got("LinkedShaders")];
+        let text = world.get_resource::<crate::LinkedShaders>().ok_or_else(missing)?;
+        Shaders::embedded(text.0, world.resource::<Registry>()).map_err(|error| vec![error])
+    }
+}
+
+#[derive(Default)]
 pub struct Ahead {
-    edited: std::collections::BTreeMap<String, String>,
-    lint: Lint,
+    linking: Linking,
     problems: Vec<Error>,
-    notices: Vec<Error>,
-    composing: crate::machine::Composing,
+    composing: Option<crate::machine::Composing>,
     parts: Vec<Option<Box<dyn Installed>>>,
     gates: Vec<Option<BrickId>>,
     reinstalls: Vec<Reinstall>,
@@ -171,70 +100,43 @@ pub struct Ahead {
 pub(crate) fn install(
     device: &wgpu::Device,
     world: &mut World,
-    (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
+    linking: Linking,
 ) -> Result<Built, Vec<Error>> {
-    let ahead = ahead(world, (edited, lint));
+    let ahead = ahead(world, linking);
     finish(device, world, ahead)
 }
 
-pub(crate) fn ahead(
-    world: &mut World,
-    (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
-) -> Ahead {
+pub(crate) fn ahead(world: &mut World, linking: Linking) -> Ahead {
+    let linked = match linking.shaders(world) {
+        Ok(linked) => Arc::new(linked),
+        Err(problems) => {
+            return Ahead {
+                linking,
+                problems,
+                ..Ahead::default()
+            };
+        }
+    };
     world.resource_scope::<Registry, _>(|world, registry| {
-        install_with(world, &registry, (edited, lint))
+        install_with(world, &registry, linking, linked)
     })
 }
 
 pub(crate) fn finish(
     device: &wgpu::Device,
     world: &mut World,
-    mut ahead: Ahead,
+    ahead: Ahead,
 ) -> Result<Built, Vec<Error>> {
-    let notices = std::mem::take(&mut ahead.notices);
-    let built =
-        world.resource_scope::<Registry, _>(|_, registry| built(device, &registry, ahead))?;
-    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
-        for notice in notices {
-            registry.report_notice(notice);
-        }
-    }
-    Ok(built)
+    world.resource_scope::<Registry, _>(|_, registry| built(device, &registry, ahead))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 fn install_with(
     world: &mut World,
     registry: &Registry,
-    (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
+    linking: Linking,
+    linked: Arc<Shaders>,
 ) -> Ahead {
     let mut problems = Vec::new();
-    let mut linker = Linker::edited(crate::shared::core_source(), edited.clone());
-    for (path, text) in crate::shaders::generated_core() {
-        linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
-    }
-    hand_generated(registry, &mut linker);
-    let entries = Entries::of_registry(registry);
-    let mut notices = Vec::new();
-    for (_, record) in registry.iter() {
-        for modules in record.render_entries::<Modules>() {
-            let made = (modules.0)(&entries);
-            for module in made.sources {
-                linker.add_source(module.source());
-            }
-            for (path, text) in made.modules {
-                linker.add_generated(path, record.package, text);
-            }
-            for (path, name) in &made.keep {
-                linker.keep(path, name);
-            }
-            problems.extend(made.problems);
-            notices.extend(made.notices);
-        }
-    }
     let mut listed: Vec<Listed> = vec![
         Listed {
             record: core_part::<crate::shared::ScenePart>(),
@@ -269,9 +171,8 @@ fn install_with(
             }
         }
     }
-    let mut core = InstallCore::new(linker);
+    let mut core = InstallCore::new(linked);
     core.passes = scene_passes(world);
-    core.entries = entries;
     for entry in &listed {
         core.declared.parts.push(PartInfo {
             ty: entry.record.part,
@@ -318,26 +219,23 @@ fn install_with(
     }
     let InstallCore {
         declared,
-        linker,
+        linked,
         draws: entries,
         problems: mut declared_problems,
         ..
     } = core;
     problems.append(&mut declared_problems);
-    problems.extend(linker.check());
     let mut passes: Vec<&'static str> = Vec::new();
     for pass in &declared.passes {
         if !passes.contains(&pass.name) {
             passes.push(pass.name);
         }
     }
-    let composing = crate::machine::compose(linker, declared, &mut problems);
+    let composing = crate::machine::compose(linked, declared, &mut problems);
     Ahead {
-        edited,
-        lint,
+        linking,
         problems,
-        notices,
-        composing,
+        composing: Some(composing),
         parts,
         gates,
         reinstalls,
@@ -348,58 +246,42 @@ fn install_with(
 
 fn built(device: &wgpu::Device, registry: &Registry, ahead: Ahead) -> Result<Built, Vec<Error>> {
     let mut problems = ahead.problems;
+    let Some(composing) = ahead.composing else {
+        return Err(problems);
+    };
     let scope = crate::gpu_calls::validation_scope(device);
-    let machine = Machine::build(device, ahead.composing, &mut problems);
+    let machine = Machine::build(device, composing, &mut problems);
     if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
         problems.push(failed_with("$.pipelines", error));
     }
-    let Some(mut machine) = machine.filter(|_| problems.is_empty()) else {
+    let Some(machine) = machine.filter(|_| problems.is_empty()) else {
         return Err(problems);
     };
-    if ahead.lint == Lint::Check {
-        let composed: Vec<std::sync::Arc<crate::linker::Composed>> = machine
-            .pipelines
-            .iter()
-            .flat_map(|pipeline| {
-                pipeline
-                    .stages
-                    .iter()
-                    .map(|stage| std::sync::Arc::clone(&stage.composed))
-            })
-            .collect();
-        problems.extend(machine.linker.unused(&composed));
-    }
-    machine.linker.forget_wholes();
     let pass_gates = pass_gates(registry, &machine.declared.passes);
-    if problems.is_empty() {
-        Ok(Built {
-            run_parts: ahead.parts,
-            gates: ahead.gates,
-            pass_gates,
-            reinstalls: ahead.reinstalls,
-            draws: ahead.draws,
-            machine,
-            passes: ahead.passes,
-        })
-    } else {
-        Err(problems)
-    }
+    Ok(Built {
+        run_parts: ahead.parts,
+        gates: ahead.gates,
+        pass_gates,
+        reinstalls: ahead.reinstalls,
+        draws: ahead.draws,
+        machine,
+        passes: ahead.passes,
+    })
 }
 
 impl Renderer {
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        let installed = install(&self.core.device, world, (self.edited(), Lint::Launch))?;
+        let installed = install(&self.core.device, world, self.linking())?;
         self.adopt_installed(installed, world);
         Ok(())
     }
 
     pub fn ahead(world: &mut World) -> Option<Ahead> {
-        let launch = (std::collections::BTreeMap::new(), Lint::Launch);
-        world.contains_resource::<Registry>().then(|| ahead(world, launch))
+        (world.contains_resource::<Registry>()).then(|| ahead(world, Linking::default()))
     }
 
     pub fn install_ahead(&mut self, world: &mut World, ahead: Ahead) -> Result<(), Vec<Error>> {
-        if ahead.edited != self.edited() {
+        if ahead.linking != self.linking() {
             return self.install(world);
         }
         let installed = finish(&self.core.device, world, ahead)?;
@@ -408,17 +290,20 @@ impl Renderer {
     }
 
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-    fn edited(&self) -> std::collections::BTreeMap<String, String> {
-        self.watched.edited()
+    fn linking(&self) -> Linking {
+        Linking {
+            edited: self.watched.edited(),
+            check: false,
+        }
     }
 
     #[cfg(not(all(feature = "dev", not(target_arch = "wasm32"))))]
-    fn edited(&self) -> std::collections::BTreeMap<String, String> {
-        std::collections::BTreeMap::new()
+    fn linking(&self) -> Linking {
+        Linking::default()
     }
 
     pub(super) fn adopt_installed(&mut self, installed: Built, world: &mut World) {
-        let (mut assets, kept) = match (self.run.take(), self.assets.take()) {
+        let (assets, kept) = match (self.run.take(), self.assets.take()) {
             (Some(run), _) => {
                 let (assets, kept) = kept_of(run);
                 (assets, Some(kept))
@@ -426,11 +311,6 @@ impl Renderer {
             (None, Some(assets)) => (assets, None),
             (None, None) => (new_assets(&self.core.device), None),
         };
-        crate::mesh_arena::configure(
-            &self.core.device,
-            world,
-            (&mut assets.meshes, &mut assets.textures),
-        );
         let mut run = Run::new(
             (self.core.device.clone(), self.core.queue.clone()),
             installed.machine,
@@ -486,19 +366,19 @@ impl Renderer {
     }
 }
 
-#[doc(hidden)]
+#[cfg(feature = "dev")]
 pub fn install_noop(
     world: &mut World,
     gpu: crate::GpuRequest,
-) -> Result<Installation, Vec<Error>> {
+) -> Result<String, Vec<Error>> {
     let (device, queue) = noop_device(gpu).map_err(|error| vec![error])?;
-    let mut installed = install(
-        &device,
-        world,
-        (std::collections::BTreeMap::new(), Lint::Check),
-    )?;
-    let mut listed = listing(&mut installed);
-    listed.stages = stage_texts(&installed.machine);
+    let linking = Linking {
+        check: true,
+        ..Linking::default()
+    };
+    let installed = install(&device, world, linking)?;
+    let linked = serde_json::to_string_pretty(&*installed.machine.linked)
+        .map_err(|error| vec![failed_with("$.shaders", error)])?;
     let queue = crate::gpu_calls::Queue::new(queue);
     let assets = new_assets(&device);
     let scope = crate::gpu_calls::validation_scope(&device);
@@ -518,7 +398,7 @@ pub fn install_noop(
         .collect();
     match crate::platform::ready(scope.pop()) {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
-        Some(None) | None if refused.is_empty() => Ok(listed),
+        Some(None) | None if refused.is_empty() => Ok(linked + "\n"),
         Some(None) | None => Err(refused),
     }
 }
@@ -658,23 +538,13 @@ pub(crate) fn reinstall(
     let Some(again) = run.installs.reinstalls.get(part as usize).cloned() else {
         return Err(failed(&format!("$.parts.{name}")));
     };
-    let linker = std::mem::replace(
-        &mut run.machine.linker,
-        Linker::new(crate::shared::core_source()),
-    );
-    let mut core = InstallCore::new(linker);
+    let mut core = InstallCore::new(Arc::clone(&run.machine.linked));
     core.passes = scene_passes(world);
-    core.entries = world
-        .get_resource::<Registry>()
-        .map(Entries::of_registry)
-        .unwrap_or_default();
     core.part = part;
     core.package = again.package;
     core.declared = run.machine.declared.before(again.from);
     core.draws.clone_from(&run.installs.draw_entries);
-    let made = (again.install)(world, &mut core);
-    run.machine.linker = core.linker;
-    let held = made?;
+    let held = (again.install)(world, &mut core)?;
     if let Some(problem) = core.problems.into_iter().next() {
         return Err(problem);
     }
@@ -684,7 +554,7 @@ pub(crate) fn reinstall(
     Ok(held)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 fn noop_device(gpu: crate::GpuRequest) -> Result<(wgpu::Device, wgpu::Queue), Error> {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::NOOP;
@@ -695,7 +565,7 @@ fn noop_device(gpu: crate::GpuRequest) -> Result<(wgpu::Device, wgpu::Queue), Er
     Ok((opened.device, opened.queue))
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "dev", target_arch = "wasm32"))]
 fn noop_device(_: crate::GpuRequest) -> Result<(wgpu::Device, wgpu::Queue), Error> {
     Err(failed("$.device").expected(Expected::Supported))
 }

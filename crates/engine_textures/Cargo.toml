@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 engine_assets.workspace = true
 engine_codec.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

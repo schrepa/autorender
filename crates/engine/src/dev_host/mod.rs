@@ -9,7 +9,6 @@ use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::{Applied, Request};
 use engine_registry::{Kind, NameEntry, ReachMut, register};
 use engine_render::Renderer;
-use engine_scene::SceneFiles;
 use serde_json::{Value, json};
 
 use crate::frame_stats::FrameStats;
@@ -62,6 +61,9 @@ pub(crate) fn install(world: &mut World) {
     register(
         world,
         NameEntry::read("frame", Kind::State, |reach, _| {
+            if let Some(renderer) = reach.part::<Renderer>() {
+                renderer.time_frame();
+            }
             Ok(serde_json::to_value(reach.world.resource::<FrameStats>())
                 .expect("frame_stats_serialize"))
         }),
@@ -136,7 +138,7 @@ impl<G: Game> GameHost<G> {
         std::mem::take(&mut self.development.out)
     }
 
-    pub fn dev_reloaded(&mut self, source: &str, files: &SceneFiles) {
+    pub fn dev_reloaded(&mut self, source: &str) {
         let Some(running) = self.development.running.take() else {
             return;
         };
@@ -146,28 +148,40 @@ impl<G: Game> GameHost<G> {
         };
         let outcome = crate::game_host::reload_checked(
             self.scene.instance(),
-            self.app.engine(),
             source,
             (&reload.expected_revision, &reload.revision),
         )
-        .and_then(|document| self.arrive(&document, files, crate::game::Arrival::Reload))
-        .map(|()| {
-            let skipped = self.scene.instance().map(|scene| scene.skipped().to_vec());
-            match skipped.filter(|skipped| !skipped.is_empty()) {
-                Some(skipped) => json!({"reloaded": true, "skipped": skipped}),
-                None => json!({"reloaded": true}),
-            }
-        });
-        self.answer(&running, outcome);
+        .and_then(|document| self.arrive(document));
+        self.development.running = Some(running);
+        if outcome.is_err() {
+            self.dev_reload_ended(outcome);
+        }
     }
 
-    pub fn dev_reload_failed(&mut self, error: Error) {
-        match self.development.running.take() {
-            Some(running) if matches!(running.order, Order::Reload(_)) => {
-                self.answer(&running, Err(error));
-            }
-            other => self.development.running = other,
-        }
+    pub fn dev_reload_ended(&mut self, outcome: crate::Result<()>) {
+        let Some(running) = self
+            .development
+            .running
+            .take_if(|running| matches!(running.order, Order::Reload(_)))
+        else {
+            return;
+        };
+        let refused = self
+            .app
+            .engine()
+            .app
+            .world()
+            .resource::<engine_core::Assets>()
+            .groups()
+            .into_iter()
+            .find_map(|group| match group.stage {
+                engine_core::GroupStage::Failed(error) => Some(error),
+                engine_core::GroupStage::Arriving
+                | engine_core::GroupStage::Compiling
+                | engine_core::GroupStage::Ready => None,
+            });
+        let outcome = outcome.and_then(|()| refused.map_or_else(|| Ok(json!({"reloaded": true})), Err));
+        self.answer(&running, outcome);
     }
 
     pub(crate) fn dev_apply(&mut self) {

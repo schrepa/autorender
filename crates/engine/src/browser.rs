@@ -1,61 +1,14 @@
 use crate::GameHost;
 use crate::game::{Game, GameEntry};
 use engine_core::{BrickList, IoAct, IoOrder, IoReply};
-use engine_scene::SceneFiles;
 use engine_settings::js_error as js;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-pub type SoundOrderList = js_sys::Array;
-
-#[doc(hidden)]
-pub struct SceneLoading {
-    load: Option<crate::host::SceneLoad>,
-}
-
-impl SceneLoading {
-    pub fn new(source: &str, bricks: fn(BrickList) -> BrickList) -> Result<Self, JsValue> {
-        let kinds = engine_scene::SceneKinds::listed(&bricks(BrickList::default()));
-        Ok(Self {
-            load: Some(crate::host::SceneLoad::new(source, &kinds).map_err(js)?),
-        })
-    }
-
-    pub fn take_reads(&mut self) -> Result<js_sys::Array, JsValue> {
-        let out = js_sys::Array::new();
-        for read in self.loading()?.take_reads() {
-            let object = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(&object, &"uri".into(), &read.uri.into());
-            out.push(&object);
-        }
-        Ok(out)
-    }
-
-    pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
-        self.loading()?.read(uri, bytes).map_err(js)
-    }
-
-    pub fn finish(&mut self) -> Result<SceneFiles, JsValue> {
-        let load = self.load.take().ok_or_else(ended)?;
-        let (_, files) = load.opened().map_err(js)?;
-        Ok(files)
-    }
-
-    fn loading(&mut self) -> Result<&mut crate::host::SceneLoad, JsValue> {
-        self.load.as_mut().ok_or_else(ended)
-    }
-}
-
-fn ended() -> JsValue {
-    js(
-        crate::Error::new(engine_core::ErrorCode::InvalidRequest, "$")
-            .expected(crate::Expected::Present),
-    )
-}
-
 pub struct PageHost<G: Game> {
     host: GameHost<G>,
     landed: Landed,
+    sound_bytes: Vec<u8>,
     #[cfg(feature = "dev")]
     pixels: Vec<u8>,
 }
@@ -164,11 +117,11 @@ impl<G: Game> PageHost<G> {
     pub async fn start(
         canvas: HtmlCanvasElement,
         game: GameEntry,
-        scene: Option<(String, SceneFiles)>,
+        scene: &str,
     ) -> Result<Self, JsValue> {
         let bricks = (game.bricks)(BrickList::default());
         let target = engine_render::RenderTarget::Canvas(canvas);
-        let mut host = GameHost::launch(target, G::start(), bricks)
+        let mut host = GameHost::launch(target, G::start(), bricks, game.linked)
             .await
             .map_err(js)?;
         #[cfg(feature = "dev")]
@@ -184,19 +137,11 @@ impl<G: Game> PageHost<G> {
             crate::host::kept_entry(kept_listing),
         );
         host.keep_in(game.name);
-        match scene {
-            Some((source, files)) => host.open_scene(&source, &files).map_err(js)?,
-            None => {
-                let kinds = engine_scene::SceneKinds::of(host.engine().app.world());
-                let (document, files) = crate::host::SceneLoad::new(game.scene.text, &kinds)
-                    .and_then(crate::host::SceneLoad::opened)
-                    .map_err(js)?;
-                host.open_document(&document, &files).map_err(js)?;
-            }
-        }
+        host.open_scene(scene).map_err(js)?;
         Ok(Self {
             host,
             landed: Landed::default(),
+            sound_bytes: Vec::new(),
             #[cfg(feature = "dev")]
             pixels: Vec::new(),
         })
@@ -244,67 +189,56 @@ impl<G: Game> PageHost<G> {
         self.host.cursor_mode() as u32
     }
 
-    pub fn take_sound(&mut self) -> SoundOrderList {
+    pub fn take_sound(&mut self) -> Vec<f64> {
         use engine_core::SoundOrder;
-        let out = js_sys::Array::new();
-        let set = |object: &js_sys::Object, field: &str, value: JsValue| {
-            let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), &value);
-        };
+        let mut orders = Vec::new();
+        self.sound_bytes.clear();
         for order in self.host.take_sound() {
-            let object = js_sys::Object::new();
             match order {
-                SoundOrder::Open { latency_seconds } => {
-                    set(&object, "open", JsValue::TRUE);
-                    set(
-                        &object,
-                        "latency",
-                        latency_seconds.map_or(JsValue::NULL, |seconds| {
-                            JsValue::from_f64(f64::from(seconds))
-                        }),
-                    );
-                }
+                SoundOrder::Open { latency_seconds } => orders.extend([
+                    0.0,
+                    f64::from(u8::from(latency_seconds.is_some())),
+                    latency_seconds.map_or(0.0, f64::from),
+                ]),
                 SoundOrder::Decode { sound, bytes } => {
-                    set(&object, "decode", JsValue::from(sound.0));
-                    set(
-                        &object,
-                        "bytes",
-                        js_sys::Uint8Array::from(&bytes[..]).into(),
-                    );
+                    self.sound_bytes.extend_from_slice(&bytes);
+                    orders.extend([1.0, f64::from(sound.0), bytes.len() as f64]);
                 }
-                SoundOrder::Start { voice, play } => {
-                    set(&object, "start", JsValue::from(voice.0));
-                    set(&object, "sound", JsValue::from(play.sound.0));
-                    set(&object, "gain", JsValue::from(play.gain));
-                    set(&object, "pan", JsValue::from(play.pan));
-                    set(&object, "rate", JsValue::from(play.rate));
-                    set(&object, "looping", JsValue::from(play.looping));
-                    set(&object, "offset", JsValue::from(play.offset_seconds));
-                }
-                SoundOrder::Tune { voice, tune } => {
-                    set(&object, "tune", JsValue::from(voice.0));
-                    set(&object, "gain", JsValue::from(tune.gain));
-                    set(&object, "pan", JsValue::from(tune.pan));
-                    set(&object, "rate", JsValue::from(tune.rate));
-                    set(&object, "seconds", JsValue::from(tune.seconds));
-                }
+                SoundOrder::Start { voice, play } => orders.extend([
+                    2.0,
+                    f64::from(voice.0),
+                    f64::from(play.sound.0),
+                    f64::from(play.gain),
+                    f64::from(play.pan),
+                    f64::from(play.rate),
+                    f64::from(u8::from(play.looping)),
+                    f64::from(play.offset_seconds),
+                ]),
+                SoundOrder::Tune { voice, tune } => orders.extend([
+                    3.0,
+                    f64::from(voice.0),
+                    f64::from(tune.gain),
+                    f64::from(tune.pan),
+                    f64::from(tune.rate),
+                    f64::from(tune.seconds),
+                ]),
                 SoundOrder::Stop {
                     voice,
                     fade_seconds,
-                } => {
-                    set(&object, "stop", JsValue::from(voice.0));
-                    set(&object, "seconds", JsValue::from(fade_seconds));
-                }
+                } => orders.extend([4.0, f64::from(voice.0), f64::from(fade_seconds)]),
                 SoundOrder::Master { gain, seconds } => {
-                    set(&object, "master", JsValue::from(gain));
-                    set(&object, "seconds", JsValue::from(seconds));
+                    orders.extend([5.0, f64::from(gain), f64::from(seconds)]);
                 }
             }
-            out.push(&object);
         }
         for order in self.host.take_io() {
             run_io(order, std::rc::Rc::clone(&self.landed));
         }
-        out
+        orders
+    }
+
+    pub fn take_sound_bytes(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.sound_bytes)
     }
 
     pub fn sound_opened(&mut self, running: bool, rate: u32, channels: u32, latency_seconds: f32) {
@@ -357,12 +291,26 @@ impl<G: Game> PageHost<G> {
         });
     }
 
-    pub fn reload_scene(
-        &mut self,
-        source: &str,
-        files: impl Into<engine_scene::SceneFiles>,
-    ) -> Result<(), JsValue> {
-        self.host.reload_scene(source, &files.into()).map_err(js)
+    pub fn reload_scene(&mut self, source: &str) -> Result<(), JsValue> {
+        self.host.open_scene(source).map_err(js)
+    }
+
+    pub fn files(&self) -> String {
+        let listed: Vec<serde_json::Value> = self
+            .host
+            .files()
+            .into_iter()
+            .map(|(uri, group)| serde_json::json!({"uri": uri, "group": group}))
+            .collect();
+        serde_json::Value::from(listed).to_string()
+    }
+
+    pub fn file(&mut self, uri: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
+        self.host.file(uri, Ok(bytes)).map_err(js)
+    }
+
+    pub fn file_failed(&mut self, uri: &str, error: &str) -> Result<(), JsValue> {
+        self.host.file(uri, Err(page_error(error))).map_err(js)
     }
 
     pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
@@ -379,6 +327,7 @@ impl<G: Game> PageHost<G> {
     }
 
     pub fn stats(&self) -> String {
+        self.host.time_frame();
         serde_json::to_string(self.host.frame_times()).expect("stats_serialize")
     }
 }
@@ -416,14 +365,16 @@ impl<G: Game> PageHost<G> {
         std::mem::take(&mut self.pixels)
     }
 
-    pub fn dev_reloaded(&mut self, source: &str, files: Option<impl Into<SceneFiles>>) {
-        let files = files.map(Into::into).unwrap_or_default();
-        self.host.dev_reloaded(source, &files);
+    pub fn dev_reloaded(&mut self, source: &str) {
+        self.host.dev_reloaded(source);
     }
 
-    pub fn dev_reload_failed(&mut self, error: &str) {
-        let error = engine_settings::parse_json::<crate::Error>(error)
-            .unwrap_or_else(|error| error.within("$.error"));
-        self.host.dev_reload_failed(error);
+    pub fn dev_reload_ended(&mut self, error: Option<String>) {
+        let outcome = error.map_or(Ok(()), |error| Err(page_error(&error)));
+        self.host.dev_reload_ended(outcome);
     }
+}
+
+fn page_error(error: &str) -> crate::Error {
+    engine_settings::parse_json::<crate::Error>(error).unwrap_or_else(|error| error.within("$.error"))
 }

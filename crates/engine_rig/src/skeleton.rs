@@ -114,44 +114,27 @@ impl Skeleton {
         self.rest[joint]
     }
 
-    pub fn mask(&self, joint: &str, feather_levels: usize) -> Result<Vec<f32>, Error> {
-        let top = self.find(joint).ok_or_else(|| {
-            Error::from(Fault::JointMissing {
-                name: joint.to_owned(),
-            })
-        })?;
+    pub fn mask(&self, top: usize, feather_levels: usize) -> Option<Vec<f32>> {
         let mut depths: Vec<Option<usize>> = vec![None; self.joints.len()];
-        depths[top] = Some(0);
+        *depths.get_mut(top)? = Some(0);
         for index in top + 1..self.joints.len() {
             depths[index] = self.joints[index]
                 .parent
                 .and_then(|parent| depths[parent])
                 .map(|depth| depth + 1);
         }
-        Ok(depths
-            .into_iter()
-            .map(|depth| match depth {
-                None => 0.0,
-                Some(depth) if depth < feather_levels => {
-                    (depth + 1) as f32 / (feather_levels + 1) as f32
-                }
-                Some(_) => 1.0,
-            })
-            .collect())
-    }
-
-    pub(crate) fn below(&self, top: usize, joint: usize) -> bool {
-        let mut held = Some(joint);
-        while let Some(at) = held {
-            if at == top {
-                return true;
-            }
-            if at < top {
-                return false;
-            }
-            held = self.joints[at].parent;
-        }
-        false
+        Some(
+            depths
+                .into_iter()
+                .map(|depth| match depth {
+                    None => 0.0,
+                    Some(depth) if depth < feather_levels => {
+                        (depth + 1) as f32 / (feather_levels + 1) as f32
+                    }
+                    Some(_) => 1.0,
+                })
+                .collect(),
+        )
     }
 
     pub(crate) fn inverse_rest(&self, joint: usize) -> Quat {

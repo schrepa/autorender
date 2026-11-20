@@ -1,54 +1,59 @@
 use engine_core::Var;
 
+use super::compile::Resolve;
 use super::*;
 
 pub(crate) struct HeldBatch {
     group: wgpu::BindGroup,
-    variant: Option<Drawn>,
+    resolves: Option<Vec<(u32, Resolve)>>,
 }
-
-pub(crate) type Drawn = (std::sync::Arc<crate::Variant>, u64);
 
 #[derive(Default)]
 pub(crate) struct HeldBatches(Vec<Vec<Option<HeldBatch>>>);
 
-fn key_slot(key: Option<MaterialHandle>) -> usize {
+fn key_slot(key: Option<Asset<Material>>) -> usize {
     key.map_or(0, |handle| handle.slot() + 1)
 }
 
-fn keyed_get(keyed: &[Option<HeldBatch>], key: Option<MaterialHandle>) -> Option<&HeldBatch> {
+fn keyed_get(keyed: &[Option<HeldBatch>], key: Option<Asset<Material>>) -> Option<&HeldBatch> {
     keyed.get(key_slot(key)).and_then(Option::as_ref)
 }
 
 impl HeldBatches {
-    pub(crate) fn group(&self, batch: u32, key: Option<MaterialHandle>) -> Option<&wgpu::BindGroup> {
+    pub(crate) fn group(&self, batch: u32, key: Option<Asset<Material>>) -> Option<&wgpu::BindGroup> {
         self.0
             .get(batch as usize)
             .and_then(|keyed| keyed_get(keyed, key))
             .map(|held| &held.group)
     }
 
-    pub(crate) fn held(
-        &self,
-        key: Option<MaterialHandle>,
-    ) -> Option<Option<Drawn>> {
-        let mut found = None;
-        for keyed in &self.0 {
-            if let Some(held) = keyed_get(keyed, key) {
-                if held.variant.is_some() {
-                    return Some(held.variant.clone());
-                }
-                found = Some(None);
-            }
-        }
-        found
+    pub(crate) fn holds(&self, key: Option<Asset<Material>>) -> bool {
+        self.0.iter().any(|keyed| keyed_get(keyed, key).is_some())
+    }
+
+    pub(crate) fn resolve_mut(
+        &mut self,
+        batches: &[(u32, u32)],
+        pipeline: u32,
+        key: Option<Asset<Material>>,
+    ) -> Option<&mut Resolve> {
+        let at = batches.iter().map(|&(_, batch)| batch as usize).find(|&batch| {
+            self.0
+                .get(batch)
+                .and_then(|keyed| keyed_get(keyed, key))
+                .is_some_and(|held| held.resolves.is_some())
+        })?;
+        let held = self.0.get_mut(at)?.get_mut(key_slot(key))?.as_mut()?;
+        (held.resolves.as_mut()?.iter_mut())
+            .find(|(known, _)| *known == pipeline)
+            .map(|(_, resolve)| resolve)
     }
 }
 
 pub(crate) enum BatchEntryRaw {
     Range { buffer: u32, offset: u64, size: u64 },
     Texture(u32),
-    Asset(TextureHandle),
+    Asset(Asset<engine_core::Texture>),
     AssetSampler(engine_core::Sampler),
 }
 
@@ -62,7 +67,7 @@ impl Run {
     pub(crate) fn set_batch(
         &mut self,
         batch: u32,
-        key: Option<MaterialHandle>,
+        key: Option<Asset<Material>>,
         entries: &[(Var, BatchEntryRaw)],
         variant: Option<crate::Variant>,
     ) -> Result<(), Error> {
@@ -76,11 +81,22 @@ impl Run {
         let module = crate::machine::batch_path(&decl);
         let wanted = layout.entries.clone();
         let layout = layout.layout.clone();
-        let others = self.assets.batches.0.iter().enumerate();
+        let pipelines: Vec<u32> = (0..self.machine.pipelines.len() as u32)
+            .filter(|&pipeline| {
+                (self.machine.pipelines[pipeline as usize].batches.iter())
+                    .any(|&(_, known)| known == batch)
+            })
+            .collect();
+        let groups = &self.assets.batches.0;
         let doubled = variant.is_some()
-            && others
-                .filter(|(at, _)| *at != batch as usize)
-                .any(|(_, keyed)| keyed_get(keyed, key).is_some_and(|held| held.variant.is_some()));
+            && pipelines.iter().any(|&pipeline| {
+                (self.machine.pipelines[pipeline as usize].batches.iter()).any(|&(_, other)| {
+                    other != batch
+                        && (groups.get(other as usize))
+                            .and_then(|keyed| keyed_get(keyed, key))
+                            .is_some_and(|held| held.resolves.is_some())
+                })
+            });
         if doubled {
             return Err(fault(path, ErrorCode::NameTwice).got("variant"));
         }
@@ -142,6 +158,12 @@ impl Run {
             })
             .collect();
         let group = crate::pipelines::bind_group(&self.device, "engine/batch-group", &layout, &bound);
+        let resolves = variant.map(|variant| {
+            pipelines
+                .into_iter()
+                .map(|pipeline| (pipeline, self.resolve(pipeline, Some(&variant))))
+                .collect()
+        });
         let groups = &mut self.assets.batches.0;
         if groups.len() <= batch as usize {
             groups.resize_with(batch as usize + 1, Default::default);
@@ -151,17 +173,12 @@ impl Run {
         if keyed.len() <= slot {
             keyed.resize_with(slot + 1, || None);
         }
-        keyed[slot] = Some(HeldBatch {
-            group,
-            variant: variant.map(|variant| {
-                let identity = variant.identity();
-                (std::sync::Arc::new(variant), identity)
-            }),
-        });
+        keyed[slot] = Some(HeldBatch { group, resolves });
+        self.forget_records(key);
         Ok(())
     }
 
-    pub(crate) fn clear_batch(&mut self, batch: u32, key: Option<MaterialHandle>) {
+    pub(crate) fn clear_batch(&mut self, batch: u32, key: Option<Asset<Material>>) {
         if let Some(held) = self
             .assets
             .batches
@@ -171,6 +188,18 @@ impl Run {
         {
             *held = None;
         }
+        self.forget_records(key);
+    }
+
+    pub(super) fn refresh_held(&mut self) {
+        let mut groups = std::mem::take(&mut self.assets.batches.0);
+        for held in groups.iter_mut().flatten().flatten() {
+            for (_, resolve) in held.resolves.iter_mut().flatten() {
+                self.refresh(resolve);
+            }
+        }
+        self.assets.batches.0 = groups;
+        self.refresh_plain();
     }
 
     fn batch_stand_in(

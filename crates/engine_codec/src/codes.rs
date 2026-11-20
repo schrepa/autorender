@@ -106,7 +106,6 @@ error_codes! {
     HierarchyDepth => "hierarchy_depth",
     HierarchyInstallFailed => "hierarchy_install_failed",
     NestedPrefab => "nested_prefab",
-    MissingAssetLibrary => "missing_asset_library",
     InvalidMesh => "invalid_mesh",
     InvalidMaterial => "invalid_material",
     InvalidTexture => "invalid_texture",

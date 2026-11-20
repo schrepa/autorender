@@ -512,6 +512,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "brick_interface"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_render",
+ "engine_sources",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "brick_present"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_render",
+ "engine_sources",
+ "schemars",
+ "serde",
+]
+
+[[package]]
+name = "brick_sound"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_math",
+ "engine_sources",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,11 +704,22 @@ dependencies = [
  "cook",
  "cook_texture",
  "engine_assets",
+ "engine_meshpack",
  "engine_rig",
+ "engine_scene",
  "glam 0.30.9",
  "gltf",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "cook_rays"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]
@@ -972,6 +1026,7 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "engine_settings",
+ "engine_textures",
  "glam 0.30.9",
  "js-sys",
  "schemars",
@@ -989,6 +1044,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine_codec",
+ "engine_math",
  "engine_settings",
  "glam 0.30.9",
  "schemars",
@@ -996,13 +1052,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_bindings"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "serde",
+]
+
+[[package]]
 name = "engine_checks"
 version = "0.1.0"
 dependencies = [
- "engine",
  "engine_command_line",
  "engine_core",
- "engine_render",
  "serde_json",
  "toml_edit",
 ]
@@ -1039,7 +1101,6 @@ dependencies = [
  "engine_profile",
  "engine_registry",
  "engine_settings",
- "engine_textures",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1058,6 +1119,17 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine_drawing"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_render",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
 ]
 
 [[package]]
@@ -1085,6 +1157,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_meshpack"
+version = "0.1.0"
+dependencies = [
+ "engine_assets",
+ "engine_codec",
+ "engine_math",
+ "glam 0.30.9",
+]
+
+[[package]]
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
@@ -1100,6 +1182,15 @@ dependencies = [
  "pollster",
  "serde_json",
  "winit",
+]
+
+[[package]]
+name = "engine_nav"
+version = "0.1.0"
+dependencies = [
+ "engine_codec",
+ "engine_math",
+ "glam 0.30.9",
 ]
 
 [[package]]
@@ -1195,7 +1286,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "bevy_ecs",
- "engine_assets",
  "engine_core",
  "engine_registry",
  "engine_settings",
@@ -1217,10 +1307,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_solids"
+version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "glam 0.30.9",
+ "serde",
+]
+
+[[package]]
 name = "engine_sources"
 version = "0.1.0"
 dependencies = [
- "sha2",
+ "serde_json",
  "toml_edit",
  "wgsl-parse",
 ]
@@ -1231,8 +1330,11 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_codec",
- "serde_json",
 ]
+
+[[package]]
+name = "engine_visible_sets"
+version = "0.1.0"
 
 [[package]]
 name = "equivalent"
@@ -1336,18 +1438,28 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 name = "fruit_fps"
 version = "0.1.0"
 dependencies = [
+ "brick_interface",
+ "brick_present",
+ "brick_sound",
  "bytemuck",
  "cook",
  "cook_model",
+ "cook_rays",
  "cook_texture",
  "engine",
- "engine_assets",
+ "engine_bindings",
  "engine_core",
+ "engine_drawing",
  "engine_ecs",
+ "engine_math",
+ "engine_meshpack",
  "engine_native",
+ "engine_nav",
  "engine_render",
  "engine_rig",
+ "engine_solids",
  "engine_sources",
+ "engine_visible_sets",
  "glam 0.30.9",
  "gltf",
  "schemars",
@@ -1454,8 +1566,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1513,23 +1627,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 dependencies = [
  "serde_core",
-]
-
-[[package]]
-name = "glb_cook"
-version = "0.1.0"
-dependencies = [
- "engine_assets",
- "engine_math",
- "engine_rig",
- "engine_scene",
- "engine_textures",
- "glam 0.30.9",
- "gltf",
- "png",
- "serde",
- "serde_json",
- "zune-jpeg",
 ]
 
 [[package]]
@@ -3379,6 +3476,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
+name = "typed-path"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4265,6 +4368,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "xtask",
+ "zip",
 ]
 
 [[package]]
@@ -4285,6 +4389,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "zip"
+version = "9.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e408c6cc4699dd017d53dc080cd51c2cea2b5354af57a1479bd265ed42911487"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "getrandom 0.4.3",
+ "indexmap",
+ "libc",
+ "memchr",
+ "nix",
+ "typed-path",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

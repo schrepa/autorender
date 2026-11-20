@@ -2,6 +2,7 @@
 pub struct Source {
     package: &'static str,
     game: bool,
+    hash: u64,
     modules: &'static [ShaderText],
 }
 
@@ -10,11 +11,13 @@ impl Source {
     pub const fn generated(
         package: &'static str,
         game: bool,
+        hash: u64,
         modules: &'static [ShaderText],
     ) -> Self {
         Self {
             package,
             game,
+            hash,
             modules,
         }
     }
@@ -30,6 +33,11 @@ impl Source {
     }
 
     #[doc(hidden)]
+    pub const fn hash(&self) -> u64 {
+        self.hash
+    }
+
+    #[doc(hidden)]
     pub fn modules(&self) -> &'static [ShaderText] {
         self.modules
     }
@@ -39,14 +47,24 @@ impl Source {
 #[derive(Debug)]
 pub struct ShaderText {
     path: &'static str,
+    #[cfg(feature = "dev")]
     text: &'static str,
+    #[cfg(feature = "dev")]
     file: &'static str,
 }
 
 impl ShaderText {
     #[doc(hidden)]
     pub const fn generated(path: &'static str, text: &'static str, file: &'static str) -> Self {
-        Self { path, text, file }
+        #[cfg(not(feature = "dev"))]
+        let _ = (text, file);
+        Self {
+            path,
+            #[cfg(feature = "dev")]
+            text,
+            #[cfg(feature = "dev")]
+            file,
+        }
     }
 
     #[doc(hidden)]
@@ -55,11 +73,13 @@ impl ShaderText {
     }
 
     #[doc(hidden)]
+    #[cfg(feature = "dev")]
     pub fn text(&self) -> &'static str {
         self.text
     }
 
     #[doc(hidden)]
+    #[cfg(feature = "dev")]
     pub fn file(&self) -> &'static str {
         self.file
     }

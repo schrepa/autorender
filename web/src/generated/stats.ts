@@ -1,7 +1,6 @@
 export interface FrameStats {
   cut_seconds: number;
   draw_calls: number;
-  dropped_seconds: number;
   extraction_ms: number;
   fixed_steps: number;
   frame: number;
@@ -38,6 +37,16 @@ export type Expected = "number" | "integer" | "string" | "boolean" | "object" | 
 
 export type GpuTime = number | { unavailable: string };
 
+export interface GroupReport {
+  bytes_in: number;
+  files: number;
+  files_in: number;
+  name: string;
+  stage: GroupStage;
+}
+
+export type GroupStage = "arriving" | "compiling" | "ready" | { failed: Error };
+
 export interface Progress {
   done: number;
   total: number;
@@ -46,6 +55,7 @@ export interface Progress {
 export interface Readiness {
   compiling: number;
   failed: [string, Error][];
+  groups: GroupReport[];
   loading: Progress;
   settling: number;
   unsettled: Unsettled[];

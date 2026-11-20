@@ -12,7 +12,7 @@ pub fn print_generated(files: &[(&str, String)]) {
 
 #[cfg(feature = "dev")]
 fn listed<G: crate::Game>(bricks: crate::BrickList) -> Result<crate::Engine, String> {
-    crate::game::engine(bricks, G::start().ticks_per_second).map_err(|error| error.to_string())
+    crate::game::engine(bricks, &G::start()).map_err(|error| error.to_string())
 }
 
 #[cfg(feature = "dev")]
@@ -33,17 +33,7 @@ pub fn print_shaders<G: crate::Game>(bricks: crate::BrickList) -> Result<(), Str
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
-    let stages: Vec<Value> = (installed.stages.iter())
-        .map(|(entry, passes, text)| {
-            serde_json::json!({"entry": entry, "passes": passes, "text": text})
-        })
-        .collect();
-    let shaders = serde_json::json!({
-        "modules": installed.modules,
-        "texts": installed.texts,
-        "stages": stages,
-    });
-    println!("{shaders}");
+    print_generated(&[("shaders.json", installed)]);
     Ok(())
 }
 

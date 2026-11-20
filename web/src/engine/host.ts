@@ -2,7 +2,7 @@ import { FRAME_PHASES } from "../generated/host";
 import { engineError, engineFailure } from "../generated/errors";
 import type { Error as Failure } from "../generated/reply";
 import { parseJson, type Runtime } from "../generated/runtime";
-import type { Progress, Readiness } from "../generated/stats";
+import type { Readiness } from "../generated/stats";
 import type { Development } from "./dev";
 import { BrowserInput } from "./input";
 import { fatal, panicReport } from "./panic";
@@ -66,6 +66,7 @@ class FrameHud {
     if (!span) { this.span = { start: timestamp, frames: 0 }; return; }
     span.frames++;
     if (timestamp - span.start < 250) return;
+    if (!element("fps").checkVisibility()) { this.reset(); return; }
     this.elapsed += timestamp - span.start; this.intervals += span.frames;
     this.span = { start: timestamp, frames: 0 };
     const stats = parseJson(runtime.stats());
@@ -88,77 +89,7 @@ class FrameHud {
   }
 }
 
-class GpuPace {
-  private drawn = 0;
-  private since = 0;
-  private done = false;
-  private shown = true;
-  private refresh = Infinity;
-  private animated: number | undefined;
-  private stamp = -Infinity;
-  private posted = 0;
-  private tick = 0;
-  private readonly channel = new MessageChannel();
-
-  constructor(private readonly canvas: HTMLCanvasElement, early: () => void) {
-    this.channel.port1.onmessage = (event: MessageEvent<number>) => {
-      if (event.data !== this.posted) return;
-      this.posted = 0;
-      early();
-    };
-  }
-
-  animation(timestamp: number): boolean {
-    if (this.animated !== undefined && timestamp > this.animated) {
-      this.refresh = Math.min(this.refresh, timestamp - this.animated);
-    }
-    this.animated = timestamp;
-    if (this.shown) return false;
-    this.shown = true;
-    this.offer();
-    return true;
-  }
-
-  time(timestamp: number): number {
-    this.stamp = Math.max(this.stamp, timestamp);
-    return this.stamp;
-  }
-
-  submitted(since: number, early: boolean) {
-    const drawn = ++this.drawn;
-    this.since = since;
-    this.done = false;
-    this.shown = !early;
-    this.posted = 0;
-    const queue = (this.canvas.getContext("webgpu") as GPUCanvasContext | null)?.getConfiguration()?.device.queue;
-    void queue?.onSubmittedWorkDone().then(() => {
-      if (drawn !== this.drawn) return;
-      this.done = true;
-      this.offer();
-    }, () => undefined);
-  }
-
-  stop() {
-    this.drawn++;
-    this.done = false;
-    this.shown = true;
-    this.posted = 0;
-  }
-
-  dispose() {
-    this.stop();
-    this.channel.port1.close();
-  }
-
-  private offer() {
-    if (!this.done || !this.shown || this.posted || performance.now() - this.since < this.refresh) return;
-    this.posted = ++this.tick;
-    this.channel.port2.postMessage(this.posted);
-  }
-}
-
-export interface Fetched { files: Progress; bytes: number }
-export interface Loading extends Fetched { readiness?: Readiness; pipelines: number }
+export interface Loading { readiness: Readiness; pipelines: number }
 export interface Stopped { title: string; summary: string; detail: string; error?: Failure }
 
 export interface StartWatch {
@@ -168,8 +99,8 @@ export interface StartWatch {
 }
 
 export interface GameOptions<T extends Runtime> extends StartWatch {
-  create(canvas: HTMLCanvasElement, signal: AbortSignal, fetched: (fetched: Fetched) => void): Promise<T>;
-  source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
+  create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
+  source: { url: string; load(signal: AbortSignal): Promise<string>; feed(game: Runtime, signal: AbortSignal): Promise<void> };
 }
 
 interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; shown: boolean }
@@ -195,10 +126,6 @@ let state: HostState<T> = { kind: "starting" };
 let dev: Development | undefined;
 let request = 0;
 const hud = new FrameHud();
-const pace = new GpuPace(canvas, () => {
-  const current = live();
-  if (current?.kind === "playing" && current.shown && !halted(current)) run(current, performance.now(), true);
-});
 const ticks = new MessageChannel();
 let tickCount = 0;
 ticks.port1.onmessage = (event: MessageEvent<number>) => {
@@ -206,21 +133,25 @@ ticks.port1.onmessage = (event: MessageEvent<number>) => {
 };
 let pixelWidth = 1;
 let pixelHeight = 1;
-let fetched: Fetched = { files: { done: 0, total: 0 }, bytes: 0 };
-let preparing: Omit<Loading, keyof Fetched> = { pipelines: 0 };
 let sampled = { at: -Infinity, phase: -1 };
-
-function progress() {
-  options.progress?.({ ...fetched, ...preparing });
-}
+let feeding: Promise<unknown> = Promise.resolve();
 
 function prepared(game: T, phase: number) {
   const at = performance.now();
   if (phase === sampled.phase && at - sampled.at < 250) return;
   sampled = { at, phase };
   const { readiness, pipelines } = parseJson(game.stats());
-  preparing = { readiness, pipelines };
-  progress();
+  options.progress?.({ readiness, pipelines });
+}
+
+function handOver(game: T, hand: () => void): Promise<void> {
+  const fed = feeding.then(() => {
+    lifecycle.signal.throwIfAborted();
+    hand();
+    return options.source.feed(game, lifecycle.signal);
+  });
+  feeding = fed.catch(() => undefined);
+  return fed;
 }
 
 function setStatus(text: string, shown: string) {
@@ -264,7 +195,6 @@ window.addEventListener("resize", resize, listenerOptions);
 function halt() {
   if (request > 0) cancelAnimationFrame(request);
   request = 0;
-  pace.stop();
   hud.reset();
   if (dev?.pending()) wake();
 }
@@ -342,25 +272,18 @@ function frame(timestamp: number) {
   if (!current) return;
   if (current.kind === "playing" && !current.shown) return;
   if (halted(current)) {
-    if (dev?.pending()) run(current, timestamp, false);
+    if (dev?.pending()) run(current, timestamp);
     return;
   }
-  if (current.kind === "playing" && pace.animation(timestamp)) {
-    request = requestAnimationFrame(frame);
-    return;
-  }
-  run(current, timestamp, false);
+  run(current, timestamp);
 }
 
-function run(current: Live<T>, at: number, early: boolean) {
+function run(current: Live<T>, timestamp: number) {
   if (panicReport()) { fail(engineFailure({ code: "runtime_panicked", path: "$" })); return; }
   const game = current.game;
-  const since = performance.now();
-  const timestamp = current.kind === "playing" ? pace.time(at) : at;
   try {
     input.pollPads();
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
-    if (phase === FRAME_PHASES.playing) pace.submitted(since, early);
     input.setCursorMode(game.cursor_mode());
     sound.exchange(game);
     dev?.turned();
@@ -370,7 +293,6 @@ function run(current: Live<T>, at: number, early: boolean) {
     } else if (phase === FRAME_PHASES.playing) {
       hud.frame(game, timestamp);
     } else if (phase === FRAME_PHASES.idle || phase === FRAME_PHASES.paused) {
-      pace.stop();
       hud.reset();
       if (dev?.pending()) wake();
       return;
@@ -440,9 +362,10 @@ async function start() {
   pause.disabled = true;
   reset.disabled = true;
   if (!("gpu" in navigator)) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "gpu" });
-  const created = await options.create(canvas, lifecycle.signal, files => { fetched = files; progress(); });
+  const created = await options.create(canvas, lifecycle.signal);
   if (disposed()) { created.free(); return; }
   state = { kind: "preparing", game: created, paused: false, shown: false };
+  handOver(created, () => undefined).catch(fail);
   created.apply_host_settings(location.search);
   connectInput();
   resize();
@@ -452,7 +375,7 @@ async function start() {
   if (development) {
     const { connectDevelopment } = await import("./dev");
     if (disposed()) return;
-    dev = connectDevelopment({ game: created, signal: lifecycle.signal, source: options.source, wake, fail });
+    dev = connectDevelopment({ game: created, signal: lifecycle.signal, source: options.source, handOver: hand => handOver(created, hand), wake, fail });
   }
   resume();
 }
@@ -460,13 +383,13 @@ async function start() {
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
   lifecycle.abort();
-  stopClock(); observer.disconnect(); input.dispose(); sound.dispose(); ticks.port1.close(); pace.dispose();
+  stopClock(); observer.disconnect(); input.dispose(); sound.dispose(); ticks.port1.close();
   state = { kind: "disposed" };
   current?.game.free();
 });
 const source = options.source;
-const followed = import.meta.hot && source && URL.parse(source.url, location.href)?.href;
-if (import.meta.hot && source && followed) {
+const followed = import.meta.hot && URL.parse(source.url, location.href)?.href;
+if (import.meta.hot && followed) {
   let edited = false;
   let following = false;
   let shown = false;
@@ -476,9 +399,8 @@ if (import.meta.hot && source && followed) {
     if (!current) return;
     try {
       const text = await source.load(lifecycle.signal);
-      const files = await source.files(text, lifecycle.signal);
       if (live() !== current) return;
-      current.game.reload_scene(text, files);
+      await handOver(current.game, () => current.game.reload_scene(text));
       hud.reset();
       if (shown) message.hidden = true;
       shown = false;

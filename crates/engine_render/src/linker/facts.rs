@@ -4,7 +4,7 @@ use wesl::syntax::{
 };
 use wgpu::ShaderStages;
 
-use super::{Declaration, Sample, Ty};
+use super::{Declaration, Fragment, Sample, Ty};
 
 #[derive(Default)]
 pub(super) struct Facts {
@@ -12,12 +12,6 @@ pub(super) struct Facts {
     pub(super) overrides: Vec<String>,
     pub(super) functions: Vec<(String, Option<ShaderStages>)>,
     pub(super) items: Vec<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Fragment {
-    pub(crate) outputs: Vec<(u32, wgpu::TextureSampleType)>,
-    pub(crate) inputs: Vec<u32>,
 }
 
 pub(super) fn facts(text: &str) -> Facts {
@@ -65,9 +59,9 @@ pub(super) fn facts(text: &str) -> Facts {
     facts
 }
 
-pub(super) fn fragments(text: &str) -> Vec<(String, Fragment)> {
+pub(super) fn fragment(text: &str, entry: &str) -> Fragment {
     let Ok(unit) = text.parse::<TranslationUnit>() else {
-        return Vec::new();
+        return Fragment::default();
     };
     let members = |name: &str| {
         unit.global_declarations.iter().find_map(|declaration| {
@@ -81,11 +75,13 @@ pub(super) fn fragments(text: &str) -> Vec<(String, Fragment)> {
             })
         })
     };
-    let mut found = Vec::new();
     for declaration in &unit.global_declarations {
         let GlobalDeclaration::Function(item) = declaration.node() else {
             continue;
         };
+        if item.ident.to_string() != entry {
+            continue;
+        }
         let mut outputs = Vec::new();
         if let Some(returned) = &item.return_type {
             match location(&item.return_attributes) {
@@ -107,9 +103,9 @@ pub(super) fn fragments(text: &str) -> Vec<(String, Fragment)> {
             }
         }
         inputs.sort_unstable();
-        found.push((item.ident.to_string(), Fragment { outputs, inputs }));
+        return Fragment { outputs, inputs };
     }
-    found
+    Fragment::default()
 }
 
 fn stage(function: &Function) -> Option<ShaderStages> {

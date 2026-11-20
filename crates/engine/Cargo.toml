@@ -19,6 +19,7 @@ engine_profile.workspace = true
 engine_scene.workspace = true
 engine_settings.workspace = true
 engine_render.workspace = true
+engine_textures.workspace = true
 engine_dev = { workspace = true, optional = true }
 engine_panic.workspace = true
 bevy_ecs.workspace = true

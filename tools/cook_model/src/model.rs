@@ -6,24 +6,28 @@ use glam::{Mat4, Vec3};
 use serde_json::{Value, json};
 
 use crate::geometry::{self, budget, counted};
+use crate::maps;
 use crate::markers::{markers, write_markers};
-use crate::material::{MaterialPlan, materials, write_materials, write_meshes, write_textures};
+use crate::material::{
+    MapPlan, MaterialPlan, Maps, materials, write_materials, write_meshes, write_textures,
+};
 use crate::motion;
 use crate::params::{
-    Character, Clip, Form, Model, Static, check_clips, check_name, check_scale, map_kinds,
+    Character, Clip, Form, MaterialMaps, Model, StaticBudgets, check_clips, check_exact_alpha,
+    check_name, check_scale, map_kinds, map_names,
 };
 use crate::rig::{Rig, rig, rig_by_names};
 use crate::source::Source;
 
 pub static MODEL: Kind = Kind {
     name: "model",
-    version: 1,
+    version: 2,
     run: model,
 };
 
 pub static FORM: Kind = Kind {
     name: "form",
-    version: 1,
+    version: 2,
     run: form,
 };
 
@@ -31,6 +35,12 @@ pub static CLIP: Kind = Kind {
     name: "clip",
     version: 1,
     run: clip,
+};
+
+pub static MATERIAL_MAPS: Kind = Kind {
+    name: "material_maps",
+    version: 1,
+    run: material_maps,
 };
 
 fn sources<const N: usize>(step: &Step<'_>) -> Result<[Source; N], Refusal> {
@@ -197,7 +207,31 @@ fn model(step: &mut Step<'_>) -> Result<(), Refusal> {
         }
         Model::Static(fixed) => {
             survey(step, &source, None);
-            run_static(step, &source, &name, fixed)
+            let sizes = (fixed.texture_size, &fixed.map_sizes);
+            let kinds = map_kinds(&name, fixed.maps.as_deref(), &fixed.textures, sizes)?;
+            check_exact_alpha(&name, &fixed.exact_alpha, &kinds)?;
+            let own = MapPlan {
+                size: fixed.texture_size,
+                sizes: &fixed.map_sizes,
+                material_sizes: None,
+                textures: &fixed.textures,
+                exact_alpha: &fixed.exact_alpha,
+            };
+            let plan = MaterialPlan {
+                names: &fixed.material,
+                kinds,
+                maps: Maps::Own(own),
+            };
+            run_static(step, &source, &name, (fixed.scale, fixed.tolerance, &fixed.budgets), &plan)
+        }
+        Model::Borrowing(held) => {
+            survey(step, &source, None);
+            let plan = MaterialPlan {
+                names: &held.material,
+                kinds: map_names(&name, held.maps.as_deref())?,
+                maps: Maps::Of(&held.maps_of),
+            };
+            run_static(step, &source, &name, (held.scale, held.tolerance, &held.budgets), &plan)
         }
     }
 }
@@ -225,18 +259,20 @@ fn run_character(
     let budgets = &character.budgets;
     let influences = counted(step, source, &meshes, (budgets.triangles, budgets.vertices))?;
     budget(source, "BudgetInfluences", influences, budgets.influences)?;
-    let plan = MaterialPlan {
-        names: &character.material,
+    let own = MapPlan {
         size: character.texture_size,
         sizes: &character.map_sizes,
-        kinds,
-        textures: &character.textures,
         material_sizes: None,
+        textures: &character.textures,
         exact_alpha: &[],
-        shared: None,
+    };
+    let plan = MaterialPlan {
+        names: &character.material,
+        kinds,
+        maps: Maps::Own(own),
     };
     let made = materials(step, source, name, &meshes, &plan)?;
-    write_textures(step, source, &made.maps, &plan)?;
+    write_textures(step, source, &made.maps, &own)?;
     write_materials(step, &made.materials);
     write_meshes(step, &meshes);
     let space = Mat4::from_scale(Vec3::splat(rig.scale)) * rig.space.inverse();
@@ -252,41 +288,53 @@ fn run_character(
     write_clips(step, source, &rig, &plan)
 }
 
+fn material_maps(step: &mut Step<'_>) -> Result<(), Refusal> {
+    let name = step.name().to_owned();
+    check_name(&name)?;
+    let params: MaterialMaps = step.params()?;
+    let sizes = (params.texture_size, &params.map_sizes);
+    let kinds = map_kinds(&name, params.maps.as_deref(), &params.textures, sizes)?;
+    check_exact_alpha(&name, &params.exact_alpha, &kinds)?;
+    let [source] = sources(step)?;
+    let wanted = Some(params.material.as_str());
+    let held = source
+        .gltf
+        .materials()
+        .find(|held| held.name() == wanted)
+        .ok_or_else(|| {
+            source.refuse("MaterialMissing", &params.material, "no material has this name")
+        })?;
+    let plan = MapPlan {
+        size: params.texture_size,
+        sizes: &params.map_sizes,
+        material_sizes: None,
+        textures: &params.textures,
+        exact_alpha: &params.exact_alpha,
+    };
+    let made = kinds
+        .into_iter()
+        .map(|kind| maps::map(&source, &held, kind, &name, plan.size(held.name(), kind)))
+        .collect::<Result<Vec<_>, _>>()?;
+    write_textures(step, &source, &made, &plan)
+}
+
 fn run_static(
     step: &mut Step<'_>,
     source: &Source,
     name: &str,
-    fixed: &Static,
+    (scale, tolerance, budgets): (f32, f32, &StaticBudgets),
+    plan: &MaterialPlan<'_>,
 ) -> Result<(), Refusal> {
-    check_scale(name, fixed.scale, fixed.tolerance)?;
-    let sizes = (fixed.texture_size, &fixed.map_sizes);
-    let kinds = map_kinds(name, fixed.maps.as_deref(), &fixed.textures, sizes)?;
-    if let Some(wanted) = fixed
-        .exact_alpha
-        .iter()
-        .find(|wanted| kinds.iter().all(|kind| kind.name() != *wanted))
-    {
-        let detail = format!("`{wanted}` is not a map this entry cooks");
-        return Err(Refusal::new("ExactAlpha", name, detail));
+    check_scale(name, scale, tolerance)?;
+    let meshes = geometry::fixed(source, name, scale, tolerance)?;
+    counted(step, source, &meshes, (budgets.triangles, budgets.vertices))?;
+    let made = materials(step, source, name, &meshes, plan)?;
+    if let Maps::Own(own) = plan.maps {
+        write_textures(step, source, &made.maps, &own)?;
     }
-    let meshes = geometry::fixed(source, name, fixed.scale, fixed.tolerance)?;
-    let budgets = (fixed.budgets.triangles, fixed.budgets.vertices);
-    counted(step, source, &meshes, budgets)?;
-    let plan = MaterialPlan {
-        names: &fixed.material,
-        size: fixed.texture_size,
-        sizes: &fixed.map_sizes,
-        kinds,
-        textures: &fixed.textures,
-        material_sizes: None,
-        exact_alpha: &fixed.exact_alpha,
-        shared: fixed.shared_maps.as_ref(),
-    };
-    let made = materials(step, source, name, &meshes, &plan)?;
-    write_textures(step, source, &made.maps, &plan)?;
     write_materials(step, &made.materials);
     write_meshes(step, &meshes);
-    let found = markers(source, Mat4::from_scale(Vec3::splat(fixed.scale)), |_| None);
+    let found = markers(source, Mat4::from_scale(Vec3::splat(scale)), |_| None);
     write_markers(step, name, &found);
     Ok(())
 }

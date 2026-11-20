@@ -26,6 +26,7 @@ static RGA_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize
 struct Checked {
     source: String,
     name: String,
+    text: String,
     module: naga::Module,
     info: ModuleInfo,
 }
@@ -39,107 +40,50 @@ fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
     Ok((module, info))
 }
 
-type Stages = Vec<(String, Vec<String>, String)>;
-
-struct Installed {
-    source: String,
-    modules: Vec<String>,
-    texts: Vec<String>,
-    stages: Stages,
-}
-
-fn standard() -> Result<Installed, String> {
-    let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let installed = engine_checks::install::noop(&mut engine, engine::Start::default().gpu)?;
-    Ok(Installed {
-        source: "standard".to_owned(),
-        modules: installed.modules,
-        texts: installed.texts,
-        stages: (installed.stages.into_iter())
-            .map(|(entry, passes, text)| {
-                let passes = passes.into_iter().map(str::to_owned).collect();
-                (entry.to_owned(), passes, text)
-            })
-            .collect(),
-    })
-}
-
-fn games(root: &Path) -> Result<Vec<Installed>, String> {
-    let mut games = Vec::new();
+fn linked(root: &Path) -> Result<Vec<(String, String, String)>, String> {
+    let mut linked = Vec::new();
     for package in crate::rules::repository(root)?.projects() {
         let Some(folder) = package.path.as_deref() else {
             continue;
         };
-        let project = crate::process::Project::read(root, folder)?;
-        let program = crate::pipeline::build_native(root, &project)?;
-        let output = Command::new(&program)
-            .arg("--shaders")
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("{program}: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "{program} --shaders: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let printed = String::from_utf8_lossy(&output.stdout);
-        let shaders: Value = printed
-            .lines()
-            .rev()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .find(|value| value.get("stages").is_some())
-            .ok_or_else(|| format!("{program} --shaders printed no stages"))?;
-        let texts = |key: &str| -> Vec<String> {
-            (shaders[key].as_array().into_iter().flatten())
-                .filter_map(|text| text.as_str().map(str::to_owned))
-                .collect()
+        let path = format!("{folder}/generated/shaders.json");
+        let text = std::fs::read_to_string(root.join(&path))
+            .map_err(|error| format!("cannot read {path}: {error}; run cargo xtask generate"))?;
+        let shaders: Value =
+            serde_json::from_str(&text).map_err(|error| format!("{path}: {error}"))?;
+        let field = |value: &Value, key: &str| -> Result<String, String> {
+            value[key]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{path}: {key} is not text"))
         };
-        let stages = (shaders["stages"].as_array().into_iter().flatten())
-            .map(|stage| {
-                let text = |key: &str| stage[key].as_str().unwrap_or_default().to_owned();
-                let passes = (stage["passes"].as_array().into_iter().flatten())
-                    .filter_map(|pass| pass.as_str().map(str::to_owned))
-                    .collect();
-                (text("entry"), passes, text("text"))
-            })
-            .collect();
-        games.push(Installed {
-            source: folder.to_owned(),
-            modules: texts("modules"),
-            texts: texts("texts"),
-            stages,
-        });
+        for module in shaders["modules"].as_array().into_iter().flatten() {
+            let name = field(module, "path")?;
+            for entry in module["entries"].as_array().into_iter().flatten() {
+                linked.push((folder.to_owned(), name.clone(), field(entry, "text")?));
+            }
+        }
     }
-    Ok(games)
+    Ok(linked)
 }
 
-fn modules(root: &Path) -> Result<(Vec<Checked>, Vec<Installed>), String> {
-    let mut sources = vec![standard()?];
-    sources.extend(games(root)?);
+fn checked(root: &Path) -> Result<Vec<Checked>, String> {
     let mut checked = Vec::new();
     let mut failures = Vec::new();
-    let mut seen: HashSet<(String, String)> = HashSet::default();
-    for installed in &mut sources {
-        let modules = std::mem::take(&mut installed.modules);
-        let texts = std::mem::take(&mut installed.texts);
-        for (path, text) in modules.into_iter().zip(texts) {
-            if !seen.insert((path.clone(), text.clone())) {
-                continue;
-            }
-            match validated(&text) {
-                Ok((module, info)) => checked.push(Checked {
-                    source: installed.source.clone(),
-                    name: path,
-                    module,
-                    info,
-                }),
-                Err(error) => failures.push(format!("{}: {path}: {error}", installed.source)),
-            }
+    for (source, name, text) in linked(root)? {
+        match validated(&text) {
+            Ok((module, info)) => checked.push(Checked {
+                source,
+                name,
+                text,
+                module,
+                info,
+            }),
+            Err(error) => failures.push(format!("{source}: {name}: {error}")),
         }
     }
     if failures.is_empty() {
-        Ok((checked, sources))
+        Ok(checked)
     } else {
         Err(failures.join("\n"))
     }
@@ -151,14 +95,15 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         [flag, folder, no] if flag == "--out" && no == "--no-rga" => (PathBuf::from(folder), false),
         _ => return Err("usage: cargo xtask shaders --out DIR [--no-rga]".into()),
     };
-    let (modules, sources) = modules(root)?;
+    let modules = checked(root)?;
     let rga = if rga { rga_program(root)? } else { None };
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let linked = folder.join("linked");
     let _ = std::fs::remove_dir_all(&linked);
-    for installed in &sources {
-        write_linked(&linked.join(folder_name(&installed.source)), &installed.stages)?;
+    for checked in &modules {
+        write_linked(&linked, checked)?;
     }
+    let mut seen = HashSet::default();
     let work: Vec<(&Checked, &naga::EntryPoint)> = modules
         .iter()
         .flat_map(|checked| {
@@ -168,7 +113,16 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
                 .iter()
                 .map(move |entry| (checked, entry))
         })
+        .filter(|(checked, entry)| {
+            seen.insert((
+                checked.source.as_str(),
+                checked.name.as_str(),
+                entry.name.as_str(),
+            ))
+        })
         .collect();
+    let mut sources: Vec<&str> = modules.iter().map(|checked| checked.source.as_str()).collect();
+    sources.dedup();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let done: Vec<std::sync::Mutex<Option<Result<Value, String>>>> =
         work.iter().map(|_| std::sync::Mutex::new(None)).collect();
@@ -196,7 +150,6 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     let report = json!({
-        "version": 1,
         "naga": "counts over each entry point's function and every function it calls",
         "amd": rga.as_ref().map(|program| json!({
             "tool": format!("Radeon GPU Analyzer {RGA_VERSION}, offline SPIR-V mode (no driver)"),
@@ -207,7 +160,7 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         "amd_unavailable": rga.is_none().then_some(
             if RGA_ARCHIVE.is_none() { "Radeon GPU Analyzer runs on Windows and Linux" } else { "skipped with --no-rga" }
         ),
-        "sources": sources.iter().map(|installed| installed.source.as_str()).collect::<Vec<_>>(),
+        "sources": sources,
         "entries": entries,
     });
     let path = folder.join("report.json");
@@ -228,30 +181,16 @@ fn folder_name(source: &str) -> String {
     source.replace(['/', '\\'], ".")
 }
 
-fn write_linked(linked: &Path, stages: &Stages) -> Result<(), String> {
-    std::fs::create_dir_all(linked).map_err(|error| error.to_string())?;
-    let mut named: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-    for (entry, _, _) in stages {
-        *named.entry(entry.as_str()).or_default() += 1;
-    }
-    let mut taken = HashSet::default();
-    for (entry, passes, text) in stages {
-        let mut name = if named[entry.as_str()] == 1 {
-            entry.clone()
-        } else {
-            format!("{entry}.{}", passes.join("+"))
-        };
-        let base = name.clone();
-        let mut form = 1;
-        while !taken.insert(name.clone()) {
-            form += 1;
-            name = format!("{base}.{form}");
-        }
-        let path = linked.join(format!("{name}.wgsl"));
-        std::fs::write(&path, text)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    }
-    Ok(())
+fn write_linked(linked: &Path, checked: &Checked) -> Result<(), String> {
+    let folder = linked.join(folder_name(&checked.source));
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let entries: Vec<&str> = (checked.module.entry_points.iter())
+        .map(|entry| entry.name.as_str())
+        .collect();
+    let name = format!("{}.{}", checked.name.replace("::", "."), entries.join("+"));
+    let path = folder.join(format!("{name}.wgsl"));
+    std::fs::write(&path, &checked.text)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
 fn entry_report(

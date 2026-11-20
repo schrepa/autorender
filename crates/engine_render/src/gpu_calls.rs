@@ -208,6 +208,10 @@ impl Queue {
         self.0.submission.settle();
     }
 
+    pub(crate) fn finishers(&self) -> usize {
+        self.0.submission.finishers()
+    }
+
     pub fn submit_now(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.settle();
         self.0

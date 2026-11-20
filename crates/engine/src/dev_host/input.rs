@@ -1,4 +1,4 @@
-use engine_core::{Error, ErrorCode, Expected, MouseButton, TouchPhase};
+use engine_core::{Error, ErrorCode, Expected, KeyCode, MouseButton, TouchPhase};
 use engine_registry::{Kind, Lands, NameEntry, Reach, unavailable};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ struct Touch {
 #[serde(deny_unknown_fields)]
 struct Held {
     #[serde(default)]
-    keys: Vec<String>,
+    keys: Vec<KeyCode>,
     #[serde(default)]
     pointer: Pointer,
     #[serde(default)]
@@ -49,15 +49,6 @@ fn held(reach: &Reach<'_>) -> Value {
 }
 
 fn checked(asked: &Held) -> Result<(), Error> {
-    for (at, key) in asked.keys.iter().enumerate() {
-        if !engine_core::is_id(key) {
-            return Err(
-                Error::new(ErrorCode::InvalidInput, format!("$.args.keys[{at}]"))
-                    .expected(Expected::Id)
-                    .got(key.as_str()),
-            );
-        }
-    }
     let pointer = &asked.pointer;
     let finite = [
         (
@@ -85,11 +76,11 @@ fn checked(asked: &Held) -> Result<(), Error> {
 }
 
 fn hold(agent: &mut DeviceGatherer, asked: &Held) {
-    let keys: Vec<String> = agent.keys_held().map(str::to_owned).collect();
-    for key in keys.iter().filter(|key| !asked.keys.contains(key)) {
+    let keys: Vec<KeyCode> = agent.keys_held().collect();
+    for &key in keys.iter().filter(|key| !asked.keys.contains(key)) {
         agent.key(key, false);
     }
-    for key in &asked.keys {
+    for &key in &asked.keys {
         agent.key(key, true);
     }
     let pressed: Vec<MouseButton> = agent.mouse_held().collect();

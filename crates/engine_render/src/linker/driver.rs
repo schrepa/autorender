@@ -19,20 +19,7 @@ pub(super) struct Prepared {
 
 #[derive(Default)]
 pub(super) struct Parsed {
-    stamp: u64,
-    units: HashMap<ModulePath, Unit>,
-}
-
-struct Unit {
-    source: String,
-    stamp: u64,
-    syntax: TranslationUnit,
-}
-
-impl Parsed {
-    pub(super) fn changed(&mut self) {
-        self.stamp += 1;
-    }
+    units: HashMap<ModulePath, TranslationUnit>,
 }
 
 #[derive(Default)]
@@ -103,33 +90,19 @@ impl CompilerDriver for Linking<'_> {
     }
 
     fn load_module(&mut self, path: &ModulePath) -> Result<TranslationUnit, Error> {
-        let Some(at) = self.texts.at.get(path).copied() else {
+        if !self.texts.at.contains_key(path) {
             return pass::load_module(path, self.texts);
-        };
-        let source = self.texts.texts[at].as_str();
-        let key = path.clone();
-        let stamp = self.parsed.stamp;
-        let kept = match self.parsed.units.get_mut(&key) {
-            Some(unit) if unit.stamp == stamp => true,
-            Some(unit) if unit.source == source => {
-                unit.stamp = stamp;
-                true
-            }
-            Some(_) | None => false,
-        };
-        if !kept {
-            let mut syntax = pass::load_module(path, self.texts)?;
-            pass::condcomp(&mut syntax, &self.features)?;
-            pass::retarget_idents(&mut syntax);
-            let source = source.to_owned();
-            let unit = Unit {
-                source,
-                stamp,
-                syntax,
-            };
-            self.parsed.units.insert(key.clone(), unit);
         }
-        let module = self.parsed.units[&key].syntax.clone();
+        let module = match self.parsed.units.get(path) {
+            Some(syntax) => syntax.clone(),
+            None => {
+                let mut syntax = pass::load_module(path, self.texts)?;
+                pass::condcomp(&mut syntax, &self.features)?;
+                pass::retarget_idents(&mut syntax);
+                self.parsed.units.insert(path.clone(), syntax.clone());
+                syntax
+            }
+        };
         for declaration in &module.global_declarations {
             if let Some(ident) = declared(declaration.node()) {
                 self.names.0.push((ident.clone(), ident.name().clone()));
@@ -175,7 +148,6 @@ pub(super) struct Linked {
     pub(super) text: String,
     pub(super) bindings: Vec<String>,
     pub(super) overrides: Vec<String>,
-    pub(super) functions: Vec<String>,
 }
 
 impl Linked {
@@ -192,9 +164,9 @@ impl Linked {
             {
                 &mut self.bindings
             }
-            GlobalDeclaration::Function(_) => &mut self.functions,
             GlobalDeclaration::Void
             | GlobalDeclaration::Declaration(_)
+            | GlobalDeclaration::Function(_)
             | GlobalDeclaration::TypeAlias(_)
             | GlobalDeclaration::Struct(_)
             | GlobalDeclaration::ConstAssert(_)
@@ -240,38 +212,17 @@ fn assemble(modules: &mut [Module], used: Option<&UsedItems>) -> TranslationUnit
 
 pub(super) fn linked_entry(
     main: &ModulePath,
-    kept: Option<&str>,
+    kept: &str,
     prepared: &Prepared,
     parsed: &mut Parsed,
 ) -> Result<Linked, Error> {
-    let (result, _names) = compile(main, kept, prepared, parsed);
+    let (result, _names) = compile(main, Some(kept), prepared, parsed);
     let mut result = result?;
     sort(&mut result.modules, main, prepared);
     Ok(linked(&assemble(
         &mut result.modules,
         Some(&result.used_items),
     )))
-}
-
-pub(super) fn bindings(
-    main: &ModulePath,
-    kept: &str,
-    prepared: &Prepared,
-    parsed: &mut Parsed,
-) -> Result<Vec<String>, Error> {
-    let (result, _names) = compile(main, Some(kept), prepared, parsed);
-    let result = result?;
-    let mut linked = Linked::default();
-    for module in &result.modules {
-        for declaration in &module.syntax.global_declarations {
-            if let Some(ident) = declared(declaration.node())
-                && result.used_items.get_ident(&module.path, ident).is_some()
-            {
-                linked.note(declaration.node(), &ident.name());
-            }
-        }
-    }
-    Ok(linked.bindings)
 }
 
 pub(super) enum Slot {
@@ -414,7 +365,6 @@ impl Whole {
             let role = &self.roles[index];
             linked.bindings.extend(role.bindings.iter().cloned());
             linked.overrides.extend(role.overrides.iter().cloned());
-            linked.functions.extend(role.functions.iter().cloned());
         }
         linked.text.push('\n');
         Some(linked)

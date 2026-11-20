@@ -1,16 +1,19 @@
 use crate::app_host::{Advance, AppHost};
-use crate::game::{Arrival, Game, LoadedScene, Start};
+use crate::game::{Game, LoadedScene, Start};
 use crate::host::{DeviceGatherer, FrameLoop, FramePhase, InputSource};
 use engine_core::{
-    BrickList, CursorMode, Devices, Engine, IoOrder, IoReply, MouseButton, TouchPhase,
+    Assets, BrickList, CursorMode, Devices, Engine, Error, ErrorCode, Expected, IoOrder, IoReply,
+    KeyCode, MouseButton, TouchPhase,
 };
 use engine_render::{Picture, RenderTarget};
-use engine_scene::SceneFiles;
+use engine_scene::SceneDocument;
 
 pub struct GameHost<G: Game> {
     pub(crate) app: AppHost,
     game: std::marker::PhantomData<fn() -> G>,
     pub(crate) scene: LoadedScene,
+    variant: Option<&'static str>,
+    cooking: Option<(SceneDocument, String)>,
     input: DeviceGatherer,
     frames: FrameLoop,
     away: bool,
@@ -30,19 +33,24 @@ impl<G: Game> GameHost<G> {
         target: RenderTarget,
         start: Start,
         bricks: BrickList,
+        linked: Option<&'static str>,
     ) -> crate::Result<Self> {
         engine_panic::install();
+        let pick = start.variant;
         #[cfg_attr(
             not(feature = "dev"),
             expect(unused_mut, reason = "dev installs names")
         )]
-        let mut app = AppHost::launch(target, start, bricks, G::default()).await?;
+        let mut app = AppHost::launch(target, start, bricks, linked, G::default()).await?;
         #[cfg(feature = "dev")]
         crate::dev_host::install(app.engine.app.world_mut());
+        let variant = pick.map(|pick| pick(app.renderer.features()));
         Ok(Self {
             app,
             game: std::marker::PhantomData,
             scene: LoadedScene::default(),
+            variant,
+            cooking: None,
             input: DeviceGatherer::default(),
             frames: FrameLoop::default(),
             away: false,
@@ -72,6 +80,10 @@ impl<G: Game> GameHost<G> {
         size: (u32, u32),
         picture: Picture,
     ) -> crate::Result<bool> {
+        if self.scene.land(self.app.engine_mut().app.world_mut())? {
+            self.app.replay_settings()?;
+            self.suspend();
+        }
         let input = self.frame_input(self.input_source());
         self.app.accept(input);
         self.app.frame(advance, size, picture)
@@ -165,7 +177,18 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn key(&mut self, code: &str, down: bool) {
-        self.input.key(code, down);
+        if let Some(key) = KeyCode::named(code) {
+            self.input.key(key, down);
+            return;
+        }
+        let world = self.app.engine_mut().app.world_mut();
+        let notice = Error::new(ErrorCode::UnknownVariant, "$.key").got(code);
+        if let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>()
+            && !registry.notices().contains(&notice)
+        {
+            crate::app_host::log_notice(&notice);
+            registry.report_notice(notice);
+        }
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
@@ -276,36 +299,65 @@ impl<G: Game> GameHost<G> {
         }
     }
 
-    pub fn open_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
-        let document = engine_scene::SceneDocument::from_json(source)?;
-        self.open_document(&document, files)
+    pub fn open_scene(&mut self, source: &str) -> crate::Result<()> {
+        self.arrive(SceneDocument::from_json(source)?)
     }
 
-    pub fn open_document(
-        &mut self,
-        document: &engine_scene::SceneDocument,
-        files: &SceneFiles,
-    ) -> crate::Result<()> {
-        self.arrive(document, files, Arrival::Opening)
+    pub(crate) fn arrive(&mut self, document: SceneDocument) -> crate::Result<()> {
+        match document.cooked().map(str::to_owned) {
+            Some(uri) => {
+                self.cooking = Some((document, uri));
+                Ok(())
+            }
+            None => {
+                self.cooking = None;
+                self.instantiate(&document)
+            }
+        }
     }
 
-    pub fn reload_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
-        let document = engine_scene::SceneDocument::from_json(source)?;
-        self.arrive(&document, files, Arrival::Reload)
-    }
-
-    pub(crate) fn arrive(
-        &mut self,
-        document: &engine_scene::SceneDocument,
-        files: &SceneFiles,
-        arrival: Arrival,
-    ) -> crate::Result<()> {
-        let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
-        self.scene
-            .replace(self.app.engine_mut().app.world_mut(), instance);
-        self.app.replay_settings()?;
-        self.suspend();
+    fn instantiate(&mut self, document: &SceneDocument) -> crate::Result<()> {
+        let world = self.app.engine_mut().app.world_mut();
+        let instance = document.instantiate(world, self.variant)?;
+        self.scene.replace(world, instance);
         Ok(())
+    }
+
+    pub fn files(&self) -> Vec<(String, String)> {
+        let assets = self.app.engine().app.world().resource::<Assets>();
+        if let Some((_, cooked)) = &self.cooking {
+            let group = assets.groups().into_iter().next().map(|group| group.name);
+            return vec![(cooked.clone(), group.unwrap_or_default())];
+        }
+        assets
+            .files()
+            .into_iter()
+            .map(|(uri, group)| (uri.to_owned(), group.to_owned()))
+            .collect()
+    }
+
+    pub fn file(&mut self, uri: &str, read: crate::Result<Vec<u8>>) -> crate::Result<()> {
+        let Some((mut document, _)) = self.cooking.take_if(|(_, cooked)| cooked == uri) else {
+            let world = self.app.engine_mut().app.world_mut();
+            let mut assets = world.resource_mut::<Assets>();
+            assets.file(uri, read.map(Into::into))?;
+            if let Some(refused) = assets
+                .ids()
+                .filter(|&id| assets.uri(id) == Some(uri))
+                .find_map(|id| assets.refusal(id))
+            {
+                crate::app_host::log_notice(refused);
+            }
+            return Ok(());
+        };
+        let bytes = read?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| {
+            Error::new(ErrorCode::InvalidUtf8, "$.cooked")
+                .expected(Expected::Utf8)
+                .got(uri)
+        })?;
+        document.append_cooked(text)?;
+        self.instantiate(&document)
     }
 
     pub fn set_settings(&mut self, entries: &[(String, serde_json::Value)]) -> crate::Result<()> {
@@ -322,6 +374,10 @@ impl<G: Game> GameHost<G> {
 
     pub fn adapter(&self) -> &crate::AdapterInfo {
         self.app.renderer.adapter()
+    }
+
+    pub fn time_frame(&self) {
+        self.app.renderer.time_frame();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -369,18 +425,23 @@ impl<G: Game> GameHost<G> {
             self.watched.clear();
             return;
         };
-        let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
-        let document = std::fs::read_to_string(&path)
+        let cooked = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|source| engine_scene::SceneDocument::from_json(&source).ok());
+            .and_then(|source| SceneDocument::from_json(&source).ok())
+            .and_then(|document| document.cooked().map(str::to_owned));
+        let assets = self.app.engine().app.world().resource::<Assets>();
+        let uris: std::collections::BTreeSet<String> = cooked
+            .into_iter()
+            .chain(assets.ids().filter_map(|id| assets.uri(id).map(str::to_owned)))
+            .collect();
         let folder = path
             .parent()
             .unwrap_or(std::path::Path::new("."))
             .to_owned();
         let stamp = modified(&path);
         let mut watched = vec![(path, stamp)];
-        for file in document.iter().flat_map(|document| document.files(&kinds)) {
-            let file = folder.join(file.uri);
+        for uri in uris {
+            let file = folder.join(uri);
             let stamp = modified(&file);
             watched.push((file, stamp));
         }
@@ -401,13 +462,9 @@ fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
 #[cfg(feature = "dev")]
 pub(crate) fn reload_checked(
     scene: Option<&engine_scene::SceneInstance>,
-    engine: &Engine,
     source: &str,
     (expected_revision, revision): (&str, &str),
-) -> crate::Result<engine_scene::SceneDocument> {
-    use engine_core::{Error, ErrorCode};
-    use engine_scene::{SceneDocument, SceneKinds};
-    use engine_settings::Expected;
+) -> crate::Result<SceneDocument> {
     let Some(scene) = scene else {
         return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
     };
@@ -425,7 +482,6 @@ pub(crate) fn reload_checked(
         );
     }
     let document = SceneDocument::from_json(source)?;
-    document.validate(&SceneKinds::of(engine.app.world()))?;
     if document.id != scene.id() || document.revision != target {
         return Err(Error::new(ErrorCode::RevisionConflict, "$.args.revision")
             .expected(Expected::Matching)

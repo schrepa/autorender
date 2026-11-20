@@ -4,8 +4,7 @@ use bevy_ecs::system::SystemState;
 use glam::{Mat4, UVec2, Vec3};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, Error, ErrorCode, FrameFacts, Layers, Poses, Target,
-    View,
+    Assets, Camera, Clear, ColorSpace, Error, ErrorCode, FrameFacts, Layers, Poses, Target, View,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -88,11 +87,12 @@ fn refuse(view: Entity, field: &str, code: ErrorCode) -> Error {
     Error::new(code, format!("$.views.{}.{field}", view.to_bits()))
 }
 
-fn target_size(assets: Option<&AssetLibrary>, target: Target, surface: UVec2) -> Option<UVec2> {
+fn target_size(assets: Option<&Assets>, target: Target, surface: UVec2) -> Option<UVec2> {
     match target {
         Target::Surface => Some(surface.max(UVec2::ONE)),
         Target::Texture(texture) => assets?
-            .texture(texture)
+            .get(texture)
+            .ok()
             .filter(|texture| texture.is_target() && texture.color_space() == ColorSpace::Srgb)
             .map(|texture| UVec2::new(texture.width(), texture.height()).max(UVec2::ONE)),
     }
@@ -172,7 +172,7 @@ fn placed(
         .and_then(eye_of)
         .ok_or_else(|| refuse(entity, "camera", ErrorCode::InvalidCamera))?;
     let size = target_size(
-        world.get_resource::<AssetLibrary>(),
+        world.get_resource::<Assets>(),
         view.target,
         facts.display_size,
     )

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::marker::PhantomData;
 
 use bevy_ecs::prelude::Resource;
 use glam::Vec2;
@@ -37,6 +37,12 @@ impl MouseButton {
 
     pub fn of(index: u32) -> Option<Self> {
         Self::ALL.get(index as usize).copied()
+    }
+}
+
+impl From<MouseButton> for u8 {
+    fn from(button: MouseButton) -> u8 {
+        button as u8
     }
 }
 
@@ -90,46 +96,140 @@ impl PadButton {
     ];
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Buttons<B: Ord> {
-    pub held: BTreeSet<B>,
-    pub pressed: BTreeSet<B>,
-    pub released: BTreeSet<B>,
+impl From<PadButton> for u8 {
+    fn from(button: PadButton) -> u8 {
+        button as u8
+    }
 }
 
-impl<B: Ord> Default for Buttons<B> {
+macro_rules! key_codes {
+    ($($key:ident)*) => {
+        #[derive(
+            Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+        )]
+        #[repr(u8)]
+        pub enum KeyCode {
+            $($key,)*
+        }
+
+        impl KeyCode {
+            pub const ALL: &'static [KeyCode] = &[$(KeyCode::$key,)*];
+
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(KeyCode::$key => stringify!($key),)*
+                }
+            }
+
+            pub fn named(name: &str) -> Option<KeyCode> {
+                Self::ALL.iter().copied().find(|key| key.name() == name)
+            }
+        }
+    };
+}
+
+key_codes! {
+    Backquote Backslash BracketLeft BracketRight Comma Digit0 Digit1 Digit2 Digit3 Digit4 Digit5
+    Digit6 Digit7 Digit8 Digit9 Equal IntlBackslash IntlRo IntlYen KeyA KeyB KeyC KeyD KeyE KeyF
+    KeyG KeyH KeyI KeyJ KeyK KeyL KeyM KeyN KeyO KeyP KeyQ KeyR KeyS KeyT KeyU KeyV KeyW KeyX KeyY
+    KeyZ Minus Period Quote Semicolon Slash AltLeft AltRight Backspace CapsLock ContextMenu
+    ControlLeft ControlRight Enter MetaLeft MetaRight ShiftLeft ShiftRight Space Tab Convert
+    KanaMode Lang1 Lang2 Lang3 Lang4 Lang5 NonConvert Delete End Help Home Insert PageDown PageUp
+    ArrowDown ArrowLeft ArrowRight ArrowUp NumLock Numpad0 Numpad1 Numpad2 Numpad3 Numpad4 Numpad5
+    Numpad6 Numpad7 Numpad8 Numpad9 NumpadAdd NumpadBackspace NumpadClear NumpadClearEntry
+    NumpadComma NumpadDecimal NumpadDivide NumpadEnter NumpadEqual NumpadHash NumpadMemoryAdd
+    NumpadMemoryClear NumpadMemoryRecall NumpadMemoryStore NumpadMemorySubtract NumpadMultiply
+    NumpadParenLeft NumpadParenRight NumpadStar NumpadSubtract Escape F1 F2 F3 F4 F5 F6 F7 F8 F9
+    F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 Fn FnLock PrintScreen ScrollLock
+    Pause BrowserBack BrowserFavorites BrowserForward BrowserHome BrowserRefresh BrowserSearch
+    BrowserStop Eject LaunchApp1 LaunchApp2 LaunchMail MediaPlayPause MediaSelect MediaStop
+    MediaTrackNext MediaTrackPrevious Power Sleep AudioVolumeDown AudioVolumeMute AudioVolumeUp
+    WakeUp Hyper Super Turbo Abort Resume Suspend Again Copy Cut Find Open Paste Props Select Undo
+    Hiragana Katakana
+}
+
+impl From<KeyCode> for u8 {
+    fn from(key: KeyCode) -> u8 {
+        key as u8
+    }
+}
+
+const KEY_WORDS: usize = KeyCode::ALL.len().div_ceil(64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Buttons<B, const WORDS: usize = 1> {
+    held: [u64; WORDS],
+    pressed: [u64; WORDS],
+    released: [u64; WORDS],
+    kind: PhantomData<B>,
+}
+
+impl<B, const WORDS: usize> Default for Buttons<B, WORDS> {
     fn default() -> Self {
         Self {
-            held: BTreeSet::new(),
-            pressed: BTreeSet::new(),
-            released: BTreeSet::new(),
+            held: [0; WORDS],
+            pressed: [0; WORDS],
+            released: [0; WORDS],
+            kind: PhantomData,
         }
     }
 }
 
-impl<B: Ord + Clone> Buttons<B> {
+fn spot(button: impl Into<u8>) -> (usize, u64) {
+    let index = usize::from(button.into());
+    (index / 64, 1 << (index % 64))
+}
+
+impl<B: Copy + Into<u8>, const WORDS: usize> Buttons<B, WORDS> {
     pub fn set(&mut self, button: B, down: bool) {
-        if down {
-            if self.held.insert(button.clone()) {
-                self.pressed.insert(button);
-            }
-        } else if self.held.remove(&button) {
-            self.released.insert(button);
+        let (word, bit) = spot(button);
+        let was = self.held[word] & bit != 0;
+        if down && !was {
+            self.held[word] |= bit;
+            self.pressed[word] |= bit;
+        } else if !down && was {
+            self.held[word] &= !bit;
+            self.released[word] |= bit;
         }
     }
 
-    pub fn drop_edges(&mut self) {
-        self.pressed.clear();
-        self.released.clear();
+    pub fn held(&self, button: B) -> bool {
+        let (word, bit) = spot(button);
+        self.held[word] & bit != 0
+    }
+
+    pub fn pressed(&self, button: B) -> bool {
+        let (word, bit) = spot(button);
+        self.pressed[word] & bit != 0
+    }
+
+    pub fn released(&self, button: B) -> bool {
+        let (word, bit) = spot(button);
+        self.released[word] & bit != 0
+    }
+
+    pub fn release_all(&mut self) {
+        for (released, held) in self.released.iter_mut().zip(&mut self.held) {
+            *released |= std::mem::take(held);
+        }
+    }
+}
+
+impl<B, const WORDS: usize> Buttons<B, WORDS> {
+    fn drop_edges(&mut self) {
+        self.pressed = [0; WORDS];
+        self.released = [0; WORDS];
     }
 
     fn carry(&mut self, older: &Self) {
-        self.pressed.extend(older.pressed.iter().cloned());
-        self.released.extend(older.released.iter().cloned());
+        for word in 0..WORDS {
+            self.pressed[word] |= older.pressed[word];
+            self.released[word] |= older.released[word];
+        }
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mouse {
     pub buttons: Buttons<MouseButton>,
     pub position_pixels: Option<Vec2>,
@@ -138,7 +238,7 @@ pub struct Mouse {
     pub wheel_notches: Vec2,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pad {
     pub index: u32,
     pub buttons: Buttons<PadButton>,
@@ -169,7 +269,7 @@ impl TouchPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Touch {
     pub id: u32,
     pub position_pixels: Vec2,
@@ -177,10 +277,10 @@ pub struct Touch {
     pub phase: TouchPhase,
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 #[component(immutable)]
 pub struct Devices {
-    pub keyboard: Buttons<String>,
+    pub keyboard: Buttons<KeyCode, KEY_WORDS>,
     pub mouse: Mouse,
     pub pads: Vec<Pad>,
     pub touches: Vec<Touch>,

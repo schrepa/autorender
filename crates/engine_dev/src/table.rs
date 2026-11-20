@@ -2,8 +2,9 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, Camera, Drawn, FixedTime, GlobalTransforms, Held, Host, Kind, Lands, NameEntry,
-    Pause, Projection, Reach, ReachMut, Transform, glam::Vec3, main_camera, place_camera,
+    Assets, Camera, Drawn, FixedTime, GlobalTransforms, Held, Host, Kind, Lands, Material,
+    MeshFile, NameEntry, Pause, Projection, Reach, ReachMut, Texture, Transform, glam::Vec3,
+    main_camera, place_camera,
 };
 use engine_registry::{BrickStates, Registry, SettingsEntry, StatsEntry};
 use engine_scene::{SceneEntity, SceneInstance};
@@ -132,7 +133,8 @@ fn setting(section: &SettingsEntry) -> NameEntry {
     let section = *section;
     NameEntry::read(format!("settings.{}", section.key), Kind::Setting, move |reach, given| {
         none(given)?;
-        in_scene(reach.world, || section.current(reach.world))
+        let world = reach.world;
+        world.resource::<Assets>().scope(|| section.current(world))
     })
     .args(
         engine_core::schema_of::<SectionArgs>(),
@@ -140,7 +142,8 @@ fn setting(section: &SettingsEntry) -> NameEntry {
     )
     .set(Lands::ThisFrame, move |reach, given| {
         let given: SectionArgs = args(given)?;
-        let before = in_scene(reach.world, || section.current(reach.world))?;
+        let world = &*reach.world;
+        let before = world.resource::<Assets>().scope(|| section.current(world))?;
         let after = match (given.value, given.replace) {
             (Some(patch), None) => {
                 let mut merged = before.clone();
@@ -154,8 +157,9 @@ fn setting(section: &SettingsEntry) -> NameEntry {
                     .variants(["value", "replace"]));
             }
         };
-        section.set_at(reach.world, &after, "$.args")?;
-        let after = in_scene(reach.world, || section.current(reach.world))?;
+        engine_scene::named(reach.world, |world| section.set_at(world, &after, "$.args"))?;
+        let world = &*reach.world;
+        let after = world.resource::<Assets>().scope(|| section.current(world))?;
         Ok(json!({ "before": before, "after": after }))
     })
     .owned_by(section.brick)
@@ -174,13 +178,6 @@ fn stats(stats: &StatsEntry) -> NameEntry {
         Ok(stats.read(reach.world))
     })
     .owned_by(stats.brick)
-}
-
-fn in_scene<R>(world: &World, run: impl FnOnce() -> R) -> R {
-    match world.get_resource::<engine_core::SceneContext>() {
-        Some(context) => context.scope(run),
-        None => run(),
-    }
 }
 
 fn overlay(base: &mut Value, patch: Value) {
@@ -232,32 +229,38 @@ fn bricks(world: &World) -> Value {
 
 fn assets(reach: &Reach<'_>) -> Result<Value, Error> {
     let world = reach.world;
-    let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
+    let assets = world.get_resource::<Assets>().ok_or_else(|| {
         Error::new(ErrorCode::MissingResource, "$.assets")
             .expected(Expected::Present)
-            .got("AssetLibrary")
+            .got("Assets")
     })?;
-    let textures: Vec<Value> = reach
-        .part::<SceneInstance>()
-        .into_iter()
-        .flat_map(SceneInstance::textures)
-        .map(|(id, handle)| {
-            let texture = assets.texture(handle);
+    let textures: Vec<Value> = assets
+        .each::<Texture>()
+        .map(|(texture, held)| {
             json!({
-                "id": id,
-                "loaded": texture.is_some(),
-                "width": texture.map(|texture| texture.width()),
-                "height": texture.map(|texture| texture.height()),
-                "bytes": texture.map(|texture| texture.byte_len()),
+                "id": assets.name(texture),
+                "uri": assets.uri(texture),
+                "width": held.width(),
+                "height": held.height(),
+                "bytes": held.byte_len(),
+            })
+        })
+        .collect();
+    let waiting: Vec<Value> = assets
+        .ids()
+        .filter(|&id| !assets.ready(id))
+        .map(|id| {
+            json!({
+                "id": assets.name(id),
+                "uri": assets.uri(id),
+                "refused": assets.refusal(id),
             })
         })
         .collect();
     let mut missing: Vec<(Entity, &str)> = Vec::new();
     if let Some(mut drawn) = world.try_query::<(Entity, &Drawn)>() {
         for (entity, drawn) in drawn.iter(world) {
-            if let Some(mesh) = drawn.geometry
-                && let Some(what) = missing_of(assets, mesh, drawn.material)
-            {
+            if let Some(what) = missing_of(assets, drawn) {
                 missing.push((entity, what));
             }
         }
@@ -279,30 +282,36 @@ fn assets(reach: &Reach<'_>) -> Result<Value, Error> {
             })
         })
         .collect();
+    let mesh_bytes: usize = assets.each::<MeshFile>().map(|(_, mesh)| mesh.byte_len()).sum();
+    let texture_bytes: usize = assets
+        .each::<Texture>()
+        .map(|(_, texture)| texture.byte_len())
+        .sum();
+    let materials = assets.each::<Material>().count();
     Ok(json!({
-        "meshes": assets.mesh_count(),
-        "materials": assets.material_count(),
-        "textures": assets.texture_count(),
-        "texture_cpu_bytes": assets.texture_bytes(),
-        "resident_cpu_bytes": assets.resident_bytes(),
+        "meshes": assets.each::<MeshFile>().count(),
+        "materials": materials,
+        "textures": textures.len(),
+        "texture_cpu_bytes": texture_bytes,
+        "resident_cpu_bytes": mesh_bytes + texture_bytes + materials * size_of::<Material>(),
         "scene_textures": textures,
+        "waiting": waiting,
+        "groups": assets.groups(),
         "missing": missing,
     }))
 }
 
-fn missing_of(
-    assets: &AssetLibrary,
-    mesh: engine_core::GeometryHandle,
-    material: Option<engine_core::MaterialHandle>,
-) -> Option<&'static str> {
-    match material.map(|material| assets.material(material)) {
-        Some(None) => Some("material"),
-        None | Some(Some(_)) if assets.mesh(mesh).is_none() => Some("mesh"),
-        None => None,
-        Some(Some(material)) => material
-            .textures()
-            .any(|texture| assets.texture(texture).is_none())
-            .then_some("texture"),
+fn missing_of(assets: &Assets, drawn: &Drawn) -> Option<&'static str> {
+    let mesh = drawn.geometry?;
+    let material = drawn.material;
+    if material.is_some_and(|material| assets.get(material).is_err()) {
+        Some("material")
+    } else if assets.get(mesh).is_err() {
+        Some("mesh")
+    } else if material.is_some_and(|material| !assets.ready(material)) {
+        Some("texture")
+    } else {
+        None
     }
 }
 

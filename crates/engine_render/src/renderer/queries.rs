@@ -17,6 +17,10 @@ impl Renderer {
         self.core.display.take_frame_time()
     }
 
+    pub fn time_frame(&self) {
+        self.core.display.time_frame();
+    }
+
     #[cfg(feature = "dev")]
     pub fn gpu_instrument(&mut self, name: &str, on: bool) -> Result<&'static str, &'static str> {
         if name == crate::linker::counting::INSTRUMENT {
@@ -122,6 +126,10 @@ impl Renderer {
         crate::platform::poll(&self.core.device);
         let pending = self.run.as_mut().map_or(0, Run::take_made);
         self.core.ledger.compiling().saturating_add(pending)
+    }
+
+    pub fn held_ready(&self) -> bool {
+        self.run.as_ref().and_then(|run| run.tallies.held) == Some(false)
     }
 
     pub fn pipelines_stood_in(&self) -> u32 {

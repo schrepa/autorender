@@ -30,11 +30,18 @@ fn modified(file: &str) -> Option<SystemTime> {
 
 impl Renderer {
     pub fn reload_shaders(&mut self, world: &mut World) {
-        let Some(run) = self.run.as_ref() else {
+        if self.run.is_none() {
+            return;
+        }
+        let Some(registry) = world.get_resource::<engine_registry::Registry>() else {
             return;
         };
+        let sources = crate::linker::sources(registry);
+        let files = (std::iter::once(crate::shared::core_source()).chain(sources))
+            .flat_map(engine_core::Source::modules)
+            .filter(|module| !module.file().is_empty());
         let mut changed = Vec::new();
-        for (path, file) in run.machine.linker.files() {
+        for (path, file) in files.map(|module| (module.path(), module.file())) {
             let now = modified(file);
             match self
                 .watched
@@ -71,11 +78,11 @@ impl Renderer {
     }
 
     fn reinstall_edited(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        let mut installed = super::install::install(
-            &self.core.device,
-            world,
-            (self.watched.edited(), super::install::Lint::Check),
-        )?;
+        let linking = super::install::Linking {
+            edited: self.watched.edited(),
+            check: true,
+        };
+        let mut installed = super::install::install(&self.core.device, world, linking)?;
         if let Some(run) = &self.run {
             installed.machine.shaders = run.machine.shaders.clone();
         }

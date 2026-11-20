@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use cook::Refusal;
 use cook_texture::Encoding;
+use engine_scene::SceneCull;
 use serde::Deserialize;
 
 use crate::maps::MapKind;
@@ -13,6 +14,7 @@ pub struct MaterialNames {
     pub module: String,
     pub lighting: String,
     pub emissive_value: Option<String>,
+    pub cull: Option<SceneCull>,
 }
 
 #[derive(Deserialize)]
@@ -37,17 +39,11 @@ impl TextureVariant {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedMaps {
-    Make(String),
-    Use(String),
-}
-
-#[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Model {
     Character(Character),
     Static(Static),
+    Borrowing(Borrowing),
 }
 
 #[derive(Deserialize)]
@@ -88,13 +84,35 @@ pub struct Static {
     pub map_sizes: BTreeMap<String, u32>,
     pub material: MaterialNames,
     pub maps: Option<Vec<String>>,
-    #[serde(default)]
     pub textures: Vec<TextureVariant>,
     #[serde(default)]
     pub exact_alpha: Vec<String>,
-    pub shared_maps: Option<SharedMaps>,
     pub budgets: StaticBudgets,
     pub tolerance: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Borrowing {
+    pub scale: f32,
+    pub maps_of: String,
+    pub material: MaterialNames,
+    pub maps: Option<Vec<String>>,
+    pub budgets: StaticBudgets,
+    pub tolerance: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialMaps {
+    pub material: String,
+    pub texture_size: u32,
+    #[serde(default)]
+    pub map_sizes: BTreeMap<String, u32>,
+    pub maps: Option<Vec<String>>,
+    pub textures: Vec<TextureVariant>,
+    #[serde(default)]
+    pub exact_alpha: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -197,12 +215,7 @@ pub fn check_clips(
     Ok(())
 }
 
-pub fn map_kinds<'s>(
-    name: &str,
-    maps: Option<&[String]>,
-    textures: &[TextureVariant],
-    (size, sizes): (u32, impl IntoIterator<Item = (&'s String, &'s u32)>),
-) -> Result<Vec<MapKind>, Refusal> {
+pub fn map_names(name: &str, maps: Option<&[String]>) -> Result<Vec<MapKind>, Refusal> {
     let maps: Vec<&str> = match maps {
         Some(maps) => maps.iter().map(String::as_str).collect(),
         None => MapKind::ALL.map(MapKind::name).to_vec(),
@@ -213,15 +226,41 @@ pub fn map_kinds<'s>(
             return Err(Refusal::new("MapName", name, detail));
         }
     }
-    let kinds: Vec<MapKind> = MapKind::ALL
+    Ok(MapKind::ALL
         .into_iter()
         .filter(|kind| maps.contains(&kind.name()))
-        .collect();
+        .collect())
+}
+
+pub fn check_exact_alpha(
+    name: &str,
+    exact_alpha: &[String],
+    kinds: &[MapKind],
+) -> Result<(), Refusal> {
+    match exact_alpha
+        .iter()
+        .find(|wanted| kinds.iter().all(|kind| kind.name() != *wanted))
+    {
+        Some(wanted) => {
+            let detail = format!("`{wanted}` is not a map this entry cooks");
+            Err(Refusal::new("ExactAlpha", name, detail))
+        }
+        None => Ok(()),
+    }
+}
+
+pub fn map_kinds<'s>(
+    name: &str,
+    maps: Option<&[String]>,
+    textures: &[TextureVariant],
+    (size, sizes): (u32, impl IntoIterator<Item = (&'s String, &'s u32)>),
+) -> Result<Vec<MapKind>, Refusal> {
+    let kinds = map_names(name, maps)?;
     if size == 0 {
         return Err(Refusal::new("TextureSize", name, 0));
     }
     for (map, &size) in sizes {
-        if !maps.contains(&map.as_str()) || size == 0 {
+        if kinds.iter().all(|kind| kind.name() != map) || size == 0 {
             let detail = format!("`{map}`: {size}; each key a cooked map, each size above zero");
             return Err(Refusal::new("MapSize", name, detail));
         }

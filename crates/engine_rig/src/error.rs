@@ -72,18 +72,6 @@ pub(crate) enum Fault {
         track: usize,
         tracks: usize,
     },
-    JointMissing {
-        name: String,
-    },
-    JointIndex {
-        joint: usize,
-        joints: usize,
-    },
-    Chain {
-        upper: usize,
-        middle: usize,
-        end: usize,
-    },
 }
 
 impl fmt::Display for Fault {
@@ -148,19 +136,6 @@ impl fmt::Display for Fault {
                 formatter,
                 "TrackMissing: bound track {track} but the clip has {tracks}; sample with the clip given to bind"
             ),
-            Self::JointMissing { name } => {
-                write!(
-                    formatter,
-                    "JointMissing: the skeleton has no joint `{name}`"
-                )
-            }
-            Self::JointIndex { joint, joints } => {
-                write!(formatter, "JointIndex: joint {joint} of {joints}")
-            }
-            Self::Chain { upper, middle, end } => write!(
-                formatter,
-                "Chain: joints {upper}, {middle}, {end} are not an ancestor chain with two bones of length"
-            ),
         }
     }
 }
@@ -223,21 +198,6 @@ impl From<Fault> for Error {
                 ErrorCode::InvalidInput,
                 "$.bound".to_owned(),
                 Some(Expected::Matching),
-            ),
-            Fault::JointMissing { .. } => (
-                ErrorCode::UnknownReference,
-                "$.joint".to_owned(),
-                Some(Expected::Present),
-            ),
-            Fault::JointIndex { .. } => (
-                ErrorCode::OutOfRange,
-                "$.joint".to_owned(),
-                Some(Expected::Present),
-            ),
-            Fault::Chain { .. } => (
-                ErrorCode::InvalidInput,
-                "$.chain".to_owned(),
-                Some(Expected::Acyclic),
             ),
         };
         let error = Error::new(code, path).got(fault.to_string());

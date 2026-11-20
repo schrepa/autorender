@@ -9,8 +9,8 @@ pub fn scene(arguments: &[String]) -> Result<(), String> {
     let result = scene_command(arguments);
     let succeeded = result.is_ok();
     let envelope = match result {
-        Ok(result) => json!({"version":1,"ok":true,"result":result}),
-        Err(error) => json!({"version":1,"ok":false,"error":error}),
+        Ok(result) => json!({"ok":true,"result":result}),
+        Err(error) => json!({"ok":false,"error":error}),
     };
     println!("{envelope}");
     if succeeded {
@@ -23,9 +23,8 @@ pub fn scene(arguments: &[String]) -> Result<(), String> {
 fn scene_command(arguments: &[String]) -> Result<Value, Error> {
     match arguments {
         [command, file, path] if command == "validate" && file == "--file" => {
-            let source = authoring::read_scene_source(Path::new(path))?;
             Ok(json!(authoring::validate_scene(
-                &source,
+                Path::new(path),
                 &crate::bricks::standard_kinds()?
             )?))
         }
@@ -67,9 +66,9 @@ fn format_scene(path: &str) -> Result<Value, Error> {
     let engine = crate::bricks::standard_engine()?;
     let schema: Value = serde_json::from_str(&crate::bricks::scene_schema(&engine)?)
         .map_err(|_| Error::new(ErrorCode::InvalidJson, "$.schema"))?;
+    authoring::validate_scene(Path::new(path), &engine_scene::SceneKinds::of(engine.app.world()))?;
     let source = authoring::read_scene_source(Path::new(path))?;
     let document = engine_scene::SceneDocument::from_json(&source)?;
-    document.validate(&engine_scene::SceneKinds::of(engine.app.world()))?;
     let canonical = document.to_canonical_json(&schema)?;
     let changed = canonical != source;
     if changed {

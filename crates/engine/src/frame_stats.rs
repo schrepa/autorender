@@ -11,7 +11,6 @@ pub struct FrameStats {
     pub render_ms: f64,
     pub fixed_steps: u32,
     pub preparation_ms: f64,
-    pub dropped_seconds: f64,
     pub cut_seconds: f64,
     pub readiness: engine_core::Readiness,
     pub resolution: ResolutionStats,

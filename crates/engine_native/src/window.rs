@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,14 +14,15 @@ use winit::window::WindowId;
 
 use crate::host_error;
 use crate::input::Input;
-use crate::options::{HostOptions, StartScene};
+use crate::options::HostOptions;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Window {
     pub(crate) title: String,
     pub(crate) keep: Option<String>,
     pub(crate) options: HostOptions,
-    pub(crate) scene: StartScene,
+    pub(crate) scene: PathBuf,
+    pub(crate) linked: Option<&'static str>,
 }
 
 pub(crate) fn run<G: Game>(window: Window, bricks: BrickList) -> engine::Result<()> {
@@ -85,6 +87,7 @@ impl<G: Game> App<G> {
             target,
             options.start::<G>(),
             bricks,
+            self.options.linked,
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
@@ -312,6 +315,7 @@ impl Title {
 
     fn frame<G: Game>(&mut self, window: &winit::window::Window, host: &GameHost<G>) {
         self.loading = false;
+        host.time_frame();
         let stats = host.frame_times();
         let gpu = match stats.resolution.gpu_ms {
             GpuTime::Ms(ms) => format!("{ms:.2} ms"),

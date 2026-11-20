@@ -33,7 +33,14 @@ pub(crate) struct Input {
 
 impl Input {
     pub(crate) fn key<G: Game>(host: &mut GameHost<G>, code: KeyCode, state: ElementState) {
-        host.key(&format!("{code:?}"), state == ElementState::Pressed);
+        let name = if code == KeyCode::SuperLeft {
+            "MetaLeft".to_owned()
+        } else if code == KeyCode::SuperRight {
+            "MetaRight".to_owned()
+        } else {
+            format!("{code:?}")
+        };
+        host.key(&name, state == ElementState::Pressed);
     }
 
     pub(crate) fn button<G: Game>(

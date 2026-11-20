@@ -1,7 +1,6 @@
 mod adapter;
 mod frame_loop;
 mod input;
-mod scene_load;
 mod settings;
 
 pub use crate::app_host::now_ms;
@@ -13,10 +12,21 @@ pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub(crate) use frame_loop::in_flight;
 pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{DeviceGatherer, InputSource};
-pub use scene_load::{FileRead, SceneLoad};
 pub use settings::{HostSettings, OVERLAY, Settings, SettingsLog, TypedSettings};
 
 pub const WHEEL_PIXELS: f32 = 100.0;
+
+pub const SOUND_ORDERS: [(&str, &[&str]); 6] = [
+    ("open", &["latency_given", "latency_seconds"]),
+    ("decode", &["sound", "length"]),
+    (
+        "start",
+        &["voice", "sound", "gain", "pan", "rate", "looping", "offset_seconds"],
+    ),
+    ("tune", &["voice", "gain", "pan", "rate", "seconds"]),
+    ("stop", &["voice", "seconds"]),
+    ("master", &["gain", "seconds"]),
+];
 
 #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {
@@ -48,5 +58,17 @@ pub fn typescript() -> String {
         .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
         .collect();
     output.push_str(&constant("TOUCH_PHASES", &touches.into()));
+    let orders: serde_json::Map<String, serde_json::Value> = SOUND_ORDERS
+        .iter()
+        .enumerate()
+        .map(|(code, (name, fields))| {
+            let mut layout = serde_json::json!({"code": code, "size": fields.len() + 1});
+            for (at, field) in fields.iter().enumerate() {
+                layout[*field] = (at + 1).into();
+            }
+            ((*name).to_owned(), layout)
+        })
+        .collect();
+    output.push_str(&constant("SOUND_ORDERS", &orders.into()));
     output
 }

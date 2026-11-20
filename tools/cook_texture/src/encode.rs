@@ -1,11 +1,10 @@
-use std::time::Instant;
+use std::sync::Arc;
 
-use engine_assets::ColorSpace;
+use engine_assets::{ColorSpace, TextureFormat};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::image::Image;
-use crate::ktx2::write_ktx2;
 use crate::mips::Texels;
 use crate::{bc5, bc7};
 
@@ -33,12 +32,21 @@ impl Encoding {
     pub const fn srgb(self) -> bool {
         matches!(self, Self::Rgba8Srgb | Self::Bc7Srgb)
     }
+
+    const fn texture(self) -> (TextureFormat, ColorSpace) {
+        match self {
+            Self::Rgba8Srgb => (TextureFormat::Rgba8, ColorSpace::Srgb),
+            Self::Rgba8 => (TextureFormat::Rgba8, ColorSpace::Linear),
+            Self::Bc7Srgb => (TextureFormat::Bc7, ColorSpace::Srgb),
+            Self::Bc7 => (TextureFormat::Bc7, ColorSpace::Linear),
+            Self::Bc5 => (TextureFormat::Bc5, ColorSpace::Linear),
+        }
+    }
 }
 
 pub struct Encoded {
     pub file: Vec<u8>,
     pub gpu_bytes: usize,
-    pub seconds: f64,
     pub quality: Value,
 }
 
@@ -202,7 +210,6 @@ pub fn encode(
     chain: &[Image],
     exact_alpha: bool,
 ) -> Result<Encoded, String> {
-    let started = Instant::now();
     let levels: Vec<Vec<u8>> = chain
         .iter()
         .map(|image| match encoding {
@@ -214,30 +221,17 @@ pub fn encode(
             Encoding::Bc7 | Encoding::Bc7Srgb => blocks(image, bc7::encode_block),
         })
         .collect();
-    let seconds = started.elapsed().as_secs_f64();
     let (width, height) = (chain[0].width, chain[0].height);
-    let file = write_ktx2(encoding, width, height, &levels);
-    let engine =
-        engine_textures::decode_texture("ktx2", &file).map_err(|error| error.to_string())?;
-    let space = if encoding.srgb() {
-        ColorSpace::Srgb
-    } else {
-        ColorSpace::Linear
-    };
-    let same_levels = engine.levels().len() == levels.len()
-        && engine
-            .levels()
-            .iter()
-            .zip(&levels)
-            .all(|(read, written)| **read == written[..]);
-    if !same_levels || engine.color_space() != space {
-        return Err("the engine's KTX2 reader reads the file differently".into());
-    }
+    let (format, space) = encoding.texture();
+    let held: Vec<&[u8]> = levels.iter().map(Vec::as_slice).collect();
+    let file = engine_textures::write(format, space, width, height, &held)
+        .map_err(|error| error.to_string())?;
+    engine_textures::read_texture(Arc::from(file.as_slice()), encoding.name())
+        .map_err(|error| error.to_string())?;
     let pixels = decoded(encoding, width, height, &levels[0]);
     Ok(Encoded {
         file,
         gpu_bytes: levels.iter().map(Vec::len).sum(),
-        seconds,
         quality: quality(texels, &chain[0].pixels, &pixels),
     })
 }

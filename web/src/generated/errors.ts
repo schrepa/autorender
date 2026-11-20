@@ -44,7 +44,6 @@ export type ErrorCode =
   | "hierarchy_depth"
   | "hierarchy_install_failed"
   | "nested_prefab"
-  | "missing_asset_library"
   | "invalid_mesh"
   | "invalid_material"
   | "invalid_texture"

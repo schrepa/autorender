@@ -101,7 +101,7 @@ pub fn check(
 }
 
 pub fn error_types(path: &str, source: &str, errors: &Errors, problems: &mut Problems) {
-    if !path.starts_with(errors.within) || path == errors.file {
+    if !errors.within.iter().any(|folder| path.starts_with(folder)) || path == errors.file {
         return;
     }
     for (index, code) in rust::split(source).code.iter().enumerate() {

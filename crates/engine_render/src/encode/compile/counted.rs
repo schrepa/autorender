@@ -53,11 +53,6 @@ fn counted_layout(
     }))
 }
 
-type Drawn<'f> = (
-    (&'f [Option<wgpu::TextureFormat>], Option<wgpu::TextureFormat>),
-    (bool, bool),
-);
-
 struct Prepared {
     counted: (u64, u64),
     layout: wgpu::PipelineLayout,
@@ -103,22 +98,7 @@ impl Compiler<'_> {
         })
     }
 
-    pub(super) fn count_ready(
-        &mut self,
-        pipeline: u32,
-        (targets, shown): Drawn<'_>,
-        plain: (u64, u64),
-        variant: Option<&crate::Variant>,
-    ) {
-        let Some(keyed) = self.keyed(pipeline, targets, shown, variant) else {
-            return;
-        };
-        if (keyed.program, keyed.key) == plain {
-            self.count_render(pipeline, plain, keyed.shape(targets.0, targets.1));
-        }
-    }
-
-    fn count_render(&mut self, pipeline: u32, plain: (u64, u64), shape: Shape<'_>) {
+    pub(super) fn count_render(&mut self, pipeline: u32, plain: (u64, u64), shape: Shape<'_>) {
         let Some(prepared) = self.prepare(pipeline, plain) else {
             return;
         };
@@ -305,9 +285,9 @@ impl Run {
             compute: Vec::new(),
         });
         for built in &mut self.machine.pipelines {
-            built.ready.clear();
             built.compute_ready = None;
         }
+        self.pipelines.making.arrivals += 1;
         Ok(counting::CHANGES)
     }
 

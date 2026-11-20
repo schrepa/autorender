@@ -23,6 +23,16 @@ export interface Error {
 
 export type Expected = "number" | "integer" | "string" | "boolean" | "object" | "array" | "id" | "file" | "entity" | "unique" | "present" | "absent" | "finite" | "sorted" | "nonzero" | "above" | "multiple" | "json" | "utf8" | "uri" | "base64" | "image" | "gpu" | "live" | "non_empty" | "readable" | "writable" | "matching" | "supported" | "acyclic" | "opaque" | "triangles" | "invertible";
 
+export interface GroupReport {
+  bytes_in: number;
+  files: number;
+  files_in: number;
+  name: string;
+  stage: GroupStage;
+}
+
+export type GroupStage = "arriving" | "compiling" | "ready" | { failed: Error };
+
 export interface Progress {
   done: number;
   total: number;
@@ -31,6 +41,7 @@ export interface Progress {
 export interface Readiness {
   compiling: number;
   failed: [string, Error][];
+  groups: GroupReport[];
   loading: Progress;
   settling: number;
   unsettled: Unsettled[];

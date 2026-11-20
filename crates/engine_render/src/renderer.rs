@@ -27,7 +27,9 @@ use display::DisplayFrame;
 #[cfg(feature = "dev")]
 pub use frame::names::gpu_names;
 pub use health::DeviceHealth;
-pub use install::{Ahead, Installation, device_limits, install_noop};
+pub use install::{Ahead, device_limits};
+#[cfg(feature = "dev")]
+pub use install::install_noop;
 pub use startup::StartingRenderer;
 
 pub(crate) fn new_assets(device: &wgpu::Device) -> Assets {

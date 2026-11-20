@@ -1,24 +1,22 @@
 use engine_codec::{Error, ErrorCode, Expected};
 use engine_settings::{InvalidSetting, Rule, Setting};
 
-use crate::{ColorSpace, TextureHandle};
+use crate::{Asset, Texture};
 
 fn invalid(setting: InvalidSetting) -> Error {
     setting.error(ErrorCode::InvalidMaterial, "$")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Wrap {
-    #[default]
     Repeat,
     MirroredRepeat,
     ClampToEdge,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Filter {
     Nearest,
-    #[default]
     Linear,
 }
 
@@ -47,42 +45,16 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub const ANISOTROPY: u16 = 16;
-
-    pub const REPEAT: Self = Self {
-        wrap_u: Wrap::Repeat,
-        wrap_v: Wrap::Repeat,
-        wrap_w: Wrap::ClampToEdge,
-        mag_filter: Filter::Linear,
-        min_filter: Filter::Linear,
-        mipmap_filter: Some(Filter::Linear),
-        compare: None,
-        anisotropy: Self::ANISOTROPY,
-    };
-
-    pub const CLAMP: Self = Self {
+    pub const NEAREST: Self = Self {
         wrap_u: Wrap::ClampToEdge,
         wrap_v: Wrap::ClampToEdge,
-        ..Self::REPEAT
-    };
-
-    pub const LINEAR_CLAMP: Self = Self {
-        anisotropy: 1,
-        ..Self::CLAMP
-    };
-
-    pub const NEAREST: Self = Self {
+        wrap_w: Wrap::ClampToEdge,
         mag_filter: Filter::Nearest,
         min_filter: Filter::Nearest,
         mipmap_filter: Some(Filter::Nearest),
-        ..Self::LINEAR_CLAMP
+        compare: None,
+        anisotropy: 1,
     };
-}
-
-impl Default for Sampler {
-    fn default() -> Self {
-        Self::REPEAT
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -116,17 +88,17 @@ impl Default for UvTransform {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureRef {
-    pub texture: TextureHandle,
-    pub sampler: Sampler,
+    pub texture: Asset<Texture>,
+    pub sampler: Option<Sampler>,
     pub transform: UvTransform,
     pub tex_coord: u32,
 }
 
 impl TextureRef {
-    pub const fn new(texture: TextureHandle) -> Self {
+    pub const fn new(texture: Asset<Texture>) -> Self {
         Self {
             texture,
-            sampler: Sampler::REPEAT,
+            sampler: None,
             transform: UvTransform::IDENTITY,
             tex_coord: 0,
         }
@@ -140,7 +112,7 @@ impl TextureRef {
 
     #[must_use]
     pub const fn with_sampler(mut self, sampler: Sampler) -> Self {
-        self.sampler = sampler;
+        self.sampler = Some(sampler);
         self
     }
 
@@ -234,23 +206,6 @@ pub enum LightingModel {
     Unlit,
     Named(String),
 }
-
-pub const MAPPED: &str = "mapped";
-pub const BASE_COLOR_MAP: &str = "base_color";
-pub const NORMAL_MAP: &str = "normal";
-pub const EMISSIVE_MAP: &str = "emissive";
-pub const MAPPED_MAPS: [(&str, ColorSpace); 3] = [
-    (BASE_COLOR_MAP, ColorSpace::Srgb),
-    (NORMAL_MAP, ColorSpace::Linear),
-    (EMISSIVE_MAP, ColorSpace::Srgb),
-];
-pub const MAPPED_SLOTS: [(&str, &[&str]); 5] = [
-    ("base_color", &[BASE_COLOR_MAP]),
-    ("opacity", &[BASE_COLOR_MAP]),
-    ("cutoff", &[BASE_COLOR_MAP]),
-    ("normal", &[NORMAL_MAP]),
-    ("emissive", &[EMISSIVE_MAP, BASE_COLOR_MAP]),
-];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Material {
@@ -490,7 +445,7 @@ impl Material {
         &self.lighting
     }
 
-    pub fn textures(&self) -> impl Iterator<Item = TextureHandle> + '_ {
+    pub fn textures(&self) -> impl Iterator<Item = Asset<Texture>> + '_ {
         self.maps.iter().map(|(_, map)| map.texture)
     }
 }

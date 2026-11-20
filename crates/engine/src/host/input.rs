@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use engine_core::{Devices, MouseButton, Pad, PadButton, Touch, TouchPhase};
+use engine_core::{Devices, KeyCode, MouseButton, Pad, PadButton, Touch, TouchPhase};
 use glam::Vec2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -18,12 +18,12 @@ pub struct DeviceGatherer {
 }
 
 impl DeviceGatherer {
-    pub fn key(&mut self, code: &str, down: bool) {
-        self.devices.keyboard.set(code.to_owned(), down);
+    pub fn key(&mut self, key: KeyCode, down: bool) {
+        self.devices.keyboard.set(key, down);
     }
 
-    pub fn keys_held(&self) -> impl Iterator<Item = &str> + '_ {
-        self.devices.keyboard.held.iter().map(String::as_str)
+    pub fn keys_held(&self) -> impl Iterator<Item = KeyCode> + '_ {
+        (KeyCode::ALL.iter().copied()).filter(|&key| self.devices.keyboard.held(key))
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
@@ -31,7 +31,7 @@ impl DeviceGatherer {
     }
 
     pub fn mouse_held(&self) -> impl Iterator<Item = MouseButton> + '_ {
-        self.devices.mouse.buttons.held.iter().copied()
+        (MouseButton::ALL.into_iter()).filter(|&button| self.devices.mouse.buttons.held(button))
     }
 
     pub fn motion(&mut self, dx: f32, dy: f32) {
@@ -110,13 +110,8 @@ impl DeviceGatherer {
     }
 
     pub fn clear(&mut self) {
-        let keys: Vec<String> = self.devices.keyboard.held.iter().cloned().collect();
-        for code in keys {
-            self.devices.keyboard.set(code, false);
-        }
-        for button in MouseButton::ALL {
-            self.devices.mouse.buttons.set(button, false);
-        }
+        self.devices.keyboard.release_all();
+        self.devices.mouse.buttons.release_all();
         self.devices.mouse.position_pixels = None;
         self.devices.mouse.inside = false;
         self.polled.clear();
@@ -149,9 +144,7 @@ impl DeviceGatherer {
             if self.polled.contains(&pad.index) {
                 continue;
             }
-            for (button, _) in PadButton::ALL {
-                pad.buttons.set(button, false);
-            }
+            pad.buttons.release_all();
             pad.sticks = [Vec2::ZERO; 2];
             pad.triggers = [0.0; 2];
         }

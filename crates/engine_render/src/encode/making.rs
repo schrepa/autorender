@@ -38,6 +38,7 @@ pub(crate) struct Making {
     later: Vec<(u64, u64)>,
     refused: Vec<(u64, u64)>,
     pub(crate) book: crate::pipelines::Book,
+    pub(crate) arrivals: u64,
 }
 
 impl Making {
@@ -53,6 +54,7 @@ impl Making {
         u32::try_from(self.later.len()).unwrap_or(u32::MAX)
     }
 
+    #[cfg(feature = "dev")]
     pub(crate) fn first(&self) -> Option<(u64, u64)> {
         self.pending.first().copied()
     }
@@ -139,6 +141,7 @@ impl Making {
         });
         let pending = &self.pending;
         self.later.retain(|made| pending.contains(made));
+        self.arrivals += u64::from(!taken.is_empty());
         taken
     }
 

@@ -1,6 +1,6 @@
 use super::making::{Created, Creating};
 use super::run::Pipelines;
-use super::warming::{Asked, Warm, WarmShape};
+use super::warming::Asked;
 use super::*;
 use crate::Variant;
 use crate::install::RenderDecl;
@@ -53,7 +53,6 @@ fn stage_constants(stages: &[Stage], offered: &[(&str, f64)]) -> Vec<Vec<(String
 
 struct HeldLayout {
     stride: u64,
-    step: wgpu::VertexStepMode,
     attributes: Vec<wgpu::VertexAttribute>,
 }
 
@@ -61,18 +60,17 @@ impl HeldLayout {
     fn layout(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
             array_stride: self.stride,
-            step_mode: self.step,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &self.attributes,
         }
     }
 }
 
-fn vertex_layouts(vertices: &[engine_core::GeometryStream]) -> Vec<HeldLayout> {
+fn vertex_layouts(vertices: &[engine_core::VertexStream]) -> Vec<HeldLayout> {
     vertices
         .iter()
-        .map(|&stream| HeldLayout {
-            stride: stream.stride(),
-            step: wgpu::VertexStepMode::Vertex,
+        .map(|stream| HeldLayout {
+            stride: u64::from(stream.stride),
             attributes: crate::mesh_arena::geometry_attributes(stream),
         })
         .collect()
@@ -352,17 +350,65 @@ struct Keyed {
     fragment: Option<engine_core::Entry>,
 }
 
+type Targets<'f> = (&'f [Option<wgpu::TextureFormat>], Option<wgpu::TextureFormat>);
+
 impl Keyed {
-    fn shape<'f>(
-        &self,
-        formats: &'f [Option<wgpu::TextureFormat>],
-        depth: Option<wgpu::TextureFormat>,
-    ) -> Shape<'f> {
+    fn made(&self) -> (u64, u64) {
+        (self.program, self.key)
+    }
+
+    fn shape<'f>(&self, (formats, depth): Targets<'f>) -> Shape<'f> {
         Shape {
             formats,
             depth,
             cut: self.cut.clone(),
             fragment: self.fragment,
+        }
+    }
+}
+
+fn declared_layout((formats, depth): Targets<'_>, (plain, main): (bool, bool)) -> PassLayout {
+    let mut held = [None; MOST_COLORS];
+    for (slot, format) in held.iter_mut().zip(formats) {
+        *slot = *format;
+    }
+    PassLayout {
+        formats: held,
+        count: formats.len().min(MOST_COLORS),
+        depth,
+        plain,
+        main,
+    }
+}
+
+struct Waiting {
+    layout: u32,
+    made: (u64, u64),
+    exact: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct Landed {
+    pub(crate) layout: u32,
+    pub(crate) made: wgpu::RenderPipeline,
+    pub(crate) exact: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct Resolve {
+    pub(crate) landed: Vec<Landed>,
+    pipeline: u32,
+    program: Option<u64>,
+    variant: Option<Variant>,
+    waiting: Vec<Waiting>,
+}
+
+impl Resolve {
+    pub(crate) fn plain(pipeline: u32, program: u64) -> Self {
+        Self {
+            pipeline,
+            program: Some(program),
+            ..Self::default()
         }
     }
 }
@@ -395,6 +441,7 @@ impl Run {
         self.pipelines.making.needed().saturating_sub(warming)
     }
 
+    #[cfg(feature = "dev")]
     pub(crate) fn wait_made(&mut self) {
         while let Some(first) = self.pipelines.making.first() {
             self.compiler().collect(Some(first));
@@ -428,24 +475,178 @@ impl Run {
         let making = &pipelines.making;
         pipelines.standing.retain(|&made| making.waits(made));
         self.pipelines = pipelines;
+        self.pipelines.making.arrivals += 1;
         #[cfg(feature = "dev")]
         if self.pipelines.work.as_ref().is_some_and(|work| work.live.is_some()) {
             let _ = self.count_work(true);
         }
     }
 
-    pub(crate) fn compile(
+    pub(crate) fn arrivals(&self) -> u64 {
+        self.pipelines.making.arrivals
+    }
+
+    pub(crate) fn resolve(&mut self, pipeline: u32, variant: Option<&Variant>) -> Resolve {
+        let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
+            return Resolve::default();
+        };
+        let mut resolve = Resolve {
+            pipeline,
+            program: Some(built.program_key),
+            variant: variant.cloned(),
+            ..Resolve::default()
+        };
+        self.compiler().collect(None);
+        self.extend(&mut resolve);
+        resolve
+    }
+
+    pub(crate) fn resolve_layout(
         &mut self,
-        pipeline: u32,
-        targets: (
-            &[Option<wgpu::TextureFormat>],
-            Option<wgpu::TextureFormat>,
-        ),
-        shown: (bool, bool),
-        variant: Option<&Variant>,
-    ) -> Option<(u64, wgpu::RenderPipeline)> {
-        self.compiler()
-            .compile_with(pipeline, targets, shown, variant, Asked::Drawn)
+        resolve: &mut Resolve,
+        layout: u32,
+    ) -> Result<usize, DropReason> {
+        if resolve.program.is_none() {
+            return Err(DropReason::UnknownPipeline);
+        }
+        if !resolve.landed.iter().any(|landed| landed.layout == layout) {
+            self.compiler().collect(None);
+            self.start(resolve, layout);
+        }
+        match resolve.landed.iter().position(|landed| landed.layout == layout) {
+            Some(at) => Ok(at),
+            None if resolve.waiting.iter().any(|waiting| waiting.layout == layout) => {
+                Err(DropReason::PipelineCompiling)
+            }
+            None => Err(DropReason::PipelineRefused),
+        }
+    }
+
+    pub(crate) fn refresh(&mut self, resolve: &mut Resolve) -> bool {
+        let Some(program) = resolve.program else {
+            return false;
+        };
+        let Some(current) = (self.machine.pipelines.get(resolve.pipeline as usize))
+            .map(|built| built.program_key)
+        else {
+            return false;
+        };
+        let changed = if current == program {
+            self.compiler().land(resolve)
+        } else {
+            resolve.landed.clear();
+            resolve.waiting.clear();
+            resolve.program = Some(current);
+            self.extend(resolve);
+            true
+        };
+        #[cfg(feature = "dev")]
+        self.count_landed(resolve);
+        changed
+    }
+
+    pub(crate) fn refresh_plain(&mut self) {
+        for pipeline in 0..self.machine.pipelines.len() {
+            let mut plain = std::mem::take(&mut self.machine.pipelines[pipeline].plain);
+            self.refresh(&mut plain);
+            self.machine.pipelines[pipeline].plain = plain;
+        }
+    }
+
+    pub(super) fn extend(&mut self, resolve: &mut Resolve) {
+        let pipeline = resolve.pipeline as usize;
+        for pass in self.scope_passes(pipeline) {
+            if !self.pass_reached(pass) {
+                continue;
+            }
+            let (formats, depth, shown) = self.pass_formats(pass);
+            if self.writes_fit(pipeline, &formats) {
+                let layout = self.machine.layout_id(declared_layout((&formats, depth), shown));
+                self.start(resolve, layout);
+            }
+        }
+    }
+
+    fn start(&mut self, resolve: &mut Resolve, layout: u32) {
+        let known = (resolve.landed.iter().map(|landed| landed.layout))
+            .chain(resolve.waiting.iter().map(|waiting| waiting.layout))
+            .any(|known| known == layout);
+        if known {
+            return;
+        }
+        let pipeline = resolve.pipeline;
+        let (Some(pass), Some(built)) = (
+            self.machine.pass_layout(layout),
+            self.machine.pipelines.get(pipeline as usize),
+        ) else {
+            return;
+        };
+        let cut = cut_of(built, resolve.variant.as_ref());
+        let stand_in = (resolve.variant.as_ref())
+            .and_then(|variant| variant.stand_in.as_deref())
+            .map(|stand_in| cut_of(built, Some(stand_in)));
+        let shown = ((pass.formats(), pass.depth), (pass.plain, pass.main));
+        let settled = self.pipelines.settled;
+        let mut compiler = self.compiler();
+        let exact = compiler.keyed(pipeline, shown, cut.as_ref());
+        let standing =
+            stand_in.and_then(|stand_in| compiler.keyed(pipeline, shown, stand_in.as_ref()));
+        let making = &compiler.pipelines.making;
+        let refused = exact.as_ref().is_none_or(|exact| making.refused(exact.made()));
+        let standing = standing.filter(|standing| {
+            refused || (settled && exact.as_ref().is_some_and(|exact| exact.key != standing.key))
+        });
+        if let Some(exact) = exact.filter(|_| !refused) {
+            let later = standing.is_some();
+            compiler.ask(pipeline, &exact, shown.0, later);
+            let made = exact.made();
+            if later && !compiler.pipelines.standing.contains(&made) {
+                compiler.pipelines.standing.push(made);
+                compiler.pipelines.warming.stood_in += 1;
+            }
+            resolve.waiting.push(Waiting {
+                layout,
+                made,
+                exact: true,
+            });
+        }
+        if let Some(standing) = standing {
+            compiler.ask(pipeline, &standing, shown.0, false);
+            resolve.waiting.push(Waiting {
+                layout,
+                made: standing.made(),
+                exact: false,
+            });
+        }
+        compiler.land(resolve);
+    }
+
+    #[cfg(feature = "dev")]
+    fn count_landed(&mut self, resolve: &Resolve) {
+        if self.pipelines.work.is_none() {
+            return;
+        }
+        for landed in &resolve.landed {
+            let (Some(pass), Some(built)) = (
+                self.machine.pass_layout(landed.layout),
+                self.machine.pipelines.get(resolve.pipeline as usize),
+            ) else {
+                continue;
+            };
+            let variant = resolve.variant.as_ref();
+            let variant = if landed.exact {
+                variant
+            } else {
+                variant.and_then(|variant| variant.stand_in.as_deref())
+            };
+            let cut = cut_of(built, variant);
+            let targets = (pass.formats(), pass.depth);
+            let shown = (targets, (pass.plain, pass.main));
+            let mut compiler = self.compiler();
+            if let Some(keyed) = compiler.keyed(resolve.pipeline, shown, cut.as_ref()) {
+                compiler.count_render(resolve.pipeline, keyed.made(), keyed.shape(targets));
+            }
+        }
     }
 
     pub(super) fn pipeline_of(&self, handle: u32) -> Option<(u32, Option<usize>)> {
@@ -455,72 +656,6 @@ impl Run {
         }
         let filled = (handle - count) as usize;
         Some((self.filled.get(filled)?.base, Some(filled)))
-    }
-
-    pub(super) fn render_pipeline(
-        &mut self,
-        pipeline: u32,
-        drawn: Option<(&Variant, u64)>,
-    ) -> Result<usize, engine_core::DropReason> {
-        let layout = self
-            .recording
-            .open()
-            .ok_or(DropReason::NoRenderPass)?
-            .layout;
-        let identity = drawn.map_or(0, |(_, identity)| identity);
-        let built = self
-            .machine
-            .pipelines
-            .get(pipeline as usize)
-            .ok_or(DropReason::UnknownPipeline)?;
-        if let Some(at) = built
-            .ready
-            .iter()
-            .position(|ready| ready.layout == layout && ready.variant == identity)
-        {
-            return Ok(at);
-        }
-        let variant = drawn.map(|(variant, _)| variant);
-        let program = built.program_key;
-        let pass = self
-            .machine
-            .pass_layout(layout)
-            .ok_or(DropReason::NoRenderPass)?;
-        let targets = (pass.formats(), pass.depth);
-        let shown = (pass.plain, pass.main);
-        let found = match variant.and_then(|variant| Some((variant, variant.stand_in.as_deref()?))) {
-            Some(variants) => self
-                .compiler()
-                .standing_in(pipeline, targets, shown, variants),
-            None => self
-                .compile(pipeline, targets, shown, variant)
-                .map(|(key, made)| (key, made, true)),
-        };
-        let Some((key, made, exact)) = found else {
-            return Err(if self.pipelines.making.program_waits(program) {
-                DropReason::PipelineCompiling
-            } else {
-                DropReason::PipelineRefused
-            });
-        };
-        self.pipelines.making.book.used((program, key), self.frames.asked);
-        #[cfg(feature = "dev")]
-        if self.pipelines.work.is_some() {
-            let variant = if exact { variant } else { variant.and_then(|variant| variant.stand_in.as_deref()) };
-            self.compiler().count_ready(pipeline, (targets, shown), (program, key), variant);
-        }
-        let built = self
-            .machine
-            .pipelines
-            .get_mut(pipeline as usize)
-            .ok_or(DropReason::UnknownPipeline)?;
-        built.ready.push(Ready {
-            layout,
-            variant: identity,
-            made,
-            exact,
-        });
-        Ok(built.ready.len() - 1)
     }
 
     pub(super) fn compute_pipeline(
@@ -615,7 +750,6 @@ impl Compiler<'_> {
             if warmed {
                 self.pipelines.warming.fed = None;
             }
-            let stood = self.pipelines.standing.contains(&done);
             self.pipelines.standing.retain(|known| *known != done);
             let made = match finished.made {
                 Ok(made) => made,
@@ -644,13 +778,6 @@ impl Compiler<'_> {
             } else {
                 crate::pipelines::count(finished.pass, 1);
             }
-            if warmed || stood {
-                for built in &mut self.machine.pipelines {
-                    if built.program_key == finished.program {
-                        built.ready.clear();
-                    }
-                }
-            }
             self.pipelines.making.book.ready(done, self.frame);
         }
     }
@@ -665,128 +792,96 @@ impl Compiler<'_> {
         Some(found)
     }
 
-    fn standing_in(
-        &mut self,
-        pipeline: u32,
-        targets: (
-            &[Option<wgpu::TextureFormat>],
-            Option<wgpu::TextureFormat>,
-        ),
-        shown: (bool, bool),
-        (specialized, dynamic): (&Variant, &Variant),
-    ) -> Option<(u64, wgpu::RenderPipeline, bool)> {
-        self.collect(None);
-        let keyed = self.keyed(pipeline, targets, shown, Some(specialized))?;
-        let made = (keyed.program, keyed.key);
-        if let Some(found) = self.made(pipeline, made) {
-            return Some((keyed.key, found, true));
-        }
-        let refused = self.pipelines.making.refused(made);
-        let standing = self.keyed(pipeline, targets, shown, Some(dynamic))?;
-        let exact = standing.key == keyed.key || !self.pipelines.settled;
-        if !refused && exact {
-            return self
-                .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
-                .map(|(key, made)| (key, made, true));
-        }
-        if !refused {
-            if !self.pipelines.standing.contains(&made) {
-                self.pipelines.standing.push(made);
-                self.pipelines.warming.stood_in += 1;
+    fn land(&mut self, resolve: &mut Resolve) -> bool {
+        let mut changed = false;
+        let mut at = 0;
+        while let Some(waiting) = resolve.waiting.get(at) {
+            let (layout, made, exact) = (waiting.layout, waiting.made, waiting.exact);
+            let found = self.made(resolve.pipeline, made);
+            if found.is_none() && self.pipelines.making.waits(made) {
+                at += 1;
+                continue;
             }
-            let warm = Warm {
-                pipeline,
-                shape: Some(WarmShape {
-                    formats: targets.0.to_vec(),
-                    depth: targets.1,
-                    shown,
-                    variant: keyed.cut,
-                }),
+            resolve.waiting.swap_remove(at);
+            let Some(found) = found else {
+                continue;
             };
-            let warming = &mut self.pipelines.warming;
-            let queued = warming.queue.iter().any(|known| known.same(&warm));
-            if !queued && !self.pipelines.making.waits(made) {
-                warming.queue.push_front(warm);
+            self.pipelines.making.book.used(made, self.frame);
+            let landed = Landed {
+                layout,
+                made: found,
+                exact,
+            };
+            match resolve.landed.iter_mut().find(|known| known.layout == layout) {
+                Some(known) if known.exact => {}
+                Some(known) => {
+                    *known = landed;
+                    changed = true;
+                }
+                None => {
+                    resolve.landed.push(landed);
+                    changed = true;
+                }
             }
         }
-        self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn)
-            .map(|(key, made)| (key, made, false))
+        let Resolve { landed, waiting, .. } = resolve;
+        waiting.retain(|waiting| {
+            waiting.exact || !landed.iter().any(|known| known.exact && known.layout == waiting.layout)
+        });
+        changed
     }
 
     fn keyed(
         &self,
         pipeline: u32,
-        (formats, depth): (
-            &[Option<wgpu::TextureFormat>],
-            Option<wgpu::TextureFormat>,
-        ),
-        (plain, main): (bool, bool),
-        variant: Option<&Variant>,
+        ((formats, depth), (plain, main)): (Targets<'_>, (bool, bool)),
+        cut: Option<&Variant>,
     ) -> Option<Keyed> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        let cut = cut_of(built, variant);
-        let fragment = desc.fragment.filter(|_| {
-            !desc.per_batch.fragment || cut.as_ref().is_some_and(|cut| cut.fragment)
-        });
+        let fragment = desc
+            .fragment
+            .filter(|_| !desc.per_batch.fragment || cut.is_some_and(|cut| cut.fragment));
         if fragment.is_none() && formats.iter().any(Option::is_some) {
             return None;
         }
         let mut hasher = DefaultHasher::new();
         (formats, depth, plain, main).hash(&mut hasher);
-        (cut.as_ref().map(Variant::key), fragment.is_some()).hash(&mut hasher);
+        (cut.map(Variant::key), fragment.is_some()).hash(&mut hasher);
         Some(Keyed {
             program: built.program_key,
             key: hasher.finish(),
-            cut,
+            cut: cut.cloned(),
             fragment,
         })
     }
 
-    pub(super) fn compile_with(
-        &mut self,
-        pipeline: u32,
-        (formats, depth): (
-            &[Option<wgpu::TextureFormat>],
-            Option<wgpu::TextureFormat>,
-        ),
-        (plain, main): (bool, bool),
-        variant: Option<&Variant>,
-        asked: Asked,
-    ) -> Option<(u64, wgpu::RenderPipeline)> {
-        self.collect(None);
-        let keyed = self.keyed(pipeline, (formats, depth), (plain, main), variant)?;
-        let (program, key) = (keyed.program, keyed.key);
-        let made = (program, key);
-        if self.made(pipeline, made).is_none()
-            && !self.pipelines.making.refused(made)
-            && !self.pipelines.making.waits(made)
+    fn ask(&mut self, pipeline: u32, keyed: &Keyed, targets: Targets<'_>, later: bool) {
+        let made = keyed.made();
+        if self.made(pipeline, made).is_some()
+            || self.pipelines.making.refused(made)
+            || self.pipelines.making.waits(made)
         {
-            let Some(mut job) = self.render_job(pipeline, keyed.shape(formats, depth)) else {
-                self.pipelines.standing.retain(|known| *known != made);
-                return None;
-            };
-            let stages = std::mem::take(&mut job.stages);
-            let pass = self.machine.pass_name(pipeline);
-            let machine = &*self.machine;
-            self.pipelines
-                .making
-                .book
-                .asked(made, self.frame, || machine.asker(pipeline, asked));
-            self.pipelines
-                .making
-                .submit((made, false), (pass, stages), move || job.make());
-            if asked == Asked::Warmed {
-                self.pipelines.warming.fed = Some(made);
-            }
-            self.collect(None);
-        } else if asked != Asked::Warmed {
-            self.pipelines.warming.promote(made);
+            return;
         }
-        let found = self.made(pipeline, made)?;
-        Some((key, found))
+        let Some(mut job) = self.render_job(pipeline, keyed.shape(targets)) else {
+            self.pipelines.making.refuse(made);
+            return;
+        };
+        let stages = std::mem::take(&mut job.stages);
+        let pass = self.machine.pass_name(pipeline);
+        let asked = if later { Asked::Warmed } else { Asked::Drawn };
+        let machine = &*self.machine;
+        self.pipelines
+            .making
+            .book
+            .asked(made, self.frame, || machine.asker(pipeline, asked));
+        self.pipelines
+            .making
+            .submit((made, later), (pass, stages), move || job.make());
+        self.collect(None);
     }
 
     fn render_job(&mut self, pipeline: u32, shape: Shape<'_>) -> Option<RenderJob> {
@@ -907,6 +1002,7 @@ impl Run {
         (formats, depth, shown)
     }
 
+    #[cfg(feature = "dev")]
     pub(crate) fn make_all_shaders(&mut self) {
         let machine = &mut self.machine;
         for built in &machine.pipelines {

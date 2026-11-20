@@ -37,48 +37,6 @@ impl PartRecord {
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
-pub(crate) struct Modules(pub(crate) fn(&Entries) -> Made);
-
-#[derive(Clone, Default)]
-pub struct Entries(Vec<(&'static str, Arc<dyn Any + Send + Sync>)>);
-
-impl Entries {
-    pub(crate) fn of_registry(registry: &engine_registry::Registry) -> Self {
-        Self(
-            registry
-                .iter()
-                .flat_map(|(_, record)| {
-                    record
-                        .render
-                        .iter()
-                        .map(move |entry| (record.package, Arc::clone(entry)))
-                })
-                .collect(),
-        )
-    }
-
-    pub fn of<T: Any>(&self) -> impl Iterator<Item = (&'static str, &T)> + '_ {
-        self.0
-            .iter()
-            .filter_map(|(package, entry)| Some((*package, entry.downcast_ref::<T>()?)))
-    }
-}
-
-#[derive(Default)]
-pub struct Made {
-    pub sources: Vec<engine_core::Module>,
-    pub modules: Vec<(String, String)>,
-    pub keep: Vec<(String, String)>,
-    pub problems: Vec<Error>,
-    pub notices: Vec<Error>,
-}
-
-impl<P: GpuPart> Install<'_, P> {
-    pub fn entries(&self) -> &Entries {
-        &self.core.entries
-    }
-}
-
 pub(crate) type KindCall = Arc<dyn Fn(&dyn Any, &mut RawDraw<'_>) + Send + Sync>;
 
 pub(crate) struct KindDraw {

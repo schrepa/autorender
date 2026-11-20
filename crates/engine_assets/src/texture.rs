@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Deref;
+use std::ops::Range;
+use std::sync::Arc;
 
 use engine_codec::{Error, ErrorCode, Expected};
 
@@ -11,14 +11,39 @@ pub enum TextureFormat {
 }
 
 impl TextureFormat {
+    pub const fn block(self) -> (u32, u32) {
+        match self {
+            Self::Rgba8 => (1, 4),
+            Self::Bc7 | Self::Bc5 => (4, 16),
+        }
+    }
+
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
-        let (columns, rows, block) = match self {
-            Self::Rgba8 => (width, height, 4),
-            Self::Bc7 | Self::Bc5 => (width.div_ceil(4), height.div_ceil(4), 16),
-        };
-        (columns as usize)
-            .saturating_mul(rows as usize)
-            .saturating_mul(block)
+        let (side, bytes) = self.block();
+        (width.div_ceil(side) as usize)
+            .saturating_mul(height.div_ceil(side) as usize)
+            .saturating_mul(bytes as usize)
+    }
+
+    pub fn check_levels(self, width: u32, height: u32, levels: &[&[u8]]) -> Result<(), Error> {
+        check_size(self, width, height)?;
+        let chain = 32 - width.max(height).leading_zeros();
+        if levels.is_empty() || levels.len() > chain as usize {
+            return Err(invalid("$.levels")
+                .expected(Expected::Array)
+                .range(1.0, f64::from(chain))
+                .got(levels.len()));
+        }
+        for (level, bytes) in levels.iter().enumerate() {
+            let expected = self.level_bytes((width >> level).max(1), (height >> level).max(1));
+            if bytes.len() != expected {
+                return Err(invalid(format!("$.levels[{level}]"))
+                    .expected(Expected::Matching)
+                    .range(expected as f64, expected as f64)
+                    .got(bytes.len()));
+            }
+        }
+        Ok(())
     }
 
     pub fn is_compressed(self) -> bool {
@@ -26,39 +51,16 @@ impl TextureFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ColorSpace {
-    #[default]
     Srgb,
     Linear,
 }
 
-pub struct Level(Box<[u8]>);
-
-impl Deref for Level {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Level {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (**self).fmt(f)
-    }
-}
-
-impl PartialEq for Level {
-    fn eq(&self, other: &Self) -> bool {
-        **self == **other
-    }
-}
-
 #[derive(Debug)]
 enum Contents {
-    Levels(Box<[Level]>),
-    Base(Box<[Level]>),
+    File,
+    Base,
     Drawn,
 }
 
@@ -68,6 +70,8 @@ pub struct Texture {
     height: u32,
     format: TextureFormat,
     space: ColorSpace,
+    bytes: Arc<[u8]>,
+    levels: Box<[Range<usize>]>,
     contents: Contents,
 }
 
@@ -85,13 +89,17 @@ impl Texture {
     }
 
     pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, Error> {
-        let levels = [Level(rgba8.into_boxed_slice())];
-        check_levels(TextureFormat::Rgba8, width, height, &levels)?;
-        Ok(Self::of_contents(
-            TextureFormat::Rgba8,
-            (width, height),
-            Contents::Base(Box::new(levels)),
-        ))
+        TextureFormat::Rgba8.check_levels(width, height, &[&rgba8])?;
+        let levels = std::iter::once(0..rgba8.len()).collect();
+        Ok(Self {
+            width,
+            height,
+            format: TextureFormat::Rgba8,
+            space: ColorSpace::Srgb,
+            bytes: rgba8.into(),
+            levels,
+            contents: Contents::Base,
+        })
     }
 
     pub fn target(width: u32, height: u32, space: ColorSpace) -> Result<Self, Error> {
@@ -101,41 +109,41 @@ impl Texture {
             height,
             format: TextureFormat::Rgba8,
             space,
+            bytes: Arc::new([]),
+            levels: Box::new([]),
             contents: Contents::Drawn,
         })
     }
 
-    pub fn from_levels(
+    pub fn from_file(
         format: TextureFormat,
+        space: ColorSpace,
         width: u32,
         height: u32,
-        levels: Vec<Vec<u8>>,
+        bytes: Arc<[u8]>,
+        levels: Vec<Range<usize>>,
     ) -> Result<Self, Error> {
-        check_levels(format, width, height, &levels)?;
-        let levels = levels
-            .into_iter()
-            .map(|bytes| Level(bytes.into_boxed_slice()))
-            .collect();
-        Ok(Self::of_contents(
-            format,
-            (width, height),
-            Contents::Levels(levels),
-        ))
-    }
-
-    fn of_contents(format: TextureFormat, (width, height): (u32, u32), contents: Contents) -> Self {
-        Self {
+        let held = levels
+            .iter()
+            .enumerate()
+            .map(|(level, range)| {
+                bytes.get(range.clone()).ok_or_else(|| {
+                    invalid(format!("$.levels[{level}]"))
+                        .at_most(bytes.len() as u64)
+                        .got(range.end)
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        format.check_levels(width, height, &held)?;
+        Ok(Self {
             width,
             height,
             format,
-            space: ColorSpace::Srgb,
-            contents,
-        }
-    }
-
-    #[must_use]
-    pub fn with_color_space(self, space: ColorSpace) -> Self {
-        Self { space, ..self }
+            space,
+            bytes,
+            levels: levels.into_boxed_slice(),
+            contents: Contents::File,
+        })
     }
 
     pub fn color_space(&self) -> ColorSpace {
@@ -147,7 +155,7 @@ impl Texture {
     }
 
     pub fn makes_levels(&self) -> bool {
-        matches!(self.contents, Contents::Base(_))
+        matches!(self.contents, Contents::Base)
     }
 
     pub fn width(&self) -> u32 {
@@ -159,22 +167,19 @@ impl Texture {
     }
 
     pub fn pixels(&self) -> &[u8] {
-        self.levels().first().map_or(&[][..], |level| &level[..])
+        self.levels().next().unwrap_or_default()
     }
 
     pub fn format(&self) -> TextureFormat {
         self.format
     }
 
-    pub fn levels(&self) -> &[Level] {
-        match &self.contents {
-            Contents::Levels(levels) | Contents::Base(levels) => levels,
-            Contents::Drawn => &[],
-        }
+    pub fn levels(&self) -> impl ExactSizeIterator<Item = &[u8]> + '_ {
+        self.levels.iter().map(|range| &self.bytes[range.clone()])
     }
 
     pub fn byte_len(&self) -> usize {
-        self.levels().iter().map(|level| level.len()).sum()
+        self.levels.iter().map(|range| range.len()).sum()
     }
 }
 
@@ -193,35 +198,6 @@ fn check_size(format: TextureFormat, width: u32, height: u32) -> Result<(), Erro
     Ok(())
 }
 
-fn check_levels(
-    format: TextureFormat,
-    width: u32,
-    height: u32,
-    levels: &[impl Deref<Target = [u8]>],
-) -> Result<(), Error> {
-    check_size(format, width, height)?;
-    if levels.is_empty() || levels.len() > full_chain(width, height) as usize {
-        return Err(invalid("$.levels")
-            .expected(Expected::Array)
-            .range(1.0, f64::from(full_chain(width, height)))
-            .got(levels.len()));
-    }
-    for (level, bytes) in levels.iter().enumerate() {
-        let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
-        if bytes.len() != expected {
-            return Err(invalid(format!("$.levels[{level}]"))
-                .expected(Expected::Matching)
-                .range(expected as f64, expected as f64)
-                .got(bytes.len()));
-        }
-    }
-    Ok(())
-}
-
 fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidTexture, path)
-}
-
-fn full_chain(width: u32, height: u32) -> u32 {
-    32 - width.max(height).leading_zeros()
 }

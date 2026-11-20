@@ -1,166 +1,111 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
+use engine_core::collections::{Cursor, Since};
 use engine_core::{
-    ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, ClassStream, Cursor,
-    GeometryClass, GeometryHandle, GeometryStream, Mesh, MeshPlacement, MeshResidence,
-    ResidentMesh, Since, math::clamp,
+    Asset, Assets, Error, ErrorCode, Expected, IndexFormat, MeshFile, VertexFormat, VertexStream,
 };
 
 use crate::gpu_calls::Queue;
 
-const fn format_of(stored: AttributeFormat) -> wgpu::VertexFormat {
+const fn format_of(stored: VertexFormat) -> wgpu::VertexFormat {
     match stored {
-        AttributeFormat::Float32x2 => wgpu::VertexFormat::Float32x2,
-        AttributeFormat::Float32x3 => wgpu::VertexFormat::Float32x3,
-        AttributeFormat::Float32x4 => wgpu::VertexFormat::Float32x4,
-        AttributeFormat::Snorm16x2 => wgpu::VertexFormat::Snorm16x2,
-        AttributeFormat::Unorm16x4 => wgpu::VertexFormat::Unorm16x4,
-        AttributeFormat::Uint32x4 => wgpu::VertexFormat::Uint32x4,
+        VertexFormat::Float32x2 => wgpu::VertexFormat::Float32x2,
+        VertexFormat::Float32x3 => wgpu::VertexFormat::Float32x3,
+        VertexFormat::Snorm16x2 => wgpu::VertexFormat::Snorm16x2,
+        VertexFormat::Unorm16x4 => wgpu::VertexFormat::Unorm16x4,
+        VertexFormat::Uint32x4 => wgpu::VertexFormat::Uint32x4,
     }
 }
 
-pub(crate) fn geometry_attributes(stream: GeometryStream) -> Vec<wgpu::VertexAttribute> {
+pub(crate) fn geometry_attributes(stream: &VertexStream) -> Vec<wgpu::VertexAttribute> {
     stream
-        .inputs()
-        .into_iter()
-        .map(|(location, stored, offset)| wgpu::VertexAttribute {
-            format: format_of(stored),
-            offset,
-            shader_location: location,
+        .inputs
+        .iter()
+        .map(|input| wgpu::VertexAttribute {
+            format: format_of(input.format),
+            offset: u64::from(input.offset),
+            shader_location: input.location,
         })
         .collect()
 }
 
-fn octahedral(normal: [f32; 3]) -> [i16; 2] {
-    let [x, y, z] = normal;
-    let length = x.abs() + y.abs() + z.abs();
-    let (u, v) = (x / length, y / length);
-    let sign = |value: f32| if value >= 0.0 { 1.0 } else { -1.0 };
-    let (u, v) = if z < 0.0 {
-        ((1.0 - v.abs()) * sign(u), (1.0 - u.abs()) * sign(v))
-    } else {
-        (u, v)
-    };
-    [u, v].map(|value| (clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
-}
-
-fn packed(mesh: &Mesh, index: usize, attribute: Attribute, bytes: &mut Vec<u8>) {
-    let vertex = &mesh.vertices()[index];
-    let floats = |bytes: &mut Vec<u8>, values: &[f32]| {
-        for value in values {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    };
-    match attribute {
-        Attribute::Position => floats(bytes, &vertex.position),
-        Attribute::Normal => {
-            for value in octahedral(vertex.normal) {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        Attribute::Uv0 => floats(bytes, &vertex.uv),
-        Attribute::Uv1 => floats(bytes, &mesh.uv1().map_or(vertex.uv, |uv1| uv1[index])),
-        Attribute::Color => {
-            let color = mesh.colors().map_or([1.0; 4], |colors| colors[index]);
-            for value in color {
-                let unit = (clamp(value, 0.0, 1.0) * 65535.0).round() as u16;
-                bytes.extend_from_slice(&unit.to_le_bytes());
-            }
-        }
-        Attribute::Tangent => {}
-    }
-}
-
-fn stream_bytes(mesh: &Mesh, stream: &ClassStream, bytes: &mut Vec<u8>) {
-    bytes.clear();
-    let vertices = mesh.vertices().len();
-    bytes.reserve(vertices * stream.stride() as usize);
-    let fixed = match stream {
-        ClassStream::Vertex => GeometryStream::Vertex,
-        ClassStream::Extra => GeometryStream::Extra,
-        ClassStream::Named(name, format) => {
-            let held = mesh
-                .streams()
-                .iter()
-                .find(|held| held.name() == name && held.format() == *format);
-            match held {
-                Some(held) => bytes.extend_from_slice(held.bytes()),
-                None => bytes.resize(vertices * format.bytes() as usize, 0),
-            }
-            return;
-        }
-    };
-    for index in 0..vertices {
-        for (attribute, _, _) in fixed.placed() {
-            packed(mesh, index, attribute, bytes);
-        }
-    }
-}
-
-pub(crate) fn arena_shape(device: &wgpu::Device) -> ArenaShape {
-    ArenaShape {
-        limit: device.limits().max_buffer_size,
-    }
-}
-
-pub(crate) fn configure(
-    device: &wgpu::Device,
-    world: &mut World,
-    (meshes, textures): (&mut GpuMeshes, &mut crate::textures::TextureStore),
-) {
-    meshes.placed = engine_core::Cursor::default();
-    textures.forget_sync();
-    engine_core::configure_assets(world, arena_shape(device));
+pub(crate) fn layout(
+    path: String,
+    declared: &[VertexStream],
+    held: &[VertexStream],
+) -> Result<Box<[u32]>, Error> {
+    declared
+        .iter()
+        .map(|stream| held.iter().position(|file| file == stream).map(|at| at as u32))
+        .collect::<Option<_>>()
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidRenderable, path)
+                .expected(Expected::Matching)
+                .got(serde_json::json!({
+                    "declared": format!("{declared:?}"),
+                    "file": format!("{held:?}"),
+                }))
+        })
 }
 
 #[derive(Clone, Copy)]
-pub struct MeshDraw<'a> {
-    pub streams: &'a [ClassStream],
-    pub buffers: &'a [wgpu::Buffer],
-    pub indices: &'a wgpu::Buffer,
-    pub first_index: u32,
-    pub base_vertex: i32,
-    pub index_count: u32,
+pub(crate) struct MeshDraw<'a> {
+    pub(crate) class: u32,
+    pub(crate) streams: &'a [VertexStream],
+    pub(crate) buffers: &'a [wgpu::Buffer],
+    pub(crate) indices: &'a wgpu::Buffer,
+    pub(crate) index_format: wgpu::IndexFormat,
+    pub(crate) first_index: u32,
+    pub(crate) base_vertex: i32,
+    pub(crate) index_count: u32,
 }
 
-impl<'a> MeshDraw<'a> {
-    pub fn stream(&self, stream: GeometryStream) -> Option<&'a wgpu::Buffer> {
-        let at = self.streams.iter().position(|held| held.serves(stream))?;
-        self.buffers.get(at)
-    }
-
-    pub fn holds(&self, streams: &[GeometryStream]) -> bool {
-        streams.iter().all(|&stream| self.stream(stream).is_some())
-    }
-}
-
-struct Class {
-    class: GeometryClass,
-    buffers: Vec<wgpu::Buffer>,
-    strides: Vec<u64>,
+#[derive(Default)]
+struct Space {
     capacity: u32,
+    free: Vec<(u32, u32)>,
 }
 
-impl Class {
-    fn new(device: &wgpu::Device, class: &GeometryClass) -> Self {
-        let strides: Vec<u64> = class.streams.iter().map(ClassStream::stride).collect();
-        Self {
-            class: class.clone(),
-            buffers: strides
-                .iter()
-                .map(|_| buffer(device, "engine/mesh-arena", 0, VERTEX_USAGE))
-                .collect(),
-            strides,
-            capacity: 0,
+impl Space {
+    fn allocate(&mut self, length: u32) -> Option<u32> {
+        let slot = self.free.iter().position(|&(_, free)| free >= length)?;
+        let (start, free) = self.free[slot];
+        if free == length {
+            self.free.remove(slot);
+        } else {
+            self.free[slot] = (start + length, free - length);
+        }
+        Some(start)
+    }
+
+    fn release(&mut self, start: u32, length: u32) {
+        if length == 0 {
+            return;
+        }
+        let slot = self.free.partition_point(|&(free, _)| free < start);
+        self.free.insert(slot, (start, length));
+        if slot + 1 < self.free.len() {
+            let (next_start, next_length) = self.free[slot + 1];
+            if start + length == next_start {
+                self.free[slot].1 += next_length;
+                self.free.remove(slot + 1);
+            }
+        }
+        if slot > 0 {
+            let (previous_start, previous_length) = self.free[slot - 1];
+            if previous_start + previous_length == start {
+                self.free[slot - 1].1 += self.free[slot].1;
+                self.free.remove(slot);
+            }
         }
     }
-}
 
-struct MeshArena {
-    classes: Vec<Class>,
-    indices: wgpu::Buffer,
-    index_capacity: u32,
+    fn grow(&mut self, capacity: u32) {
+        let old = self.capacity;
+        self.capacity = capacity;
+        self.release(old, capacity - old);
+    }
 }
 
 const VERTEX_USAGE: wgpu::BufferUsages = wgpu::BufferUsages::VERTEX
@@ -169,7 +114,6 @@ const VERTEX_USAGE: wgpu::BufferUsages = wgpu::BufferUsages::VERTEX
 const INDEX_USAGE: wgpu::BufferUsages = wgpu::BufferUsages::INDEX
     .union(wgpu::BufferUsages::COPY_DST)
     .union(wgpu::BufferUsages::COPY_SRC);
-const INDEX_BYTES: u64 = 4;
 
 fn buffer(
     device: &wgpu::Device,
@@ -201,289 +145,317 @@ fn regrown(
     grown
 }
 
-impl MeshArena {
-    fn new(device: &wgpu::Device) -> Self {
-        Self {
-            classes: Vec::new(),
-            indices: buffer(device, "engine/mesh-arena-indices", 0, INDEX_USAGE),
-            index_capacity: 0,
-        }
+fn write_aligned(queue: &Queue, buffer: &wgpu::Buffer, offset: u64, bytes: &[u8]) {
+    let whole = bytes.len() / 4 * 4;
+    if whole > 0 {
+        queue.write_buffer(buffer, offset, &bytes[..whole]);
     }
-
-    fn fit(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        classes: &[(&GeometryClass, u32)],
-        indices: u32,
-    ) -> Vec<u32> {
-        let mut replaced: Vec<u32> = (classes.len()..self.classes.len())
-            .map(|at| at as u32)
-            .collect();
-        self.classes.truncate(classes.len());
-        for (at, &(class, _)) in classes.iter().enumerate() {
-            match self.classes.get_mut(at) {
-                Some(held) if held.class == *class => {}
-                Some(held) => {
-                    *held = Class::new(device, class);
-                    replaced.push(at as u32);
-                }
-                None => self.classes.push(Class::new(device, class)),
-            }
-        }
-        if indices > self.index_capacity {
-            self.indices = regrown(
-                device,
-                queue,
-                &self.indices,
-                u64::from(indices) * INDEX_BYTES,
-                INDEX_USAGE,
-            );
-            self.index_capacity = indices;
-        }
-        for (class, &(_, capacity)) in self.classes.iter_mut().zip(classes) {
-            if capacity <= class.capacity {
-                continue;
-            }
-            for (buffer, stride) in class.buffers.iter_mut().zip(&class.strides) {
-                *buffer = regrown(
-                    device,
-                    queue,
-                    buffer,
-                    u64::from(capacity) * stride,
-                    VERTEX_USAGE,
-                );
-            }
-            class.capacity = capacity;
-        }
-        replaced
-    }
-
-    fn write(&self, queue: &Queue, placement: MeshPlacement, streams: &[Vec<u8>], indices: &[u32]) {
-        let Some(class) = self.classes.get(placement.class as usize) else {
-            return;
-        };
-        for ((buffer, stride), bytes) in class.buffers.iter().zip(&class.strides).zip(streams) {
-            if !bytes.is_empty() {
-                queue.write_buffer(buffer, u64::from(placement.base_vertex) * stride, bytes);
-            }
-        }
-        if !indices.is_empty() {
-            queue.write_buffer(
-                &self.indices,
-                u64::from(placement.first_index) * INDEX_BYTES,
-                bytemuck::cast_slice(indices),
-            );
-        }
-    }
-
-    fn draw(&self, placement: MeshPlacement) -> Option<MeshDraw<'_>> {
-        let class = self.classes.get(placement.class as usize)?;
-        Some(MeshDraw {
-            streams: &class.class.streams,
-            buffers: &class.buffers,
-            indices: &self.indices,
-            first_index: placement.first_index,
-            base_vertex: placement.base_vertex as i32,
-            index_count: placement.index_count,
-        })
+    if whole < bytes.len() {
+        let mut tail = [0; 4];
+        tail[..bytes.len() - whole].copy_from_slice(&bytes[whole..]);
+        queue.write_buffer(buffer, offset + whole as u64, &tail);
     }
 }
 
-struct OwnMesh {
-    streams: Vec<ClassStream>,
+struct Shelf {
+    space: Space,
     buffers: Vec<wgpu::Buffer>,
-    indices: wgpu::Buffer,
+    units: Vec<u64>,
+    usage: wgpu::BufferUsages,
 }
 
-pub struct GpuMesh {
-    placement: MeshResidence,
-    revision: u64,
-    own: Option<OwnMesh>,
-    pub index_count: u32,
-}
-
-impl GpuMesh {
-    fn in_class(&self, classes: &[u32]) -> bool {
-        match self.placement {
-            MeshResidence::Arena(placement) => classes.contains(&placement.class),
-            MeshResidence::Own => false,
+impl Shelf {
+    fn new(device: &wgpu::Device, units: Vec<u64>, usage: wgpu::BufferUsages) -> Self {
+        Self {
+            space: Space::default(),
+            buffers: units
+                .iter()
+                .map(|_| buffer(device, "engine/mesh-arena", 0, usage))
+                .collect(),
+            units,
+            usage,
         }
     }
 
-    fn draw<'a>(&'a self, arena: &'a MeshArena) -> Option<MeshDraw<'a>> {
-        match (self.placement, &self.own) {
-            (MeshResidence::Arena(placement), _) => Some(MeshDraw {
-                index_count: self.index_count,
-                ..arena.draw(placement)?
-            }),
-            (MeshResidence::Own, Some(own)) => Some(MeshDraw {
-                streams: &own.streams,
-                buffers: &own.buffers,
-                indices: &own.indices,
-                first_index: 0,
-                base_vertex: 0,
-                index_count: self.index_count,
-            }),
-            (MeshResidence::Own, None) => None,
+    fn take(&mut self, length: u32, limit: u64) -> Option<u32> {
+        if let Some(start) = self.space.allocate(length) {
+            return Some(start);
+        }
+        let widest = self.units.iter().copied().max()?;
+        let needed = u64::from(self.space.capacity) + u64::from(length);
+        let fits = (limit / widest).min(u64::from(u32::MAX));
+        let capacity = (u64::from(self.space.capacity) * 2).max(needed).min(fits);
+        if capacity < needed {
+            return None;
+        }
+        self.space.grow(capacity as u32);
+        self.space.allocate(length)
+    }
+
+    fn fit(&mut self, device: &wgpu::Device, queue: &Queue) {
+        for (held, unit) in self.buffers.iter_mut().zip(&self.units) {
+            let size = u64::from(self.space.capacity) * unit;
+            if held.size() < size {
+                *held = regrown(device, queue, held, size, self.usage);
+            }
+        }
+    }
+
+    fn write(&self, queue: &Queue, start: u32, bytes: impl Iterator<Item = impl AsRef<[u8]>>) {
+        for ((held, unit), bytes) in self.buffers.iter().zip(&self.units).zip(bytes) {
+            write_aligned(queue, held, u64::from(start) * unit, bytes.as_ref());
         }
     }
 }
 
-pub struct GpuMeshes {
-    meshes: BTreeMap<GeometryHandle, GpuMesh>,
-    arena: MeshArena,
-    staging: Vec<Vec<u8>>,
-    placed: Cursor,
+struct Class {
+    streams: Vec<VertexStream>,
+    shelf: Shelf,
+}
+
+enum Placed {
+    Arena {
+        base_vertex: u32,
+        vertex_count: u32,
+        first_index: u32,
+        index_span: u32,
+    },
+    Own {
+        buffers: Vec<wgpu::Buffer>,
+        indices: wgpu::Buffer,
+    },
+}
+
+struct GpuMesh {
+    class: u32,
+    index_format: IndexFormat,
+    index_count: u32,
+    bytes: u64,
+    placed: Placed,
+}
+
+pub(crate) struct GpuMeshes {
+    meshes: BTreeMap<Asset<MeshFile>, GpuMesh>,
+    classes: Vec<Class>,
+    indices: [Shelf; 2],
+    cursor: Cursor,
+}
+
+const fn shelf_of(format: IndexFormat) -> usize {
+    match format {
+        IndexFormat::Uint16 => 0,
+        IndexFormat::Uint32 => 1,
+    }
 }
 
 impl GpuMeshes {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let indices = |format: IndexFormat| {
+            Shelf::new(device, vec![u64::from(format.bytes())], INDEX_USAGE)
+        };
         Self {
             meshes: BTreeMap::new(),
-            arena: MeshArena::new(device),
-            staging: Vec::new(),
-            placed: Cursor::default(),
+            classes: Vec::new(),
+            indices: [indices(IndexFormat::Uint16), indices(IndexFormat::Uint32)],
+            cursor: Cursor::default(),
         }
     }
 
-    pub fn get(&self, handle: GeometryHandle) -> Option<&GpuMesh> {
-        self.meshes.get(&handle)
-    }
-
-    #[cfg_attr(
-        not(feature = "dev"),
-        expect(dead_code, reason = "read by the gpu.assets names")
-    )]
-    pub fn contains(&self, handle: GeometryHandle) -> bool {
+    pub(crate) fn contains(&self, handle: Asset<MeshFile>) -> bool {
         self.meshes.contains_key(&handle)
     }
 
-    pub fn draw(&self, handle: GeometryHandle) -> Option<MeshDraw<'_>> {
-        self.meshes.get(&handle)?.draw(&self.arena)
+    #[cfg_attr(
+        not(feature = "dev"),
+        expect(dead_code, reason = "read by the gpu.assets names")
+    )]
+    pub(crate) fn len(&self) -> usize {
+        self.meshes.len()
     }
 
     #[cfg_attr(
         not(feature = "dev"),
         expect(dead_code, reason = "read by the gpu.assets names")
     )]
-    pub fn len(&self) -> usize {
-        self.meshes.len()
+    pub(crate) fn bytes(&self) -> u64 {
+        self.meshes.values().map(|mesh| mesh.bytes).sum()
     }
 
-    pub fn sync(&mut self, device: &wgpu::Device, queue: &Queue, world: &World) -> u64 {
-        let (Some(residency), Some(library)) = (
-            world.get_resource::<AssetResidency>(),
-            world.get_resource::<AssetLibrary>(),
-        ) else {
+    pub(crate) fn draw(&self, handle: Asset<MeshFile>) -> Option<MeshDraw<'_>> {
+        let mesh = self.meshes.get(&handle)?;
+        let class = self.classes.get(mesh.class as usize)?;
+        let (buffers, indices, first_index, base_vertex) = match &mesh.placed {
+            Placed::Arena {
+                base_vertex,
+                first_index,
+                ..
+            } => (
+                &class.shelf.buffers,
+                &self.indices[shelf_of(mesh.index_format)].buffers[0],
+                *first_index,
+                *base_vertex as i32,
+            ),
+            Placed::Own { buffers, indices } => (buffers, indices, 0, 0),
+        };
+        Some(MeshDraw {
+            class: mesh.class,
+            streams: &class.streams,
+            buffers,
+            indices,
+            index_format: match mesh.index_format {
+                IndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
+                IndexFormat::Uint32 => wgpu::IndexFormat::Uint32,
+            },
+            first_index,
+            base_vertex,
+            index_count: mesh.index_count,
+        })
+    }
+
+    pub(crate) fn sync(&mut self, device: &wgpu::Device, queue: &Queue, world: &World) -> u64 {
+        let Some(assets) = world.get_resource::<Assets>() else {
             return 0;
         };
-        let since = residency.placed().since(&mut self.placed);
-        if matches!(since, Since::Same) {
-            return 0;
-        }
-        let Some((classes, indices)) = residency.capacities() else {
-            return 0;
-        };
-        let replaced = self.arena.fit(device, queue, &classes, indices);
-        let since = if replaced.is_empty() {
-            since
-        } else {
-            self.meshes.retain(|_, mesh| !mesh.in_class(&replaced));
-            Since::All
-        };
-        let all: Vec<GeometryHandle>;
-        let changed = match since {
+        let mut listed: Vec<Asset<MeshFile>> = match assets.changed(&mut self.cursor) {
             Since::Same => return 0,
-            Since::Listed(handles) => handles,
-            Since::All => {
-                self.meshes.retain(|&handle, mesh| {
-                    residency.mesh(handle).is_some_and(|resident| {
-                        (resident.placement(), resident.revision())
-                            == (mesh.placement, mesh.revision)
-                    })
-                });
-                all = residency.meshes().map(|(handle, _)| handle).collect();
-                all.as_slice()
-            }
-        };
-        let mut bytes = 0;
-        for &handle in changed {
-            let resident = residency.mesh(handle);
-            let current = self
+            Since::Listed(ids) => ids
+                .iter()
+                .filter_map(|&id| assets.asset::<MeshFile>(id))
+                .collect(),
+            Since::All => self
                 .meshes
-                .get(&handle)
-                .map(|mesh| (mesh.placement, mesh.revision));
-            if resident.is_some_and(|resident| {
-                current == Some((resident.placement(), resident.revision()))
-            }) {
-                continue;
+                .keys()
+                .copied()
+                .chain(assets.each::<MeshFile>().map(|(handle, _)| handle))
+                .collect(),
+        };
+        listed.sort_unstable();
+        listed.dedup();
+        let limit = device.limits().max_buffer_size;
+        let mut placed = Vec::with_capacity(listed.len());
+        for handle in listed {
+            if let Some(mesh) = self.meshes.remove(&handle) {
+                self.release(&mesh);
             }
-            self.meshes.remove(&handle);
-            let (Some(resident), Some(source)) = (resident, library.mesh(handle)) else {
-                continue;
-            };
-            let Some(class) = residency.class(resident.class()) else {
-                continue;
-            };
-            bytes += self.upload(device, queue, (handle, resident, class), source);
+            if let Ok(file) = assets.get(handle) {
+                placed.push((handle, file, self.place(device, file, limit)));
+            }
+        }
+        for shelf in self
+            .classes
+            .iter_mut()
+            .map(|class| &mut class.shelf)
+            .chain(&mut self.indices)
+        {
+            shelf.fit(device, queue);
+        }
+        let mut bytes = 0;
+        for (handle, file, mesh) in placed {
+            if let Placed::Arena {
+                base_vertex,
+                first_index,
+                ..
+            } = mesh.placed
+            {
+                let streams = (0..file.description().streams.len()).map(|at| file.stream(at));
+                self.classes[mesh.class as usize]
+                    .shelf
+                    .write(queue, base_vertex, streams);
+                self.indices[shelf_of(mesh.index_format)].write(
+                    queue,
+                    first_index,
+                    std::iter::once(file.indices()),
+                );
+            }
+            bytes += mesh.bytes;
+            self.meshes.insert(handle, mesh);
         }
         bytes
     }
 
-    fn upload(
+    fn class_of(&mut self, device: &wgpu::Device, streams: &[VertexStream]) -> u32 {
+        if let Some(at) = self.classes.iter().position(|class| class.streams == streams) {
+            return at as u32;
+        }
+        let units = streams.iter().map(|stream| u64::from(stream.stride)).collect();
+        self.classes.push(Class {
+            streams: streams.to_vec(),
+            shelf: Shelf::new(device, units, VERTEX_USAGE),
+        });
+        (self.classes.len() - 1) as u32
+    }
+
+    fn place(
         &mut self,
         device: &wgpu::Device,
-        queue: &Queue,
-        (handle, resident, class): (GeometryHandle, &ResidentMesh, &GeometryClass),
-        source: &Mesh,
-    ) -> u64 {
-        let streams = &class.streams;
-        self.staging
-            .resize_with(streams.len().max(self.staging.len()), Vec::new);
-        for (stream, bytes) in streams.iter().zip(&mut self.staging) {
-            stream_bytes(source, stream, bytes);
-        }
-        let staged = &self.staging[..streams.len()];
-        let indices = source.indices();
-        let placement = resident.placement();
-        let own = match placement {
-            MeshResidence::Arena(placement) => {
-                self.arena.write(queue, placement, staged, indices);
-                None
-            }
-            MeshResidence::Own => {
-                let buffer = |label, contents: &[u8], usage| {
-                    crate::gpu_calls::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
-                        label: Some(label),
-                        contents,
-                        usage,
-                    })
-                };
-                let vertex = wgpu::BufferUsages::VERTEX;
-                Some(OwnMesh {
-                    streams: streams.clone(),
-                    buffers: staged
-                        .iter()
-                        .map(|bytes| buffer("engine/mesh-vertices", bytes, vertex))
-                        .collect(),
-                    indices: buffer(
-                        "engine/mesh-indices",
-                        bytemuck::cast_slice(indices),
-                        wgpu::BufferUsages::INDEX,
-                    ),
+        file: &MeshFile,
+        limit: u64,
+    ) -> GpuMesh {
+        let description = file.description();
+        let class = self.class_of(device, &description.streams);
+        let format = description.index_format;
+        let (vertex_count, index_count) = (description.vertex_count, description.index_count);
+        let index_span = index_count.next_multiple_of(4 / format.bytes());
+        let indices = &mut self.indices[shelf_of(format)];
+        let vertices = &mut self.classes[class as usize].shelf;
+        let arena = indices.take(index_span, limit).and_then(|first_index| {
+            let Some(base_vertex) = vertices.take(vertex_count, limit) else {
+                indices.space.release(first_index, index_span);
+                return None;
+            };
+            Some(Placed::Arena {
+                base_vertex,
+                vertex_count,
+                first_index,
+                index_span,
+            })
+        });
+        let placed = arena.unwrap_or_else(|| {
+            let made = |label, contents: &[u8], usage| {
+                crate::gpu_calls::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents,
+                    usage,
                 })
+            };
+            let vertex = wgpu::BufferUsages::VERTEX;
+            Placed::Own {
+                buffers: (0..description.streams.len())
+                    .map(|at| made("engine/mesh-vertices", file.stream(at), vertex))
+                    .collect(),
+                indices: made("engine/mesh-indices", file.indices(), wgpu::BufferUsages::INDEX),
             }
+        });
+        let strides: u64 = description
+            .streams
+            .iter()
+            .map(|stream| u64::from(stream.stride))
+            .sum();
+        GpuMesh {
+            class,
+            index_format: format,
+            index_count,
+            bytes: u64::from(vertex_count) * strides
+                + u64::from(index_count) * u64::from(format.bytes()),
+            placed,
+        }
+    }
+
+    fn release(&mut self, mesh: &GpuMesh) {
+        let Placed::Arena {
+            base_vertex,
+            vertex_count,
+            first_index,
+            index_span,
+        } = mesh.placed
+        else {
+            return;
         };
-        self.meshes.insert(
-            handle,
-            GpuMesh {
-                placement,
-                revision: resident.revision(),
-                own,
-                index_count: resident.index_count(),
-            },
-        );
-        resident.byte_len()
+        self.indices[shelf_of(mesh.index_format)]
+            .space
+            .release(first_index, index_span);
+        if let Some(class) = self.classes.get_mut(mesh.class as usize) {
+            class.shelf.space.release(base_vertex, vertex_count);
+        }
     }
 }

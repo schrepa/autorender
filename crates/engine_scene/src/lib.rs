@@ -7,10 +7,8 @@ mod bricks;
 mod components;
 mod document;
 mod environment;
-mod files;
 mod hierarchy;
 mod instance;
-mod loading;
 mod material;
 mod spawning;
 mod texture;
@@ -19,17 +17,15 @@ mod writer;
 
 pub use components::SceneKinds;
 pub use document::{
-    MAX_SOURCE_BYTES, MeshSource, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
-    SceneTransform, SceneVertex,
+    MAX_SOURCE_BYTES, SceneDocument, SceneMesh, SceneObject, ScenePrefab, SceneTransform,
 };
 pub use engine_core::SceneEntity;
 pub use environment::SceneEnvironment;
-pub use files::{SceneFile, SceneFileKind, SceneFiles};
-pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
+pub use instance::SceneInstance;
 pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
     SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,
 };
-pub use spawning::{described, remove, spawn};
+pub use spawning::{described, named, remove, spawn};
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};

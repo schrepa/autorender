@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    AlphaMode, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED, MAPPED_MAPS,
-    MAPPED_SLOTS, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
+    AlphaMode, Asset, Cull, DepthBias, Error, Filter, LightingModel, Material, Sampler, Texture,
+    TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
@@ -202,7 +202,7 @@ pub enum SceneAlphaMode {
     Additive,
 }
 
-type PreparedMap = (String, String, Sampler, UvTransform, u32);
+type PreparedMap = (String, String, Option<Sampler>, UvTransform, u32);
 
 pub(crate) struct PreparedMaterial {
     material: Material,
@@ -210,13 +210,15 @@ pub(crate) struct PreparedMaterial {
 }
 
 impl PreparedMaterial {
-    pub(crate) fn material(&self, texture: impl Fn(&str) -> TextureHandle) -> Material {
+    pub(crate) fn material(&self, texture: impl Fn(&str) -> Asset<Texture>) -> Material {
         let mut material = self.material.clone();
         for (name, id, sampler, transform, tex_coord) in &self.maps {
-            let map = TextureRef::new(texture(id))
-                .with_sampler(*sampler)
-                .with_transform(*transform)
-                .with_tex_coord(*tex_coord);
+            let map = TextureRef {
+                texture: texture(id),
+                sampler: *sampler,
+                transform: *transform,
+                tex_coord: *tex_coord,
+            };
             material = material
                 .with_map(name.as_str(), map)
                 .expect("prepared_maps_valid");
@@ -225,26 +227,11 @@ impl PreparedMaterial {
     }
 }
 
-fn home_slot<'a>(material: &'a Material, map: &str) -> Option<&'a str> {
-    let mapped = |slot: &str| {
-        MAPPED_SLOTS
-            .iter()
-            .any(|(known, maps)| *known == slot && maps.contains(&map))
-    };
-    let slots = material.slots();
-    slots
-        .iter()
-        .find(|(slot, module)| module == MAPPED && mapped(slot.as_str()))
-        .or_else(|| slots.iter().find(|(_, module)| module != MAPPED))
-        .or_else(|| slots.first())
-        .map(|(slot, _)| slot.as_str())
-}
-
 impl SceneMaterial {
     pub fn from_runtime(
         id: impl Into<String>,
         material: &Material,
-        texture: impl Fn(TextureHandle) -> String,
+        texture: impl Fn(Asset<Texture>) -> String,
     ) -> Self {
         let mut fills: BTreeMap<String, SceneSlotFill> = material
             .slots()
@@ -259,9 +246,8 @@ impl SceneMaterial {
                 )
             })
             .collect();
-        for (name, map) in material.maps() {
-            let fill = home_slot(material, name).and_then(|slot| fills.get_mut(slot));
-            if let Some(fill) = fill {
+        if let Some(fill) = fills.values_mut().next() {
+            for (name, map) in material.maps() {
                 fill.maps.insert(
                     name.clone(),
                     SceneMap::Map(SceneTextureMap::from_runtime(texture(map.texture), map)),
@@ -331,16 +317,6 @@ impl SceneMaterial {
     pub(crate) fn texture_ids(&self) -> impl Iterator<Item = (String, &str)> {
         self.maps()
             .map(|(slot, name, map)| (format!("slots.{slot}.maps.{name}"), map.id()))
-    }
-
-    pub(crate) fn map_spaces(&self) -> impl Iterator<Item = (&str, ColorSpace)> + '_ {
-        self.maps().map(|(_, name, map)| {
-            let space = MAPPED_MAPS
-                .iter()
-                .find(|(known, _)| *known == name)
-                .map_or(ColorSpace::Linear, |(_, space)| *space);
-            (map.id(), space)
-        })
     }
 
     pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, Error> {
@@ -453,7 +429,7 @@ impl SceneMaterial {
                 return Err(invalid(&field).expected(Expected::Id).got(name));
             }
             let (id, sampler, transform, tex_coord) = match map {
-                SceneMap::Id(id) => (id.clone(), Sampler::REPEAT, UvTransform::IDENTITY, 0),
+                SceneMap::Id(id) => (id.clone(), None, UvTransform::IDENTITY, 0),
                 SceneMap::Map(map) => {
                     let transform = UvTransform {
                         offset: map.offset.unwrap_or([0.0; 2]),
@@ -482,7 +458,8 @@ impl SceneMaterial {
                             .at_most(1)
                             .got(tex_coord));
                     }
-                    (map.id.clone(), map.sampler(), transform, tex_coord)
+                    let sampler = map.sampler(&format!("{path}.{field}"))?;
+                    (map.id.clone(), sampler, transform, tex_coord)
                 }
             };
             maps.push((name.to_owned(), id, sampler, transform, tex_coord));
@@ -505,11 +482,11 @@ impl SceneTextureMap {
         let sampler = map.sampler;
         Self {
             id,
-            wrap_u: Some(wrap(sampler.wrap_u)),
-            wrap_v: Some(wrap(sampler.wrap_v)),
-            mag_filter: Some(filter(sampler.mag_filter)),
-            min_filter: Some(filter(sampler.min_filter)),
-            mipmap_filter: Some(match sampler.mipmap_filter {
+            wrap_u: sampler.map(|sampler| wrap(sampler.wrap_u)),
+            wrap_v: sampler.map(|sampler| wrap(sampler.wrap_v)),
+            mag_filter: sampler.map(|sampler| filter(sampler.mag_filter)),
+            min_filter: sampler.map(|sampler| filter(sampler.min_filter)),
+            mipmap_filter: sampler.map(|sampler| match sampler.mipmap_filter {
                 None => SceneMipmapFilter::None,
                 Some(Filter::Nearest) => SceneMipmapFilter::Nearest,
                 Some(Filter::Linear) => SceneMipmapFilter::Linear,
@@ -521,27 +498,53 @@ impl SceneTextureMap {
         }
     }
 
-    fn sampler(&self) -> Sampler {
-        let wrap = |wrap: Option<SceneWrap>| match wrap.unwrap_or(SceneWrap::Repeat) {
+    fn sampler(&self, path: &str) -> Result<Option<Sampler>, Error> {
+        let stated = (
+            self.wrap_u,
+            self.wrap_v,
+            self.mag_filter,
+            self.min_filter,
+            self.mipmap_filter,
+        );
+        let (Some(wrap_u), Some(wrap_v), Some(mag), Some(min), Some(mip)) = stated else {
+            let fields = [
+                ("wrap_u", self.wrap_u.is_some()),
+                ("wrap_v", self.wrap_v.is_some()),
+                ("mag_filter", self.mag_filter.is_some()),
+                ("min_filter", self.min_filter.is_some()),
+                ("mipmap_filter", self.mipmap_filter.is_some()),
+            ];
+            return match fields.iter().find(|&&(_, given)| !given) {
+                Some((field, _)) if fields.iter().any(|&(_, given)| given) => Err(Error::new(
+                    ErrorCode::MissingField,
+                    format!("{path}.{field}"),
+                )
+                .expected(Expected::Present)),
+                Some(_) | None => Ok(None),
+            };
+        };
+        let wrap = |wrap| match wrap {
             SceneWrap::Repeat => Wrap::Repeat,
             SceneWrap::MirroredRepeat => Wrap::MirroredRepeat,
             SceneWrap::ClampToEdge => Wrap::ClampToEdge,
         };
-        let filter = |filter: Option<SceneFilter>| match filter.unwrap_or(SceneFilter::Linear) {
+        let filter = |filter| match filter {
             SceneFilter::Nearest => Filter::Nearest,
             SceneFilter::Linear => Filter::Linear,
         };
-        Sampler {
-            wrap_u: wrap(self.wrap_u),
-            wrap_v: wrap(self.wrap_v),
-            mag_filter: filter(self.mag_filter),
-            min_filter: filter(self.min_filter),
-            mipmap_filter: match self.mipmap_filter.unwrap_or(SceneMipmapFilter::Linear) {
+        Ok(Some(Sampler {
+            wrap_u: wrap(wrap_u),
+            wrap_v: wrap(wrap_v),
+            wrap_w: Wrap::ClampToEdge,
+            mag_filter: filter(mag),
+            min_filter: filter(min),
+            mipmap_filter: match mip {
                 SceneMipmapFilter::None => None,
                 SceneMipmapFilter::Nearest => Some(Filter::Nearest),
                 SceneMipmapFilter::Linear => Some(Filter::Linear),
             },
-            ..Sampler::REPEAT
-        }
+            compare: None,
+            anisotropy: 1,
+        }))
     }
 }

@@ -1,4 +1,4 @@
-use engine_core::{Error, ShaderText, Source, TargetName};
+use engine_core::{Error, ShaderText, TargetName};
 
 use crate::{GpuPart, Install, Pass, Prepare};
 
@@ -67,7 +67,8 @@ pub(crate) fn post_uniform(render: (u32, u32)) -> PostUniform {
     }
 }
 
-pub(crate) fn core_source() -> &'static Source {
+#[cfg(feature = "dev")]
+pub(crate) fn core_source() -> &'static engine_core::Source {
     &crate::shaders::CORE
 }
 

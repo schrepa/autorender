@@ -25,16 +25,6 @@ impl SceneEnvironment {
         self.sections.get(key).filter(|value| !value.is_null())
     }
 
-    pub(crate) fn check_in(&self, registry: Option<&Registry>, path: &str) -> Result<(), Error> {
-        let Some(registry) = registry else {
-            return Ok(());
-        };
-        for key in self.keys() {
-            registry.check_section(key, &self.sections[key], &format!("{path}.{key}"))?;
-        }
-        Ok(())
-    }
-
     pub fn unlisted(&self, world: &World, path: &str) -> Vec<Error> {
         self.sections
             .iter()
@@ -57,20 +47,6 @@ impl SceneEnvironment {
             section.set_at(world, &value, &format!("{path}.{}", section.key))?;
         }
         Ok(())
-    }
-}
-
-pub(crate) fn held(world: &World) -> Vec<(SettingsEntry, Value)> {
-    registered(world)
-        .filter_map(|section| Some((*section, section.current(world).ok()?)))
-        .collect()
-}
-
-pub(crate) fn restore(world: &mut World, held: &[(SettingsEntry, Value)]) {
-    for (section, value) in held {
-        if section.current(world).ok().as_ref() != Some(value) {
-            let _ = section.set_at(world, value, "$");
-        }
     }
 }
 

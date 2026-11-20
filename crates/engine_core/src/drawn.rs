@@ -8,14 +8,14 @@ use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
-use engine_assets::{Asset, AssetLibrary, attributes_wgsl};
 use engine_place::{Changes, PoseNodes, PoseRows, same_rows_bits};
 use engine_registry::Registry;
 
+use crate::collections::{Cursor, Since};
 use crate::{
-    AssetResidency, DeviceLimits, DrawKind, Drawn, Error, ErrorCode, Expected,
-    GeometryHandle, GlobalTransforms, GpuStruct, Interest, KindDecl, Layers, MaterialHandle,
-    PassMask, Refusals, Request, Transform, gpu_struct, settings,
+    Asset, AssetId, Assets, DeviceLimits, DrawKind, Drawn, Error, ErrorCode, Expected,
+    GlobalTransforms, GpuStruct, KindDecl, Layers, Material, MeshFile, PassMask, Refusals,
+    Transform, gpu_struct, settings,
 };
 
 pub(crate) const DRAWN_PART: &str = "drawn";
@@ -52,10 +52,7 @@ gpu_struct! {
 }
 
 pub fn drawn_wgsl() -> String {
-    let mut text = String::from(DrawnRecord::WGSL);
-    text.push_str(&attributes_wgsl());
-    text.push_str(SLOTS);
-    text
+    format!("{}{SLOTS}", DrawnRecord::WGSL)
 }
 
 const NO_BATCH: u32 = u32::MAX;
@@ -79,26 +76,27 @@ pub(crate) enum DrawnState {
 pub struct DrawnBatch {
     pub kind: DrawKind,
     pub order: i16,
-    pub geometry: Option<GeometryHandle>,
-    pub material: Option<MaterialHandle>,
+    pub geometry: Option<Asset<MeshFile>>,
+    pub material: Option<Asset<Material>>,
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub instances: Range<u32>,
+    pub held: bool,
 }
 
 type BatchKey = (
     usize,
     i16,
-    Option<GeometryHandle>,
-    Option<MaterialHandle>,
+    Option<Asset<MeshFile>>,
+    Option<Asset<Material>>,
     Option<u32>,
     u32,
+    bool,
 );
 
 struct Held {
     state: DrawnState,
     drawn: Drawn,
-    uses: Vec<Interest<Asset>>,
 }
 
 #[derive(Clone, Copy)]
@@ -109,16 +107,13 @@ struct Home {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Seen {
-    residency: u64,
-    library: (u64, u64),
     stride: usize,
     room: u64,
 }
 
 struct Context<'a> {
     globals: &'a GlobalTransforms,
-    residency: &'a AssetResidency,
-    library: &'a AssetLibrary,
+    assets: &'a Assets,
     floats: usize,
     room: u64,
 }
@@ -128,6 +123,7 @@ pub struct DrawnTable {
     kinds: Vec<KindDecl>,
     held: BTreeMap<Entity, Held>,
     pending: BTreeSet<Entity>,
+    holding: BTreeSet<Entity>,
     homes: Vec<Home>,
     records: Vec<DrawnRecord>,
     values: Vec<[f32; 4]>,
@@ -146,6 +142,7 @@ pub struct DrawnTable {
     touched: Vec<Entity>,
     verdicts: Vec<(Entity, Result<(), Error>)>,
     seen: Option<Seen>,
+    assets: Cursor,
     stride: usize,
 }
 
@@ -155,6 +152,7 @@ impl Default for DrawnTable {
             kinds: Vec::new(),
             held: BTreeMap::new(),
             pending: BTreeSet::new(),
+            holding: BTreeSet::new(),
             homes: Vec::new(),
             records: Vec::new(),
             values: Vec::new(),
@@ -173,6 +171,7 @@ impl Default for DrawnTable {
             touched: Vec::new(),
             verdicts: Vec::new(),
             seen: None,
+            assets: Cursor::default(),
             stride: stride_of(DrawnSettings::default().instance_floats),
         }
     }
@@ -237,11 +236,19 @@ impl DrawnTable {
             .map(|&batch| &self.batches[batch as usize])
     }
 
+    pub fn hold(&mut self, entity: Entity) {
+        self.holding.insert(entity);
+        self.touched.push(entity);
+    }
+
+    pub(crate) fn release_held(&mut self) {
+        self.touched.extend(std::mem::take(&mut self.holding));
+    }
+
     fn settle(&mut self, world: &World, settings: &DrawnSettings) {
-        let (Some(globals), Some(residency), Some(library)) = (
+        let (Some(globals), Some(assets)) = (
             world.get_resource::<GlobalTransforms>(),
-            world.get_resource::<AssetResidency>(),
-            world.get_resource::<AssetLibrary>(),
+            world.get_resource::<Assets>(),
         ) else {
             return;
         };
@@ -251,35 +258,27 @@ impl DrawnTable {
         let room = world
             .get_resource::<DeviceLimits>()
             .map_or(0, |limits| limits.storage_room);
-        let seen = Seen {
-            residency: residency.revision(),
-            library: library.revision(),
-            stride,
-            room,
-        };
+        let seen = Seen { stride, room };
         let mut touched = std::mem::take(&mut self.touched);
         if stride != self.stride {
             self.stride = stride;
             self.values = vec![[0.0; 4]; self.records.len() * stride];
         }
-        match self.seen.replace(seen) {
-            Some(known) if known == seen => {}
-            Some(known)
-                if (known.stride, known.room, known.library.0)
-                    == (stride, room, seen.library.0) =>
-            {
+        let changed = assets.changed(&mut self.assets);
+        match (self.seen.replace(seen) == Some(seen), changed) {
+            (true, Since::Same) => {}
+            (true, Since::Listed(ids)) => {
+                let mut listed = ids.to_vec();
+                listed.sort_unstable();
                 touched.extend(self.pending.iter().copied());
-                if known.library != seen.library {
-                    let before = known.library.1;
-                    touched.extend(
-                        self.held
-                            .iter()
-                            .filter(|(_, kept)| stale(&kept.drawn, library, before))
-                            .map(|(&entity, _)| entity),
-                    );
-                }
+                touched.extend(
+                    self.held
+                        .iter()
+                        .filter(|(_, kept)| stale(&kept.drawn, assets, &listed))
+                        .map(|(&entity, _)| entity),
+                );
             }
-            Some(_) | None => touched.extend(self.held.keys().copied()),
+            (false, _) | (true, Since::All) => touched.extend(self.held.keys().copied()),
         }
         let placed = globals.placed().read();
         if placed.all {
@@ -298,8 +297,7 @@ impl DrawnTable {
         touched.dedup();
         let cx = Context {
             globals,
-            residency,
-            library,
+            assets,
             floats: settings.instance_floats as usize,
             room,
         };
@@ -347,26 +345,11 @@ impl DrawnTable {
         globals.posed().take(0, moved.upto);
     }
 
-    fn take_held(&mut self, entity: Entity, drawn: &Drawn, residency: &AssetResidency) -> Held {
-        match self.held.remove(&entity) {
-            Some(mut kept) => {
-                if (kept.drawn.geometry, kept.drawn.material) != (drawn.geometry, drawn.material) {
-                    kept.uses = hold(residency, drawn);
-                    kept.drawn.geometry = drawn.geometry;
-                    kept.drawn.material = drawn.material;
-                }
-                kept
-            }
-            None => Held {
-                state: DrawnState::Waiting,
-                drawn: drawn.clone(),
-                uses: hold(residency, drawn),
-            },
-        }
-    }
-
     fn refresh(&mut self, entity: Entity, drawn: &Drawn, cx: &Context<'_>) {
-        let mut kept = self.take_held(entity, drawn, cx.residency);
+        let mut kept = self.held.remove(&entity).unwrap_or_else(|| Held {
+            state: DrawnState::Waiting,
+            drawn: drawn.clone(),
+        });
         let slot = match kept.state {
             DrawnState::Drawn { slot } => Some(slot),
             DrawnState::Hidden
@@ -421,6 +404,7 @@ impl DrawnTable {
                 drawn.material,
                 drawn.passes.map(PassMask::word),
                 drawn.layers.0,
+                self.holding.contains(&entity),
             );
             self.file(slot, key);
         }
@@ -436,27 +420,18 @@ impl DrawnTable {
     }
 
     fn refusal(&self, entity: Entity, drawn: &Drawn, cx: &Context<'_>) -> Option<DrawnState> {
-        let Some(decl) = self.kind_at(drawn.kind).map(|at| &self.kinds[at]) else {
+        if self.kind_at(drawn.kind).is_none() {
             return Some(DrawnState::Refused(
                 Error::new(ErrorCode::InvalidRenderable, "$.drawn.kind")
                     .got(drawn.kind.name())
                     .variants(self.kinds.iter().map(|decl| decl.kind.name())),
             ));
-        };
+        }
         if drawn.values.floats.len() > cx.floats {
             return Some(DrawnState::Refused(
                 Error::new(ErrorCode::OutOfRange, "$.drawn.values.floats")
                     .at_most(cx.floats as u64)
                     .got(drawn.values.floats.len()),
-            ));
-        }
-        if drawn.geometry.is_none()
-            && (decl.needs != engine_assets::Attributes::NONE || !decl.streams.is_empty())
-        {
-            return Some(DrawnState::Refused(
-                Error::new(ErrorCode::InvalidRenderable, "$.drawn.mesh")
-                    .expected(Expected::Present)
-                    .got(drawn.kind.name()),
             ));
         }
         if !cx.globals.drawn(entity) {
@@ -470,53 +445,21 @@ impl DrawnTable {
         {
             return Some(DrawnState::Unplaced);
         }
-        let assets = [
-            drawn
-                .geometry
-                .map(|geometry| (Asset::Mesh(geometry), "$.drawn.mesh")),
-            drawn
-                .material
-                .map(|material| (Asset::Material(material), "$.drawn.material")),
+        let assets: [Option<(AssetId, &str)>; 2] = [
+            drawn.geometry.map(|geometry| (geometry.id(), "$.drawn.mesh")),
+            drawn.material.map(|material| (material.id(), "$.drawn.material")),
         ];
-        for (asset, path) in assets.into_iter().flatten() {
-            if let Some(error) = cx.residency.refusal(asset, path) {
-                return Some(DrawnState::Refused(error));
+        assets.into_iter().flatten().find_map(|(asset, path)| {
+            if cx.assets.revision_of(asset).is_none() {
+                return Some(DrawnState::Refused(
+                    Error::new(ErrorCode::UnknownReference, path).expected(Expected::Live),
+                ));
             }
-            if !matches!(cx.residency.state(asset), Some(Request::Ready(_))) {
-                return Some(DrawnState::Waiting);
+            if let Some(error) = cx.assets.refusal(asset) {
+                return Some(DrawnState::Refused(error.clone()));
             }
-        }
-        if let Some(material) = drawn.material {
-            let live = cx.library.material(material).is_some_and(|material| {
-                material
-                    .textures()
-                    .all(|texture| cx.library.texture(texture).is_some())
-            });
-            if !live {
-                return Some(DrawnState::Waiting);
-            }
-        }
-        let geometry = drawn.geometry?;
-        let Some(mesh) = cx.library.mesh(geometry) else {
-            return Some(DrawnState::Waiting);
-        };
-        if let Err(error) = mesh.attributes().check(decl.needs, "$.drawn.mesh") {
-            return Some(DrawnState::Refused(error));
-        }
-        decl.streams
-            .iter()
-            .find(|&&shape| mesh.stream(shape).is_none())
-            .map(|missing| {
-                let has: Vec<&str> = mesh.streams().iter().map(|stream| stream.name()).collect();
-                DrawnState::Refused(
-                    Error::new(
-                        ErrorCode::InvalidRenderable,
-                        format!("$.drawn.mesh.streams.{}", missing.name),
-                    )
-                    .variants(decl.streams.iter().map(|shape| shape.name))
-                    .got(has),
-                )
-            })
+            (!cx.assets.ready(asset)).then_some(DrawnState::Waiting)
+        })
     }
 
     fn take(&mut self) -> u32 {
@@ -647,7 +590,7 @@ impl DrawnTable {
 
     fn open(&mut self, key: BatchKey) -> u32 {
         let start = self.region(1);
-        let (kind, order, geometry, material, passes, layers) = key;
+        let (kind, order, geometry, material, passes, layers, held) = key;
         let made = DrawnBatch {
             kind: self.kinds[kind].kind,
             order,
@@ -656,6 +599,7 @@ impl DrawnTable {
             passes: passes.map(PassMask),
             layers: Layers(layers),
             instances: start..start,
+            held,
         };
         let batch = match self.spare_batches.pop() {
             Some(batch) => {
@@ -724,18 +668,14 @@ impl DrawnTable {
     }
 }
 
-fn stale(drawn: &Drawn, library: &AssetLibrary, before: u64) -> bool {
-    let moved = |revision: Option<u64>| revision.is_none_or(|revision| revision > before);
-    drawn
-        .geometry
-        .is_some_and(|geometry| moved(library.revision_of(geometry)))
+fn stale(drawn: &Drawn, assets: &Assets, listed: &[AssetId]) -> bool {
+    let moved = |id: AssetId| listed.binary_search(&id).is_ok();
+    drawn.geometry.is_some_and(|geometry| moved(geometry.id()))
         || drawn.material.is_some_and(|handle| {
-            moved(library.revision_of(handle))
-                || library.material(handle).is_some_and(|material| {
-                    material
-                        .textures()
-                        .any(|texture| moved(library.revision_of(texture)))
-                })
+            moved(handle.id())
+                || assets
+                    .get(handle)
+                    .is_ok_and(|material| material.textures().any(|texture| moved(texture.id())))
         })
 }
 
@@ -755,15 +695,6 @@ fn refused_of(state: &DrawnState) -> Option<&Error> {
         | DrawnState::Unplaced
         | DrawnState::Waiting => None,
     }
-}
-
-fn hold(residency: &AssetResidency, drawn: &Drawn) -> Vec<Interest<Asset>> {
-    drawn
-        .geometry
-        .map(|geometry| residency.hold(geometry))
-        .into_iter()
-        .chain(drawn.material.map(|material| residency.hold(material)))
-        .collect()
 }
 
 fn touched(insert: On<Insert, Drawn>, mut table: ResMut<DrawnTable>) {
@@ -816,25 +747,6 @@ pub(crate) fn install_kinds(world: &mut World) {
             registry.report(problem);
         }
     }
-}
-
-pub(crate) fn ask(world: &mut World) {
-    if !world.contains_resource::<DrawnTable>() {
-        return;
-    }
-    world.resource_scope(|world, mut table: Mut<DrawnTable>| {
-        let Some(residency) = world.get_resource::<AssetResidency>() else {
-            return;
-        };
-        let touched = std::mem::take(&mut table.touched);
-        for &entity in &touched {
-            if let Some(drawn) = world.get::<Drawn>(entity) {
-                let kept = table.take_held(entity, drawn, residency);
-                table.held.insert(entity, kept);
-            }
-        }
-        table.touched = touched;
-    });
 }
 
 pub(crate) fn resolve(world: &mut World) {
@@ -922,8 +834,9 @@ impl DrawnTable {
                     serde_json::json!({
                         "batch": batch,
                         "order": made.order,
-                        "geometry": made.geometry.map(GeometryHandle::slot),
-                        "material": made.material.map(MaterialHandle::slot),
+                        "geometry": made.geometry.map(Asset::slot),
+                        "material": made.material.map(Asset::slot),
+                        "held": made.held,
                         "passes": made.passes.map(named),
                         "layers": made.layers.0,
                         "instances": [made.instances.start, made.instances.end],

@@ -10,14 +10,15 @@ mod rig;
 mod source;
 
 pub use geometry::{
-    Built, Part, Reading, budget, counted, encode_mesh, placed, primitive_item, read_part,
+    Built, Part, budget, counted, encode_mesh, encode_shape, placed, primitive_item, read_part,
+    read_shape,
 };
-pub use maps::{Map, MapKind, Sampling};
+pub use maps::{Map, MapKind};
 pub use markers::{markers, write_markers};
 pub use material::{
-    Material, MaterialPlan, Materials, Slot, item, materials, write_materials, write_meshes,
+    MapPlan, Maps, Material, MaterialPlan, item, materials, write_materials, write_meshes,
     write_textures,
 };
-pub use model::{CLIP, FORM, MODEL};
-pub use params::{MaterialNames, SharedMaps, TextureVariant, identifier, map_kinds};
+pub use model::{CLIP, FORM, MATERIAL_MAPS, MODEL};
+pub use params::{MaterialNames, TextureVariant, identifier, map_kinds};
 pub use source::{Source, node_label};

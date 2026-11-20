@@ -1,9 +1,9 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{
-    BrickList, ComponentKind, Error, SceneComponents, SceneCx, core_components, scene_components,
-};
-use engine_registry::{MembersOf, Registry, SettingsEntry};
+use std::sync::Arc;
+
+use engine_core::{Assets, ComponentKind, Error, Prepared, SceneCx, scene_components};
+use engine_registry::{Registry, SettingsEntry};
 use engine_settings::ErrorCode;
 use serde_json::Value;
 
@@ -13,15 +13,13 @@ use crate::SceneObject;
 pub struct SceneKinds {
     listed: Vec<ComponentKind>,
     sections: Vec<SettingsEntry>,
+    assets: Arc<Assets>,
 }
 
-impl Default for SceneKinds {
-    fn default() -> Self {
-        Self {
-            listed: core_components().to_vec(),
-            sections: Vec::new(),
-        }
-    }
+pub(crate) struct Component {
+    kind: ComponentKind,
+    at: String,
+    value: Prepared,
 }
 
 impl SceneKinds {
@@ -34,26 +32,11 @@ impl SceneKinds {
                 .flat_map(Registry::sections)
                 .copied()
                 .collect(),
-        }
-    }
-
-    pub fn listed(bricks: &BrickList) -> Self {
-        let mut records: Vec<_> = bricks
-            .listed()
-            .iter()
-            .map(|listed| listed.record().0)
-            .collect();
-        let members = MembersOf::<SceneComponents>::taken(&mut records);
-        Self {
-            listed: core_components()
-                .iter()
-                .chain(members.all())
-                .cloned()
-                .collect(),
-            sections: records
-                .iter()
-                .flat_map(|record| record.settings_entries().iter().copied())
-                .collect(),
+            assets: Arc::new(
+                world
+                    .get_resource::<Assets>()
+                    .map_or_else(Assets::default, Assets::fresh),
+            ),
         }
     }
 
@@ -64,6 +47,10 @@ impl SceneKinds {
             .copied()
     }
 
+    pub(crate) fn scratch(&self) -> Assets {
+        self.assets.fresh()
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.listed.iter().map(ComponentKind::key)
     }
@@ -72,44 +59,26 @@ impl SceneKinds {
         self.listed.iter().find(|kind| kind.key() == key)
     }
 
-    fn each_known(
-        &self,
-        object: &SceneObject,
-        path: &str,
-        mut visit: impl FnMut(&ComponentKind, &Value, &str) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        for (name, value) in object.authored() {
-            if let Some(kind) = self.find(name) {
-                visit(kind, value, &format!("{path}.{name}"))?;
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn check(&self, object: &SceneObject, path: &str) -> Result<(), Error> {
-        self.each_known(object, path, |kind, value, at| kind.validate(value, at))
-    }
-
     pub(crate) fn prepare(
         &self,
         object: &SceneObject,
         path: &str,
         cx: &SceneCx<'_>,
-    ) -> Result<(), Error> {
-        self.each_known(object, path, |kind, value, at| {
-            kind.validate(value, at)?;
-            kind.validate_prepared(value, cx, at)
-        })
-    }
-
-    pub(crate) fn files<'a>(
-        &'a self,
-        object: &'a SceneObject,
-    ) -> impl Iterator<Item = String> + 'a {
-        object
-            .authored()
-            .filter_map(|(name, value)| self.find(name).map(|kind| kind.listed_files(value)))
-            .flatten()
+    ) -> Result<Vec<Component>, Error> {
+        let mut components = Vec::new();
+        for (name, value) in object.authored() {
+            let Some(kind) = self.find(name) else {
+                continue;
+            };
+            let at = format!("{path}.{name}");
+            let value = kind.prepare_value(value, cx, &at)?;
+            components.push(Component {
+                kind: kind.clone(),
+                at,
+                value,
+            });
+        }
+        Ok(components)
     }
 
     pub(crate) fn unlisted(&self, object: &SceneObject, path: &str, skipped: &mut Vec<Error>) {
@@ -132,16 +101,18 @@ impl SceneKinds {
         path: &str,
         cx: &SceneCx<'_>,
     ) -> Result<(), Error> {
-        for (name, value) in object.authored() {
-            let Some(kind) = self.find(name) else {
-                continue;
-            };
-            let at = format!("{path}.{name}");
-            let prepared = kind.prepare_value(value, cx, &at)?;
-            kind.insert_prepared(world, entity, prepared)
-                .map_err(|error| error.within(&at))?;
+        for component in self.prepare(object, path, cx)? {
+            component.insert(world, entity)?;
         }
         Ok(())
+    }
+}
+
+impl Component {
+    pub(crate) fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
+        self.kind
+            .insert_prepared(world, entity, self.value)
+            .map_err(|error| error.within(&self.at))
     }
 }
 

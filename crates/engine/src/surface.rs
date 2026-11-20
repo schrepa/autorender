@@ -19,11 +19,14 @@ macro_rules! __game_surface {
                 fn focused(focused: bool);
                 fn hidden(hidden: bool);
                 fn reset_camera();
-                fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
+                fn reload_scene(source: &str) -> Result<(), $crate::__private::JsValue>;
+                fn file(uri: &str, bytes: Vec<u8>) -> Result<(), $crate::__private::JsValue>;
+                fn file_failed(uri: &str, error: &str) -> Result<(), $crate::__private::JsValue>;
                 fn set_file_root(root: &str);
                 fn set_pixel_ratio(ratio: f64);
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
-                fn take_sound() -> $crate::browser::SoundOrderList;
+                fn take_sound() -> Vec<f64>;
+                fn take_sound_bytes() -> Vec<u8>;
                 fn sound_opened(running: bool, rate: u32, channels: u32, latency_seconds: f32);
                 fn sound_open_failed(error: String);
                 fn sound_decoded(sound: u32, frames: f64, rate: u32, channels: u32);
@@ -34,13 +37,14 @@ macro_rules! __game_surface {
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn cursor_mode() -> u32;
+                fn files() -> String as Json<SceneFileList>;
             }
             dev_mut {
                 fn dev_push(line: &str) -> u32;
                 fn dev_take() -> String as Json<DevTake>;
                 fn dev_pixels() -> Vec<u8>;
-                fn dev_reloaded(source: &str, files: Option<SceneFileSet>);
-                fn dev_reload_failed(error: &str);
+                fn dev_reloaded(source: &str);
+                fn dev_reload_ended(error: Option<String>);
             }
         }
     };
@@ -69,16 +73,12 @@ macro_rules! game {
             <$crate::BrickList as $crate::Listing>::with::<GameBrick>($bricks(list))
         }
 
-        pub const GAME: $crate::GameEntry = $crate::GameEntry {
+        pub const GAME: $crate::GameEntry = $crate::__game_entry! {
             name: env!("CARGO_PKG_NAME"),
             title: $title,
-            folder: env!("CARGO_MANIFEST_DIR"),
             bricks: __game_bricks,
-            scene: $crate::DefaultScene {
-                name: $scene,
-                path: concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene),
-                text: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene)),
-            },
+            scene: $scene,
+            linked: LINKED,
         };
 
         $crate::__game_surface!(__export_game { $vis $name $game });
@@ -90,8 +90,29 @@ macro_rules! game {
     };
 }
 
+#[cfg(feature = "dev")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __game_entry {
+    ($($field:tt)*) => {
+        $crate::GameEntry { folder: env!("CARGO_MANIFEST_DIR"), $($field)* }
+    };
+}
+
+#[cfg(not(feature = "dev"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __game_entry {
+    ($($field:tt)*) => {
+        $crate::GameEntry { $($field)* }
+    };
+}
+
 #[macro_export]
 macro_rules! brick {
+    () => {
+        include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+    };
     ($name:ident) => {
         include!(concat!(
             env!("OUT_DIR"),
@@ -131,48 +152,6 @@ macro_rules! __export_game {
         dev_mut { $( fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
     ) => {
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
-        pub struct SceneFileSet {
-            files: $crate::scene::SceneFiles,
-        }
-
-        impl ::core::convert::From<SceneFileSet> for $crate::scene::SceneFiles {
-            fn from(set: SceneFileSet) -> Self {
-                set.files
-            }
-        }
-
-        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen, js_name = SceneLoad)]
-        pub struct PageSceneLoad {
-            load: $crate::browser::SceneLoading,
-        }
-
-        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen, js_class = SceneLoad)]
-        impl PageSceneLoad {
-            #[wasm_bindgen(constructor)]
-            pub fn new(source: &str) -> Result<PageSceneLoad, $crate::__private::JsValue> {
-                Ok(Self {
-                    load: $crate::browser::SceneLoading::new(source, __game_bricks)?,
-                })
-            }
-
-            pub fn take_reads(
-                &mut self,
-            ) -> Result<$crate::__private::js_sys::Array, $crate::__private::JsValue> {
-                self.load.take_reads()
-            }
-
-            pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<(), $crate::__private::JsValue> {
-                self.load.read(uri, bytes)
-            }
-
-            pub fn finish(&mut self) -> Result<SceneFileSet, $crate::__private::JsValue> {
-                Ok(SceneFileSet {
-                    files: self.load.finish()?,
-                })
-            }
-        }
-
-        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         $vis struct $name {
             host: $crate::browser::PageHost<$game>,
         }
@@ -197,16 +176,10 @@ macro_rules! __export_game {
         impl $name {
             pub async fn create(
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
-                scene: Option<String>,
-                files: Option<SceneFileSet>,
+                scene: String,
             ) -> Result<$name, $crate::__private::JsValue> {
                 Ok(Self {
-                    host: $crate::browser::PageHost::<$game>::start(
-                        canvas,
-                        GAME,
-                        scene.map(|source| (source, files.map(|set| set.files).unwrap_or_default())),
-                    )
-                    .await?,
+                    host: $crate::browser::PageHost::<$game>::start(canvas, GAME, &scene).await?,
                 })
             }
         }
@@ -261,9 +234,9 @@ pub struct SurfaceMethod {
 pub fn typescript(methods: &[SurfaceMethod]) -> String {
     use std::fmt::Write;
     let mut output = String::from(
-        "import type { SoundOrder } from \"../engine/sound\";\n\
-         import type { FrameStats } from \"./stats\";\n\n\
+        "import type { FrameStats } from \"./stats\";\n\n\
          export interface DevTake {\n  replies: [number, string][];\n  pictures: { file: string; width: number; height: number }[];\n  reload: boolean;\n}\n\n\
+         export type SceneFileList = { uri: string; group: string }[];\n\n\
          export type Json<T> = string & { readonly json?: T };\n\n\
          export function parseJson<T>(json: Json<T>): T {\n  \
          return JSON.parse(json) as T;\n\
@@ -333,8 +306,7 @@ fn typescript_type(ty: &str) -> String {
         "String" | "&str" => "string",
         "Vec<u8>" => "Uint8Array",
         "Vec<f32>" => "Float32Array",
-        "SoundOrderList" => "SoundOrder[]",
-        "SceneFileSet" => "unknown",
+        "Vec<f64>" => "Float64Array",
         _ => panic!("surface_typescript_type {ty}"),
     }
     .to_owned()

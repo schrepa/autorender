@@ -16,7 +16,7 @@ pub const RULES: Rules = Rules {
         ],
     },
     errors: Some(Errors {
-        within: "crates/",
+        within: &["crates/", "bricks/"],
         file: "crates/engine_codec/src/error.rs",
     }),
 };

@@ -8,14 +8,14 @@ pub enum DropReason {
     PassMismatch,
     UnfilledHoles,
     GeometryNotResident,
-    GeometryNotHeld,
+    GeometryNotInLoad,
     GeometryWaiting,
     GeometryFailed,
     MaterialNotResident,
-    MaterialNotHeld,
+    MaterialNotInLoad,
     MaterialWaiting,
     MaterialFailed,
-    GeometryLacksStreams,
+    MeshLayoutRefused,
     NoRenderPass,
     PipelineCompiling,
     PipelineRefused,
@@ -30,10 +30,10 @@ impl DropReason {
             | Self::PassMismatch
             | Self::UnfilledHoles
             | Self::GeometryNotResident
-            | Self::GeometryNotHeld
+            | Self::GeometryNotInLoad
             | Self::MaterialNotResident
-            | Self::MaterialNotHeld
-            | Self::GeometryLacksStreams
+            | Self::MaterialNotInLoad
+            | Self::MeshLayoutRefused
             | Self::NoRenderPass
             | Self::PipelineRefused
             | Self::MissingBindGroup => true,

@@ -2,13 +2,13 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use bevy_ecs::world::World;
-use engine_core::{Error, ErrorCode, FrameId, GeometryHandle, MaterialHandle, PassBit, TextureHandle};
+use engine_core::{Asset, Error, ErrorCode, FrameId, Material, MeshFile, PassBit};
 
 use crate::graph::{Bits, Clear, Load, Ops, Plan};
 use crate::install::{Bound, PassDecl, Program, Reinstall, Scoped};
 use crate::linker::Ty;
 use crate::machine::{
-    CAMERA_STRIDE, Machine, Ready, SetFormat, Target, lit_set, shared,
+    CAMERA_STRIDE, Machine, SetFormat, Target, lit_set, shared,
 };
 use crate::profiling::GpuProfiler;
 use crate::readback::Readbacks;
@@ -25,6 +25,8 @@ mod run;
 mod views;
 mod warming;
 
+pub(crate) use compile::Resolve;
+pub(crate) use draw::DrawRecord;
 pub(crate) use recording::{Ended, Recording, Step};
 pub(crate) use resources::{BatchEntryRaw, HeldBatches};
 pub(crate) use run::{Bindings, DroppedTally, KindTallies, Pipelines, Run};
@@ -213,7 +215,7 @@ impl Allocated {
 
 pub(crate) struct Filled {
     pub(crate) base: u32,
-    pub(crate) textures: Vec<TextureHandle>,
+    pub(crate) textures: Vec<Asset<engine_core::Texture>>,
     pub(crate) generation: u64,
     pub(crate) used: u64,
     pub(crate) groups: Vec<(u32, wgpu::BindGroup)>,
@@ -251,7 +253,7 @@ pub(crate) struct Spare {
     colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)>,
     attachments: Vec<u64>,
     cameras: Vec<u8>,
-    pub(crate) shapes: Vec<(u32, crate::Shape)>,
+    pub(crate) kept: Vec<draw::Kept>,
 }
 
 fn fault(path: String, code: ErrorCode) -> Error {
@@ -347,9 +349,7 @@ impl Run {
             if let Some(slot) = self.installs.turned.get_mut(part) {
                 *slot = None;
             }
-            if self.parts[part].take().is_some() {
-                self.release_part(part as u32);
-            }
+            self.parts[part] = None;
         }
     }
 
@@ -403,37 +403,6 @@ impl Run {
         };
         self.tables.textures[at] = Some(Allocated::new(&self.device, &made, size));
         Allocation::Fresh
-    }
-
-    pub(crate) fn release(&mut self, texture: u32) {
-        if let Some(held) = self.tables.textures.get_mut(texture as usize) {
-            *held = None;
-        }
-    }
-
-    pub(crate) fn release_buffer(&mut self, buffer: u32) {
-        let Some(held) = self.tables.buffers.get_mut(buffer as usize) else {
-            return;
-        };
-        if held.take().is_some() {
-            self.touch(Held::Buffer(buffer));
-        }
-    }
-
-    pub(crate) fn release_part(&mut self, part: u32) {
-        let textures: Vec<u32> = (0..self.machine.declared.textures.len() as u32)
-            .filter(|&texture| self.machine.declared.textures[texture as usize].part == part)
-            .collect();
-        for texture in textures {
-            self.release(texture);
-        }
-        let buffers: Vec<u32> = (0..self.machine.declared.buffers.len() as u32)
-            .filter(|&buffer| self.machine.declared.buffers[buffer as usize].part == part)
-            .collect();
-        for buffer in buffers {
-            self.release_buffer(buffer);
-        }
-        self.forget_ran(part);
     }
 
     pub(crate) fn written(&self) -> FrameId {

@@ -5,7 +5,6 @@
 
 extern crate self as engine_core;
 
-mod admission;
 mod assets;
 mod authoring;
 mod background;
@@ -36,8 +35,7 @@ mod ticks;
 mod transform_edits;
 mod views;
 
-pub use admission::admit;
-pub use assets::*;
+pub use assets::AssetKinds;
 pub use authoring::core_components;
 pub use background::{Background, Delivers, Landed, Taken};
 pub use bevy_app::App;
@@ -46,22 +44,20 @@ pub use clock::*;
 pub use closing::Closing;
 pub use drawn::{DrawnBatch, DrawnRecord, DrawnSettings, DrawnTable, drawn_wgsl};
 pub use engine_assets::{
-    Aabb, AlphaMode, Asset, AssetLibrary, Attribute, AttributeFormat, Attributes,
-    BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, FIRST_NAMED_LOCATION,
-    Filter, GeometryStream, InstanceInput, LightingModel, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
-    Material, Mesh, MeshVertex, NORMAL_MAP, NamedStream, RenderState, Sampler, StreamShape,
-    Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
+    Aabb, AlphaMode, Asset, AssetId, AssetKind, Assets, ColorSpace, Compare, Cull, DepthBias,
+    Filter, GroupReport, GroupStage, IndexFormat, LightingModel, Material, MeshDescription,
+    MeshFile, RenderState, Sampler, Texture, TextureFormat, TextureRef, UvTransform, VertexFormat,
+    VertexInput, VertexStream, Wrap,
 };
 pub use engine_place::{
     AuthoredId, OperationScene, SCENE_SCHEMA, SceneEntity, entity_removed, schema_of,
 };
 pub use engine_place::{
-    Asked, Board, Census, Changed, Changes, Clock, Cursor, DrawKind, Drawn, Error, ErrorCode,
-    Events, Feed, FeedView, GeometryHandle, GpuStruct, InstanceValues, Interest, KindCell,
-    KindDecl, KindJoin, Layers, List, MaterialHandle, Mobility, Mover, MoverId, Node, NodeId,
-    NodeWord, Pace, Pass, PassBit, PassEntry, PassMask, PassName, PassViews, Progress, Readiness,
-    Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, StoreId, TargetName,
-    TextureHandle, Ticket, Unsettled, Writes,
+    Asked, Board, Census, Changed, Changes, Clock, DrawKind, Drawn, Error, ErrorCode, GpuStruct,
+    InstanceValues, Interest, KindCell, KindDecl, KindJoin, Layers, List, Mobility, Mover, MoverId,
+    Node, NodeId, NodeWord, Pace, Pass, PassBit, PassEntry, PassMask, PassName, PassViews,
+    Progress, Readiness, Request, Requests, ScenePass, ScenePasses, Settling, TargetName, Ticket,
+    Unsettled, Writes,
 };
 pub use engine_place::{BitValue, FrameId, GpuBits, Readable, Readback, gpu_bits};
 pub use engine_place::{Clear, Rect, Target, View, ViewSkip};
@@ -75,7 +71,6 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use engine_textures::decode_texture;
 pub use dev_doors::{DevBricks, DevOnly, DevSetting, Stats};
 pub use files::{Files, IoAct, IoOrder, IoReply};
 pub use kept::Kept;
@@ -91,10 +86,9 @@ pub use scene::*;
 pub use schedules::Schedule;
 pub use section::{Section, Switch};
 pub use services::{
-    ComponentKind, ComponentKindOf, DeviceLimits, Prepared, SceneBuffers, SceneComponents,
-    SceneContext, SceneCx, SceneForm, scene_component, scene_components,
+    ComponentKind, ComponentKindOf, DeviceLimits, Prepared, SceneComponents, SceneContext, SceneCx,
+    SceneForm, scene_component, scene_components,
 };
-pub use shared::FeedSettings;
 pub use sound::{
     Length, Loaded, Output, Play, Refusal, RefusalCounts, SoundCounts, SoundId, SoundOrder,
     SoundReply, SoundReport, Sounds, Tune, VoiceCounts, VoiceId,
@@ -166,6 +160,7 @@ pub struct Engine {
     facts: Option<FrameFacts>,
     finalized: bool,
     board: Board,
+    reported: Option<shared::Reported>,
 }
 
 #[doc(hidden)]
@@ -201,9 +196,7 @@ fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
 }
 
 fn core_entries(registry: &mut RegistryBuilder) {
-    registry.core_settings(bricks::settings_entry::<FeedSettings>());
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
-    registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.despawn_rule(hierarchy::despawn_owned);
 }
 
@@ -272,15 +265,24 @@ fn refused(problems: &[Error]) -> Result<(), Error> {
 }
 
 impl Engine {
-    pub fn listed(list: BrickList, ticks_per_second: u32) -> Result<Self, Error> {
+    pub fn listed(
+        list: BrickList,
+        ticks_per_second: u32,
+        catch_up_seconds: f64,
+    ) -> Result<Self, Error> {
         let board = Board::default();
-        let mut engine = board.scope(|| Self::on_board(ticks_per_second, board.clone()))?;
+        let mut engine =
+            board.scope(|| Self::on_board(ticks_per_second, catch_up_seconds, board.clone()))?;
         engine.scoped(|engine| engine.install(&list))?;
         Ok(engine)
     }
 
-    fn on_board(ticks_per_second: u32, board: Board) -> Result<Self, Error> {
-        let clock = FixedClock::new(ticks_per_second)?;
+    fn on_board(
+        ticks_per_second: u32,
+        catch_up_seconds: f64,
+        board: Board,
+    ) -> Result<Self, Error> {
+        let clock = FixedClock::new(ticks_per_second, catch_up_seconds)?;
         let mut app = App::empty();
         app.world_mut()
             .resource_mut::<Schedules>()
@@ -306,11 +308,9 @@ impl Engine {
             })
             .init_resource::<FrameTime>()
             .init_resource::<Pause>()
-            .init_resource::<FrameLimits>()
             .init_resource::<Readiness>()
             .init_resource::<Refusals>()
             .init_resource::<Views>()
-            .init_resource::<FeedSettings>()
             .init_resource::<DrawnSettings>()
             .init_resource::<Files>()
             .init_resource::<Kept>()
@@ -322,8 +322,7 @@ impl Engine {
             .init_resource::<engine_place::DrawnPoses>()
             .init_resource::<Asked<Teleport>>()
             .init_resource::<GlobalTransforms>()
-            .init_resource::<AssetLibrary>();
-        assets::install(app.world_mut());
+            .init_resource::<Assets>();
         drawn::install(app.world_mut());
         #[cfg(feature = "dev")]
         app.init_resource::<Held>();
@@ -336,6 +335,7 @@ impl Engine {
             facts: None,
             finalized: false,
             board,
+            reported: None,
         })
     }
 
@@ -359,6 +359,7 @@ impl Engine {
         let mut gates = registry.install(world, &labels);
         moves::install_kinds(world);
         drawn::install_kinds(world);
+        assets::install_kinds(world);
         install_passes(world);
         let mut twice = world
             .get_resource::<MembersOf<SceneComponents>>()
@@ -375,7 +376,12 @@ impl Engine {
         for error in twice {
             registry.report(error);
         }
-        let checked = refused(registry.problems());
+        let problems: Vec<Error> = registry
+            .problems()
+            .iter()
+            .map(|(error, _)| error.clone())
+            .collect();
+        let checked = refused(&problems);
         gates.run(world);
         self.gates = Some(gates);
         checked
@@ -421,7 +427,15 @@ impl Engine {
             return;
         }
         world.insert_resource(reports);
-        shared::settle_readiness(world, &self.board);
+        shared::settle_readiness(world, &self.board, &mut self.reported);
+    }
+
+    pub fn report_held(&mut self, ready: bool) {
+        let world = self.app.world_mut();
+        if ready && world.resource::<Assets>().compiling() {
+            world.resource_mut::<Assets>().compiled();
+            world.resource_mut::<DrawnTable>().release_held();
+        }
     }
 
     pub fn frame(&mut self, timestamp_seconds: f64) -> Result<(), Error> {
@@ -444,11 +458,8 @@ impl Engine {
             0.0
         };
         let rate = if self.time_runs() { 1.0 } else { 0.0 };
-        let limits = *self.app.world().resource::<FrameLimits>();
-        let advanced = self
-            .clock
-            .advance(real_seconds * rate, limits.max_fixed_steps);
-        let shown = real_seconds.min(limits.max_frame_seconds);
+        let shown = self.clock.capped(real_seconds);
+        let advanced = self.clock.advance(shown * rate);
         self.run_frame(advanced, (shown, shown * rate), real_seconds - shown);
     }
 
@@ -482,11 +493,7 @@ impl Engine {
                 0.0
             };
             let ran = if engine.time_runs() { ticks } else { 0 };
-            let advanced = Advanced {
-                ticks: ran,
-                dropped_seconds: 0.0,
-                alpha,
-            };
+            let advanced = Advanced { ticks: ran, alpha };
             engine.run_frame(advanced, (lasting, f64::from(ran) * step), 0.0);
         });
         Ok(())
@@ -535,7 +542,6 @@ impl Engine {
             time.real_seconds = real_seconds;
             time.elapsed = ticked - (1.0 - f64::from(alpha)) * step;
             time.real_elapsed += real_seconds;
-            time.dropped_seconds += advanced.dropped_seconds;
             time.cut_seconds += cut_seconds;
         });
         if has_systems(self.app.world(), BeforeTicks) {
@@ -592,7 +598,7 @@ impl Engine {
             engine.finalize();
             engine.refresh_transforms();
             engine.sync_view();
-            shared::settle_readiness(engine.app.world_mut(), &engine.board);
+            shared::settle_readiness(engine.app.world_mut(), &engine.board, &mut engine.reported);
         });
         Ok(RenderFrame {
             world: self.app.world(),
@@ -611,8 +617,7 @@ impl Engine {
         let _profile = engine_profile::span("ecs", "ViewSync");
         let facts = self.facts.unwrap_or_default();
         let world = self.app.world_mut();
-        drawn::ask(world);
-        assets::settle_assets(world);
+        drawn::resolve(world);
         moves::gather(world);
         views::settle(world, facts);
     }

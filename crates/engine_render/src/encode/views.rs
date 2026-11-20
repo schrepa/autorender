@@ -5,12 +5,13 @@ impl Run {
         self.uniforms.camera_slot * CAMERA_STRIDE as u32
     }
 
-    pub(crate) fn write_cameras(&mut self) {
+    pub(crate) fn write_cameras(&mut self, views: usize) {
         let bytes = self.uniforms.cameras.len() as u64 * CAMERA_STRIDE;
-        if self.uniforms.camera.size() < bytes {
+        let room = bytes.max(views as u64 * CAMERA_STRIDE);
+        if self.uniforms.camera.size() < room {
             self.uniforms.camera = crate::gpu_calls::create_buffer(&self.device, &wgpu::BufferDescriptor {
                 label: Some("engine/cameras"),
-                size: bytes.next_power_of_two(),
+                size: room.next_power_of_two(),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -36,12 +37,7 @@ impl Run {
         );
     }
 
-    pub(crate) fn fill(&mut self, pipeline: u32, textures: &[TextureHandle]) -> u32 {
-        for texture in textures {
-            if !self.bindings.wanted_textures.contains(texture) {
-                self.bindings.wanted_textures.push(*texture);
-            }
-        }
+    pub(crate) fn fill(&mut self, pipeline: u32, textures: &[Asset<engine_core::Texture>]) -> u32 {
         let generation = self.assets.textures.generation();
         let base = self.machine.pipelines.len() as u32;
         if let Some(at) = self.filled.iter().position(|filled| {
@@ -462,7 +458,7 @@ impl Run {
     pub(crate) fn drawing_of(
         &mut self,
         slot: u32,
-        handle: TextureHandle,
+        handle: Asset<engine_core::Texture>,
     ) -> Option<(wgpu::TextureView, wgpu::Texture)> {
         let (texture, _) = self.assets.textures.target(handle)?;
         let set = self
@@ -632,7 +628,6 @@ impl ViewSet {
 
 pub(crate) struct Fixed {
     pub(crate) holding: Bits,
-    pub(crate) part_passes: Vec<Vec<u32>>,
     pub(crate) part_globals: Vec<Vec<u32>>,
     pub(crate) global: Bits,
     pub(crate) main_views: Bits,
@@ -692,14 +687,12 @@ impl Sets {
             .max()
             .unwrap_or(0)
             .max(machine.declared.parts.len());
-        let mut part_passes = vec![Vec::new(); parts];
         let mut part_globals = vec![Vec::new(); parts];
         let mut global = Bits::of(count);
         let mut main_views = Bits::of(count);
         let mut seen: Vec<&'static str> = Vec::new();
         let mut names = Vec::with_capacity(count);
         for (index, pass) in declared.iter().enumerate() {
-            part_passes[pass.part as usize].push(index as u32);
             let viewed = passes.contains(index);
             if !viewed {
                 part_globals[pass.part as usize].push(index as u32);
@@ -736,7 +729,6 @@ impl Sets {
             main,
             fixed: Fixed {
                 holding,
-                part_passes,
                 part_globals,
                 global,
                 main_views,

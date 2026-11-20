@@ -6,7 +6,8 @@ import { parseJson } from "../generated/runtime";
 interface Host {
   game: Runtime;
   signal: AbortSignal;
-  source?: { load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
+  source: { load(signal: AbortSignal): Promise<string> };
+  handOver(hand: () => void): Promise<void>;
   wake(): void;
   fail(error: unknown): void;
 }
@@ -26,7 +27,7 @@ declare global {
 
 export function connectDevelopment(host: Host): Development {
   const { game, signal } = host;
-  if (!game.dev_push || !game.dev_take || !game.dev_pixels || !game.dev_reloaded || !game.dev_reload_failed) {
+  if (!game.dev_push || !game.dev_take || !game.dev_pixels || !game.dev_reloaded || !game.dev_reload_ended) {
     throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "present", got: "dev_push" });
   }
   const waiting = new Map<number, { resolve(reply: string): void; reject(error: Error): void }>();
@@ -63,13 +64,12 @@ export function connectDevelopment(host: Host): Development {
   async function reload() {
     reloading = true;
     try {
-      if (!host.source) throw engineFailure({ code: "missing_resource", path: "$.scene", expected: "present" });
       const text = await host.source.load(signal);
-      const files = await host.source.files(text, signal);
-      if (closed === undefined) game.dev_reloaded!(text, files);
+      if (closed === undefined) await host.handOver(() => game.dev_reloaded!(text));
+      if (closed === undefined) game.dev_reload_ended!();
     } catch (cause) {
       if (fatal(cause)) { host.fail(cause); return; }
-      if (closed === undefined) game.dev_reload_failed!(engineError(cause)?.message ?? JSON.stringify({ code: "browser_command_failed", path: "$", got: String(cause) }));
+      if (closed === undefined) game.dev_reload_ended!(engineError(cause)?.message ?? JSON.stringify({ code: "browser_command_failed", path: "$", got: String(cause) }));
     } finally {
       reloading = false;
     }

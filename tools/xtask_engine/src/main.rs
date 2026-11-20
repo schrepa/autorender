@@ -4,6 +4,7 @@ mod development;
 mod lint;
 mod rules;
 mod shader_report;
+mod ship;
 
 use std::{env, process::ExitCode};
 
@@ -39,7 +40,6 @@ fn execute() -> Result<(), String> {
             [option] if option == "--profiling" => true,
             _ => return Err("usage: build [--profiling]".into()),
         };
-        authoring::validate_sources(&root)?;
         return pipeline::build(&root, profiling);
     }
     if task == "lint" {
@@ -50,6 +50,9 @@ fn execute() -> Result<(), String> {
     }
     if task == "generate" {
         return authoring::generate(&root, &options);
+    }
+    if task == "ship" {
+        return ship::ship(&root, &options);
     }
     if let Some(argument) = options.first() {
         return Err(
@@ -86,6 +89,7 @@ fn commands() -> Vec<Command> {
             ],
         ),
         Command::new("generate", [CommandOption::flag("--check")]),
+        Command::new("ship", []),
         Command::new(
             "shaders",
             [

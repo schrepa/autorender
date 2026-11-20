@@ -5,9 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+dev = ["engine_codec/dev"]
+
 [dependencies]
 bevy_ecs.workspace = true
 engine_codec.workspace = true
+engine_math.workspace = true
 engine_settings.workspace = true
 schemars.workspace = true
 serde.workspace = true

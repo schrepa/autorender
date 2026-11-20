@@ -12,7 +12,6 @@ dev = ["engine_core/dev", "engine_registry/dev", "engine_settings/dev"]
 [dependencies]
 bevy_ecs.workspace = true
 base64.workspace = true
-engine_assets.workspace = true
 engine_core.workspace = true
 engine_registry.workspace = true
 engine_settings.workspace = true

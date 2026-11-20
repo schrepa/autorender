@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["engine_settings/dev"]
+dev = ["engine_settings/dev", "engine_assets/dev"]
 
 [dependencies]
 engine_assets.workspace = true

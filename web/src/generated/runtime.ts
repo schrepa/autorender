@@ -1,4 +1,3 @@
-import type { SoundOrder } from "../engine/sound";
 import type { FrameStats } from "./stats";
 
 export interface DevTake {
@@ -6,6 +5,8 @@ export interface DevTake {
   pictures: { file: string; width: number; height: number }[];
   reload: boolean;
 }
+
+export type SceneFileList = { uri: string; group: string }[];
 
 export type Json<T> = string & { readonly json?: T };
 
@@ -28,11 +29,14 @@ export interface Runtime {
   focused(focused: boolean): void;
   hidden(hidden: boolean): void;
   reset_camera(): void;
-  reload_scene(source: string, files: unknown): void;
+  reload_scene(source: string): void;
+  file(uri: string, bytes: Uint8Array): void;
+  file_failed(uri: string, error: string): void;
   set_file_root(root: string): void;
   set_pixel_ratio(ratio: number): void;
   apply_host_settings(query: string): void;
-  take_sound(): SoundOrder[];
+  take_sound(): Float64Array;
+  take_sound_bytes(): Uint8Array;
   sound_opened(running: boolean, rate: number, channels: number, latency_seconds: number): void;
   sound_open_failed(error: string): void;
   sound_decoded(sound: number, frames: number, rate: number, channels: number): void;
@@ -41,10 +45,11 @@ export interface Runtime {
   voice_dropped(voice: number, error: string): void;
   stats(): Json<FrameStats>;
   cursor_mode(): number;
+  files(): Json<SceneFileList>;
   dev_push?(line: string): number;
   dev_take?(): Json<DevTake>;
   dev_pixels?(): Uint8Array;
-  dev_reloaded?(source: string, files?: unknown): void;
-  dev_reload_failed?(error: string): void;
+  dev_reloaded?(source: string): void;
+  dev_reload_ended?(error?: string): void;
   free(): void;
 }

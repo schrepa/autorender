@@ -3,212 +3,198 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
-use engine_core::{ColorSpace, Error, Mesh, SceneContext, SceneCx, Texture, Transform};
-
-use crate::{
-    MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, SceneKinds,
-    hierarchy::ExpandedObject, material::PreparedMaterial,
+use engine_core::{
+    Asset, AssetId, Assets, Error, Material, MeshFile, SceneContext, SceneCx, SceneEntity,
+    Texture, Transform, valid_uri,
 };
 
-pub(crate) struct PreparedScene {
-    pub environment: Option<crate::SceneEnvironment>,
-    pub meshes: Vec<Option<Mesh>>,
-    pub materials: Vec<PreparedMaterial>,
-    pub textures: Vec<Texture>,
-    pub transforms: Vec<Transform>,
-    pub entities: Vec<ExpandedObject>,
+use crate::components::Component;
+use crate::hierarchy::{ExpandedObject, ExpandedScene};
+use crate::texture::TextureSource;
+use crate::{SceneDocument, SceneKinds};
+
+#[derive(Clone, Copy)]
+pub(crate) enum Pick<'a> {
+    Checked,
+    Variant(Option<&'a str>),
 }
 
-struct CpuAssets {
-    textures: Vec<Texture>,
-    meshes: Vec<Option<Mesh>>,
-    materials: Vec<PreparedMaterial>,
+impl<'a> Pick<'a> {
+    fn variant(self) -> Option<&'a str> {
+        match self {
+            Self::Checked => None,
+            Self::Variant(variant) => variant,
+        }
+    }
+
+    fn file(self, uri: &str) -> Option<&str> {
+        match self {
+            Self::Checked => None,
+            Self::Variant(_) => Some(uri),
+        }
+    }
+}
+
+pub(crate) struct Landing {
+    pub entity: Entity,
+    pub parent: Option<Entity>,
+    pub transform: Transform,
+    pub scene: SceneEntity,
+    pub components: Vec<Component>,
 }
 
 impl SceneDocument {
-    pub fn validate(&self, kinds: &SceneKinds) -> Result<(), Error> {
-        self.prepare(None, kinds).map(|_| ())
-    }
-
-    pub fn validate_with(&self, kinds: &SceneKinds, files: &SceneFiles) -> Result<(), Error> {
-        self.prepare(Some(files), kinds).map(|_| ())
-    }
-
-    pub(crate) fn structure(&self) -> Result<(), Error> {
-        self.prepare(None, &SceneKinds::default()).map(|_| ())
-    }
-
-    pub fn files(&self, kinds: &SceneKinds) -> Vec<SceneFile> {
-        let mut files: Vec<SceneFile> = Vec::new();
-        let mut add = |uri: &String, kind| {
-            if !files.iter().any(|file| file.uri == *uri) {
-                files.push(SceneFile {
-                    uri: uri.clone(),
-                    kind,
-                });
-            }
-        };
-        for texture in &self.textures {
-            if let Some(uri) = &texture.uri {
-                add(uri, SceneFileKind::Image);
-            }
-        }
-        for mesh in &self.meshes {
-            match &mesh.source {
-                MeshSource::Buffer { uri } => add(uri, SceneFileKind::Buffer),
-                MeshSource::Cube { .. } | MeshSource::Plane { .. } | MeshSource::Inline { .. } => {}
-            }
-        }
-        let entities = self
-            .entities
-            .iter()
-            .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
-        crate::loading::named(self).lenient(|| {
-            for entity in entities {
-                for uri in kinds.files(entity) {
-                    add(&uri, SceneFileKind::Buffer);
-                }
-            }
-        });
-        files
+    pub fn validate(&self, kinds: &SceneKinds) -> Result<usize, Error> {
+        let expanded = self.expand()?;
+        let count = expanded.entities.len();
+        let entities = Arc::new(
+            expanded
+                .entities
+                .iter()
+                .map(|entity| (entity.source.id.clone(), Entity::PLACEHOLDER))
+                .collect(),
+        );
+        let mut assets = kinds.scratch();
+        self.prepare(kinds, &mut assets, expanded, &entities, Pick::Checked)?;
+        Ok(count)
     }
 
     pub(crate) fn prepare(
         &self,
-        files: Option<&SceneFiles>,
         kinds: &SceneKinds,
-    ) -> Result<PreparedScene, Error> {
-        identifier(&self.id, "$.id")?;
-        unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
-        unique_ids(
-            self.materials.iter().map(|material| material.id.as_str()),
-            "$.materials",
-        )?;
-        let texture_ids = unique_ids(
-            self.textures.iter().map(|texture| texture.id.as_str()),
-            "$.textures",
-        )?;
-        for (index, material) in self.materials.iter().enumerate() {
-            for (field, texture) in material.texture_ids() {
-                reference(
-                    texture,
-                    &texture_ids,
-                    &format!("$.materials[{index}].{field}"),
-                )?;
-            }
-        }
-        let named = crate::loading::named(self);
-        let expanded = named.lenient(|| self.expand(kinds))?;
-        let entities = expanded
-            .entities
-            .iter()
-            .map(|entity| (entity.source.id.clone(), Entity::PLACEHOLDER))
-            .collect();
+        assets: &mut Assets,
+        expanded: ExpandedScene,
+        entities: &Arc<BTreeMap<String, Entity>>,
+        pick: Pick<'_>,
+    ) -> Result<Vec<Vec<Landing>>, Error> {
+        self.declare(assets, pick)?;
         let context = SceneContext {
-            assets: named,
-            entities: Arc::new(entities),
+            entities: Arc::clone(entities),
         };
+        let cx = SceneCx::new(Some(&context));
         if let Some(environment) = &self.environment {
-            for key in environment.keys() {
-                if let Some(section) = kinds.section(key) {
-                    section.check_scene(
-                        &environment.sections[key],
-                        &format!("$.environment.{key}"),
-                        &context,
-                    )?;
-                }
-            }
+            assets.collect(0, "", || {
+                environment.keys().try_for_each(|key| {
+                    let Some(section) = kinds.section(key) else {
+                        return Ok(());
+                    };
+                    let path = format!("$.environment.{key}");
+                    let value = &environment.sections[key];
+                    section.check(value, &path)?;
+                    section.check_scene(value, &path, &context)
+                })
+            })?;
         }
-        let buffers = files.map(SceneFiles::buffers);
-        let cx = SceneCx::new(Some(&context), buffers.as_deref());
-        context.scope(|| {
-            expanded
-                .entities
-                .iter()
-                .try_for_each(|entity| kinds.prepare(&entity.source, &entity.path, &cx))
-        })?;
-        let CpuAssets {
-            textures,
-            meshes,
-            materials,
-        } = self.prepare_assets(files)?;
-        Ok(PreparedScene {
-            environment: self.environment.clone(),
-            meshes,
-            materials,
-            textures,
-            transforms: expanded.transforms,
-            entities: expanded.entities,
-        })
+        let names: Vec<String> = assets
+            .groups()
+            .into_iter()
+            .map(|group| group.name)
+            .collect();
+        let joined = joined(&expanded.entities, &names);
+        let mut groups: Vec<Vec<Landing>> = names.iter().map(|_| Vec::new()).collect();
+        let listed = expanded.entities.into_iter().zip(expanded.transforms);
+        for ((object, transform), group) in listed.zip(joined) {
+            let within = if object.source.cooked {
+                self.folder.as_str()
+            } else {
+                ""
+            };
+            let components = assets.collect(group, within, || {
+                kinds.prepare(&object.source, &object.path, &cx)
+            })?;
+            let source = &object.source;
+            groups[group].push(Landing {
+                entity: entities[&source.id],
+                parent: source.parent.as_ref().map(|parent| entities[parent]),
+                transform,
+                scene: object.scene_entity(&self.id),
+                components,
+            });
+        }
+        Ok(groups)
     }
 
-    fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, Error> {
-        for (mesh_index, mesh) in self.meshes.iter().enumerate() {
-            if let MeshSource::Inline { vertices, .. } = &mesh.source {
-                let path = format!("$.meshes[{mesh_index}].source");
-                for (index, vertex) in vertices.iter().enumerate() {
-                    bounded_vector(
-                        vertex.position,
-                        &format!("{path}.vertices[{index}].position"),
-                        1_000_000.0,
-                    )?;
-                }
+    fn declare(&self, assets: &mut Assets, pick: Pick<'_>) -> Result<(), Error> {
+        let mut textures: BTreeMap<&str, Asset<Texture>> = BTreeMap::new();
+        for (index, texture) in self.textures.iter().enumerate() {
+            let path = format!("$.textures[{index}]");
+            let source = texture.source(&path, pick.variant())?;
+            let file = match (&source, pick) {
+                (TextureSource::File(uri), _) => pick.file(uri),
+                (TextureSource::Unpicked, Pick::Variant(_)) => return Err(texture.unpicked(&path)),
+                (TextureSource::Made(_) | TextureSource::Unpicked, _) => None,
+            };
+            let asset = assets
+                .declare::<Texture>(&texture.id, file)
+                .map_err(|error| error.within(&path))?;
+            if let TextureSource::Made(made) = source {
+                assets
+                    .make(asset, made, Vec::new())
+                    .map_err(|error| error.within(&path))?;
             }
+            textures.insert(texture.id.as_str(), asset);
         }
-        let mut spaces: BTreeMap<&str, ColorSpace> = BTreeMap::new();
-        for (id, space) in self
-            .materials
-            .iter()
-            .flat_map(|material| material.map_spaces())
-        {
-            let held = spaces.entry(id).or_insert(space);
-            if space == ColorSpace::Srgb {
-                *held = ColorSpace::Srgb;
+        for (index, mesh) in self.meshes.iter().enumerate() {
+            let path = format!("$.meshes[{index}]");
+            valid_uri(&mesh.uri, &format!("{path}.uri"))?;
+            assets
+                .declare::<MeshFile>(&mesh.id, pick.file(&mesh.uri))
+                .map_err(|error| error.within(&path))?;
+        }
+        let known: BTreeSet<&str> = textures.keys().copied().collect();
+        for (index, material) in self.materials.iter().enumerate() {
+            let path = format!("$.materials[{index}]");
+            for (field, texture) in material.texture_ids() {
+                reference(texture, &known, &format!("{path}.{field}"))?;
             }
+            let made = material.prepare(&path)?.material(|id| textures[id]);
+            let needs = made.textures().map(AssetId::from).collect();
+            let asset = assets
+                .declare::<Material>(&material.id, None)
+                .map_err(|error| error.within(&path))?;
+            assets
+                .make(asset, made, needs)
+                .map_err(|error| error.within(&path))?;
         }
-        let textures = self
-            .textures
-            .iter()
-            .enumerate()
-            .map(|(index, texture)| {
-                let path = format!("$.textures[{index}]");
-                let named = spaces.get(texture.id.as_str()).copied();
-                let (made, stated) = texture.texture(&path, files)?;
-                match (stated, named) {
-                    (true, Some(named)) if named != made.color_space() => {
-                        Err(Error::new(ErrorCode::InvalidTexture, path)
-                            .expected(Expected::Matching)
-                            .got(format!(
-                                "the file states {:?}, its material map needs {named:?}",
-                                made.color_space()
-                            )))
-                    }
-                    (true, _) => Ok(made),
-                    (false, named) => Ok(made.with_color_space(named.unwrap_or_default())),
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let meshes = self
-            .meshes
-            .iter()
-            .enumerate()
-            .map(|(index, mesh)| {
-                mesh.source
-                    .mesh(&format!("$.meshes[{index}].source"), files)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let materials = self
-            .materials
-            .iter()
-            .enumerate()
-            .map(|(index, material)| material.prepare(&format!("$.materials[{index}]")))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(CpuAssets {
-            textures,
-            meshes,
-            materials,
-        })
+        Ok(())
     }
+}
+
+fn joined(entities: &[ExpandedObject], names: &[String]) -> Vec<usize> {
+    let last = names.len() - 1;
+    let own: Vec<usize> = entities
+        .iter()
+        .map(|entity| {
+            names
+                .iter()
+                .position(|name| entity.source.tags.contains(name))
+                .unwrap_or(last)
+        })
+        .collect();
+    let at: BTreeMap<&str, usize> = entities
+        .iter()
+        .enumerate()
+        .map(|(index, entity)| (entity.source.id.as_str(), index))
+        .collect();
+    let parent = |index: usize| {
+        let parent = entities[index].source.parent.as_deref()?;
+        at.get(parent).copied()
+    };
+    let mut group: Vec<Option<usize>> = vec![None; entities.len()];
+    let mut chain = Vec::new();
+    for start in 0..entities.len() {
+        let mut cursor = Some(start);
+        while let Some(index) = cursor.filter(|&index| group[index].is_none()) {
+            chain.push(index);
+            cursor = parent(index);
+        }
+        let mut above = cursor.and_then(|index| group[index]).unwrap_or(0);
+        while let Some(index) = chain.pop() {
+            above = above.max(own[index]);
+            group[index] = Some(above);
+        }
+    }
+    group.into_iter().flatten().collect()
 }
 
 pub fn identifier(id: &str, path: &str) -> Result<(), Error> {
@@ -280,18 +266,4 @@ pub(crate) fn moved(error: Error, code: ErrorCode, path: impl Into<String>) -> E
         path: path.into(),
         detail: error.detail,
     }
-}
-
-fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), Error> {
-    for (index, coordinate) in value.iter().enumerate() {
-        if !coordinate.is_finite() || coordinate.abs() > maximum {
-            return Err(
-                Error::new(ErrorCode::InvalidNumber, format!("{path}[{index}]"))
-                    .expected(Expected::Finite)
-                    .range(-f64::from(maximum), f64::from(maximum))
-                    .got(coordinate),
-            );
-        }
-    }
-    Ok(())
 }

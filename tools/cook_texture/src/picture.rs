@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use cook::{Kind, Refusal, Step};
 use serde::Deserialize;
-use serde_json::{Map, json};
+use serde_json::{Map, Value, json};
 
 use crate::encode::{Encoding, encode};
 use crate::image::decode;
@@ -32,6 +32,13 @@ fn identifier(name: &str) -> bool {
         })
 }
 
+pub fn texture_item(id: &str, mut files: BTreeMap<String, String>) -> Value {
+    match files.len() {
+        1 => json!({"id": id, "uri": files.pop_first().map(|(_, file)| file)}),
+        _ => json!({"id": id, "variants": files}),
+    }
+}
+
 fn picture(step: &mut Step<'_>) -> Result<(), Refusal> {
     let (name, params): (String, Picture) = (step.name().to_owned(), step.params()?);
     let usable = |(variant, encoding): (&String, &Encoding)| {
@@ -47,7 +54,7 @@ fn picture(step: &mut Step<'_>) -> Result<(), Refusal> {
     };
     let (file, bytes) = (source.name, source.bytes);
     let image = decode(bytes).map_err(|error| Refusal::new("PictureUndecodable", file, error))?;
-    let (mut variants, mut notes) = (Map::new(), Map::new());
+    let (mut variants, mut notes) = (BTreeMap::new(), Map::new());
     for (variant, &encoding) in &params.encodings {
         let texels = if encoding.srgb() {
             Texels::Srgb
@@ -69,14 +76,13 @@ fn picture(step: &mut Step<'_>) -> Result<(), Refusal> {
                 "levels": levels.len(),
                 "file_bytes": encoded.file.len(),
                 "gpu_bytes": encoded.gpu_bytes,
-                "encode_seconds": encoded.seconds,
                 "quality": encoded.quality,
             }),
         );
-        variants.insert(variant.clone(), json!(made));
         step.write(&made, encoded.file);
+        variants.insert(variant.clone(), made);
     }
-    step.item("textures", &name, json!({"id": name, "variants": variants}));
+    step.item("textures", &name, texture_item(&name, variants));
     step.note(
         json!({"picture": {"width": image.width, "height": image.height, "variants": notes}}),
     );

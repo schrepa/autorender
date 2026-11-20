@@ -1,56 +1,11 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
-
-use engine_dev::authoring::{read_scene_source, validate_scene};
-
-pub fn validate_sources(root: &Path) -> Result<(), String> {
-    let paths = project_scenes(root)?;
-    let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
-    for path in &paths {
-        let display = path.strip_prefix(root).unwrap_or(path).display();
-        let report = read_scene_source(path)
-            .and_then(|source| validate_scene(&source, &kinds))
-            .map_err(|error| format!("{display}: {error}"))?;
-        let record = serde_json::json!({
-            "event": "scene_validated",
-            "file": display.to_string(),
-            "scene": report.id,
-            "revision": report.revision,
-            "authored_entities": report.entities,
-            "prefabs": report.prefabs,
-            "expanded_entities": report.expanded_entities,
-        });
-        println!("{record}");
-    }
-    println!(
-        "{}",
-        serde_json::json!({"event": "scenes_validated", "scenes": paths.len()})
-    );
-    Ok(())
-}
-
-fn project_scenes(root: &Path) -> Result<Vec<PathBuf>, String> {
-    Ok(crate::rules::repository(root)?
-        .own()
-        .flat_map(|package| {
-            package.engine["scenes"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .map(move |scene| package.folder.join(scene))
-        })
-        .collect())
-}
+use std::{path::Path, process::Command};
 
 fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("client_list_serializes")
         + "
 ";
-    let mut files = game_schemas(root)?;
+    let mut files = game_files(root)?;
     files.extend([
         ("web/src/generated/clients.json".to_owned(), clients),
         (
@@ -80,7 +35,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(files)
 }
 
-fn game_schemas(root: &Path) -> Result<Vec<(String, String)>, String> {
+fn game_files(root: &Path) -> Result<Vec<(String, String)>, String> {
     let mut files = Vec::new();
     for package in crate::rules::repository(root)?.projects() {
         let Some(folder) = package.path.as_deref() else {
@@ -88,28 +43,30 @@ fn game_schemas(root: &Path) -> Result<Vec<(String, String)>, String> {
         };
         let project = crate::process::Project::read(root, folder)?;
         let program = crate::pipeline::build_native(root, &project)?;
-        let output = Command::new(&program)
-            .arg("--schemas")
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("{program}: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "{program} --schemas: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let printed = String::from_utf8_lossy(&output.stdout);
-        let listed: serde_json::Map<String, serde_json::Value> = printed
-            .lines()
-            .rev()
-            .find_map(|line| serde_json::from_str(line).ok())
-            .ok_or_else(|| format!("{program} --schemas printed no files"))?;
-        for (name, contents) in listed {
-            let contents = contents
-                .as_str()
-                .ok_or_else(|| format!("{program} --schemas printed {name} as no text"))?;
-            files.push((format!("{folder}/generated/{name}"), contents.to_owned()));
+        for mode in ["--schemas", "--shaders"] {
+            let output = Command::new(&program)
+                .arg(mode)
+                .current_dir(root)
+                .output()
+                .map_err(|error| format!("{program}: {error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "{program} {mode}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            let printed = String::from_utf8_lossy(&output.stdout);
+            let listed: serde_json::Map<String, serde_json::Value> = printed
+                .lines()
+                .rev()
+                .find_map(|line| serde_json::from_str(line).ok())
+                .ok_or_else(|| format!("{program} {mode} printed no files"))?;
+            for (name, contents) in listed {
+                let contents = contents
+                    .as_str()
+                    .ok_or_else(|| format!("{program} {mode} printed {name} as no text"))?;
+                files.push((format!("{folder}/generated/{name}"), contents.to_owned()));
+            }
         }
     }
     Ok(files)

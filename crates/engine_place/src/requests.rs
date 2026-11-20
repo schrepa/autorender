@@ -128,15 +128,32 @@ struct Tally {
     loading: Progress,
     settling: u32,
     failed: Vec<(u64, Error)>,
-    joined: bool,
+    board: Option<Arc<AtomicU64>>,
     owner: &'static str,
+}
+
+impl Tally {
+    fn moved(&self) {
+        if let Some(changes) = &self.board {
+            changes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for Tally {
+    fn drop(&mut self) {
+        self.moved();
+    }
 }
 
 type Tallied = Arc<Mutex<Tally>>;
 
 #[doc(hidden)]
 #[derive(Clone, Default)]
-pub struct Board(Arc<Mutex<Vec<Weak<Mutex<Tally>>>>>);
+pub struct Board {
+    members: Arc<Mutex<Vec<Weak<Mutex<Tally>>>>>,
+    changes: Arc<AtomicU64>,
+}
 
 thread_local! {
     static BOARD: RefCell<Option<Board>> = const { RefCell::new(None) };
@@ -184,7 +201,7 @@ impl Board {
     }
 
     pub fn add_to(&self, readiness: &mut Readiness) {
-        lock(&self.0).retain(|member| {
+        lock(&self.members).retain(|member| {
             let Some(tally) = member.upgrade() else {
                 return false;
             };
@@ -197,11 +214,15 @@ impl Board {
             true
         });
     }
+
+    pub fn changes(&self) -> u64 {
+        self.changes.load(Ordering::Relaxed)
+    }
 }
 
 impl fmt::Debug for Board {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Board").field(&lock(&self.0).len()).finish()
+        f.debug_tuple("Board").field(&lock(&self.members).len()).finish()
     }
 }
 
@@ -212,15 +233,16 @@ fn joined() -> Tallied {
 }
 
 fn join(tally: &Tallied) {
-    if lock(tally).joined {
+    if lock(tally).board.is_some() {
         return;
     }
     let _ = BOARD.try_with(|board| {
         if let Some(board) = board.borrow().as_ref() {
-            lock(&board.0).push(Arc::downgrade(tally));
+            lock(&board.members).push(Arc::downgrade(tally));
             let mut joined = lock(tally);
-            joined.joined = true;
+            joined.board = Some(Arc::clone(&board.changes));
             joined.owner = owner();
+            joined.moved();
         }
     });
 }
@@ -236,12 +258,21 @@ impl Default for Settling {
 impl Settling {
     pub fn left(&self, left: u32) {
         join(&self.0);
-        lock(&self.0).settling = left;
+        let mut tally = lock(&self.0);
+        if tally.settling != left {
+            tally.settling = left;
+            tally.moved();
+        }
     }
 
     pub fn failed(&self, failed: Option<Error>) {
         join(&self.0);
-        lock(&self.0).failed = failed.into_iter().map(|error| (0, error)).collect();
+        let failed: Vec<(u64, Error)> = failed.into_iter().map(|error| (0, error)).collect();
+        let mut tally = lock(&self.0);
+        if tally.failed != failed {
+            tally.failed = failed;
+            tally.moved();
+        }
     }
 }
 
@@ -309,6 +340,7 @@ fn left_asked<V, A>(tally: &mut Tally, held: &Held<V, A>) {
         Request::Failed(_) => tally.failed.retain(|(serial, _)| *serial != held.serial),
         Request::Ready(_) | Request::Missing => {}
     }
+    tally.moved();
 }
 
 impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
@@ -355,6 +387,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
                 self.asked.insert(ticket, free.key().clone());
                 let mut tally = lock(&self.tally);
                 tally.loading = tally.loading.and(Progress::asked());
+                tally.moved();
                 free.insert(Held {
                     request: Request::Asked(ticket),
                     interests: 1,

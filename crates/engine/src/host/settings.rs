@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Resource, World};
-use engine_core::{Error, ErrorCode, SceneContext, Section};
+use engine_core::{Error, ErrorCode, Section};
 use engine_registry::SettingsEntry;
 use engine_settings::Expected;
 use serde_json::Value;
@@ -35,13 +35,6 @@ fn overlaid(entry: &str) -> Result<(String, Value), Error> {
     };
     let value = engine_settings::parse_json::<Value>(value).map_err(|error| error.within("$"))?;
     Ok((key.to_owned(), value))
-}
-
-fn scoped<R>(world: &mut World, run: impl FnOnce(&mut World) -> R) -> R {
-    match world.get_resource::<SceneContext>().cloned() {
-        Some(context) => context.scope(|| run(world)),
-        None => run(world),
-    }
 }
 
 fn split(key: &str) -> (&str, Option<&str>) {
@@ -140,7 +133,7 @@ fn apply_settings(world: &mut World, entries: &[(String, Value)]) -> Result<(), 
             touched.push(entry);
         }
     }
-    scoped(world, |world| {
+    engine_scene::named(world, |world| {
         let before: Vec<(SettingsEntry, Value)> = touched
             .iter()
             .map(|entry| entry.current(world).map(|value| (*entry, value)))
