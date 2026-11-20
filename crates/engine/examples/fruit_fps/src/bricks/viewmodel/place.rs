@@ -567,7 +567,7 @@ fn published(
             (
                 look.markers
                     .muzzle
-                    .map(|at| body.eye + eye_turn * (root + turn * at)),
+                    .map(|at| body.eye + eye_turn * ((root + turn * at) * scale)),
                 eye_turn * turn * Vec3::Z,
             )
         },

@@ -173,12 +173,15 @@ impl Spawns {
         &mut self,
         look: &EffectsNumbers,
         from: Vec3,
-        muzzle: Option<Vec3>,
+        muzzle: Option<(Vec3, f32)>,
         to: Vec3,
         born: f64,
     ) {
         let toward = (to - from).normalize_or_zero();
-        let muzzle = muzzle.unwrap_or(from + muzzle_offset(toward, look.tracer.muzzle_offset_m));
+        let (muzzle, scale) = muzzle.unwrap_or((
+            from + muzzle_offset(toward, look.tracer.muzzle_offset_m),
+            1.0,
+        ));
         self.tracers.push(Tracer {
             from: muzzle,
             to,
@@ -190,7 +193,7 @@ impl Spawns {
             toward,
             born,
             seed,
-            scale: 1.0,
+            scale,
             seconds: look.flash.seconds,
         });
     }
@@ -339,13 +342,15 @@ struct Origins<'a> {
 }
 
 impl Origins<'_> {
-    fn muzzle(&self, slot: u32, human: Option<u32>) -> Option<Vec3> {
+    fn muzzle(&self, slot: u32, human: Option<u32>) -> Option<(Vec3, f32)> {
         if human == Some(slot) {
-            return self.view.and_then(|view| view.muzzle);
+            return self
+                .view
+                .and_then(|view| view.muzzle.map(|at| (at, view.scale)));
         }
         self.muzzles
             .and_then(|muzzles| muzzles.of(slot))
-            .map(|muzzle| muzzle.position)
+            .map(|muzzle| (muzzle.position, 1.0))
     }
 }
 

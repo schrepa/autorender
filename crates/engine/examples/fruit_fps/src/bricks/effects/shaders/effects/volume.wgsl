@@ -134,7 +134,15 @@ fn zone_dashes(across: vec2<f32>) -> f32 {
     return 0.55 + 0.45 * smoothstep(0.35, 0.5, abs(dash - 0.5));
 }
 
-fn wall_glow(item: EffectItem, axes: mat3x3<f32>, seen: Seen, radius: f32, dashed: bool) -> f32 {
+fn wall_glow(
+    item: EffectItem,
+    axes: mat3x3<f32>,
+    seen: Seen,
+    radius: f32,
+    dashed: bool,
+    base_y: f32,
+    height: f32,
+) -> f32 {
     let eye = (seen.eye - item.p0.xyz) * axes;
     let toward = seen.toward * axes;
     let a = dot(toward.xz, toward.xz);
@@ -145,13 +153,12 @@ fn wall_glow(item: EffectItem, axes: mat3x3<f32>, seen: Seen, radius: f32, dashe
         return 0.0;
     }
     let root = sqrt(reach);
-    let height = item.p1.y;
     let inv_a = 1.0 / a;
-    let inv_height = 1.0 / height;
+    let inv_height = 1.0 / max(height, 1.0e-3);
     var most = 0.0;
     for (var side = 0u; side < 2u; side += 1u) {
         let t = (-b + select(-root, root, side == 1u)) * inv_a;
-        let y = eye.y + t * toward.y;
+        let y = eye.y + t * toward.y - base_y;
         if t > 0.0 && t < seen.scene && y >= 0.0 && y <= height {
             let up = 1.0 - y * inv_height;
             var factor = 1.0;
@@ -168,7 +175,7 @@ fn ring(distance: f32, at: f32, width: f32) -> f32 {
     return 1.0 - smoothstep(0.0, max(width, 1.0e-3), abs(distance - at));
 }
 
-fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32) -> f32 {
+fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32, flat_up: f32) -> f32 {
     let kind = u32(item.p3.x);
     let radius = item.p0.w;
     let rim = item.p3.w;
@@ -181,7 +188,21 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32) -> f32 {
         return 0.0;
     }
     if kind == 6u {
-        return ring(length(local.xz), radius, rim) * (1.0 - abs(local.y) / item.p1.y);
+        let line = max(rim, min(grain * 1.6, rim * 2.5));
+        if radius <= 0.35 {
+            let dist3 = length(local);
+            let outer = max(radius, 0.18);
+            return ring(dist3, outer, max(line * 0.7, 0.035)) * 0.85;
+        }
+        let across = length(local.xz);
+        let floor_mask = smoothstep(0.35, 0.75, flat_up);
+        let vertical = 1.0 - smoothstep(0.25, 0.85, abs(local.y));
+        var edge = ring(across, radius - rim * 0.5, line);
+        if edge > 0.0 {
+            edge *= zone_dashes(local.xz);
+        }
+        let inner = (1.0 - smoothstep(radius - rim, radius, across)) * 0.16;
+        return max(edge * 0.95, inner) * floor_mask * vertical;
     }
     if kind == 7u {
         let inside = item.p1.xyz - vec3<f32>(rim) - abs(local);
@@ -240,17 +261,24 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32) -> f32 {
     let item = effect_items[corner.index];
     let seen = seen_from(corner, corner.clip.xy);
     let point = seen.eye + seen.toward * seen.scene;
-    let grain = max(length(fwidth(point)), 1.0e-4);
+    let dx = dpdx(point);
+    let dy = dpdy(point);
+    let grain = max(length(abs(dx) + abs(dy)), 1.0e-4);
+    let surf_n = cross(dx, dy);
+    let surf_sq = dot(surf_n, surf_n);
+    let flat_up = select(1.0, abs(surf_n.y) * inverseSqrt(surf_sq), surf_sq > 1.0e-12);
     let axes = effect_axes(item);
     let local = (point - item.p0.xyz) * axes;
     let kind = u32(item.p3.x);
     var wall = 0.0;
-    if kind == 1u || kind == 2u || kind == 6u {
-        wall = wall_glow(item, axes, seen, item.p0.w, kind != 6u) * 0.85;
+    if kind == 1u || kind == 2u {
+        wall = wall_glow(item, axes, seen, item.p0.w, true, 0.0, item.p1.y) * 0.85;
     } else if kind == 3u {
-        wall = wall_glow(item, axes, seen, max(item.p0.w * item.p6.x, 1.0e-3), false) * (1.0 - item.p6.x);
+        wall = wall_glow(item, axes, seen, max(item.p0.w * item.p6.x, 1.0e-3), false, 0.0, item.p1.y) * (1.0 - item.p6.x);
+    } else if kind == 6u && item.p0.w > 0.35 {
+        wall = wall_glow(item, axes, seen, item.p0.w, true, -0.15, 0.22) * 0.18;
     }
-    let alpha = saturate(max(marked(item, local, seen, grain), wall));
+    let alpha = saturate(max(marked(item, local, seen, grain, flat_up), wall));
     if alpha <= 0.0 {
         discard;
     }

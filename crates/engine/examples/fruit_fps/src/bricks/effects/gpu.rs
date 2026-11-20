@@ -54,7 +54,7 @@ fn noise_volume() -> Vec<u8> {
 }
 
 pub(super) struct EffectsGpu {
-    glow: Pipeline<Self, Scene>,
+    glow: Pipeline<Self, Own>,
     solid: Pipeline<Self, Scene>,
     slab: Pipeline<Self, Scene>,
     sheet: Pipeline<Self, Scene>,
@@ -167,13 +167,6 @@ impl GpuPart for EffectsGpu {
         let scene = Scene::named(COLOR_PASS);
         let over = [(blended(), wgpu::ColorWrites::ALL)];
         let opaque = [(None, wgpu::ColorWrites::ALL)];
-        let entries = [glow::VS_GLOW, glow::FS_GLOW];
-        let list = bound(cx, entries, &buffers);
-        let glow = cx.render_pipeline(
-            scene,
-            &description(entries[0], entries[1], tested(false), &over),
-            &list,
-        )?;
         let entries = [solid::VS_SOLID, solid::FS_SOLID];
         let list = bound(cx, entries, &buffers);
         let solid = cx.render_pipeline(
@@ -209,6 +202,13 @@ impl GpuPart for EffectsGpu {
             .target(COLOR, Access::Load)
             .views(PassViews::Main)
             .id();
+        let entries = [glow::VS_GLOW, glow::FS_GLOW];
+        let list = bound(cx, entries, &buffers);
+        let glow = cx.render_pipeline(
+            pass,
+            &description(entries[0], entries[1], DepthUse::None, &over),
+            &list,
+        )?;
         let entries = [volume::VS_VOLUME, volume::FS_SMOKE];
         let list = bound(cx, entries, &buffers);
         let smoke = cx.render_pipeline(
@@ -330,6 +330,9 @@ impl GpuPart for EffectsGpu {
         if !self.smoke_range.is_empty() {
             draw.draw(&self.smoke, pulled(BOX_VERTICES, &self.smoke_range));
         }
+        for (range, vertices) in &self.glows {
+            draw.draw(&self.glow, pulled(*vertices, range));
+        }
         if self.screened {
             draw.draw(&self.screen, pulled(FULLSCREEN_VERTICES, &(0..1)));
         }
@@ -375,9 +378,6 @@ impl EffectsGpu {
         }
         if !self.sheet_range.is_empty() {
             draw.draw(&self.sheet, pulled(BOX_VERTICES, &self.sheet_range));
-        }
-        for (range, vertices) in &self.glows {
-            draw.draw(&self.glow, pulled(*vertices, range));
         }
         if !self.barrier_range.is_empty() {
             draw.draw(&self.barrier, pulled(QUAD_VERTICES, &self.barrier_range));

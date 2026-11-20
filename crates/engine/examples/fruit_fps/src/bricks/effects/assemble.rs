@@ -1655,6 +1655,8 @@ pub(super) fn assemble(
     let device = put(&mut items, device_solid);
     let smoke = put(&mut items, sorted.smokes.drain(..));
     let (mut frame, mut screen) = screen_frame(look, &feed, show, &spawns, now);
+    frame.clock[2] = smoke.start as f32;
+    frame.clock[3] = smoke.end as f32;
     let field = lit_frame(&mut frame, seen.lighting.as_deref());
     let limit = if show == Show::NearSight {
         Some(look.showcase.radius_m)

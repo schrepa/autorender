@@ -76,7 +76,7 @@ pub(crate) struct EffectsDrawing {
 
 impl EffectsDrawing {
     pub fn own_pass(&self) -> bool {
-        self.screen || !self.smoke.is_empty() || !self.marks.is_empty()
+        self.screen || !self.smoke.is_empty() || !self.marks.is_empty() || !self.glows.is_empty()
     }
 }
 
