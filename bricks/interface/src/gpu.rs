@@ -30,6 +30,7 @@ pub(super) struct InterfaceGpu {
     filled: Option<Pipeline<Self, Own>>,
     sent: Option<u64>,
     count: u32,
+    staged: Vec<u8>,
 }
 
 impl GpuPart for InterfaceGpu {
@@ -90,6 +91,7 @@ impl GpuPart for InterfaceGpu {
             filled: None,
             sent: None,
             count: 0,
+            staged: Vec::new(),
         })
     }
 
@@ -103,12 +105,15 @@ impl GpuPart for InterfaceGpu {
         let wanted = HEADER_BYTES + (count.max(1) * size_of::<Quad>()) as u64;
         let fresh = cx.allocate_buffer(self.quads, wanted.next_power_of_two()) == Allocation::Fresh;
         if fresh || self.sent != Some(draw.revision) {
-            cx.write(self.quads, 0, &[draw.size.x, draw.size.y, draw.sharpen_levels, 0.0]);
-            let mut at = HEADER_BYTES;
+            let total = HEADER_BYTES as usize + count * size_of::<Quad>();
+            self.staged.clear();
+            self.staged.reserve(total.saturating_sub(self.staged.capacity()));
+            let header = [draw.size.x, draw.size.y, draw.sharpen_levels, 0.0];
+            self.staged.extend_from_slice(bytemuck::bytes_of(&header));
             for part in parts.into_iter().filter(|part| !part.is_empty()) {
-                cx.write(self.quads, at, part);
-                at += size_of_val(part) as u64;
+                self.staged.extend_from_slice(bytemuck::cast_slice(part));
             }
+            cx.write(self.quads, 0, &self.staged);
             self.sent = Some(draw.revision);
         }
     }

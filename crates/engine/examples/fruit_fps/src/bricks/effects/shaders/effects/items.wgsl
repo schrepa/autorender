@@ -13,9 +13,13 @@ struct EffectItem {
 
 @group(2) @binding(0) var<storage, read> effect_items: array<EffectItem>;
 @group(2) @binding(1) var<uniform> effects_frame: EffectsFrame;
+@group(2) @binding(2) var effects_noise_map: texture_3d<f32>;
+@group(2) @binding(3) var effects_noise_sampler: sampler;
 
 const EFFECT_HIDDEN: vec4<f32> = vec4<f32>(2.0, 2.0, 2.0, 1.0);
 const EFFECT_TAU: f32 = 6.2831853;
+const EFFECT_INV_24: f32 = 1.0 / 16777216.0;
+const EFFECT_NOISE_INV: f32 = 1.0 / 32.0;
 
 fn effect_hash(value: u32) -> u32 {
     var x = value * 747796405u + 2891336453u;
@@ -23,8 +27,12 @@ fn effect_hash(value: u32) -> u32 {
     return (x >> 22u) ^ x;
 }
 
+fn effect_noise_raw(seed: u32) -> f32 {
+    return f32(effect_hash(seed) >> 8u);
+}
+
 fn effect_random(seed: u32) -> f32 {
-    return f32(effect_hash(seed) >> 8u) / 16777216.0;
+    return effect_noise_raw(seed) * EFFECT_INV_24;
 }
 
 fn effect_direction(seed: u32) -> vec3<f32> {
@@ -67,18 +75,28 @@ fn effect_lattice(cell: vec3<f32>) -> f32 {
     return effect_random((bits.x * 73856093u) ^ (bits.y * 19349663u) ^ (bits.z * 83492791u));
 }
 
+fn effect_noise_2d(point: vec2<f32>, z_int: f32) -> f32 {
+    let cell = floor(point);
+    let part = point - cell;
+    let blend = part * part * (3.0 - 2.0 * part);
+    return textureSampleLevel(
+        effects_noise_map,
+        effects_noise_sampler,
+        vec3<f32>(cell + blend + 0.5, z_int + 0.5) * EFFECT_NOISE_INV,
+        0.0,
+    ).r;
+}
+
 fn effect_noise(point: vec3<f32>) -> f32 {
     let cell = floor(point);
     let part = point - cell;
     let blend = part * part * (3.0 - 2.0 * part);
-    let a = mix(effect_lattice(cell), effect_lattice(cell + vec3<f32>(1.0, 0.0, 0.0)), blend.x);
-    let b = mix(effect_lattice(cell + vec3<f32>(0.0, 1.0, 0.0)),
-        effect_lattice(cell + vec3<f32>(1.0, 1.0, 0.0)), blend.x);
-    let c = mix(effect_lattice(cell + vec3<f32>(0.0, 0.0, 1.0)),
-        effect_lattice(cell + vec3<f32>(1.0, 0.0, 1.0)), blend.x);
-    let d = mix(effect_lattice(cell + vec3<f32>(0.0, 1.0, 1.0)),
-        effect_lattice(cell + vec3<f32>(1.0, 1.0, 1.0)), blend.x);
-    return mix(mix(a, b, blend.y), mix(c, d, blend.y), blend.z);
+    return textureSampleLevel(
+        effects_noise_map,
+        effects_noise_sampler,
+        (cell + blend + 0.5) * EFFECT_NOISE_INV,
+        0.0,
+    ).r;
 }
 
 fn effect_axes(item: EffectItem) -> mat3x3<f32> {

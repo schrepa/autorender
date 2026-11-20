@@ -59,7 +59,8 @@ impl Default for Start {
                 },
                 want: GpuAsk {
                     features: wgpu::Features::TEXTURE_COMPRESSION_BC
-                        | wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                        | wgpu::Features::INDIRECT_FIRST_INSTANCE
+                        | wgpu::Features::RG11B10UFLOAT_RENDERABLE,
                     limits: wgpu::Limits {
                         max_buffer_size: u64::MAX,
                         max_storage_buffer_binding_size: u64::MAX,

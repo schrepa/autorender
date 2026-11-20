@@ -43,14 +43,13 @@ impl<'a> Reader<'a> {
 
     fn take(&mut self, length: usize) -> Result<&'a [u8], Error> {
         let end = self.at.saturating_add(length);
-        let taken = self
-            .bytes
-            .get(self.at..end)
-            .ok_or(Error::from(Fault::Truncated {
+        let taken = self.bytes.get(self.at..end).ok_or_else(|| {
+            Error::from(Fault::Truncated {
                 item: self.item,
                 needed: end,
                 held: self.bytes.len(),
-            }))?;
+            })
+        })?;
         self.at = end;
         Ok(taken)
     }

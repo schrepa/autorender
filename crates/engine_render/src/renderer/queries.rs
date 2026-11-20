@@ -76,6 +76,43 @@ impl Renderer {
         }
         crate::linker::counting::names(world);
         crate::machine::layout_names(world);
+        register(
+            world,
+            NameEntry::call("gpu.shaders.reload", |reach, _| {
+                let Some(renderer) = reach
+                    .parts
+                    .iter_mut()
+                    .find_map(|part| part.downcast_mut::<Self>())
+                else {
+                    return Ok(engine_registry::Answer::Value(unavailable("no_renderer")));
+                };
+                renderer.reload_shaders_answer(reach.world)
+            }),
+        );
+    }
+
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    fn reload_shaders_answer(
+        &mut self,
+        world: &mut bevy_ecs::world::World,
+    ) -> Result<engine_registry::Answer, Error> {
+        let reloaded = self
+            .reload_shaders_now(world)
+            .map_err(|errors| errors.into_iter().next().unwrap_or_else(|| failed("$.shaders")))?;
+        Ok(engine_registry::Answer::Value(serde_json::json!({
+            "reloaded": reloaded,
+            "count": reloaded.len(),
+        })))
+    }
+
+    #[cfg(all(feature = "dev", target_arch = "wasm32"))]
+    fn reload_shaders_answer(
+        &mut self,
+        _: &mut bevy_ecs::world::World,
+    ) -> Result<engine_registry::Answer, Error> {
+        Ok(engine_registry::Answer::Value(
+            engine_registry::unavailable("wasm"),
+        ))
     }
 
     #[cfg(feature = "dev")]

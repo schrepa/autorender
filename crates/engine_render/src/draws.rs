@@ -78,11 +78,24 @@ impl<'e> RawDraw<'e> {
         self.encoding
     }
 
-    pub(crate) fn batches(&mut self, (handle, vertices, order): (u32, Range<u32>, DrawOrder)) {
+    pub(crate) fn batches(&mut self, call: (u32, Range<u32>, DrawOrder)) {
+        self.batches_matching(call, &mut |_| true);
+    }
+
+    pub(crate) fn batches_matching(
+        &mut self,
+        (handle, vertices, order): (u32, Range<u32>, DrawOrder),
+        keep: &mut dyn FnMut(BatchOf<'_>) -> bool,
+    ) {
         let Some((batches, pass)) = self.batches.as_mut() else {
             return;
         };
         let drawn = (&mut **batches, *pass);
-        (self.encoding).batches((self.part, self.timer), (handle, vertices, order), drawn);
+        (self.encoding).batches_matching(
+            (self.part, self.timer),
+            (handle, vertices, order),
+            drawn,
+            keep,
+        );
     }
 }

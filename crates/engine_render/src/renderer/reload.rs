@@ -77,6 +77,76 @@ impl Renderer {
         };
     }
 
+    pub fn reload_shaders_now(
+        &mut self,
+        world: &mut World,
+    ) -> Result<Vec<&'static str>, Vec<Error>> {
+        if self.run.is_none() {
+            return Ok(Vec::new());
+        }
+        let Some(registry) = world.get_resource::<engine_registry::Registry>() else {
+            return Ok(Vec::new());
+        };
+        let sources = crate::linker::sources(registry);
+        let modules: Vec<_> = (std::iter::once(crate::shared::core_source()).chain(sources))
+            .flat_map(engine_core::Source::modules)
+            .filter(|module| !module.file().is_empty())
+            .collect();
+        let previous = self.watched.edited.clone();
+        let mut changed = Vec::new();
+        for module in modules {
+            let path = module.path();
+            let file = module.file();
+            let stamp = modified(file);
+            match self
+                .watched
+                .files
+                .iter_mut()
+                .find(|(known, ..)| *known == path)
+            {
+                Some((_, _, seen)) => *seen = stamp,
+                None => self.watched.files.push((path, file, stamp)),
+            }
+            let text = match std::fs::read_to_string(file) {
+                Ok(text) => text,
+                Err(error) => {
+                    self.watched.edited = previous;
+                    let errors = vec![failed_with(&format!("$.shaders.{path}"), error)];
+                    self.watched.errors = errors.clone();
+                    return Err(errors);
+                }
+            };
+            let current = self
+                .watched
+                .edited
+                .get(path)
+                .map_or(module.text(), String::as_str);
+            if text != current {
+                if text == module.text() {
+                    self.watched.edited.remove(path);
+                } else {
+                    self.watched.edited.insert(path.to_owned(), text);
+                }
+                changed.push(path);
+            }
+        }
+        if changed.is_empty() {
+            self.watched.errors.clear();
+            return Ok(changed);
+        }
+        match self.reinstall_edited(world) {
+            Ok(()) => {
+                self.watched.errors.clear();
+                Ok(changed)
+            }
+            Err(errors) => {
+                self.watched.edited = previous;
+                self.watched.errors = errors.clone();
+                Err(errors)
+            }
+        }
+    }
+
     fn reinstall_edited(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
         let linking = super::install::Linking {
             edited: self.watched.edited(),

@@ -3,6 +3,7 @@ mod bricks;
 mod development;
 mod lint;
 mod rules;
+mod shader_eval;
 mod shader_report;
 mod ship;
 
@@ -46,7 +47,10 @@ fn execute() -> Result<(), String> {
         return lint::lint(&root, &options);
     }
     if task == "shaders" {
-        return shader_report::run(&root, &options);
+        return match options.split_first() {
+            Some((sub, rest)) if sub == "eval" => shader_eval::run(&root, rest),
+            _ => shader_report::run(&root, &options),
+        };
     }
     if task == "generate" {
         return authoring::generate(&root, &options);
@@ -97,6 +101,7 @@ fn commands() -> Vec<Command> {
                 CommandOption::flag("--no-rga"),
             ],
         ),
+        shader_eval::command(),
     ];
     commands.extend(xtask::agent::commands());
     commands.extend([

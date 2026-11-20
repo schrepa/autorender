@@ -46,6 +46,7 @@ pub(crate) enum Holder {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Held {
     Buffer(u32),
+    Texture(u32),
     Targets,
     Cameras,
 }
@@ -53,6 +54,7 @@ pub(crate) enum Held {
 #[derive(Default)]
 pub(crate) struct Holders {
     buffers: Vec<Vec<Holder>>,
+    textures: Vec<Vec<Holder>>,
     targets: Vec<Holder>,
     cameras: Vec<Holder>,
     post: Vec<Holder>,
@@ -73,6 +75,7 @@ impl Holders {
             .collect();
         let mut holders = Self {
             buffers: vec![Vec::new(); machine.declared.buffers.len()],
+            textures: vec![Vec::new(); machine.declared.textures.len()],
             own_base,
             ..Self::default()
         };
@@ -113,6 +116,7 @@ impl Holders {
     fn hold(&mut self, bound: &Bound, holder: Holder) {
         match bound {
             Bound::Buffer(buffer) => self.buffers[*buffer as usize].push(holder),
+            Bound::Texture(texture) => self.textures[*texture as usize].push(holder),
             Bound::Target(_) => self.targets.push(holder),
             Bound::Sampler(_) | Bound::Asset => {}
         }
@@ -121,6 +125,7 @@ impl Holders {
     fn of_held(&self, held: Held) -> &[Holder] {
         match held {
             Held::Buffer(buffer) => &self.buffers[buffer as usize],
+            Held::Texture(texture) => &self.textures[texture as usize],
             Held::Targets => &self.targets,
             Held::Cameras => &self.cameras,
         }
@@ -156,7 +161,12 @@ impl PassLayout {
     }
 }
 
-const GROUPED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "profiling"));
+pub(crate) const LABELLED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "dev"));
+const GROUPED: bool = LABELLED;
+
+pub(crate) const fn debug_label(name: &'static str) -> Option<&'static str> {
+    if LABELLED { Some(name) } else { None }
+}
 
 pub(crate) struct Allocated {
     pub(crate) texture: wgpu::Texture,
@@ -168,6 +178,7 @@ pub(crate) struct Allocated {
 pub(crate) struct Made {
     pub(crate) label: &'static str,
     pub(crate) format: wgpu::TextureFormat,
+    pub(crate) dimension: wgpu::TextureDimension,
     pub(crate) usage: wgpu::TextureUsages,
     pub(crate) samples: u32,
 }
@@ -179,14 +190,19 @@ impl Allocated {
             size,
             mip_level_count: 1,
             sample_count: made.samples,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: made.dimension,
             format: made.format,
             usage: made.usage,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: (size.depth_or_array_layers > 1)
-                .then_some(wgpu::TextureViewDimension::D2Array),
+            dimension: match made.dimension {
+                wgpu::TextureDimension::D3 => Some(wgpu::TextureViewDimension::D3),
+                wgpu::TextureDimension::D2 if size.depth_or_array_layers > 1 => {
+                    Some(wgpu::TextureViewDimension::D2Array)
+                }
+                wgpu::TextureDimension::D1 | wgpu::TextureDimension::D2 => None,
+            },
             ..Default::default()
         });
         Self {
@@ -227,6 +243,7 @@ pub(crate) struct Open {
     pub(crate) layout: u32,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
+    pub(crate) planned_at: usize,
     pub(crate) label: Option<u32>,
 }
 
@@ -398,10 +415,12 @@ impl Run {
         let made = Made {
             label: decl.label,
             format: decl.format,
+            dimension: decl.dimension,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             samples: 1,
         };
         self.tables.textures[at] = Some(Allocated::new(&self.device, &made, size));
+        self.touch(Held::Texture(texture));
         Allocation::Fresh
     }
 

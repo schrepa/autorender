@@ -3,7 +3,9 @@ use engine_core::TargetName;
 pub const COLOR: TargetName = TargetName("color");
 pub const DEPTH: TargetName = TargetName("depth");
 
+pub const DEPTH_PASS: &str = "depth";
 pub const COLOR_PASS: &str = "color";
+pub const REVEAL_PASS: &str = "reveal";
 
 pub const CAMERA: &str = "camera";
 

@@ -107,15 +107,25 @@ fn rind_seed_spot(plane: vec2<f32>, seed: f32, grain: f32) -> f32 {
 
 fn rind_cracks(local: vec3<f32>, health: f32, grain: f32) -> f32 {
     let damage = 1.0 - saturate(health);
+    if damage <= 0.0 {
+        return 0.0;
+    }
     let line = abs(effect_noise(local * 2.5) - 0.5);
     let width = damage * 0.05;
-    return select(0.0, 1.0 - smoothstep(width, width + 0.01 + grain, line), damage > 0.0);
+    return 1.0 - smoothstep(width, width + 0.01 + grain, line);
 }
 
 fn rind_glint(normal: vec3<f32>, view: vec3<f32>, power: f32) -> f32 {
     let sun = effects_frame.sun;
+    if sun.w == 0.0 {
+        return 0.0;
+    }
     let half_way = stable_normalize(sun.xyz + view);
-    return select(0.0, pow(saturate(dot(normal, half_way)), power), sun.w != 0.0);
+    let ndh = dot(normal, half_way);
+    if ndh <= 0.0 {
+        return 0.0;
+    }
+    return pow(ndh, power);
 }
 
 @fragment fn fs_slab(corner: SlabCorner) -> @location(0) vec4<f32> {
@@ -127,46 +137,69 @@ fn rind_glint(normal: vec3<f32>, view: vec3<f32>, power: f32) -> f32 {
     let period = max(effects_frame.rind_skin.w, 0.02);
     let edge = rind_stripe_edge(local.x, local.y, seed);
     let soft = max(fwidth(edge), 1.0e-4);
-    let far = saturate(grain / period * 3.0 - 0.5);
-    let striped = mix(smoothstep(-soft, soft, edge), 0.3, far);
-    let speckle = mix(0.88 + 0.24 * effect_noise(local * 22.0 + vec3<f32>(seed)), 1.0,
-        smoothstep(0.015, 0.05, grain));
-    let cracked = rind_cracks(local, item.p2.y, grain);
-    var skin = mix(effects_frame.rind_skin.rgb, effects_frame.rind_stripe.rgb, striped) * speckle;
-    skin = mix(skin, effects_frame.rind_flesh.rgb * 0.5, cracked);
-
-    let across = item.p1.x - abs(local.z);
-    let skin_m = effects_frame.rind_flesh.w;
-    let pith_m = effects_frame.rind_stripe.w;
-    let fleshy = smoothstep(skin_m + pith_m * 0.6 - grain, skin_m + pith_m + grain, across);
-    let plane = select(local.xz, local.yz, corner.face == SLAB_END);
-    let seeded = rind_seed_spot(plane, seed, grain) * smoothstep(0.6, 1.0, fleshy)
-        * (1.0 - smoothstep(0.02, 0.06, grain));
-    let fibre = mix(0.85 + 0.3 * effect_noise(vec3<f32>(plane * 30.0, seed)), 1.0,
-        smoothstep(0.01, 0.03, grain));
-    var cut = mix(effects_frame.rind_skin.rgb, effects_frame.rind_pith.rgb,
-        smoothstep(skin_m - grain, skin_m + grain, across));
-    cut = mix(cut, effects_frame.rind_flesh.rgb * fibre, fleshy);
-    cut = mix(cut, effects_frame.rind_seed.rgb, seeded);
-
-    let rounded = effects_frame.rind_seed.w * local.x / max(half, 1.0e-3);
-    let flat_normal = stable_normalize(corner.normal);
     let is_skin = corner.face == SLAB_SKIN;
-    let normal = select(flat_normal, stable_normalize(flat_normal + item.p4.xyz * rounded), is_skin);
+    let flat_normal = stable_normalize(corner.normal);
+    var surface = vec3<f32>(0.0);
+    var normal = flat_normal;
+    var seam = 1.0;
+    var wet = 0.0;
+    var glint_power = 60.0;
+    if is_skin {
+        let far = saturate(grain / period * 3.0 - 0.5);
+        let striped = mix(smoothstep(-soft, soft, edge), 0.3, far);
+        var speckle = 1.0;
+        if grain < 0.05 {
+            speckle = mix(0.88 + 0.24 * effect_noise(local * 22.0 + vec3<f32>(seed)), 1.0,
+                smoothstep(0.015, 0.05, grain));
+        }
+        let cracked = rind_cracks(local, item.p2.y, grain);
+        surface = mix(effects_frame.rind_skin.rgb, effects_frame.rind_stripe.rgb, striped) * speckle;
+        if cracked > 0.0 {
+            surface = mix(surface, effects_frame.rind_flesh.rgb * 0.5, cracked);
+        }
+        let rounded = effects_frame.rind_seed.w * local.x / max(half, 1.0e-3);
+        normal = stable_normalize(flat_normal + item.p4.xyz * rounded);
+        seam = mix(0.55, 1.0, smoothstep(0.0, 0.08, half - abs(local.x)));
+        wet = 0.22;
+        glint_power = 36.0;
+    } else {
+        let across = item.p1.x - abs(local.z);
+        let skin_m = effects_frame.rind_flesh.w;
+        let pith_m = effects_frame.rind_stripe.w;
+        let fleshy = smoothstep(skin_m + pith_m * 0.6 - grain, skin_m + pith_m + grain, across);
+        let plane = select(local.xz, local.yz, corner.face == SLAB_END);
+        var fibre = 1.0;
+        if grain < 0.03 {
+            fibre = mix(0.85 + 0.3 * effect_noise(vec3<f32>(plane * 30.0, seed)), 1.0,
+                smoothstep(0.01, 0.03, grain));
+        }
+        surface = mix(effects_frame.rind_skin.rgb, effects_frame.rind_pith.rgb,
+            smoothstep(skin_m - grain, skin_m + grain, across));
+        surface = mix(surface, effects_frame.rind_flesh.rgb * fibre, fleshy);
+        if grain < 0.06 && fleshy > 0.6 {
+            let seeded = rind_seed_spot(plane, seed, grain) * smoothstep(0.6, 1.0, fleshy)
+                * (1.0 - smoothstep(0.02, 0.06, grain));
+            surface = mix(surface, effects_frame.rind_seed.rgb, seeded);
+        }
+        wet = 0.45 * fleshy;
+    }
     let view = stable_normalize(camera.position.xyz - corner.world);
     let ground = local.y - item.p2.z;
-    let seam = select(1.0, mix(0.55, 1.0, smoothstep(0.0, 0.08, half - abs(local.x))), is_skin);
     let occlusion = seam * mix(0.45, 1.0, smoothstep(0.0, 0.6, ground));
-    let base = select(cut, skin, is_skin) * occlusion;
-    var shown = effect_lit(base, normal, corner.field);
-    let wet = select(0.45 * fleshy, 0.22, is_skin);
-    let glint = rind_glint(normal, view, select(60.0, 36.0, is_skin)) * wet * corner.field.a;
-    shown += effects_frame.sun_color.rgb * glint;
+    var shown = effect_lit(surface * occlusion, normal, corner.field);
+    if wet > 0.0 && corner.field.a > 0.0 {
+        let glint = rind_glint(normal, view, glint_power) * wet * corner.field.a;
+        shown += effects_frame.sun_color.rgb * glint;
+    }
     let rim = pow(1.0 - abs(dot(normal, view)), effects_frame.panel.z) * effects_frame.panel.y;
     shown += effects_frame.sun_color.rgb * rim * occlusion;
-    let below_top = slab_top(item, local.x) - item.p1.w - local.y;
-    let trim_m = effects_frame.panel.x;
-    let trim = select(0.0, 1.0 - smoothstep(trim_m - grain, trim_m + grain, below_top),
-        is_skin && below_top >= 0.0);
-    return vec4<f32>(mix(shown, item.p3.rgb * effects_frame.panel.w, trim), 1.0);
+    if is_skin {
+        let below_top = slab_top(item, local.x) - item.p1.w - local.y;
+        if below_top >= 0.0 {
+            let trim_m = effects_frame.panel.x;
+            let trim = 1.0 - smoothstep(trim_m - grain, trim_m + grain, below_top);
+            shown = mix(shown, item.p3.rgb * effects_frame.panel.w, trim);
+        }
+    }
+    return vec4<f32>(shown, 1.0);
 }

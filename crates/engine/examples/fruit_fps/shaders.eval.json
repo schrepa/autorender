@@ -1,0 +1,133 @@
+{
+  "game": "fruit_fps",
+  "size": [1280, 720],
+  "capture_size": [1280, 720],
+  "setup": [
+    {
+      "verb": "call",
+      "name": "step",
+      "args": { "until": "settled", "frames": 600 },
+      "deadline_ms": 60000
+    },
+    {
+      "verb": "set",
+      "name": "settings.match_test",
+      "args": { "value": { "skip_buy": true } }
+    },
+    {
+      "verb": "set",
+      "name": "settings.flow",
+      "args": { "value": { "play_now": true } }
+    },
+    {
+      "verb": "call",
+      "name": "step",
+      "args": { "until": "settled", "frames": 600 },
+      "deadline_ms": 60000
+    },
+    {
+      "verb": "call",
+      "name": "step",
+      "args": { "frames": 60, "ticks_per_frame": 1 },
+      "deadline_ms": 60000
+    }
+  ],
+  "views": [
+    {
+      "name": "live_combat",
+      "setup": [
+        {
+          "verb": "set",
+          "name": "settings.effects_show",
+          "args": { "value": { "show": "off" } }
+        },
+        {
+          "verb": "call",
+          "name": "step",
+          "args": { "frames": 2, "ticks_per_frame": 0 },
+          "deadline_ms": 30000
+        }
+      ]
+    },
+    {
+      "name": "buy_barrier",
+      "setup": [
+        {
+          "verb": "set",
+          "name": "settings.effects_show",
+          "args": { "value": { "show": "barrier" } }
+        },
+        {
+          "verb": "call",
+          "name": "step",
+          "args": { "frames": 2, "ticks_per_frame": 0 },
+          "deadline_ms": 30000
+        }
+      ]
+    },
+    {
+      "name": "walls_curtain",
+      "setup": [
+        {
+          "verb": "set",
+          "name": "settings.effects_show",
+          "args": { "value": { "show": "walls" } }
+        },
+        {
+          "verb": "call",
+          "name": "step",
+          "args": { "frames": 2, "ticks_per_frame": 0 },
+          "deadline_ms": 30000
+        }
+      ]
+    },
+    {
+      "name": "zones",
+      "setup": [
+        {
+          "verb": "set",
+          "name": "settings.effects_show",
+          "args": { "value": { "show": "zones" } }
+        },
+        {
+          "verb": "call",
+          "name": "step",
+          "args": { "frames": 2, "ticks_per_frame": 0 },
+          "deadline_ms": 30000
+        }
+      ]
+    },
+    {
+      "name": "effects_all",
+      "setup": [
+        {
+          "verb": "set",
+          "name": "settings.effects_show",
+          "args": { "value": { "show": "all" } }
+        },
+        {
+          "verb": "call",
+          "name": "step",
+          "args": { "frames": 2, "ticks_per_frame": 0 },
+          "deadline_ms": 30000
+        }
+      ]
+    },
+    {
+      "name": "inside_smoke",
+      "setup": [
+        {
+          "verb": "set",
+          "name": "settings.effects_show",
+          "args": { "value": { "show": "inside_smoke" } }
+        },
+        {
+          "verb": "call",
+          "name": "step",
+          "args": { "frames": 2, "ticks_per_frame": 0 },
+          "deadline_ms": 30000
+        }
+      ]
+    }
+  ]
+}

@@ -12,6 +12,8 @@ struct VolumeCorner {
     @location(0) world: vec3<f32>,
     @location(1) @interpolate(flat) index: u32,
     @location(2) @interpolate(flat) field: vec4<f32>,
+    @location(3) @interpolate(flat) clip_start: vec2<f32>,
+    @location(4) clip_step: vec2<f32>,
 }
 
 struct Seen {
@@ -26,56 +28,45 @@ struct Seen {
     let item = effect_items[instance];
     let corner = effect_box_corner(vertex);
     let world = item.p0.xyz + effect_axes(item) * (corner.local * item.p1.xyz);
+    let eye = camera.position.xyz;
+    let start_clip = camera.view_projection * vec4<f32>(eye, 1.0);
+    let step_clip = camera.view_projection * vec4<f32>(world - eye, 0.0);
     var out: VolumeCorner;
     out.clip = view_clip(world);
     out.world = world;
     out.index = instance;
     out.field = effect_field(item.p0.xyz);
+    out.clip_start = start_clip.zw;
+    out.clip_step = step_clip.zw;
     return out;
 }
 
-fn scene_distance(pixel: vec2<f32>, eye: vec3<f32>, world: vec3<f32>) -> f32 {
+fn scene_distance(pixel: vec2<f32>, clip_start: vec2<f32>, clip_step: vec2<f32>, own: f32) -> f32 {
     let depth = textureLoad(effects_depth, vec2<i32>(pixel), 0);
-    let toward = world - eye;
-    let start = camera.view_projection * vec4<f32>(eye, 1.0);
-    let step = camera.view_projection * vec4<f32>(toward, 0.0);
-    let below = step.z - depth * step.w;
-    if depth <= 0.0 || below == 0.0 {
+    if depth <= 0.0 {
         return VOLUME_FAR;
     }
-    let t = (depth * start.w - start.z) / below;
-    return select(VOLUME_FAR, t * length(toward), t > 0.0);
-}
-
-fn far_face(item: EffectItem, seen: Seen) -> bool {
-    let axes = effect_axes(item);
-    let local_eye = (seen.eye - item.p0.xyz) * axes;
-    let local_toward = seen.toward * axes;
-    let half = item.p1.xyz;
-    let inverse = 1.0 / select(local_toward, vec3<f32>(1.0e-9), abs(local_toward) < vec3<f32>(1.0e-9));
-    let a = (-half - local_eye) * inverse;
-    let b = (half - local_eye) * inverse;
-    let near = max(max(min(a.x, b.x), min(a.y, b.y)), min(a.z, b.z));
-    let far = min(min(max(a.x, b.x), max(a.y, b.y)), max(a.z, b.z));
-    return seen.own >= (near + far) * 0.5;
+    let below = clip_step.x - depth * clip_step.y;
+    if below == 0.0 {
+        return VOLUME_FAR;
+    }
+    let t = (depth * clip_start.y - clip_start.x) / below;
+    return select(VOLUME_FAR, t * own, t > 0.0);
 }
 
 fn seen_from(corner: VolumeCorner, pixel: vec2<f32>) -> Seen {
     let eye = camera.position.xyz;
     let offset = corner.world - eye;
-    return Seen(eye, stable_normalize(offset), length(offset), scene_distance(pixel, eye, corner.world));
+    let own = length(offset);
+    let toward = select(vec3<f32>(0.0, 1.0, 0.0), offset / own, own > 1.0e-10);
+    return Seen(eye, toward, own, scene_distance(pixel, corner.clip_start, corner.clip_step, own));
 }
 
 fn smoke_billow(point: vec3<f32>) -> f32 {
-    var total = 0.0;
-    var weight = 0.5;
-    var at = point;
-    for (var octave = 0u; octave < 3u; octave += 1u) {
-        total += weight * effect_noise(at);
-        at = at * 2.03 + vec3<f32>(5.2, 1.3, 7.7);
-        weight *= 0.5;
-    }
-    return total / 0.875;
+    let a = effect_noise(point);
+    let b = effect_noise(point * 2.03 + vec3<f32>(5.2, 1.3, 7.7));
+    let c = effect_noise(point * 4.1209 + vec3<f32>(15.756, 3.939, 23.331));
+    return (a * 0.5 + b * 0.25 + c * 0.125) * (1.0 / 0.875);
 }
 
 @fragment fn fs_smoke(corner: VolumeCorner) -> @location(0) vec4<f32> {
@@ -83,11 +74,24 @@ fn smoke_billow(point: vec3<f32>) -> f32 {
     let seen = seen_from(corner, corner.clip.xy);
     let centre = item.p0.xyz;
     let radius = item.p0.w;
+    let offset = centre - seen.eye;
+    let offset_sq = dot(offset, offset);
+    let closest = dot(offset, seen.toward);
+    let drift = vec3<f32>(item.p3.y * 17.0, -effect_seconds() * item.p5.w, 0.0);
+    if offset_sq < radius * radius {
+        let nearest = clamp(closest, 0.0, seen.scene);
+        let surface = seen.eye + seen.toward * nearest;
+        let billow = effect_noise(surface * item.p4.w + drift);
+        let up_y = (surface.y - centre.y) / max(radius, 1.0e-3);
+        let height = saturate(0.5 + 0.5 * up_y);
+        let tint = saturate(item.p6.w * (1.0 - 0.6 * height));
+        let body = mix(item.p7.x, 1.0, height) * (0.8 + 0.4 * billow);
+        let color = effect_lit(mix(item.p2.rgb, item.p6.rgb, tint) * body, -seen.toward, corner.field);
+        return vec4<f32>(color, 1.0);
+    }
     let rim = item.p2.w;
     let outer = radius + rim;
-    let offset = centre - seen.eye;
-    let closest = dot(offset, seen.toward);
-    let miss_squared = max(dot(offset, offset) - closest * closest, 0.0);
+    let miss_squared = max(offset_sq - closest * closest, 0.0);
     let outer_squared = outer * outer - miss_squared;
     if outer_squared <= 0.0 {
         discard;
@@ -98,18 +102,12 @@ fn smoke_billow(point: vec3<f32>) -> f32 {
     }
     let nearest = clamp(closest, 0.0, seen.scene);
     let miss = length(seen.eye + seen.toward * nearest - centre);
-    let inside = dot(offset, offset) < radius * radius;
     let core_squared = radius * radius - miss_squared;
     var surface = seen.eye + seen.toward * nearest;
-    if !inside && core_squared > 0.0 {
+    if core_squared > 0.0 {
         surface = seen.eye + seen.toward * clamp(closest - sqrt(core_squared), 0.0, seen.scene);
     }
-    let drift = vec3<f32>(item.p3.y * 17.0, -effect_seconds() * item.p5.w, 0.0);
-    let at = surface * item.p4.w + drift;
-    var billow = effect_noise(at);
-    if !inside {
-        billow = smoke_billow(at);
-    }
+    let billow = smoke_billow(surface * item.p4.w + drift);
     let edge = radius + rim * (0.35 + 0.65 * billow);
     let core = select(0.0, 1.0, miss <= radius);
     let alpha = max(core, (1.0 - smoothstep(radius, edge, miss)) * item.p3.w);
@@ -118,10 +116,7 @@ fn smoke_billow(point: vec3<f32>) -> f32 {
     }
     let up = (surface - centre) / max(radius, 1.0e-3);
     let height = saturate(0.5 + 0.5 * up.y);
-    var normal = stable_normalize(up + (billow - 0.5) * vec3<f32>(0.6, 0.9, 0.6));
-    if inside {
-        normal = -seen.toward;
-    }
+    let normal = stable_normalize(up + (billow - 0.5) * vec3<f32>(0.6, 0.9, 0.6));
     let rimmed = saturate((miss - radius) / max(rim, 1.0e-3));
     let tint = saturate(item.p6.w * (1.0 - 0.6 * height) + 0.3 * rimmed);
     let body = mix(item.p7.x, 1.0, height) * (0.8 + 0.4 * billow);
@@ -139,8 +134,7 @@ fn zone_dashes(across: vec2<f32>) -> f32 {
     return 0.55 + 0.45 * smoothstep(0.35, 0.5, abs(dash - 0.5));
 }
 
-fn wall_glow(item: EffectItem, seen: Seen, radius: f32, dashed: bool) -> f32 {
-    let axes = effect_axes(item);
+fn wall_glow(item: EffectItem, axes: mat3x3<f32>, seen: Seen, radius: f32, dashed: bool) -> f32 {
     let eye = (seen.eye - item.p0.xyz) * axes;
     let toward = seen.toward * axes;
     let a = dot(toward.xz, toward.xz);
@@ -152,14 +146,19 @@ fn wall_glow(item: EffectItem, seen: Seen, radius: f32, dashed: bool) -> f32 {
     }
     let root = sqrt(reach);
     let height = item.p1.y;
+    let inv_a = 1.0 / a;
+    let inv_height = 1.0 / height;
     var most = 0.0;
     for (var side = 0u; side < 2u; side += 1u) {
-        let t = (-b + select(-root, root, side == 1u)) / a;
+        let t = (-b + select(-root, root, side == 1u)) * inv_a;
         let y = eye.y + t * toward.y;
         if t > 0.0 && t < seen.scene && y >= 0.0 && y <= height {
-            let up = 1.0 - y / height;
-            let around = eye.xz + t * toward.xz;
-            most = max(most, up * up * select(1.0, zone_dashes(around), dashed));
+            let up = 1.0 - y * inv_height;
+            var factor = 1.0;
+            if dashed {
+                factor = zone_dashes(eye.xz + t * toward.xz);
+            }
+            most = max(most, up * up * factor);
         }
     }
     return most;
@@ -218,12 +217,18 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32) -> f32 {
         let period = max(item.p4.w, 1.0e-3);
         let wave = 0.5 + 0.5 * sin((across - effect_seconds() * item.p5.w) / period * EFFECT_TAU);
         let steady = mix(wave, 0.5, smoothstep(0.12, 0.3, grain / period));
-        let edge = ring(across, radius - rim * 0.5, line) * zone_dashes(local.xz);
+        var edge = ring(across, radius - rim * 0.5, line);
+        if edge > 0.0 {
+            edge *= zone_dashes(local.xz);
+        }
         return max(fill * (0.8 + 0.2 * steady) * inner, edge);
     }
     if kind == 2u {
         let closing = ring(across, radius * (1.0 - progress), line);
-        let edge = ring(across, radius - rim * 0.5, line) * zone_dashes(local.xz);
+        var edge = ring(across, radius - rim * 0.5, line);
+        if edge > 0.0 {
+            edge *= zone_dashes(local.xz);
+        }
         return max(max(edge, closing), fill * (0.7 + 0.3 * progress) * inner);
     }
     let front = radius * progress;
@@ -236,16 +241,14 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32) -> f32 {
     let seen = seen_from(corner, corner.clip.xy);
     let point = seen.eye + seen.toward * seen.scene;
     let grain = max(length(fwidth(point)), 1.0e-4);
-    if !far_face(item, seen) {
-        discard;
-    }
-    let local = (point - item.p0.xyz) * effect_axes(item);
+    let axes = effect_axes(item);
+    let local = (point - item.p0.xyz) * axes;
     let kind = u32(item.p3.x);
     var wall = 0.0;
     if kind == 1u || kind == 2u || kind == 6u {
-        wall = wall_glow(item, seen, item.p0.w, kind != 6u) * 0.85;
+        wall = wall_glow(item, axes, seen, item.p0.w, kind != 6u) * 0.85;
     } else if kind == 3u {
-        wall = wall_glow(item, seen, max(item.p0.w * item.p6.x, 1.0e-3), false) * (1.0 - item.p6.x);
+        wall = wall_glow(item, axes, seen, max(item.p0.w * item.p6.x, 1.0e-3), false) * (1.0 - item.p6.x);
     }
     let alpha = saturate(max(marked(item, local, seen, grain), wall));
     if alpha <= 0.0 {

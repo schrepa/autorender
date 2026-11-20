@@ -97,10 +97,12 @@ impl Bound {
         let held = clip
             .rotations()
             .get(track)
-            .ok_or(Error::from(Fault::TrackMissing {
-                track,
-                tracks: clip.rotations().len(),
-            }))?;
+            .ok_or_else(|| {
+                Error::from(Fault::TrackMissing {
+                    track,
+                    tracks: clip.rotations().len(),
+                })
+            })?;
         let (from, to) = (held.values[at.first], held.values[at.second]);
         Ok(match held.keys {
             Keys::Linear => nlerp(from, to, at.fraction),
@@ -109,10 +111,12 @@ impl Bound {
     }
 
     fn hip(&self, clip: &Clip, at: &Key) -> Result<Vec3, Error> {
-        let held = clip.root().ok_or(Error::from(Fault::TrackMissing {
-            track: clip.rotations().len(),
-            tracks: clip.rotations().len(),
-        }))?;
+        let held = clip.root().ok_or_else(|| {
+            Error::from(Fault::TrackMissing {
+                track: clip.rotations().len(),
+                tracks: clip.rotations().len(),
+            })
+        })?;
         Ok(vector(held.keys, &held.values, at))
     }
 
@@ -120,10 +124,12 @@ impl Bound {
         let held = clip
             .translations()
             .get(track)
-            .ok_or(Error::from(Fault::TrackMissing {
-                track,
-                tracks: clip.translations().len(),
-            }))?;
+            .ok_or_else(|| {
+                Error::from(Fault::TrackMissing {
+                    track,
+                    tracks: clip.translations().len(),
+                })
+            })?;
         Ok(vector(held.keys, &held.values, at))
     }
 

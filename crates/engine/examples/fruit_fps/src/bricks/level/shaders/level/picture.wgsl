@@ -1,5 +1,4 @@
-import package::engine::view::stable_normalize;
-import package::level::sky::{SkyCorner, sky_corner, sky_pictured, sky_sunned};
+import package::level::sky::{SkyCorner, sky_corner, sky_pictured_with, sky_sunned_with, sky_under};
 
 @group(1) @binding(0) var sky_picture_map: texture_2d<f32>;
 @group(1) @binding(1) var sky_picture_sampler: sampler;
@@ -9,7 +8,8 @@ import package::level::sky::{SkyCorner, sky_corner, sky_pictured, sky_sunned};
 }
 
 @fragment fn fs_sky_picture(corner: SkyCorner) -> @location(0) vec4<f32> {
-    let toward = stable_normalize(corner.direction);
-    let color = sky_pictured(sky_picture_map, sky_picture_sampler, toward);
-    return vec4<f32>(sky_sunned(color, toward), 1.0);
+    let toward = normalize(corner.direction);
+    let under = sky_under(toward);
+    let color = sky_pictured_with(sky_picture_map, sky_picture_sampler, toward, under);
+    return vec4<f32>(sky_sunned_with(color, toward, under), 1.0);
 }

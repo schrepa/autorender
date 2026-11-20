@@ -194,8 +194,33 @@ impl Renderer {
     }
 
     pub fn read_picture(&mut self) {
+        self.core
+            .display
+            .require_usage(wgpu::TextureUsages::COPY_SRC);
         self.picture.asked = true;
         self.picture.reading = None;
+    }
+
+    fn ensure_surface_copy(
+        &mut self,
+        surface: &mut Option<DisplayFrame>,
+        listed: &[engine_core::ViewFacts],
+        display: glam::UVec2,
+    ) -> Result<(), Error> {
+        let partial = surface.is_some()
+            && listed
+                .iter()
+                .any(|facts| facts.target.surface() && !facts.whole(display));
+        if partial
+            && self
+                .core
+                .display
+                .require_usage(wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST)
+        {
+            drop(surface.take());
+            *surface = self.core.display.acquire(&self.core.device)?;
+        }
+        Ok(())
     }
 
     pub fn take_picture(&mut self) -> Option<Result<Pixels, Error>> {
@@ -272,7 +297,7 @@ impl Renderer {
     ) -> wgpu::CommandEncoder {
         let mut encoder = kept.unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/frame-encoder"),
+                label: crate::encode::debug_label("engine/frame-encoder"),
             })
         });
         let busy = |batch: u8| self.core.profiler.busy(BATCHES.get(usize::from(batch))?);
@@ -345,7 +370,7 @@ impl Renderer {
     )]
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         let _profile = engine_profile::span("render", "render_snapshot");
-        let surface = self.surface.take();
+        let mut surface = self.surface.take();
         let hidden = std::mem::take(&mut self.hidden.asked);
         if surface.is_none() && !hidden {
             return Ok(self.answer_picture(surface));
@@ -361,6 +386,10 @@ impl Renderer {
             return Ok(self.answer_picture(surface));
         }
         let display = views.map_or(glam::UVec2::ONE, |views| views.frame().display_size);
+        self.ensure_surface_copy(&mut surface, listed, display)?;
+        if surface.is_none() && !hidden {
+            return Ok(self.answer_picture(surface));
+        }
         let Some(run) = self.run.as_mut() else {
             return Ok(self.answer_picture(surface));
         };
@@ -684,7 +713,7 @@ impl Renderer {
         run.canvas.rect = None;
         let mut encoder = run.take_encoder().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/frame-encoder"),
+                label: crate::encode::debug_label("engine/frame-encoder"),
             })
         });
         if let Some((open, _)) = parted.take() {
@@ -698,7 +727,7 @@ impl Renderer {
         run.record_readbacks();
         let mut encoder = run.take_encoder().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/frame-encoder"),
+                label: crate::encode::debug_label("engine/frame-encoder"),
             })
         });
         let (written, slots) = (run.written(), run.reading.slots);

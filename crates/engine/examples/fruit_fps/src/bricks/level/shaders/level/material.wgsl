@@ -17,7 +17,6 @@ import package::generated::level::LevelSurface;
 struct LevelTexels {
     base_color: vec3<f32>,
     alpha: f32,
-    normal: vec3<f32>,
     occlusion: f32,
     roughness: f32,
     metallic: f32,
@@ -29,14 +28,17 @@ fn level_texels(uv: vec2<f32>) -> LevelTexels {
     let base = textureSample(level_base_color_map, level_base_color_sampler, uv) * level_surface.tint;
     texels.base_color = base.rgb;
     texels.alpha = base.a;
-    let across = textureSample(level_normal_map, level_normal_sampler, uv).xy * 2.0 - 1.0;
-    texels.normal = vec3<f32>(across, sqrt(max(1.0 - dot(across, across), 0.0)));
     let orm = textureSample(level_orm_map, level_orm_sampler, uv);
     texels.occlusion = orm.r;
     texels.roughness = orm.g;
     texels.metallic = orm.b;
     texels.glow = orm.a;
     return texels;
+}
+
+fn level_normal_sample(uv: vec2<f32>) -> vec3<f32> {
+    let across = textureSample(level_normal_map, level_normal_sampler, uv).xy * 2.0 - 1.0;
+    return vec3<f32>(across, sqrt(max(1.0 - dot(across, across), 0.0)));
 }
 
 fn level_baked(uv1: vec2<f32>) -> vec4<f32> {

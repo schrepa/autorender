@@ -139,7 +139,9 @@ fn spray_corner(item: EffectItem, sprite: u32, unit: vec2<f32>, fade: f32) -> Gl
     } else if corner.shape.x == GLOW_STAR {
         let reach = length(unit);
         let angle = atan2(unit.y, unit.x);
-        let petals = pow(abs(cos(angle * corner.shape.z * 0.5)), 6.0);
+        let c = cos(angle * corner.shape.z * 0.5);
+        let c2 = c * c;
+        let petals = c2 * c2 * c2;
         let edge = 0.35 + 0.65 * petals;
         strength = saturate(1.0 - reach / edge) + saturate(1.0 - reach) * 0.3;
     } else {

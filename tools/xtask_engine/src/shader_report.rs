@@ -95,9 +95,19 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         [flag, folder, no] if flag == "--out" && no == "--no-rga" => (PathBuf::from(folder), false),
         _ => return Err("usage: cargo xtask shaders --out DIR [--no-rga]".into()),
     };
+    let (report, path) = generate(root, &folder, rga)?;
+    print_summary(&report);
+    println!(
+        "{}",
+        json!({"event": "written", "file": path.display().to_string()})
+    );
+    Ok(())
+}
+
+pub fn generate(root: &Path, folder: &Path, rga: bool) -> Result<(Value, PathBuf), String> {
     let modules = checked(root)?;
     let rga = if rga { rga_program(root)? } else { None };
-    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     let linked = folder.join("linked");
     let _ = std::fs::remove_dir_all(&linked);
     for checked in &modules {
@@ -135,7 +145,7 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
                     let Some(&(checked, entry)) = work.get(index) else {
                         break;
                     };
-                    let report = entry_report(checked, entry, &folder, rga.as_deref());
+                    let report = entry_report(checked, entry, folder, rga.as_deref());
                     *done[index].lock().expect("worker_not_panicked") = Some(report);
                 }
             });
@@ -169,12 +179,7 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         serde_json::to_string_pretty(&report).expect("report_serializes"),
     )
     .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    print_summary(&report);
-    println!(
-        "{}",
-        json!({"event": "written", "file": path.display().to_string()})
-    );
-    Ok(())
+    Ok((report, path))
 }
 
 fn folder_name(source: &str) -> String {

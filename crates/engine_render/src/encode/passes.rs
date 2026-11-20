@@ -1,14 +1,34 @@
 use super::*;
 
 impl Run {
-    pub(crate) fn enter(&mut self, pass: u32) -> bool {
-        let shares = self
-            .machine
+    fn can_merge_open(&self, pass: u32) -> bool {
+        if !self.planning.merge {
+            return false;
+        }
+        let Some((open_shared, open_at)) = self.recording.open_render() else {
+            return false;
+        };
+        if open_at + 1 != self.planning.planned_at {
+            return false;
+        }
+        let Some(plan) = self.planning.plan.as_ref() else {
+            return false;
+        };
+        let Some(planned) = plan.passes.get(self.planning.planned_at) else {
+            return false;
+        };
+        if !planned.merge || planned.pass.index() != pass as usize {
+            return false;
+        }
+        self.machine
             .declared
             .passes
             .get(pass as usize)
-            .is_some_and(shared);
-        if self.planning.merge && shares && self.recording.open().is_some_and(|open| open.shared) {
+            .is_some_and(|decl| shared(decl) == open_shared)
+    }
+
+    pub(crate) fn enter(&mut self, pass: u32) -> bool {
+        if self.can_merge_open(pass) {
             return false;
         }
         if self.planning.labelled == Some(pass) {
@@ -221,15 +241,25 @@ impl Run {
                 .map(|(key, ..)| *key)
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
+        let collecting = self.recording.collecting();
+        let layout = self.machine.layout_id(pass_layout(
+            &colors,
+            depth.as_ref().map(|(_, _, format, _)| *format),
+            (plain, main),
+            collecting.then(|| self.machine.declared.target_key(Target::Canvas)),
+        ));
         if let Some(open) = self.recording.open_mut()
             && self.planning.merge
-            && open.shared
-            && is_shared
+            && planned.merge
+            && open.planned_at + 1 == self.planning.planned_at
+            && open.shared == is_shared
+            && open.layout == layout
             && open.attachments == attachments
         {
             if let Some(merged) = self.sets.counted.merged.get_mut(self.pass as usize) {
                 *merged += 1;
             }
+            open.planned_at = self.planning.planned_at;
             open.offset = offset;
             if GROUPED && open.label != Some(self.pass) && self.planning.labelled != Some(self.pass)
             {
@@ -248,18 +278,8 @@ impl Run {
         let current = self.pass;
         self.group(current);
         let label = self.label_of(current).unwrap_or(pass.name);
-        let collecting = self.recording.collecting();
-        let layout = self.machine.layout_id(pass_layout(
-            &colors,
-            depth.as_ref().map(|(_, _, format, _)| *format),
-            (plain, main),
-            collecting.then(|| self.machine.declared.target_key(Target::Canvas)),
-        ));
         if collecting {
-            self.recording.collected(super::recording::Opened {
-                layout,
-                shared: is_shared,
-            });
+            self.recording.collected(super::recording::Opened { layout });
             colors.clear();
             self.spare.colors = colors;
             self.spare.attachments = attachments;
@@ -289,7 +309,7 @@ impl Run {
                 });
         let render = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(label),
+                label: debug_label(label),
                 color_attachments: &color_attachments[..colors.len().min(MOST_COLORS)],
                 depth_stencil_attachment: depth_attachment,
                 timestamp_writes: None,
@@ -307,6 +327,7 @@ impl Run {
             layout,
             offset,
             shared: is_shared,
+            planned_at: self.planning.planned_at,
             label: None,
         })));
         colors.clear();
@@ -336,7 +357,7 @@ impl Run {
             return;
         };
         drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/canvas-clear"),
+            label: debug_label("engine/canvas-clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &canvas,
                 depth_slice: None,

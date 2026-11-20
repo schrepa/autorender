@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
-use engine_core::{Error, ErrorCode, Filter, Sampler, ViewFacts, ViewSkip, Wrap};
+use engine_core::{Error, ErrorCode, Filter, Sampler, ViewFacts, ViewSkip, Views, Wrap};
 use engine_render::{Access, Encode, FULLSCREEN, Own, PerBatch, SharedTarget, TargetClear};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,10 @@ pub const PRESENTED: TargetName = TargetName("presented");
 
 pub trait Scale: Resource {
     fn fraction(&self) -> f32;
+
+    fn direct_supported() -> bool {
+        false
+    }
 }
 
 const PRESENT_PASS: &str = "present";
@@ -39,12 +43,21 @@ const LINEAR_CLAMP: Sampler = Sampler {
 #[serde(deny_unknown_fields)]
 pub struct Present {
     pub antialias: bool,
+    #[serde(default)]
+    pub antialias_max_pixel_ratio: Option<f32>,
 }
 
-gpu_struct! {
-    struct PresentFrame {
-        antialias: [f32; 4],
+impl Present {
+    pub fn antialias_active(self, pixel_ratio: f32) -> bool {
+        self.antialias
+            && self
+                .antialias_max_pixel_ratio
+                .is_none_or(|limit| pixel_ratio <= limit)
     }
+}
+
+pub fn needs_intermediate(present: Option<Present>, scale: f32, pixel_ratio: f32) -> bool {
+    scale < 1.0 || present.is_some_and(|present| present.antialias_active(pixel_ratio))
 }
 
 pub struct PresentBrick<S>(PhantomData<fn() -> S>);
@@ -64,16 +77,20 @@ impl<S: Scale> Brick for PresentBrick<S> {
 
 struct Presenting<S> {
     pass: engine_render::Pass<Self>,
-    pipeline: Pipeline<Self, Own>,
+    blit: Pipeline<Self, Own>,
+    smooth: Pipeline<Self, Own>,
     cover: engine_render::Pass<Self>,
-    frame: Buffer<Self>,
-    sent: Option<PresentFrame>,
+    antialias: bool,
+    direct: bool,
     several: bool,
     skipped: Vec<Entity>,
     scale: PhantomData<fn() -> S>,
 }
 
-fn fullscreen(fragment: engine_core::Entry) -> RenderPipeline<'static> {
+fn fullscreen(
+    fragment: engine_core::Entry,
+    constants: &'static [(&'static str, f64)],
+) -> RenderPipeline<'static> {
     RenderPipeline {
         vertex: FULLSCREEN,
         fragment: Some(fragment),
@@ -83,7 +100,7 @@ fn fullscreen(fragment: engine_core::Entry) -> RenderPipeline<'static> {
         stencil: wgpu::StencilState::default(),
         samples: 1,
         targets: &[(None, wgpu::ColorWrites::ALL)],
-        constants: &[],
+        constants,
         per_batch: PerBatch::NONE,
     }
 }
@@ -93,6 +110,7 @@ impl<S: Scale> GpuPart for Presenting<S> {
         Query<'static, 'static, &'static Present>,
         Query<'static, 'static, Entity, With<ViewSkip>>,
         Option<Res<'static, S>>,
+        Option<Res<'static, Views>>,
     );
     const NAME: &'static str = "present";
 
@@ -105,7 +123,6 @@ impl<S: Scale> GpuPart for Presenting<S> {
             clear: TargetClear::Color([0.0, 0.0, 0.0, 1.0]),
         });
         cx.frame(canvas::PRESENTED, Bind::Target(PRESENTED))?;
-        let frame = cx.buffer("present_frame", Lifetime::Kept);
         let sampler = cx.sampler(LINEAR_CLAMP);
         let pass = cx
             .pass(PRESENT_PASS)
@@ -113,13 +130,12 @@ impl<S: Scale> GpuPart for Presenting<S> {
             .span("present")
             .target(TargetName::CANVAS, Access::Clear)
             .id();
-        let pipeline = cx.render_pipeline(
+        let bound = [(canvas::PRESENTED_SAMPLER, Bind::Sampler(sampler))];
+        let blit = cx.render_pipeline(pass, &fullscreen(canvas::FS_PRESENT, &[]), &bound)?;
+        let smooth = cx.render_pipeline(
             pass,
-            &fullscreen(canvas::FS_PRESENT),
-            &[
-                (canvas::PRESENT_FRAME, Bind::Buffer(frame)),
-                (canvas::PRESENTED_SAMPLER, Bind::Sampler(sampler)),
-            ],
+            &fullscreen(canvas::FS_PRESENT, &[("PRESENT_ANTIALIAS", 1.0)]),
+            &bound,
         )?;
         let cover = cx
             .pass(COVER_PASS)
@@ -129,10 +145,11 @@ impl<S: Scale> GpuPart for Presenting<S> {
             .id();
         Ok(Self {
             pass,
-            pipeline,
+            blit,
+            smooth,
             cover,
-            frame,
-            sent: None,
+            antialias: false,
+            direct: false,
             several: false,
             skipped: Vec::new(),
             scale: PhantomData,
@@ -141,16 +158,15 @@ impl<S: Scale> GpuPart for Presenting<S> {
 
     fn prepare(
         &mut self,
-        (presents, skipped, scale): SystemParamItem<'_, '_, Self::Reads>,
+        (presents, skipped, scale, views): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.skipped.clear();
         self.skipped.extend(&skipped);
-        if let Some(scale) = scale {
-            cx.scale_target(PRESENTED, scale.fraction());
-        }
+        let fraction = scale.map_or(1.0, |scale| scale.fraction());
+        cx.scale_target(PRESENTED, fraction);
         let mut found = presents.iter();
-        let antialias = found.next().is_some_and(|present| present.antialias);
+        let present = found.next().copied();
         let several = found.next().is_some();
         if several && !self.several {
             cx.report(
@@ -158,20 +174,16 @@ impl<S: Scale> GpuPart for Presenting<S> {
             );
         }
         self.several = several;
-        let shown = PresentFrame {
-            antialias: [f32::from(u8::from(antialias)), 0.0, 0.0, 0.0],
-        };
-        let bytes = size_of::<PresentFrame>() as u64;
-        if cx.allocate_buffer(self.frame, bytes) == Allocation::Fresh || self.sent != Some(shown) {
-            cx.write(self.frame, 0, &[shown]);
-            self.sent = Some(shown);
-        }
+        let pixel_ratio = views.map_or(1.0, |views| views.frame().pixel_ratio);
+        self.antialias = present.is_some_and(|present| present.antialias_active(pixel_ratio));
+        self.direct =
+            S::direct_supported() && !needs_intermediate(present, fraction, pixel_ratio);
     }
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         if self.skipped.contains(&view.view) {
             cx.run(self.cover);
-        } else {
+        } else if !self.direct {
             cx.run(self.pass);
         }
     }
@@ -181,13 +193,45 @@ impl<S: Scale> GpuPart for Presenting<S> {
             let _ = cx.render();
             return;
         }
+        let pipeline = if self.antialias {
+            &self.smooth
+        } else {
+            &self.blit
+        };
         cx.render().draw(
-            &self.pipeline,
+            pipeline,
             Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,
                 key: None,
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn antialias_and_intermediate_respect_pixel_ratio_limit_and_scale() {
+        let always = Present {
+            antialias: true,
+            antialias_max_pixel_ratio: None,
+        };
+        assert!(always.antialias_active(1.0));
+        assert!(always.antialias_active(2.0));
+        assert!(needs_intermediate(Some(always), 1.0, 2.0));
+
+        let capped = Present {
+            antialias: true,
+            antialias_max_pixel_ratio: Some(1.5),
+        };
+        assert!(capped.antialias_active(1.0));
+        assert!(capped.antialias_active(1.5));
+        assert!(!capped.antialias_active(2.0));
+        assert!(needs_intermediate(Some(capped), 1.0, 1.0));
+        assert!(!needs_intermediate(Some(capped), 1.0, 2.0));
+        assert!(needs_intermediate(Some(capped), 0.75, 2.0));
     }
 }

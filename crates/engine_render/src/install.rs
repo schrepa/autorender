@@ -10,6 +10,7 @@ use crate::{Access, DepthUse, Lifetime};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Bound {
     Buffer(u32),
+    Texture(u32),
     Sampler(u32),
     Target(TargetName),
     Asset,
@@ -34,6 +35,7 @@ pub(crate) struct SceneOf {
 pub(crate) struct TextureDecl {
     pub(crate) label: &'static str,
     pub(crate) format: wgpu::TextureFormat,
+    pub(crate) dimension: wgpu::TextureDimension,
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
 }
@@ -131,6 +133,7 @@ pub(crate) struct Declared {
     pub(crate) buffers: Vec<BufferDecl>,
     pub(crate) samplers: Vec<engine_core::Sampler>,
     pub(crate) targets: Vec<crate::SharedTarget>,
+    pub(crate) target_fallbacks: Vec<Option<wgpu::TextureFormat>>,
     pub(crate) passes: Vec<PassDecl>,
     pub(crate) pipelines: Vec<PipelineDecl>,
     pub(crate) frame: Vec<FrameBind>,
@@ -184,6 +187,7 @@ impl Declared {
             buffers: kept(&self.buffers, counts.buffers),
             samplers: self.samplers.clone(),
             targets: kept(&self.targets, counts.targets),
+            target_fallbacks: kept(&self.target_fallbacks, counts.targets),
             passes: kept(&self.passes, counts.passes),
             pipelines: kept(&self.pipelines, counts.pipelines),
             frame: kept(&self.frame, counts.frame),
@@ -238,9 +242,29 @@ impl InstallCore {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> u32 {
+        self.texture_with(label, format, wgpu::TextureDimension::D2, lifetime)
+    }
+
+    pub(crate) fn texture_3d(
+        &mut self,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        lifetime: Lifetime,
+    ) -> u32 {
+        self.texture_with(label, format, wgpu::TextureDimension::D3, lifetime)
+    }
+
+    fn texture_with(
+        &mut self,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        dimension: wgpu::TextureDimension,
+        lifetime: Lifetime,
+    ) -> u32 {
         self.declared.textures.push(TextureDecl {
             label,
             format,
+            dimension,
             lifetime,
             part: self.part,
         });

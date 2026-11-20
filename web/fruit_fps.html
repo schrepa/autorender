@@ -49,8 +49,10 @@
       .bar button:hover, .bar button:focus-visible, .bar button[aria-pressed="true"] { background: var(--sun); outline: none; }
       .bar svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
       .rate { flex: none; margin-right: 6px; white-space: nowrap; color: var(--sun); font: 900 15px/1 var(--text); font-variant-numeric: tabular-nums; }
+      .rate[hidden], .pace[hidden] { display: none; }
       :root:fullscreen .bar { position: absolute; top: 10px; right: 10px; height: auto; padding: 6px 12px; border-radius: 14px; background: #1E1B3AB3; pointer-events: none; }
       .pace { flex: none; width: 300px; height: 36px; margin-right: 6px; border-radius: 6px; background: #FFFFFF14; }
+      :root:fullscreen .player:not([data-stats="on"]) .bar { display: none; }
       :root:fullscreen .bar { display: flex; gap: 10px; }
       :root:fullscreen .bar > :not(.rate, .pace) { display: none; }
       :root:fullscreen .pace { margin: 0; }
@@ -237,8 +239,9 @@
       <div class="screen"><canvas id="scene" tabindex="0" aria-label="Game view" style="visibility: hidden"></canvas></div>
       <div class="bar">
         <span>Pulp Vendetta</span>
-        <output id="rate" class="rate" aria-live="off"></output>
-        <canvas id="pace" class="pace" width="300" height="36" aria-hidden="true"></canvas>
+        <output id="rate" class="rate" aria-live="off" hidden></output>
+        <canvas id="pace" class="pace" width="300" height="36" aria-hidden="true" hidden></canvas>
+        <button id="view-stats" type="button" aria-pressed="false" aria-label="Frame pacing" title="Frame pacing"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16h4l3-8 4 10 3-6h4"/></svg></button>
         <button id="view-theater" type="button" aria-pressed="false" aria-label="Theater mode" title="Theater mode"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/></svg></button>
         <button id="view-full" type="button" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg></button>
       </div>

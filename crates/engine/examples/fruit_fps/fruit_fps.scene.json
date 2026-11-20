@@ -236,7 +236,8 @@
         "mobility": "moving"
       },
       "present": {
-        "antialias": true
+        "antialias": true,
+        "antialias_max_pixel_ratio": 1.5
       },
       "view": {
         "clear_color": [

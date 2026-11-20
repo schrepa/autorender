@@ -13,6 +13,10 @@ fn view_clip(world: vec3<f32>) -> vec4<f32> {
 }
 
 fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
+    let sq = dot(value, value);
+    if sq > 1.0e-20 && sq < 1.0e20 {
+        return value * inverseSqrt(sq);
+    }
     let scale = maximum_abs(value);
     if scale == 0.0 { // optics: a zero vector's guard, whatever it measures
         return vec3<f32>(0.0, 1.0, 0.0);

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine::prelude::*;
@@ -24,7 +23,7 @@ pub struct LevelSets {
 #[derive(Resource, Clone, Debug, Default)]
 pub(super) struct SetIndex {
     file: Option<Arc<VisibleSets>>,
-    index: BTreeMap<Asset<MeshFile>, u32>,
+    index: Vec<Option<(Asset<MeshFile>, u32)>>,
     pub unknown: u32,
 }
 
@@ -51,7 +50,11 @@ pub(super) fn adopt(
         for (at, id) in file.ids().iter().enumerate() {
             match assets.named::<MeshFile>(id) {
                 Some(mesh) => {
-                    next.index.insert(mesh, at as u32);
+                    let slot = mesh.slot();
+                    if next.index.len() <= slot {
+                        next.index.resize(slot + 1, None);
+                    }
+                    next.index[slot] = Some((mesh, at as u32));
                 }
                 None => next.unknown += 1,
             }
@@ -63,13 +66,14 @@ pub(super) fn adopt(
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SetView<'a> {
     pub at: Cell<'a>,
-    index: &'a BTreeMap<Asset<MeshFile>, u32>,
+    index: &'a [Option<(Asset<MeshFile>, u32)>],
 }
 
 impl SetView<'_> {
     pub fn hides(&self, mesh: Option<Asset<MeshFile>>) -> Option<bool> {
-        let at = *self.index.get(&mesh?)?;
-        Some(!self.at.kept(at))
+        let mesh = mesh?;
+        let &(known, at) = self.index.get(mesh.slot())?.as_ref()?;
+        (known == mesh).then(|| !self.at.kept(at))
     }
 }
 

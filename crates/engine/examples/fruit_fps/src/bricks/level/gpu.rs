@@ -4,13 +4,13 @@ use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
 use engine_core::{
     AlphaMode, Asset, Assets, ColorSpace, Cull, DrawnTable, Error, ErrorCode, Expected, Material,
-    MeshFile, TextureRef, Var, VertexStream, ViewFacts, gpu_struct,
+    MeshFile, PassBit, TextureRef, Var, VertexStream, ViewFacts, gpu_struct,
 };
 use engine_drawing::{DetailLimit, MaterialBinds, SizeSkip, StandIn, pixel_scale};
 use engine_meshpack::{BASE, COLOR, LIGHTMAP};
 use engine_render::{BatchGroup, BatchOf, DrawOrder, GroupEntry, PerBatch, Scene, Variant, wgpu};
 
-use super::chunks::{self, Pieces, Seen};
+use super::chunks::{self, Pieces};
 use super::sets::SetIndex;
 use super::shaders::level::{light, map, material, picture, sky};
 use super::{
@@ -18,7 +18,7 @@ use super::{
     MACRO_COLOR, MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE,
     SKY_BELOW, SKY_FADE, SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
 };
-use crate::names::COLOR_PASS;
+use crate::names::{COLOR_PASS, DEPTH_PASS};
 use crate::play::light::{CLAMP, Filtering, Lighting};
 
 gpu_struct! {
@@ -51,6 +51,8 @@ gpu_struct! {
 const BOX_VERTICES: u32 = 36;
 
 const RANGE_ALIGN: u64 = 256;
+
+const DEPTH_STREAMS: [VertexStream; 1] = [BASE];
 
 const LEVEL_STREAMS: [VertexStream; 2] = [BASE, LIGHTMAP];
 
@@ -103,6 +105,9 @@ struct Shaped {
 }
 
 pub(super) struct LevelGpu {
+    depth_pass: Option<PassBit>,
+    depth_back: Pipeline<Self, Scene>,
+    depth_double: Pipeline<Self, Scene>,
     level: Pipeline<Self, Scene>,
     detail: Pipeline<Self, Scene>,
     sky: Pipeline<Self, Scene>,
@@ -128,6 +133,7 @@ pub(super) struct LevelGpu {
     batched: Vec<(bool, Option<Asset<Material>>)>,
     used: BTreeMap<Asset<Material>, bool>,
     sky_bound: Option<Asset<Material>>,
+    has_double_depth: bool,
     again: bool,
 }
 
@@ -137,6 +143,37 @@ fn face(cull: Cull) -> Option<wgpu::Face> {
         Cull::Front => Some(wgpu::Face::Front),
         Cull::None => None,
     }
+}
+
+fn depth_described(cull_mode: Option<wgpu::Face>) -> RenderPipeline<'static> {
+    RenderPipeline {
+        vertex: map::VS_LEVEL_DEPTH,
+        fragment: Some(map::FS_LEVEL_DEPTH),
+        vertices: &DEPTH_STREAMS,
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode,
+            ..wgpu::PrimitiveState::default()
+        },
+        depth: DepthUse::Compare {
+            compare: wgpu::CompareFunction::GreaterEqual,
+            write: true,
+            bias: wgpu::DepthBiasState::default(),
+        },
+        stencil: wgpu::StencilState::default(),
+        samples: 1,
+        targets: &[],
+        constants: &[],
+        per_batch: PerBatch::NONE,
+    }
+}
+
+fn depth_pass_cull(mapped: &Mapped) -> Option<Option<wgpu::Face>> {
+    if mapped.cutout || mapped.cull == Some(wgpu::Face::Front) {
+        return None;
+    }
+    Some(mapped.cull)
 }
 
 fn described<'a>(
@@ -177,19 +214,22 @@ fn light_of(lighting: &Lighting, shown: Option<Shaped>) -> LevelLight {
     let to_sun = lighting.to_sun;
     let sky = lighting.sky_look;
     let fog = lighting.fog;
+    let haze_height = sky.map_or(1.0, |sky| sky.haze_height);
+    let inv_haze = 1.0 / if haze_height > 1.0e-3 { haze_height } else { 1.0e-3 };
+    let inv_span = shown.map_or(0.0, |shown| 1.0 / (shown.shape[1] - shown.shape[0]));
+    let inv_wrap = 1.0 / (1.0 + lighting.wrap);
+    let sky_luma = (lighting.sky[0] + lighting.sky[1] + lighting.sky[2]) * 0.333;
+    let inv_sky_luma = 0.333 / if sky_luma > 1.0e-3 { sky_luma } else { 1.0e-3 };
     LevelLight {
         to_sun: [to_sun.x, to_sun.y, to_sun.z, lighting.wrap],
         sun: rgb(lighting.sun, f32::from(u8::from(lighting.lit))),
-        zenith: rgb(
-            sky.map_or(lighting.sky, |sky| sky.zenith),
-            sky.map_or(1.0, |sky| sky.haze_height),
-        ),
+        zenith: rgb(sky.map_or(lighting.sky, |sky| sky.zenith), haze_height),
         ground: rgb(lighting.ground, lighting.ambient.black_floor),
         horizon: rgb(
             sky.map_or(lighting.sky, |sky| sky.horizon),
             fog.map_or(0.0, |fog| fog.most),
         ),
-        below: rgb(sky.map_or(lighting.ground, |sky| sky.below), 0.0),
+        below: rgb(sky.map_or(lighting.ground, |sky| sky.below), inv_haze),
         fog: [
             fog.map_or(0.0, |fog| fog.start_m),
             fog.map_or(0.0, |fog| fog.density_per_m),
@@ -200,7 +240,7 @@ fn light_of(lighting: &Lighting, shown: Option<Shaped>) -> LevelLight {
             sky.map_or(0.0, |sky| sky.disc_strength),
             sky.map_or(1.0, |sky| sky.glow_power),
             sky.map_or(0.0, |sky| sky.glow_strength),
-            0.0,
+            inv_span,
         ],
         sky_light: rgb(lighting.sky, lighting.ambient.floor_m),
         ambient: [
@@ -213,8 +253,8 @@ fn light_of(lighting: &Lighting, shown: Option<Shaped>) -> LevelLight {
         reflect: [
             sky.map_or(0.0, |sky| sky.mirror_roughness),
             shown.map_or(0.0, |shown| shown.haze),
-            0.0,
-            0.0,
+            inv_wrap,
+            inv_sky_luma,
         ],
     }
 }
@@ -490,9 +530,15 @@ impl GpuPart for LevelGpu {
         let plain = PLAIN.map(|(name, texel)| StandIn::install(cx, name, texel));
         let group = cx.batch_group(material::MODULE, 1, &[(material::LEVEL_SURFACE, surfaces)])?;
         let sky_group = cx.batch_group(picture::MODULE, 1, &[])?;
+        let depth_scene = Scene::named(DEPTH_PASS);
+        let depth_pass = cx.scene_bit(depth_scene);
+        let depth_back =
+            cx.render_pipeline(depth_scene, &depth_described(Some(wgpu::Face::Back)), &[])?;
+        let depth_double = cx.render_pipeline(depth_scene, &depth_described(None), &[])?;
         let scene = Scene::named(COLOR_PASS);
         let lit = [(light::LEVEL_LIGHT, Bind::Buffer(light))];
         let per_batch = PerBatch {
+            state: true,
             cull: true,
             ..PerBatch::NONE
         };
@@ -513,7 +559,10 @@ impl GpuPart for LevelGpu {
                 (map::VS_LEVEL_DETAIL, map::FS_LEVEL),
                 &DETAIL_STREAMS,
                 true,
-                per_batch,
+                PerBatch {
+                    cull: true,
+                    ..PerBatch::NONE
+                },
                 &[("LEVEL_DETAIL", 1.0)],
             ),
             &lit,
@@ -535,6 +584,9 @@ impl GpuPart for LevelGpu {
             &lit,
         )?;
         Ok(Self {
+            depth_pass,
+            depth_back,
+            depth_double,
             level,
             detail,
             sky,
@@ -560,6 +612,7 @@ impl GpuPart for LevelGpu {
             batched: Vec::new(),
             used: BTreeMap::new(),
             sky_bound: None,
+            has_double_depth: false,
             again: false,
         })
     }
@@ -587,6 +640,7 @@ impl GpuPart for LevelGpu {
             self.slots = 0;
             self.pictured.clear();
             self.ready = true;
+            self.has_double_depth = false;
             self.again = true;
         }
         let mut changed = Vec::new();
@@ -633,9 +687,7 @@ impl GpuPart for LevelGpu {
         };
         let mut verdict = |batch: BatchOf<'_>, _| {
             let piece = pieces.single(batch.geometry, batch.instances);
-            let Seen::Near(near) = chunks::seen(piece, batch.geometry, facts, set) else {
-                return None;
-            };
+            let near = chunks::near(piece, batch.geometry, facts, set)?;
             let small = (batch.geometry)
                 .zip(piece.and_then(|piece| piece.largest_m))
                 .is_some_and(|sized_piece| !sized.shown(sized_piece, near, scale));
@@ -647,8 +699,28 @@ impl GpuPart for LevelGpu {
 }
 
 impl LevelGpu {
+    fn depth_cull(&self, material: Option<Asset<Material>>) -> Option<Option<wgpu::Face>> {
+        let bound = self.binds.bound(material?)?;
+        depth_pass_cull(&bound.mapped)
+    }
+
+    fn draw_depth(&self, draw: &mut Draw<'_, Self, Scene>) {
+        draw.batches_matching(&self.depth_back, 0..0, DrawOrder::Sorted, |batch| {
+            self.depth_cull(batch.material) == Some(Some(wgpu::Face::Back))
+        });
+        if self.has_double_depth {
+            draw.batches_matching(&self.depth_double, 0..0, DrawOrder::Sorted, |batch| {
+                self.depth_cull(batch.material) == Some(None)
+            });
+        }
+    }
+
     pub(super) fn draw_level(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.level, 0..0, DrawOrder::Sorted);
+        if draw.pass() == self.depth_pass {
+            self.draw_depth(draw);
+        } else {
+            draw.batches(&self.level, 0..0, DrawOrder::Grouped);
+        }
     }
 
     pub(super) fn draw_detail(&self, draw: &mut Draw<'_, Self, Scene>) {
@@ -718,6 +790,10 @@ impl LevelGpu {
         for (handle, revision, detail, material) in self.binds.fresh(assets, &self.used) {
             self.bind(handle, (revision, detail), material, assets, cx, changed);
         }
+        self.has_double_depth = self
+            .binds
+            .each_bound()
+            .any(|(_, bound)| depth_pass_cull(&bound.mapped) == Some(None));
     }
 
     fn bind(
@@ -840,6 +916,7 @@ impl LevelGpu {
                 size: size_of::<LevelSurface>() as u64,
             },
         ));
+        let prepassed = self.depth_pass.is_some() && depth_pass_cull(mapped).is_some();
         let variant = Variant {
             constants: vec![
                 (
@@ -850,7 +927,33 @@ impl LevelGpu {
                     "LEVEL_CUTOUT".to_owned(),
                     f64::from(u8::from(mapped.cutout)),
                 ),
+                (
+                    "LEVEL_BROKEN".to_owned(),
+                    f64::from(u8::from(mapped.broken.is_some())),
+                ),
+                (
+                    "LEVEL_FLAT".to_owned(),
+                    f64::from(u8::from(mapped.surface.cut[2] > 0.5)),
+                ),
+                (
+                    "LEVEL_MIRROR".to_owned(),
+                    f64::from(u8::from(mapped.surface.cut[1] > 0.0)),
+                ),
+                (
+                    "LEVEL_BAKED_SQUARED".to_owned(),
+                    f64::from(u8::from(mapped.surface.baked[1] > 1.5)),
+                ),
+                (
+                    "LEVEL_GLOW".to_owned(),
+                    f64::from(u8::from(
+                        mapped.surface.glow[0] != 0.0
+                            || mapped.surface.glow[1] != 0.0
+                            || mapped.surface.glow[2] != 0.0,
+                    )),
+                ),
             ],
+            depth_write: prepassed.then_some(false),
+            depth_compare: prepassed.then_some(wgpu::CompareFunction::Equal),
             cull: mapped.cull,
             ..Variant::default()
         };

@@ -11,7 +11,6 @@ pub(crate) enum Recording {
 #[derive(Clone, Copy)]
 pub(crate) struct Opened {
     pub(crate) layout: u32,
-    pub(crate) shared: bool,
 }
 
 impl Recording {
@@ -30,10 +29,16 @@ impl Recording {
         match self {
             Self::Rendering(open, _) => Some(Opened {
                 layout: open.layout,
-                shared: open.shared,
             }),
             Self::Collecting(opened, _) => *opened,
             Self::Idle | Self::Encoding(_) | Self::Computing(..) => None,
+        }
+    }
+
+    pub(crate) fn open_render(&self) -> Option<(bool, usize)> {
+        match self {
+            Self::Rendering(open, _) => Some((open.shared, open.planned_at)),
+            Self::Idle | Self::Encoding(_) | Self::Computing(..) | Self::Collecting(..) => None,
         }
     }
 

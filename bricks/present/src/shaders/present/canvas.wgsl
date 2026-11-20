@@ -1,9 +1,9 @@
 import package::engine::post::frame::post;
-import package::generated::present::PresentFrame;
 
 @group(0) @binding(2) var presented: texture_2d<f32>;
-@group(2) @binding(0) var<uniform> present_frame: PresentFrame;
-@group(2) @binding(1) var presented_sampler: sampler;
+@group(2) @binding(0) var presented_sampler: sampler;
+
+override PRESENT_ANTIALIAS: bool = false;
 
 const GRADE_LUMA: vec3<f32> = vec3<f32>(0.299, 0.587, 0.114);
 const EDGE_SMALLEST: f32 = 0.0312;
@@ -57,7 +57,7 @@ fn fs_present(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> 
         middle = shown_at(uv);
     }
     var shown = middle;
-    if present_frame.antialias.x > 0.5 {
+    if PRESENT_ANTIALIAS {
         shown = smoothed(uv, 1.0 / vec2<f32>(size), middle);
     }
     return vec4<f32>(shown, 1.0);

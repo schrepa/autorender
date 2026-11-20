@@ -14,7 +14,7 @@ use engine_render::{
 use engine_rig::PaletteRow;
 
 use super::shaders::figures::{figure, ground, light, material, reveal};
-use crate::names::COLOR_PASS;
+use crate::names::{COLOR_PASS, REVEAL_PASS};
 use crate::play::light::{CLAMP, Light, LightField, Lighting, REPEAT};
 use crate::play::puppet::{Puppet, ShadeMaps};
 use crate::play::skinned::{Figure, FigurePalette};
@@ -106,11 +106,21 @@ fn face(cull: Cull) -> Option<wgpu::Face> {
     }
 }
 
+fn unit(vector: [f32; 3]) -> [f32; 3] {
+    let sq = vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2];
+    if sq > 1.0e-20 {
+        let inv = 1.0 / sq.sqrt();
+        [vector[0] * inv, vector[1] * inv, vector[2] * inv]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
+}
+
 fn light_of(lights: &[(Entity, Light)]) -> FigureLight {
     let Some((_, light)) = lights.first() else {
         return FigureLight::default();
     };
-    let [x, y, z] = light.direction;
+    let [x, y, z] = unit(light.direction);
     let [r, g, b] = light.sun;
     let rgb = |[r, g, b]: [f32; 3]| [r, g, b, 0.0];
     FigureLight {
@@ -118,6 +128,7 @@ fn light_of(lights: &[(Entity, Light)]) -> FigureLight {
         sun: [r, g, b, 0.0],
         sky: rgb(light.sky),
         ground: rgb(light.ground),
+        fog: [0.0, 0.0, 1.0, 0.0],
         ..FigureLight::default()
     }
 }
@@ -127,6 +138,7 @@ fn scene_lit(shown: FigureLight, lighting: Option<&Lighting>) -> FigureLight {
         return FigureLight {
             sky: [shown.sky[0], shown.sky[1], shown.sky[2], 1.0],
             ground: [shown.ground[0], shown.ground[1], shown.ground[2], 1.0],
+            fog: [0.0, 0.0, 1.0, 0.0],
             ..shown
         };
     };
@@ -135,6 +147,7 @@ fn scene_lit(shown: FigureLight, lighting: Option<&Lighting>) -> FigureLight {
     let [ground_r, ground_g, ground_b, _] = shown.ground;
     let horizon = lighting.sky_look.map_or(lighting.sky, |sky| sky.horizon);
     let fog = lighting.fog;
+    let inv_wrap = 1.0 / (1.0 + lighting.wrap);
     FigureLight {
         sun: [sun_r, sun_g, sun_b, lighting.wrap],
         sky: [sky_r, sky_g, sky_b, lighting.ambient.sky_scale],
@@ -148,7 +161,7 @@ fn scene_lit(shown: FigureLight, lighting: Option<&Lighting>) -> FigureLight {
         fog: [
             fog.map_or(0.0, |fog| fog.start_m),
             fog.map_or(0.0, |fog| fog.density_per_m),
-            0.0,
+            inv_wrap,
             0.0,
         ],
         ..shown
@@ -223,8 +236,9 @@ impl GpuPart for FiguresGpu {
         )?;
         let ground =
             cx.render_pipeline(scene, &pipeline(ground::VS_GROUND, &GROUND_STREAMS), &[lit])?;
+        let reveal = Scene::named(REVEAL_PASS);
         let revealed = cx.render_pipeline(
-            scene,
+            reveal,
             &revealed_pipeline(),
             &[(figure::FIGURE_PALETTE, Bind::Buffer(palette))],
         )?;
@@ -425,7 +439,8 @@ impl FiguresGpu {
             if let Err(error) = cx.set_batch(self.group, Some(handle), &entries, Some(variant)) {
                 cx.report(error);
             }
-            self.binds.keep(assets, (handle, revision, ()), &maps, None);
+            self.binds
+                .keep(assets, (handle, revision, ()), &maps, Some(()));
         }
     }
 

@@ -16,6 +16,8 @@ sha2.workspace = true
 engine = { workspace = true, features = ["dev"] }
 engine_checks.workspace = true
 engine_registry.workspace = true
+png.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true
 

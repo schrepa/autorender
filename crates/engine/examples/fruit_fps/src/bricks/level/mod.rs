@@ -9,7 +9,7 @@ mod sets;
 use engine::prelude::*;
 use engine_core::{AssetKind, AssetKinds, DrawKind, GpuStruct, KindDecl};
 
-use crate::names::COLOR_PASS;
+use crate::names::{COLOR_PASS, DEPTH_PASS};
 use crate::play::effects::GroundMarks;
 use crate::play::light::Lighting;
 
@@ -132,7 +132,7 @@ impl Brick for LevelBrick {
             )
             .draw_kind(KindDecl {
                 kind: LEVEL,
-                passes: &[COLOR_PASS],
+                passes: &[DEPTH_PASS, COLOR_PASS],
             })
             .draw_kind(KindDecl {
                 kind: LEVEL_DETAIL,

@@ -2035,7 +2035,7 @@
       },
       "orm": {
         "anisotropy": 1,
-        "mip": "linear"
+        "mip": "nearest"
       },
       "lightmap": {
         "anisotropy": 1,

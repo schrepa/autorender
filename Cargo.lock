@@ -4365,6 +4365,8 @@ dependencies = [
  "engine_registry",
  "engine_scene",
  "naga",
+ "png",
+ "serde",
  "serde_json",
  "sha2",
  "xtask",

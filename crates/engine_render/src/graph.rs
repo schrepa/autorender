@@ -250,6 +250,7 @@ impl Node {
 pub struct Planned {
     pub pass: PassId,
     pub batch: u8,
+    pub merge: bool,
     pub colors: Vec<(ResourceId, Ops)>,
     pub depth: Option<(ResourceId, Option<Ops>)>,
 }
@@ -691,6 +692,7 @@ impl StaticGraph {
             kept[at] = Some(Planned {
                 pass: PassId::new(index),
                 batch: self.batches[at],
+                merge: false,
                 colors,
                 depth,
             });
@@ -710,7 +712,7 @@ impl StaticGraph {
         let planned_writes = kept.iter().flatten().fold(ready.clone(), |all, planned| {
             all.union(self.nodes[planned.pass.index()].outputs())
         });
-        let mut passes = Vec::new();
+        let mut passes: Vec<Planned> = Vec::new();
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
             let refused_read = node.required().without(&written).iter().find(|&resource| {
@@ -748,6 +750,7 @@ impl StaticGraph {
             written.union_with(node.outputs());
             passes.push(planned);
         }
+        mark_merges(&self.nodes, self.resources.len(), &mut passes);
         let opaque = |planned: &Planned| {
             planned.batch == 1 && self.nodes[planned.pass.index()].entry.shared
         };
@@ -756,6 +759,28 @@ impl StaticGraph {
             .position(opaque)
             .zip(passes.iter().rposition(opaque));
         Ok(Plan { passes, opaque })
+    }
+}
+
+fn mark_merges(nodes: &[Node], width: usize, passes: &mut [Planned]) {
+    let mut group_outputs = Bits::of(width);
+    let mut group_reads = Bits::of(width);
+    for index in 0..passes.len() {
+        let node = &nodes[passes[index].pass.index()];
+        let merges = index > 0
+            && can_merge(
+                (&nodes[passes[index - 1].pass.index()], &passes[index - 1]),
+                (node, &passes[index]),
+                (&group_outputs, &group_reads),
+            );
+        passes[index].merge = merges;
+        if merges {
+            group_outputs.union_with(node.outputs());
+            group_reads.union_with(&node.reads);
+        } else {
+            group_outputs.assign(node.outputs());
+            group_reads.assign(&node.reads);
+        }
     }
 }
 
@@ -772,6 +797,45 @@ fn load_op(access: Access, written: bool) -> Load {
         Access::Draw(clear) if !written => Load::Clear(clear),
         Access::Draw(_) | Access::Load | Access::ReadOnly => Load::Load,
     }
+}
+
+fn can_merge(
+    (prev_node, prev): (&Node, &Planned),
+    (node, planned): (&Node, &Planned),
+    (group_outputs, group_reads): (&Bits, &Bits),
+) -> bool {
+    if prev.batch != planned.batch || prev_node.entry.shared != node.entry.shared {
+        return false;
+    }
+    let has_attachments = |step: &Planned| !step.colors.is_empty() || step.depth.is_some();
+    if !has_attachments(prev) || !has_attachments(planned) {
+        return false;
+    }
+    if prev.colors.len() != planned.colors.len() {
+        return false;
+    }
+    let colors_match = prev
+        .colors
+        .iter()
+        .zip(&planned.colors)
+        .all(|((a, a_ops), (b, b_ops))| a == b && a_ops.store && b_ops.load == Load::Load);
+    if !colors_match {
+        return false;
+    }
+    let depth_match = match (prev.depth, planned.depth) {
+        (None, None) => true,
+        (Some((a, None)), Some((b, None))) => a == b,
+        (Some((a, Some(a_ops))), Some((b, Some(b_ops)))) => {
+            a == b && a_ops.store && b_ops.load == Load::Load
+        }
+        (None, Some(_))
+        | (Some(_), None)
+        | (Some((_, None)), Some((_, Some(_))))
+        | (Some((_, Some(_))), Some((_, None))) => false,
+    };
+    depth_match
+        && group_outputs.intersect(&node.reads).is_empty()
+        && group_reads.intersect(&node.writes).is_empty()
 }
 
 #[cfg(feature = "dev")]
@@ -952,3 +1016,98 @@ mod facts {
 
 #[cfg(feature = "dev")]
 pub use facts::keyed;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(label: &'static str) -> ResourceEntry {
+        ResourceEntry {
+            label,
+            life: Life::Output,
+            view: true,
+        }
+    }
+
+    fn buffer(label: &'static str) -> ResourceEntry {
+        ResourceEntry {
+            label,
+            life: Life::Frame,
+            view: false,
+        }
+    }
+
+    fn pass(
+        label: &'static str,
+        registered: u32,
+        shared: bool,
+        colors: Vec<(ResourceId, Access)>,
+    ) -> Declared {
+        Declared {
+            entry: PassEntry {
+                label,
+                brick: "test",
+                registered,
+                shared,
+            },
+            reads: Vec::new(),
+            writes: Vec::new(),
+            colors,
+            depth: None,
+            after: Vec::new(),
+            current: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn merges_compatible_non_shared_passes_on_same_target() -> Result<(), Error> {
+        let color = ResourceId::new(0);
+        let canvas = ResourceId::new(1);
+        let mut scene = pass("scene", 0, true, vec![(color, Access::Draw(Clear::Color(BLACK)))]);
+        scene.depth = None;
+        let mut tone = pass("tone", 1, false, vec![(canvas, Access::Clear(Clear::Color(BLACK)))]);
+        tone.reads.push(color);
+        let ui = pass("ui", 2, false, vec![(canvas, Access::Load)]);
+        let graph =
+            StaticGraph::build(vec![target("color"), target("canvas")], vec![scene, tone, ui])?;
+        let mut runs = Bits::of(3);
+        for index in 0..3 {
+            runs.insert(index);
+        }
+        let mut outputs = Bits::of(2);
+        outputs.insert(canvas.index());
+        let plan = graph.plan(&runs, &outputs, &Bits::of(2))?;
+        let merged: Vec<bool> = plan.passes.iter().map(|step| step.merge).collect();
+        assert_eq!(merged, vec![false, false, true]);
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_merge_on_clear_or_hazard() -> Result<(), Error> {
+        let scratch = ResourceId::new(0);
+        let mark = ResourceId::new(1);
+        let canvas = ResourceId::new(2);
+        let mut first = pass("first", 0, false, vec![(canvas, Access::Clear(Clear::Color(BLACK)))]);
+        first.writes.push(scratch);
+        let second = pass("second", 1, false, vec![(canvas, Access::Load)]);
+        let mut third = pass("third", 2, false, vec![(canvas, Access::Load)]);
+        third.reads.push(scratch);
+        third.writes.push(mark);
+        let mut fourth = pass("fourth", 3, false, vec![(canvas, Access::Clear(Clear::Color(BLACK)))]);
+        fourth.reads.push(mark);
+        let graph = StaticGraph::build(
+            vec![buffer("scratch"), buffer("mark"), target("canvas")],
+            vec![first, second, third, fourth],
+        )?;
+        let mut runs = Bits::of(4);
+        for index in 0..4 {
+            runs.insert(index);
+        }
+        let mut outputs = Bits::of(3);
+        outputs.insert(canvas.index());
+        let plan = graph.plan(&runs, &outputs, &Bits::of(3))?;
+        let merged: Vec<bool> = plan.passes.iter().map(|step| step.merge).collect();
+        assert_eq!(merged, vec![false, true, false, false]);
+        Ok(())
+    }
+}

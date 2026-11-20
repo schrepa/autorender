@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::ops::Range;
 
 use engine::prelude::*;
@@ -25,7 +24,7 @@ pub(super) struct Piece {
 
 #[derive(Resource, Clone, Debug, Default)]
 pub(super) struct Pieces {
-    found: BTreeMap<Asset<MeshFile>, Piece>,
+    found: Vec<Option<(Asset<MeshFile>, Piece)>>,
 }
 
 impl Pieces {
@@ -37,7 +36,9 @@ impl Pieces {
         if instances.len() != 1 {
             return None;
         }
-        self.found.get(&mesh?)
+        let mesh = mesh?;
+        let (known, piece) = self.found.get(mesh.slot())?.as_ref()?;
+        (*known == mesh).then_some(piece)
     }
 }
 
@@ -62,21 +63,30 @@ pub(super) fn pieces(
     if !meshes && !touched.iter().any(level) {
         return;
     }
-    let next: BTreeMap<Asset<MeshFile>, Piece> = found
-        .iter()
-        .filter(|(drawn, _)| level(drawn))
-        .filter_map(|(drawn, piece)| {
-            let mesh = drawn.geometry?;
-            let bounds = assets.get(mesh).ok()?.description().bounds;
-            Some((
-                mesh,
-                Piece {
-                    bounds: [bounds.min, bounds.max],
-                    largest_m: piece.map(|piece| piece.largest_m),
-                },
-            ))
-        })
-        .collect();
+    let mut next: Vec<Option<(Asset<MeshFile>, Piece)>> = Vec::new();
+    for (drawn, piece) in &found {
+        if !level(drawn) {
+            continue;
+        }
+        let Some(mesh) = drawn.geometry else {
+            continue;
+        };
+        let Ok(loaded) = assets.get(mesh) else {
+            continue;
+        };
+        let bounds = loaded.description().bounds;
+        let slot = mesh.slot();
+        if next.len() <= slot {
+            next.resize(slot + 1, None);
+        }
+        next[slot] = Some((
+            mesh,
+            Piece {
+                bounds: [bounds.min, bounds.max],
+                largest_m: piece.map(|piece| piece.largest_m),
+            },
+        ));
+    }
     if pieces.found != next {
         pieces.found = next;
     }
@@ -102,4 +112,19 @@ pub(super) fn seen(
         return Seen::Hidden;
     }
     Seen::Near(piece.map_or(0.0, |piece| nearest_squared(piece.bounds, facts.eye)))
+}
+
+pub(super) fn near(
+    piece: Option<&Piece>,
+    mesh: Option<Asset<MeshFile>>,
+    facts: &ViewFacts,
+    set: Option<SetView<'_>>,
+) -> Option<f32> {
+    if set.is_some_and(|set| set.hides(mesh) == Some(true)) {
+        return None;
+    }
+    if piece.is_some_and(|piece| outside(facts.view_projection, piece.bounds)) {
+        return None;
+    }
+    Some(piece.map_or(0.0, |piece| nearest_squared(piece.bounds, facts.eye)))
 }

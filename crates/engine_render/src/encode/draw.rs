@@ -156,16 +156,20 @@ impl Run {
         self.settle_draw(part, issued, handles)
     }
 
-    pub(crate) fn batches(
+    pub(crate) fn batches_matching(
         &mut self,
         (part, timer): (u32, &GpuProfiler),
         (handle, vertices, order): (u32, Range<u32>, DrawOrder),
         (batches, pass): (&mut Batches, Option<PassBit>),
+        keep: &mut dyn FnMut(BatchOf<'_>) -> bool,
     ) {
         let head = self.head(part, self.point, handle);
         let judged = batches.judged == Some(self.view_stamp());
         let mut kept = std::mem::take(&mut self.spare.kept);
         for (at, batch) in batches.drawn_mut(pass) {
+            if !keep(BatchOf::of(batch)) {
+                continue;
+            }
             if batch.held {
                 self.hold(head, batch);
                 continue;
@@ -582,7 +586,7 @@ impl Run {
             };
             let begun = encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(label),
+                    label: debug_label(label),
                     timestamp_writes: None,
                 })
                 .forget_lifetime();

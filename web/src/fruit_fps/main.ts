@@ -40,23 +40,24 @@ const BUCKETS = 300;
 const SPIKE_MS = 25;
 const CEILING_MS = 50;
 
-function frameRate() {
+function frameRate(initial: boolean) {
+  const player = part("player");
   const shown = part("rate");
   const scene = part<HTMLCanvasElement>("scene");
   const pace = part<HTMLCanvasElement>("pace");
+  const toggle = part("view-stats");
   const ink = pace.getContext("2d");
   const worsts = new Float32Array(BUCKETS);
   const spikes = new Uint16Array(BUCKETS);
   let card = "";
-  void navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(adapter => {
-    const info = adapter?.info;
-    card = [info?.vendor, info?.architecture].filter(Boolean).join(" ") || info?.description || "";
-  }, () => undefined);
+  let cardAsked = false;
   let since = 0;
   let last = 0;
   let frames = 0;
   let worst = 0;
   let bucket = 0;
+  let active = false;
+  let raf = 0;
   const draw = () => {
     if (!ink) return;
     const { width, height } = pace;
@@ -72,6 +73,7 @@ function frameRate() {
     }
   };
   const frame = (now: number) => {
+    if (!active) return;
     const at = Math.floor(now / BUCKET_MS);
     if (last === 0) {
       since = now; frames = 0; worst = 0; bucket = at;
@@ -94,10 +96,40 @@ function frameRate() {
       shown.textContent = `${Math.round(frames * 1000 / (now - since))} fps · worst ${worst.toFixed(1)} ms · 30 s: worst ${Math.round(longest)} ms, ${count} over ${SPIKE_MS} ms · ${scene.width}×${scene.height}${card ? ` · ${card}` : ""}`;
       since = now; frames = 0; worst = 0;
     }
-    requestAnimationFrame(frame);
+    raf = requestAnimationFrame(frame);
   };
+  const setActive = (next: boolean) => {
+    if (active === next) return;
+    active = next;
+    shown.hidden = !next;
+    pace.hidden = !next;
+    player.dataset.stats = next ? "on" : "off";
+    toggle.setAttribute("aria-pressed", String(next));
+    if (next) {
+      if (!cardAsked) {
+        cardAsked = true;
+        void navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(adapter => {
+          const info = adapter?.info;
+          card = [info?.vendor, info?.architecture].filter(Boolean).join(" ") || info?.description || "";
+        }, () => undefined);
+      }
+      worsts.fill(0);
+      spikes.fill(0);
+      last = 0;
+      raf = requestAnimationFrame(frame);
+    } else {
+      cancelAnimationFrame(raf);
+      raf = 0;
+      shown.textContent = "";
+      if (ink) ink.clearRect(0, 0, pace.width, pace.height);
+    }
+  };
+  toggle.addEventListener("click", () => {
+    setActive(!active);
+    scene.focus();
+  });
   document.addEventListener("visibilitychange", () => { last = 0; });
-  requestAnimationFrame(frame);
+  setActive(initial);
 }
 
 function interruptions() {
@@ -112,7 +144,8 @@ function interruptions() {
   followRatio();
 }
 
-if (new URLSearchParams(location.search).get("engine_dev") === "1") document.body.dataset.dev = "";
+const dev = new URLSearchParams(location.search).get("engine_dev") === "1";
+if (dev) document.body.dataset.dev = "";
 
 if (!window.isSecureContext) {
   refuseGpu("This page is not served over HTTPS or from localhost, and browsers only offer WebGPU to secure pages.");
@@ -120,7 +153,7 @@ if (!window.isSecureContext) {
   refuseGpu("This browser does not offer WebGPU, or it is switched off.");
 } else {
   views();
-  frameRate();
+  frameRate(dev);
   interruptions();
   adapterFound().then(found => found
     ? playGame({ wasm: "fruit_fps", scene: "fruit_fps.scene.json", load: () => import("../../pkg/fruit_fps"), game: bindings => bindings.FruitFpsGame, shown, failed, progress })

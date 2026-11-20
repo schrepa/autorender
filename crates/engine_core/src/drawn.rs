@@ -137,7 +137,9 @@ pub struct DrawnTable {
     sorted: Vec<Vec<u32>>,
     spare_batches: Vec<u32>,
     spare_regions: Vec<Vec<u32>>,
-    slot_changes: Changes,
+    record_changes: Changes,
+    value_changes: Changes,
+    pose_changes: Changes,
     order_changes: Changes,
     touched: Vec<Entity>,
     verdicts: Vec<(Entity, Result<(), Error>)>,
@@ -166,7 +168,9 @@ impl Default for DrawnTable {
             sorted: Vec::new(),
             spare_batches: Vec::new(),
             spare_regions: Vec::new(),
-            slot_changes: Changes::new(1),
+            record_changes: Changes::new(1),
+            value_changes: Changes::new(1),
+            pose_changes: Changes::new(1),
             order_changes: Changes::new(1),
             touched: Vec::new(),
             verdicts: Vec::new(),
@@ -220,8 +224,16 @@ impl DrawnTable {
         &self.order
     }
 
-    pub fn slot_changes(&self) -> &Changes {
-        &self.slot_changes
+    pub fn record_changes(&self) -> &Changes {
+        &self.record_changes
+    }
+
+    pub fn value_changes(&self) -> &Changes {
+        &self.value_changes
+    }
+
+    pub fn pose_changes(&self) -> &Changes {
+        &self.pose_changes
     }
 
     pub fn order_changes(&self) -> &Changes {
@@ -252,7 +264,9 @@ impl DrawnTable {
         ) else {
             return;
         };
-        self.slot_changes.settle();
+        self.record_changes.settle();
+        self.value_changes.settle();
+        self.pose_changes.settle();
         self.order_changes.settle();
         let stride = stride_of(settings.instance_floats);
         let room = world
@@ -263,6 +277,7 @@ impl DrawnTable {
         if stride != self.stride {
             self.stride = stride;
             self.values = vec![[0.0; 4]; self.records.len() * stride];
+            self.value_changes.mark_all();
         }
         let changed = assets.changed(&mut self.assets);
         match (self.seen.replace(seen) == Some(seen), changed) {
@@ -317,7 +332,7 @@ impl DrawnTable {
         let Self {
             held,
             poses,
-            slot_changes,
+            pose_changes,
             ..
         } = self;
         let mut mirror = |entity: Entity, node: usize| {
@@ -326,7 +341,7 @@ impl DrawnTable {
                 && let Some(rows) = globals.rows(node)
                 && copy_rows(&mut poses[slot as usize], rows)
             {
-                slot_changes.mark(slot);
+                pose_changes.mark(slot);
             }
         };
         if moved.all {
@@ -502,16 +517,21 @@ impl DrawnTable {
             values: (at * self.stride) as u32,
             floats: drawn.values.floats.len() as u32,
         };
-        let mut changed = self.records[at] != record;
+        if self.records[at] != record {
+            self.records[at] = record;
+            self.record_changes.mark(slot);
+        }
         if let Some(rows) = cx
             .globals
             .node_index(entity)
             .and_then(|node| cx.globals.rows(node))
+            && copy_rows(&mut self.poses[at], rows)
         {
-            changed |= copy_rows(&mut self.poses[at], rows);
+            self.pose_changes.mark(slot);
         }
         let [red, green, blue] = drawn.values.emission;
         let floats = &drawn.values.floats;
+        let mut values_changed = false;
         for index in 0..self.stride {
             let quad = match index {
                 0 => drawn.values.tint,
@@ -526,12 +546,11 @@ impl DrawnTable {
             let held = &mut self.values[at * self.stride + index];
             if held.map(f32::to_bits) != quad.map(f32::to_bits) {
                 *held = quad;
-                changed = true;
+                values_changed = true;
             }
         }
-        if changed {
-            self.records[at] = record;
-            self.slot_changes.mark(slot);
+        if values_changed {
+            self.value_changes.mark(slot);
         }
     }
 

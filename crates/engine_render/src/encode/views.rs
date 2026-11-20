@@ -30,11 +30,13 @@ impl Run {
     }
 
     pub(crate) fn write_post(&mut self) {
-        self.queue.write_buffer(
-            &self.set().post_buffer,
-            0,
-            bytemuck::bytes_of(&self.uniforms.post),
-        );
+        let post = self.uniforms.post;
+        if self.set().sent_post == Some(post) {
+            return;
+        }
+        self.queue
+            .write_buffer(&self.set().post_buffer, 0, bytemuck::bytes_of(&post));
+        self.set_mut().sent_post = Some(post);
     }
 
     pub(crate) fn fill(&mut self, pipeline: u32, textures: &[Asset<engine_core::Texture>]) -> u32 {
@@ -120,6 +122,15 @@ impl Run {
         match bound {
             Bound::Buffer(buffer) => match self.buffer_held(*buffer) {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
+                None => Resolved::Missing,
+            },
+            Bound::Texture(texture) => match self
+                .tables
+                .textures
+                .get(*texture as usize)
+                .and_then(Option::as_ref)
+            {
+                Some(made) => Resolved::View(made.view.clone()),
                 None => Resolved::Missing,
             },
             Bound::Sampler(sampler) => match self.bindings.samplers.get(*sampler as usize) {
@@ -322,6 +333,7 @@ impl Run {
             let made = Made {
                 label,
                 format,
+                dimension: wgpu::TextureDimension::D2,
                 usage,
                 samples,
             };
@@ -571,6 +583,7 @@ pub(crate) struct ViewSet {
     pub(crate) shared: Vec<Allocated>,
     pub(crate) canvas: Option<Allocated>,
     pub(crate) post_buffer: wgpu::Buffer,
+    pub(crate) sent_post: Option<crate::shared::PostUniform>,
     pub(crate) groups: Vec<Option<(Holder, HeldGroups)>>,
     pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) ran: Bits,
@@ -595,6 +608,7 @@ impl ViewSet {
                 "engine/post-uniform",
                 size_of::<crate::shared::PostUniform>() as u64,
             ),
+            sent_post: None,
             groups: Vec::new(),
             stale: holders.clone(),
             ran: Bits::of(machine.graph.passes()),

@@ -50,6 +50,7 @@ struct Corner {
     @location(0) local: vec2<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) @interpolate(flat) index: u32,
+    @location(3) @interpolate(flat) lod: f32,
 }
 
 fn corner_of(vertex: u32) -> vec2<f32> {
@@ -92,11 +93,17 @@ fn vs_interface(@builtin(vertex_index) vertex: u32, @builtin(instance_index) ind
     let turned = vec2<f32>(local.x * turn.x - local.y * turn.y, local.x * turn.y + local.y * turn.x);
     let at = quad.rect.xy + size * 0.5 + turned;
     let canvas = max(interface_quads.canvas.xy, vec2<f32>(1.0));
+    let base_lod = lod_of(quad.scale);
     var out: Corner;
     out.position = vec4<f32>(at.x / canvas.x * 2.0 - 1.0, 1.0 - at.y / canvas.y * 2.0, 0.0, 1.0);
     out.local = local;
     out.uv = quad.uv.xy + (local / max(size, vec2<f32>(1.0e-4)) + vec2<f32>(0.5)) * quad.uv.zw;
     out.index = index;
+    out.lod = select(
+        base_lod,
+        max(0.0, base_lod - interface_quads.canvas.z),
+        quad.mode == IMAGE || quad.mode == ICON,
+    );
     return out;
 }
 
@@ -130,24 +137,37 @@ fn premultiplied(color: vec4<f32>, amount: f32) -> vec4<f32> {
     return vec4<f32>(color.rgb * a, a);
 }
 
-fn cased(quad: Quad, local: vec2<f32>, soft: f32, shown: vec4<f32>) -> vec4<f32> {
-    if quad.case_color == 0u {
+fn cased(quad: Quad, local: vec2<f32>, soft: f32, shown: vec4<f32>, base_d: f32) -> vec4<f32> {
+    if quad.case_color == 0u || shown.a >= 1.0 {
         return shown;
     }
     let half = quad.rect.zw * 0.5;
     let grown = half + vec2<f32>(quad.case_grow);
     let rounding = quad.radius + quad.case_grow;
+    let shiftable = quad.radius >= 0.0 && quad.case_grow >= 0.0;
+    let centered = quad.case_offset.x == 0.0 && quad.case_offset.y == 0.0;
     let color = unpack4x8unorm(quad.case_color);
-    var under = color.a * coverage(rounded_box(local - quad.case_offset, grown, rounding) / soft);
+    var offset_d = base_d - quad.case_grow;
+    if !(shiftable && centered) {
+        offset_d = rounded_box(local - quad.case_offset, grown, rounding);
+    }
+    var under = color.a * coverage(offset_d / soft);
     if doubled(quad) {
-        let again = color.a * coverage(rounded_box(local, grown, rounding) / soft);
+        var center_d = base_d - quad.case_grow;
+        if !shiftable {
+            center_d = rounded_box(local, grown, rounding);
+        }
+        let again = color.a * coverage(center_d / soft);
         under = under + again - under * again;
     }
     var below = vec4<f32>(color.rgb * under, under);
     if quad.rim != 0u {
         let rim = unpack4x8unorm(quad.rim);
-        let reach = half + vec2<f32>(quad.rim_grow);
-        let ring = rim.a * coverage(rounded_box(local, reach, quad.radius + quad.rim_grow) / soft);
+        var rim_d = base_d - quad.rim_grow;
+        if !(quad.radius >= 0.0 && quad.rim_grow >= 0.0) {
+            rim_d = rounded_box(local, half + vec2<f32>(quad.rim_grow), quad.radius + quad.rim_grow);
+        }
+        let ring = rim.a * coverage(rim_d / soft);
         below = over(vec4<f32>(rim.rgb * ring, ring), below);
     }
     return over(shown, below);
@@ -155,19 +175,29 @@ fn cased(quad: Quad, local: vec2<f32>, soft: f32, shown: vec4<f32>) -> vec4<f32>
 
 fn plate(quad: Quad, local: vec2<f32>) -> vec4<f32> {
     let half = quad.rect.zw * 0.5;
+    let base_d = rounded_box(local, half, quad.radius);
     var shown = vec4<f32>(0.0);
     if (quad.fill >> 24u) != 0u {
-        let inside = coverage(rounded_box(local, half, quad.radius) / quad.scale);
+        let inside = coverage(base_d / quad.scale);
         shown = premultiplied(unpack4x8unorm(quad.fill), inside);
     }
     if quad.stroke_width > 0.0 {
         let inset = quad.stroke_inset;
-        let outer = coverage(rounded_box(local, half - vec2<f32>(inset), quad.radius - inset));
+        let min_half = min(half.x, half.y);
+        var outer_d = base_d + inset;
+        if !(inset == 0.0 || (quad.radius >= inset && quad.radius <= min_half)) {
+            outer_d = rounded_box(local, half - vec2<f32>(inset), quad.radius - inset);
+        }
+        let outer = coverage(outer_d);
         let deep = inset + quad.stroke_width;
-        let inner = coverage(rounded_box(local, half - vec2<f32>(deep), quad.radius - deep));
+        var inner_d = base_d + deep;
+        if !(quad.radius >= deep && quad.radius <= min_half) {
+            inner_d = rounded_box(local, half - vec2<f32>(deep), quad.radius - deep);
+        }
+        let inner = coverage(inner_d);
         shown = over(premultiplied(unpack4x8unorm(quad.edge), max(outer - inner, 0.0)), shown);
     }
-    shown = cased(quad, local, quad.scale, shown);
+    shown = cased(quad, local, quad.scale, shown, base_d);
     if quad.uv.x > 0.0 {
         let turn = fract(atan2(local.x, -local.y) / 6.2831853 + 1.0);
         shown = shown * select(0.0, 1.0, turn <= 1.0 - quad.uv.x);
@@ -214,36 +244,54 @@ fn lod_of(scale: f32) -> f32 {
     return max(0.0, -log2(max(scale, 1.0e-4)));
 }
 
-fn picture_lod(scale: f32) -> f32 {
-    return max(0.0, lod_of(scale) - interface_quads.canvas.z);
-}
-
 @fragment
 fn fs_interface(corner: Corner) -> @location(0) vec4<f32> {
     let quad = interface_quads.quads[corner.index];
+    var out: vec4<f32>;
     if quad.mode == PLATE {
-        return plate(quad, corner.local);
-    }
-    let tint = unpack4x8unorm(quad.fill);
-    let lod = lod_of(quad.scale);
-    if quad.mode == IMAGE {
-        let picture = picture_of(quad.edge, corner.uv, picture_lod(quad.scale));
-        let shown = encoded(picture.rgb);
-        let grey = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let tinted = vec4<f32>(mix(shown, vec3<f32>(grey), quad.stroke_width), picture.a) * tint;
-        if !framed_image(quad) {
-            return premultiplied(tinted, 1.0);
+        out = plate(quad, corner.local);
+    } else if quad.mode == IMAGE {
+        let picture = picture_of(quad.edge, corner.uv, corner.lod);
+        let framed = framed_image(quad);
+        if picture.a <= 0.0 && !framed {
+            discard;
         }
-        let inside = coverage(rounded_box(corner.local, quad.rect.zw * 0.5, quad.radius));
-        return cased(quad, corner.local, 1.0, premultiplied(tinted, inside));
-    }
-    if quad.mode == ICON {
+        let tint = unpack4x8unorm(quad.fill);
+        var shown = vec3<f32>(0.0);
+        if picture.a > 0.0 {
+            shown = encoded(picture.rgb);
+        }
+        if quad.stroke_width > 0.0 {
+            let grey = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
+            shown = mix(shown, vec3<f32>(grey), quad.stroke_width);
+        }
+        let tinted = vec4<f32>(shown, picture.a) * tint;
+        if !framed {
+            out = premultiplied(tinted, 1.0);
+        } else {
+            let base_d = rounded_box(corner.local, quad.rect.zw * 0.5, quad.radius);
+            let inside = coverage(base_d);
+            out = cased(quad, corner.local, 1.0, premultiplied(tinted, inside), base_d);
+        }
+    } else if quad.mode == ICON {
         let texels = vec2<f32>(textureDimensions(interface_icons));
-        let alpha = textureSampleLevel(interface_icons, interface_sampler, corner.uv / texels, picture_lod(quad.scale)).a;
-        return premultiplied(tint, alpha);
+        let alpha = textureSampleLevel(interface_icons, interface_sampler, corner.uv / texels, corner.lod).a;
+        if alpha <= 0.0 {
+            discard;
+        }
+        out = premultiplied(unpack4x8unorm(quad.fill), alpha);
+    } else {
+        let distance = glyph_of(quad.edge, corner.uv, corner.lod);
+        let spread = quad.radius;
+        let pixels = (distance - 0.5) * 2.0 * spread * quad.scale + quad.stroke_width;
+        let alpha = clamp(pixels / (1.0 + quad.stroke_inset) + 0.5, 0.0, 1.0);
+        if alpha <= 0.0 {
+            discard;
+        }
+        out = premultiplied(unpack4x8unorm(quad.fill), alpha);
     }
-    let distance = glyph_of(quad.edge, corner.uv, lod);
-    let spread = quad.radius;
-    let pixels = (distance - 0.5) * 2.0 * spread * quad.scale + quad.stroke_width;
-    return premultiplied(tint, clamp(pixels / (1.0 + quad.stroke_inset) + 0.5, 0.0, 1.0));
+    if out.a <= 0.0 {
+        discard;
+    }
+    return out;
 }

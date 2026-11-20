@@ -321,6 +321,10 @@ fn owned_by(declared: &Declared, bound: &Bound, part: u32) -> bool {
             .buffers
             .get(*buffer as usize)
             .is_some_and(|buffer| buffer.part == part),
+        Bound::Texture(texture) => declared
+            .textures
+            .get(*texture as usize)
+            .is_some_and(|texture| texture.part == part),
         Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => false,
     }
 }
@@ -378,7 +382,7 @@ fn handle_of(declared: &Declared, bound: &Bound) -> Option<Handle> {
     match bound {
         Bound::Buffer(buffer) => Some(Handle::Buffer(*buffer)),
         Bound::Target(name) => declared.target_of(*name).map(Handle::Target),
-        Bound::Sampler(_) | Bound::Asset => None,
+        Bound::Texture(_) | Bound::Sampler(_) | Bound::Asset => None,
     }
 }
 
@@ -437,7 +441,7 @@ impl Machine {
     ) -> Option<Self> {
         let Composing {
             linked,
-            declared,
+            mut declared,
             core_frame,
             numbers,
             frame_bound,
@@ -446,6 +450,7 @@ impl Machine {
             reaches,
             staged,
         } = composing;
+        resolve_target_formats(&mut declared, device.features());
         let limits = Limits::of(device);
         let mut unknown = unknown_targets(&declared);
         for pass in &declared.passes {
@@ -794,6 +799,35 @@ impl Machine {
     }
 }
 
+fn target_supported(format: wgpu::TextureFormat, features: wgpu::Features) -> bool {
+    let guaranteed = format.guaranteed_format_features(features);
+    let usages = guaranteed.allowed_usages;
+    if !usages.contains(wgpu::TextureUsages::RENDER_ATTACHMENT) {
+        return false;
+    }
+    if format.is_depth_stencil_format() {
+        return true;
+    }
+    usages.contains(wgpu::TextureUsages::TEXTURE_BINDING)
+        && guaranteed
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::BLENDABLE)
+}
+
+fn resolve_target_formats(declared: &mut Declared, features: wgpu::Features) {
+    for (target, fallback) in declared
+        .targets
+        .iter_mut()
+        .zip(&declared.target_fallbacks)
+    {
+        if let Some(fallback) = *fallback
+            && !target_supported(target.format, features)
+        {
+            target.format = fallback;
+        }
+    }
+}
+
 fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
     if let Some(Bound::Sampler(sampler)) = bound {
         return declared.samplers.get(*sampler as usize).is_none_or(|desc| {
@@ -806,6 +840,10 @@ fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
         Some(Bound::Target(name)) => declared
             .target_of(*name)
             .and_then(|target| declared.target_format(target)),
+        Some(Bound::Texture(texture)) => declared
+            .textures
+            .get(*texture as usize)
+            .map(|decl| decl.format),
         Some(_) | None => None,
     };
     format.is_none_or(|format| {
@@ -884,7 +922,7 @@ fn graph_of(
             match bound {
                 Bound::Buffer(buffer) => ids.buffers.get(*buffer as usize).copied(),
                 Bound::Target(name) => declared.target_of(*name).and_then(|target| ids.target(target)),
-                Bound::Sampler(_) | Bound::Asset => None,
+                Bound::Texture(_) | Bound::Sampler(_) | Bound::Asset => None,
             }
         };
         let mut current = Vec::new();
@@ -946,4 +984,34 @@ fn graph_of(
     }
     let graph = StaticGraph::build(resources, passes)?;
     Ok((graph, ids))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_target_fallback_resolves_against_device_features() {
+        let target = SharedTarget {
+            name: TargetName("color"),
+            format: wgpu::TextureFormat::Rg11b10Ufloat,
+            samples: 1,
+            clear: Clear::Color(BLACK),
+        };
+        let mut without = Declared {
+            targets: vec![target],
+            target_fallbacks: vec![Some(wgpu::TextureFormat::Rgba16Float)],
+            ..Declared::default()
+        };
+        resolve_target_formats(&mut without, wgpu::Features::empty());
+        assert_eq!(without.targets[0].format, wgpu::TextureFormat::Rgba16Float);
+
+        let mut with = Declared {
+            targets: vec![target],
+            target_fallbacks: vec![Some(wgpu::TextureFormat::Rgba16Float)],
+            ..Declared::default()
+        };
+        resolve_target_formats(&mut with, wgpu::Features::RG11B10UFLOAT_RENDERABLE);
+        assert_eq!(with.targets[0].format, wgpu::TextureFormat::Rg11b10Ufloat);
+    }
 }

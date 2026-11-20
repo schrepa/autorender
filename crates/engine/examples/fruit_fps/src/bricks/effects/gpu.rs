@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
-use engine_core::{Entry, Error, TextureRef, Var, ViewFacts};
+use engine_core::{Entry, Error, Filter, Sampler, TextureRef, Var, ViewFacts, Wrap};
 use engine_drawing::StandIn;
 use engine_render::{Access, BatchGroup, Encode, FULLSCREEN, GroupEntry, Own, PerBatch, Scene};
 
@@ -18,6 +18,41 @@ const QUAD_VERTICES: u32 = 6;
 
 const SLAB_VERTICES: u32 = 54;
 
+const NOISE_SIDE: u32 = 32;
+
+const NOISE_SAMPLER: Sampler = Sampler {
+    wrap_u: Wrap::Repeat,
+    wrap_v: Wrap::Repeat,
+    wrap_w: Wrap::Repeat,
+    mag_filter: Filter::Linear,
+    min_filter: Filter::Linear,
+    mipmap_filter: None,
+    compare: None,
+    anisotropy: 1,
+};
+
+fn noise_hash(value: u32) -> u32 {
+    let mut x = value.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    x = ((x >> ((x >> 28) + 4)) ^ x).wrapping_mul(277_803_737);
+    (x >> 22) ^ x
+}
+
+fn noise_volume() -> Vec<u8> {
+    let total = (NOISE_SIDE * NOISE_SIDE * NOISE_SIDE) as usize;
+    let mut bytes = Vec::with_capacity(total);
+    for z in 0..NOISE_SIDE {
+        let kz = (z + 4096).wrapping_mul(83_492_791);
+        for y in 0..NOISE_SIDE {
+            let kyz = (y + 4096).wrapping_mul(19_349_663) ^ kz;
+            for x in 0..NOISE_SIDE {
+                let seed = (x + 4096).wrapping_mul(73_856_093) ^ kyz;
+                bytes.push((noise_hash(seed) >> 24) as u8);
+            }
+        }
+    }
+    bytes
+}
+
 pub(super) struct EffectsGpu {
     glow: Pipeline<Self, Scene>,
     solid: Pipeline<Self, Scene>,
@@ -30,6 +65,7 @@ pub(super) struct EffectsGpu {
     pass: engine_render::Pass<Self>,
     items: Buffer<Self>,
     frame: Buffer<Self>,
+    noise: engine_render::Texture<Self>,
     field_group: BatchGroup<Self>,
     unlit: StandIn<Self>,
     field_bound: Option<Option<TextureRef>>,
@@ -90,12 +126,12 @@ fn tested(write: bool) -> DepthUse {
 fn bound(
     cx: &mut Install<'_, EffectsGpu>,
     entries: [Entry; 2],
-    buffers: [(Var, Buffer<EffectsGpu>); 2],
+    resources: &[(Var, Bind<EffectsGpu>)],
 ) -> Vec<(Var, Bind<EffectsGpu>)> {
-    buffers
-        .into_iter()
+    resources
+        .iter()
         .filter(|(var, _)| entries.iter().any(|entry| cx.reaches(*entry, *var)))
-        .map(|(var, buffer)| (var, Bind::Buffer(buffer)))
+        .map(|(var, bind)| (*var, bind.clone()))
         .collect()
 }
 
@@ -117,9 +153,13 @@ impl GpuPart for EffectsGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let items_buffer = cx.buffer("effects_items", Lifetime::Kept);
         let frame_buffer = cx.buffer("effects_frame", Lifetime::Kept);
+        let noise = cx.texture_3d("effects_noise", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
+        let noise_sampler = cx.sampler(NOISE_SAMPLER);
         let buffers = [
-            (items::EFFECT_ITEMS, items_buffer),
-            (items::EFFECTS_FRAME, frame_buffer),
+            (items::EFFECT_ITEMS, Bind::Buffer(items_buffer)),
+            (items::EFFECTS_FRAME, Bind::Buffer(frame_buffer)),
+            (items::EFFECTS_NOISE_MAP, Bind::Texture(noise)),
+            (items::EFFECTS_NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
         ];
         cx.frame(volume::EFFECTS_DEPTH, Bind::Target(DEPTH))?;
         let field_group = cx.batch_group(field::MODULE, 1, &[])?;
@@ -128,35 +168,35 @@ impl GpuPart for EffectsGpu {
         let over = [(blended(), wgpu::ColorWrites::ALL)];
         let opaque = [(None, wgpu::ColorWrites::ALL)];
         let entries = [glow::VS_GLOW, glow::FS_GLOW];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let glow = cx.render_pipeline(
             scene,
             &description(entries[0], entries[1], tested(false), &over),
             &list,
         )?;
         let entries = [solid::VS_SOLID, solid::FS_SOLID];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let solid = cx.render_pipeline(
             scene,
             &description(entries[0], entries[1], tested(true), &opaque),
             &list,
         )?;
         let entries = [slab::VS_SLAB, slab::FS_SLAB];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let slab = cx.render_pipeline(
             scene,
             &description(entries[0], entries[1], tested(true), &opaque),
             &list,
         )?;
         let entries = [sheet::VS_SHEET, sheet::FS_SHEET];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let sheet = cx.render_pipeline(
             scene,
             &description(entries[0], entries[1], tested(true), &over),
             &list,
         )?;
         let entries = [barrier::VS_BARRIER, barrier::FS_BARRIER];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let barrier = cx.render_pipeline(
             scene,
             &description(entries[0], entries[1], tested(false), &over),
@@ -170,21 +210,21 @@ impl GpuPart for EffectsGpu {
             .views(PassViews::Main)
             .id();
         let entries = [volume::VS_VOLUME, volume::FS_SMOKE];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let smoke = cx.render_pipeline(
             pass,
             &back_faces(description(entries[0], entries[1], DepthUse::None, &over)),
             &list,
         )?;
         let entries = [volume::VS_VOLUME, volume::FS_MARKS];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let marks = cx.render_pipeline(
             pass,
             &back_faces(description(entries[0], entries[1], DepthUse::None, &over)),
             &list,
         )?;
         let entries = [FULLSCREEN, screen::FS_SCREEN];
-        let list = bound(cx, entries, buffers);
+        let list = bound(cx, entries, &buffers);
         let screen = cx.render_pipeline(
             pass,
             &description(entries[0], entries[1], DepthUse::None, &over),
@@ -202,6 +242,7 @@ impl GpuPart for EffectsGpu {
             pass,
             items: items_buffer,
             frame: frame_buffer,
+            noise,
             field_group,
             unlit,
             field_bound: None,
@@ -224,6 +265,25 @@ impl GpuPart for EffectsGpu {
         (drawing, skipped): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let noise_size = wgpu::Extent3d {
+            width: NOISE_SIDE,
+            height: NOISE_SIDE,
+            depth_or_array_layers: NOISE_SIDE,
+        };
+        if cx.allocate(self.noise, noise_size) == Allocation::Fresh {
+            let volume = noise_volume();
+            cx.write_texture(
+                self.noise,
+                wgpu::Origin3d::ZERO,
+                &volume,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(NOISE_SIDE),
+                    rows_per_image: Some(NOISE_SIDE),
+                },
+                noise_size,
+            );
+        }
         let slots = drawing
             .items
             .len()

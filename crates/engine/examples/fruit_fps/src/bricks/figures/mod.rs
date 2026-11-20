@@ -13,7 +13,7 @@ use engine_render::RenderBricks;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::names::COLOR_PASS;
+use crate::names::{COLOR_PASS, REVEAL_PASS};
 use crate::play::figures::{FIGURE, Forms, GROUND, REVEALED};
 use crate::play::light::Light;
 use crate::play::puppet::ShadeMaps;
@@ -80,7 +80,7 @@ impl Brick for FiguresBrick {
             })
             .draw_kind(KindDecl {
                 kind: REVEALED,
-                passes: &[COLOR_PASS],
+                passes: &[REVEAL_PASS],
             })
             .draw_kind(KindDecl {
                 kind: GROUND,

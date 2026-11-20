@@ -23,11 +23,14 @@ struct BarrierCorner {
     return out;
 }
 
+const BARRIER_SPACING: vec2<f32> = vec2<f32>(1.0, 1.7320508);
+const BARRIER_INV_SPACING: vec2<f32> = vec2<f32>(1.0, 0.57735027);
+const BARRIER_MIDDLE: vec2<f32> = vec2<f32>(0.5, 0.8660254);
+
 fn barrier_hex(point: vec2<f32>) -> vec3<f32> {
-    let spacing = vec2<f32>(1.0, 1.7320508);
-    let middle = spacing * 0.5;
-    let a = point - spacing * floor(point / spacing) - middle;
-    let b = point - middle - spacing * floor((point - middle) / spacing) - middle;
+    let a = point - BARRIER_SPACING * floor(point * BARRIER_INV_SPACING) - BARRIER_MIDDLE;
+    let shifted = point - BARRIER_MIDDLE;
+    let b = shifted - BARRIER_SPACING * floor(shifted * BARRIER_INV_SPACING) - BARRIER_MIDDLE;
     let offset = select(b, a, dot(a, a) < dot(b, b));
     let away = abs(offset);
     let reach = max(away.x * 0.5 + away.y * 0.8660254, away.x);
@@ -50,23 +53,45 @@ fn barrier_hex(point: vec2<f32>) -> vec3<f32> {
     let hex = barrier_hex(flowing);
     let width = grain * look.w;
     let lines = (1.0 - smoothstep(width * 0.5, width * 1.5, hex.x)) * (1.0 - smoothstep(0.12, 0.35, grain));
-    let chance = effect_lattice(vec3<f32>(hex.yz, shape.x));
-    let twinkle = 0.5 + 0.5 * sin(seconds * 0.9 + chance * EFFECT_TAU);
+    var twinkle = 0.0;
+    var flare = 0.0;
+    if lines > 0.0 || drop > 0.0 {
+        let chance = effect_lattice(vec3<f32>(hex.yz, shape.x));
+        if drop > 0.0 {
+            if chance < drop {
+                discard;
+            }
+            flare = 1.0 - smoothstep(0.0, 0.15, chance - drop);
+        }
+        if lines > 0.0 {
+            twinkle = 0.5 + 0.5 * sin(seconds * 0.9 + chance * EFFECT_TAU);
+        }
+    }
     let phase = (local.x + local.y * 0.6 - seconds * pattern.z) / max(pattern.y, 0.1);
-    let band = pow(0.5 + 0.5 * cos(phase * EFFECT_TAU), 4.0);
+    let wave = 0.5 + 0.5 * cos(phase * EFFECT_TAU);
+    let wave_2 = wave * wave;
+    let band = wave_2 * wave_2;
     let rise = saturate(local.y / max(size.y, 0.01));
     let fading = 1.0 - smoothstep(shape.z, 1.0, rise);
-    let ground = alphas.z * exp(-local.y / max(alphas.w, 0.01));
+    var ground = 0.0;
+    if alphas.z > 0.0 {
+        let decay = max(alphas.w, 0.01);
+        if local.y < decay * 7.0 {
+            ground = alphas.z * exp(-local.y / decay);
+        }
+    }
     let side = smoothstep(0.0, max(shape.y, 0.01), min(local.x, size.x - local.x));
     let near = item.p4;
-    let close = select(0.0, 1.0 - smoothstep(0.0, near.w, distance(corner.world, near.xyz)), near.w > 0.0);
+    var close = 0.0;
+    if near.w > 0.0 {
+        close = 1.0 - smoothstep(0.0, near.w, distance(corner.world, near.xyz));
+    }
     let eye = mix(look.y, 1.0, smoothstep(0.0, max(look.x, 0.01), distance(corner.world, camera.position.xyz)));
     let cells = alphas.x + alphas.y * lines * (0.55 + 0.45 * twinkle) * (1.0 + pattern.w * band);
     let glow = alphas.x * pattern.w * band;
     let strength = ((cells + glow) * fading + ground) * (1.0 + item.p3.w * close);
-    let flare = select(0.0, 1.0 - smoothstep(0.0, 0.15, chance - drop), drop > 0.0);
     let alpha = saturate((strength + flare * alphas.y) * side * eye);
-    if chance < drop || alpha < 0.004 {
+    if alpha < 0.004 {
         discard;
     }
     return vec4<f32>(item.p3.rgb * (1.0 + flare) * alpha, alpha);

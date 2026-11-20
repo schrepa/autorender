@@ -1,11 +1,11 @@
 engine::brick!(frame);
 
-use bevy_ecs::prelude::Res;
+use bevy_ecs::prelude::{Entity, Query, Res, With};
 use bevy_ecs::system::SystemParamItem;
-use brick_present::{PRESENTED, Scale};
+use brick_present::{PRESENTED, Present, Scale, needs_intermediate};
 use engine_core::{
-    Brick, Bricks, Error, GpuStruct, Pass, PassName, PassViews, Source, ViewFacts, Writes,
-    gpu_struct,
+    Brick, Bricks, Error, GpuStruct, Pass, PassName, PassViews, Source, TargetName, ViewFacts,
+    ViewSkip, Views, Writes, gpu_struct,
 };
 use engine_render::{
     Access, Allocation, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
@@ -13,7 +13,7 @@ use engine_render::{
     TargetClear, wgpu,
 };
 
-use crate::names::{COLOR, COLOR_PASS, DEPTH};
+use crate::names::{COLOR, COLOR_PASS, DEPTH, DEPTH_PASS, REVEAL_PASS};
 use crate::play::light::{Grade, Lighting};
 use crate::play::view::Controls;
 
@@ -27,7 +27,19 @@ const GENERATED: &[&str] = &[<FrameGrade as GpuStruct>::WGSL];
 
 const TONE_PASS: &str = "tone";
 
+const TONE_DIRECT_PASS: &str = "tone_direct";
+
 const SKY: [f64; 4] = [0.36, 0.58, 0.88, 1.0];
+
+pub struct DepthPass;
+
+impl PassName for DepthPass {
+    const NAME: &'static str = DEPTH_PASS;
+    const PASS: Pass = Pass {
+        writes: Writes(&[COLOR, DEPTH]),
+        views: PassViews::Every,
+    };
+}
 
 pub struct ColorPass;
 
@@ -39,9 +51,23 @@ impl PassName for ColorPass {
     };
 }
 
+pub struct RevealPass;
+
+impl PassName for RevealPass {
+    const NAME: &'static str = REVEAL_PASS;
+    const PASS: Pass = Pass {
+        writes: Writes(&[COLOR, DEPTH]),
+        views: PassViews::Every,
+    };
+}
+
 impl Scale for Controls {
     fn fraction(&self) -> f32 {
         self.render_scale
+    }
+
+    fn direct_supported() -> bool {
+        true
     }
 }
 
@@ -52,7 +78,9 @@ impl Brick for FrameBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .pass::<DepthPass>()
             .pass::<ColorPass>()
+            .pass::<RevealPass>()
             .generated(GENERATED)
             .part::<Tone>();
     }
@@ -61,8 +89,12 @@ impl Brick for FrameBrick {
 struct Tone {
     pass: engine_render::Pass<Self>,
     pipeline: Pipeline<Self, Own>,
+    direct_pass: engine_render::Pass<Self>,
+    direct_pipeline: Pipeline<Self, Own>,
     grade: Buffer<Self>,
     sent: Option<FrameGrade>,
+    direct: bool,
+    skipped: Vec<Entity>,
 }
 
 fn graded(grade: Grade) -> FrameGrade {
@@ -90,17 +122,23 @@ impl GpuPart for Tone {
     type Reads = (
         Option<Res<'static, Lighting>>,
         Option<Res<'static, Controls>>,
+        Query<'static, 'static, &'static Present>,
+        Query<'static, 'static, Entity, With<ViewSkip>>,
+        Option<Res<'static, Views>>,
     );
     const NAME: &'static str = "frame";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::frame::tone;
-        cx.shared_target(SharedTarget {
-            name: COLOR,
-            format: wgpu::TextureFormat::Rgba16Float,
-            samples: 1,
-            clear: TargetClear::Color(SKY),
-        });
+        cx.shared_target_or(
+            SharedTarget {
+                name: COLOR,
+                format: wgpu::TextureFormat::Rg11b10Ufloat,
+                samples: 1,
+                clear: TargetClear::Color(SKY),
+            },
+            wgpu::TextureFormat::Rgba16Float,
+        );
         cx.shared_target(SharedTarget {
             name: DEPTH,
             format: wgpu::TextureFormat::Depth32Float,
@@ -109,31 +147,44 @@ impl GpuPart for Tone {
         });
         cx.frame(tone::SCENE, Bind::Target(COLOR))?;
         let grade = cx.buffer("frame_grade", Lifetime::Kept);
+        let bound = [(tone::TONE_GRADE, Bind::Buffer(grade))];
         let pass = cx
             .pass(TONE_PASS)
             .label("fruit_fps/tone")
             .span("tone")
             .target(PRESENTED, Access::Clear)
             .id();
-        let pipeline = cx.render_pipeline(
-            pass,
-            &fullscreen(tone::FS_TONE),
-            &[(tone::TONE_GRADE, Bind::Buffer(grade))],
-        )?;
+        let pipeline = cx.render_pipeline(pass, &fullscreen(tone::FS_TONE), &bound)?;
+        let direct_pass = cx
+            .pass(TONE_DIRECT_PASS)
+            .label("fruit_fps/tone_direct")
+            .span("tone")
+            .target(TargetName::CANVAS, Access::Clear)
+            .id();
+        let direct_pipeline =
+            cx.render_pipeline(direct_pass, &fullscreen(tone::FS_TONE), &bound)?;
         Ok(Self {
             pass,
             pipeline,
+            direct_pass,
+            direct_pipeline,
             grade,
             sent: None,
+            direct: false,
+            skipped: Vec::new(),
         })
     }
 
     fn prepare(
         &mut self,
-        (lighting, controls): SystemParamItem<'_, '_, Self::Reads>,
+        (lighting, controls, presents, skipped, views): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        self.skipped.clear();
+        self.skipped.extend(&skipped);
         let scale = controls.map_or(1.0, |controls| controls.render_scale);
+        let pixel_ratio = views.map_or(1.0, |views| views.frame().pixel_ratio);
+        self.direct = !needs_intermediate(presents.iter().next().copied(), scale, pixel_ratio);
         cx.scale_target(COLOR, scale);
         cx.scale_target(DEPTH, scale);
         let shown = lighting.map_or_else(
@@ -147,13 +198,25 @@ impl GpuPart for Tone {
         }
     }
 
-    fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        cx.run(self.pass);
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if self.skipped.contains(&view.view) {
+            return;
+        }
+        if self.direct {
+            cx.run(self.direct_pass);
+        } else {
+            cx.run(self.pass);
+        }
     }
 
-    fn encode(&mut self, _pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
+    fn encode(&mut self, pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
+        let pipeline = if pass == self.direct_pass {
+            &self.direct_pipeline
+        } else {
+            &self.pipeline
+        };
         cx.render().draw(
-            &self.pipeline,
+            pipeline,
             Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,

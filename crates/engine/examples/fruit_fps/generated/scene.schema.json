@@ -1511,6 +1511,14 @@
       "properties": {
         "antialias": {
           "type": "boolean"
+        },
+        "antialias_max_pixel_ratio": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [

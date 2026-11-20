@@ -308,19 +308,29 @@ impl DrawnGpu {
         let record_bytes = room * size_of::<DrawnRecord>() as u64;
         let value_bytes = room * (stride * size_of::<[f32; 4]>()) as u64;
         let pose_bytes = room * size_of::<PoseRows>() as u64;
-        let mut whole =
+        let records_fresh =
             cx.allocate_buffer(self.records, storage_bytes(record_bytes)) == Allocation::Fresh;
-        whole |= cx.allocate_buffer(self.values, storage_bytes(value_bytes)) == Allocation::Fresh;
-        whole |= cx.allocate_buffer(self.poses, storage_bytes(pose_bytes)) == Allocation::Fresh;
-        let changes = table.slot_changes();
-        let read = changes.read();
-        self.scratch.changed(&read, whole, count);
-        let ranges = &self.scratch.ranges;
-        write_ranges(cx, (self.records, 0), (table.records(), 1), ranges);
-        write_ranges(cx, (self.values, 0), (table.values(), stride), ranges);
-        write_ranges(cx, (self.poses, 0), (table.poses(), 1), ranges);
-        changes.take(0, read.upto);
-        !ranges.is_empty()
+        let values_fresh =
+            cx.allocate_buffer(self.values, storage_bytes(value_bytes)) == Allocation::Fresh;
+        let poses_fresh =
+            cx.allocate_buffer(self.poses, storage_bytes(pose_bytes)) == Allocation::Fresh;
+        let records = table.record_changes();
+        let read = records.read();
+        self.scratch.changed(&read, records_fresh, count);
+        write_ranges(cx, (self.records, 0), (table.records(), 1), &self.scratch.ranges);
+        records.take(0, read.upto);
+        let values = table.value_changes();
+        let read = values.read();
+        self.scratch.changed(&read, values_fresh, count);
+        write_ranges(cx, (self.values, 0), (table.values(), stride), &self.scratch.ranges);
+        values.take(0, read.upto);
+        let poses = table.pose_changes();
+        let read = poses.read();
+        self.scratch.changed(&read, poses_fresh, count);
+        let poses_written = !self.scratch.ranges.is_empty();
+        write_ranges(cx, (self.poses, 0), (table.poses(), 1), &self.scratch.ranges);
+        poses.take(0, read.upto);
+        poses_written
     }
 
     fn upload_order(&mut self, table: &DrawnTable, cx: &mut Prepare<'_, Self>) -> bool {
@@ -428,7 +438,7 @@ impl GpuPart for DrawnGpu {
         self.owed |= self.upload_slots((&table, drawn.iter().len()), cx);
         let moved = self.upload_order(&table, cx);
         let verdicts = &mut cx.core.verdicts;
-        if moved {
+        if moved || verdicts.order.len() != table.order().len() {
             verdicts.order.clear();
             verdicts.order.extend_from_slice(table.order());
         }

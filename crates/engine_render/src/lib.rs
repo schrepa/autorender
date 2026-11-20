@@ -187,6 +187,7 @@ pub enum Access {
 
 pub enum Bind<P> {
     Buffer(Buffer<P>),
+    Texture(Texture<P>),
     Sampler(Sampler<P>),
     Target(TargetName),
     Asset,
@@ -196,6 +197,7 @@ impl<P> Clone for Bind<P> {
     fn clone(&self) -> Self {
         match self {
             Self::Buffer(buffer) => Self::Buffer(*buffer),
+            Self::Texture(texture) => Self::Texture(*texture),
             Self::Sampler(sampler) => Self::Sampler(*sampler),
             Self::Target(name) => Self::Target(*name),
             Self::Asset => Self::Asset,
@@ -253,6 +255,7 @@ pub struct RenderPipeline<'a> {
 fn bound_of<P>(bound: &Bind<P>) -> install::Bound {
     match bound {
         Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
+        Bind::Texture(texture) => install::Bound::Texture(texture.0),
         Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
         Bind::Target(name) => install::Bound::Target(*name),
         Bind::Asset => install::Bound::Asset,
@@ -297,6 +300,15 @@ impl<P: GpuPart> Install<'_, P> {
         Texture(self.core.texture(label, format, lifetime), PhantomData)
     }
 
+    pub fn texture_3d(
+        &mut self,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        lifetime: Lifetime,
+    ) -> Texture<P> {
+        Texture(self.core.texture_3d(label, format, lifetime), PhantomData)
+    }
+
     pub fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
         Buffer(self.core.buffer(label, lifetime), PhantomData)
     }
@@ -310,6 +322,18 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn shared_target(&mut self, target: SharedTarget) {
+        self.push_shared_target(target, None);
+    }
+
+    pub fn shared_target_or(&mut self, target: SharedTarget, fallback: wgpu::TextureFormat) {
+        self.push_shared_target(target, Some(fallback));
+    }
+
+    fn push_shared_target(
+        &mut self,
+        target: SharedTarget,
+        fallback: Option<wgpu::TextureFormat>,
+    ) {
         let name = target.name.name();
         if self.core.declared.targets.iter().any(|known| known.name == target.name) {
             let path = format!("$.targets.{name}");
@@ -318,6 +342,7 @@ impl<P: GpuPart> Install<'_, P> {
                 .push(Error::new(engine_core::ErrorCode::NameTwice, path).got(name));
         } else {
             self.core.declared.targets.push(target);
+            self.core.declared.target_fallbacks.push(fallback);
         }
     }
 
@@ -338,6 +363,10 @@ impl<P: GpuPart> Install<'_, P> {
 
     pub fn reaches(&mut self, entry: Entry, var: Var) -> bool {
         self.core.reaches(entry, var)
+    }
+
+    pub fn scene_bit(&self, scene: Scene) -> Option<PassBit> {
+        self.core.passes.bit(scene.0)
     }
 
     pub fn render_pipeline<S: Scope<P>>(
@@ -635,6 +664,17 @@ pub enum DrawOrder {
 impl<P: GpuPart> Draw<'_, P, Scene> {
     pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>, order: DrawOrder) {
         self.raw.batches((pipeline.0, vertices, order));
+    }
+
+    pub fn batches_matching(
+        &mut self,
+        pipeline: &Pipeline<P, Scene>,
+        vertices: Range<u32>,
+        order: DrawOrder,
+        mut keep: impl FnMut(BatchOf<'_>) -> bool,
+    ) {
+        self.raw
+            .batches_matching((pipeline.0, vertices, order), &mut keep);
     }
 
     pub fn pass(&mut self) -> Option<PassBit> {

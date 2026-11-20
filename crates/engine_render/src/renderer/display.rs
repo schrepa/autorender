@@ -42,6 +42,7 @@ pub struct Display {
     offscreen: Option<wgpu::Texture>,
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
+    supported_usages: wgpu::TextureUsages,
     present: Present,
     modes: Vec<wgpu::PresentMode>,
     pub(crate) max_dimension: u32,
@@ -91,13 +92,17 @@ impl Display {
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         };
-        if let Some(capabilities) = &capabilities {
-            configuration.usage |= capabilities.usages
-                & (wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST);
-        }
-        #[cfg(all(target_arch = "wasm32", feature = "dev"))]
+        let base_usages = capabilities
+            .as_ref()
+            .map_or(configuration.usage, |capabilities| capabilities.usages);
+        let supported_usages = if cfg!(all(target_arch = "wasm32", feature = "dev")) {
+            base_usages | wgpu::TextureUsages::COPY_SRC
+        } else {
+            base_usages
+        };
+        #[cfg(feature = "dev")]
         {
-            configuration.usage |= wgpu::TextureUsages::COPY_SRC;
+            configuration.usage |= supported_usages & wgpu::TextureUsages::COPY_SRC;
         }
         configuration.format = if form.srgb {
             configuration.format.add_srgb_suffix()
@@ -116,6 +121,7 @@ impl Display {
             offscreen: None,
             target,
             configuration,
+            supported_usages,
             present,
             modes: capabilities
                 .map(|capabilities| capabilities.present_modes)
@@ -144,6 +150,16 @@ impl Display {
         let honoured =
             vsync || self.surface.is_none() || free.iter().any(|mode| self.modes.contains(mode));
         (!honoured).then(|| Error::new(ErrorCode::UnsupportedFeature, "$.present.vsync").got(vsync))
+    }
+
+    pub(crate) fn require_usage(&mut self, needed: wgpu::TextureUsages) -> bool {
+        let extra = needed & self.supported_usages;
+        if self.configuration.usage.contains(extra) {
+            return false;
+        }
+        self.configuration.usage |= extra;
+        self.state = self.state.after(SurfaceChange::Outdated);
+        true
     }
 
     pub(crate) fn set_present(&mut self, present: Present) -> Option<Error> {
@@ -351,7 +367,7 @@ impl FrameTimer {
         }
         Some(Self {
             queries: device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("engine/frame-timer"),
+                label: crate::encode::debug_label("engine/frame-timer"),
                 ty: wgpu::QueryType::Timestamp,
                 count: 2,
             }),
@@ -370,7 +386,7 @@ impl FrameTimer {
 
     fn begin(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("engine/frame-timer"),
+            label: crate::encode::debug_label("engine/frame-timer"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
                 query_set: &self.queries,
                 beginning_of_pass_write_index: Some(0),
@@ -386,7 +402,7 @@ impl FrameTimer {
         size: (u32, u32),
     ) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("engine/frame-timer"),
+            label: crate::encode::debug_label("engine/frame-timer"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
                 query_set: &self.queries,
                 beginning_of_pass_write_index: None,
