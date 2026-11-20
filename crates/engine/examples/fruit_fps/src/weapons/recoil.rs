@@ -1,8 +1,9 @@
 use std::f32::consts::{FRAC_2_PI, TAU};
 
+use engine_math::{Random, min, ticks};
 use glam::Vec3;
 
-use super::numbers::{CombatNumbers, GunNumbers, RecoilNumbers, SpreadDeg, ticks};
+use super::numbers::{CombatNumbers, GunNumbers, RecoilNumbers, SpreadDeg};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stance {
@@ -62,26 +63,6 @@ pub struct Shot {
     pub spread_deg: f32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ShotRng {
-    state: u64,
-}
-
-impl ShotRng {
-    pub fn new(seed: u64) -> Self {
-        Self { state: seed }
-    }
-
-    fn unit(&mut self) -> f32 {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut mixed = self.state;
-        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        mixed ^= mixed >> 31;
-        (mixed >> 40) as f32 / (1u32 << 24) as f32
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 struct Recovery {
     from_shots: u32,
@@ -100,7 +81,7 @@ pub struct Recoil {
 
 pub fn bloomed_deg(gun: &GunNumbers, stance: Stance, scope_level: usize, shots: u32) -> f32 {
     let bloom = gun.spread_bloom.per_shot_deg * shots as f32;
-    spread_deg(gun, stance, scope_level) + least(bloom, gun.spread_bloom.max_deg)
+    spread_deg(gun, stance, scope_level) + min(bloom, gun.spread_bloom.max_deg)
 }
 
 pub fn spread_deg(gun: &GunNumbers, stance: Stance, scope_level: usize) -> f32 {
@@ -133,7 +114,7 @@ fn triangle(step: u32, swing: u32) -> f32 {
 }
 
 pub fn pattern_deg(recoil: &RecoilNumbers, shots: u32) -> (f32, f32) {
-    let up = least(shots as f32 * recoil.up_deg_per_shot, recoil.max_up_deg);
+    let up = min(shots as f32 * recoil.up_deg_per_shot, recoil.max_up_deg);
     let swaying = shots.saturating_sub(recoil.side_starts_after_shots);
     let side = recoil.side_deg * triangle(swaying, recoil.side_swing_shots);
     (up, side)
@@ -144,7 +125,7 @@ pub fn fire(
     recoil: &mut Recoil,
     aim: Aim,
     spread_deg: f32,
-    rng: &mut ShotRng,
+    rng: &mut Random,
 ) -> (Shot, Kick) {
     let radius_draw = rng.unit();
     let turn_draw = rng.unit();
@@ -239,12 +220,4 @@ pub fn sin_cos(angle: f32) -> (f32, f32) {
         2 => (-sin, -cos),
         _ => (-cos, sin),
     }
-}
-
-pub(super) fn least(a: f32, b: f32) -> f32 {
-    if b < a { b } else { a }
-}
-
-pub(super) fn greatest(a: f32, b: f32) -> f32 {
-    if a < b { b } else { a }
 }

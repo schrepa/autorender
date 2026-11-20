@@ -42,12 +42,19 @@ pub struct LayoutPlant {
     pub center: [f32; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutClass {
+    Full,
+    Half,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct LayoutCover {
     pub name: String,
     pub pos: [f32; 3],
     pub size: [f32; 3],
-    pub class: String,
+    pub class: LayoutClass,
     pub zone: String,
 }
 
@@ -238,7 +245,7 @@ impl Places {
                 zone,
                 center: base + Vec3::new(0.0, half.y, 0.0),
                 half,
-                full: cover.class == "full",
+                full: cover.class == LayoutClass::Full,
             });
         }
         for plant in &layout.plant_zones {

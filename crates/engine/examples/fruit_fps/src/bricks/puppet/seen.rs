@@ -3,17 +3,18 @@ use std::collections::BTreeMap;
 use engine::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{Camera, Drawn, GlobalTransforms, Projection, SceneContext, Stats, ViewSkip};
+use engine_solids::Kind;
 
 use super::{DeviceShown, DroppedWeapon, PropShown, PuppetBrick, PuppetStats};
 use crate::names::CAMERA;
 use crate::play::actors::Actor;
 use crate::play::camera::TestCamera;
-use crate::play::figures::{Figure, FigureJoints, Form};
+use crate::play::figures::{Form, Forms};
 use crate::play::lobby::LobbyView;
-use crate::play::puppet::{FormsTable, PuppetFile, Seen, ViewTest};
+use crate::play::puppet::{FormsTable, Puppet, Seen, ViewTest};
+use crate::play::skinned::{Figure, FigureClock, FigureSight};
 use crate::play::view::Watched;
 use crate::play::world::Arena;
-use crate::solids::Kind;
 
 #[derive(Clone, Copy, Debug)]
 struct Eye {
@@ -25,9 +26,10 @@ struct Eye {
 
 #[derive(Default)]
 pub(super) struct Memo {
-    last: BTreeMap<Entity, u64>,
+    last: BTreeMap<Entity, f64>,
     forms: BTreeMap<Entity, Form>,
     eye: Option<Vec3>,
+    judged: Vec<Entity>,
 }
 
 fn next_form(was: Form, distance: f32, table: &FormsTable, scale: f32) -> Form {
@@ -75,14 +77,14 @@ impl Bounds {
         let (low, high) = (self.low, self.high);
         [
             self.centre(),
-            low,
-            Vec3::new(high.x, low.y, low.z),
             Vec3::new(low.x, high.y, low.z),
             Vec3::new(high.x, high.y, low.z),
-            Vec3::new(low.x, low.y, high.z),
-            Vec3::new(high.x, low.y, high.z),
             Vec3::new(low.x, high.y, high.z),
             high,
+            low,
+            Vec3::new(high.x, low.y, low.z),
+            Vec3::new(low.x, low.y, high.z),
+            Vec3::new(high.x, low.y, high.z),
         ]
     }
 }
@@ -98,7 +100,6 @@ struct Tests<'a> {
     eye: Eye,
     table: &'a ViewTest,
     arena: Option<&'a Arena>,
-    clear: Vec<Kind>,
 }
 
 impl Tests<'_> {
@@ -124,7 +125,10 @@ impl Tests<'_> {
         }
         match arena.solids().ray(self.eye.at, toward / distance, distance) {
             None => true,
-            Some(hit) => hit.distance >= distance - 0.05 || self.clear.contains(&hit.kind),
+            Some(hit) => {
+                hit.distance >= distance - 0.05
+                    || self.table.see_through.iter().any(|name| Kind::named(name) == hit.kind)
+            }
         }
     }
 
@@ -135,8 +139,8 @@ impl Tests<'_> {
         let Some(arena) = self.arena.filter(|arena| arena.ready()) else {
             return true;
         };
-        let padded = bounds.padded(self.table.map_pad_m);
-        padded
+        bounds
+            .padded(self.table.map_pad_m)
             .points()
             .into_iter()
             .any(|point| self.reached(arena, point))
@@ -153,14 +157,12 @@ impl Tests<'_> {
     }
 }
 
-fn eye_of(
-    (scene, globals): (Option<&SceneContext>, &GlobalTransforms),
-    cameras: &Query<&Camera>,
-    aspect_max: f32,
-) -> Option<Eye> {
+type Lenses<'w, 's> = Query<'w, 's, (&'static Camera, &'static Transform)>;
+
+fn eye_of(scene: Option<&SceneContext>, cameras: &Lenses, aspect_max: f32) -> Option<Eye> {
     let camera = scene?.entities.get(CAMERA).copied()?;
-    let matrix = globals.get(camera)?.matrix()?;
-    let vertical = match cameras.get(camera).ok()?.projection {
+    let (camera, placed) = cameras.get(camera).ok()?;
+    let vertical = match camera.projection {
         Projection::Perspective {
             vertical_fov_radians,
         } => Some(vertical_fov_radians),
@@ -168,25 +170,15 @@ fn eye_of(
     };
     let across = (1.0 + aspect_max * aspect_max).sqrt();
     Some(Eye {
-        at: matrix.w_axis.truncate(),
-        forward: (-matrix.z_axis.truncate()).normalize_or_zero(),
+        at: placed.translation,
+        forward: (placed.rotation * Vec3::NEG_Z).normalize_or_zero(),
         half: vertical.map(|vertical| ((vertical * 0.5).tan() * across).atan()),
         vertical,
     })
 }
 
-fn joint_bounds(joints: Option<&FigureJoints>, margin: f32) -> Option<Bounds> {
-    let joints = joints?;
-    let mut points = joints
-        .joints
-        .iter()
-        .filter(|joint| joint.found)
-        .map(|joint| joint.position)
-        .chain(joints.head_top);
-    let first = points.next()?;
-    let (low, high) = points.fold((first, first), |(low, high), at| {
-        (low.min(at), high.max(at))
-    });
+fn fixed_bounds(clock: Option<&FigureClock>, margin: f32) -> Option<Bounds> {
+    let [low, high] = clock?.bounds?;
     Some(Bounds { low, high }.padded(margin))
 }
 
@@ -195,11 +187,12 @@ type Actors<'w, 's> = Query<
     's,
     (
         Entity,
-        (&'static Actor, &'static Figure),
-        Option<&'static FigureJoints>,
+        (&'static Actor, Option<&'static Forms>),
+        Option<&'static FigureClock>,
         &'static Node,
         &'static Drawn,
     ),
+    With<Figure>,
 >;
 
 type Items<'w, 's> = Query<
@@ -211,11 +204,8 @@ type Items<'w, 's> = Query<
 
 type Reads<'w, 's> = (
     (Res<'w, FrameTime>, Res<'w, GlobalTransforms>),
-    (
-        Option<Res<'w, SceneContext>>,
-        Query<'w, 's, &'static Camera>,
-    ),
-    (Option<Res<'w, Arena>>, Query<'w, 's, &'static PuppetFile>),
+    (Option<Res<'w, SceneContext>>, Lenses<'w, 's>),
+    (Option<Res<'w, Arena>>, Res<'w, Puppet>),
     (
         Option<Res<'w, TestCamera>>,
         Option<Res<'w, Watched>>,
@@ -231,59 +221,51 @@ fn shown(spawner: &mut Spawner<PuppetBrick>, (entity, node): (Entity, &Node), vi
 }
 
 pub(super) fn cull(
-    ((time, globals), (scene, cameras), (arena, files), (test, watched, skipped, lobby)): Reads,
+    ((time, globals), (scene, cameras), (arena, puppet), (test, watched, skipped, lobby)): Reads,
     (actors, items): (Actors, Items),
     (mut seen, mut memo, mut stats): (ResMut<Seen>, Local<Memo>, Stats<PuppetStats>),
-    mut spawner: Spawner<PuppetBrick>,
+    (mut sight, mut spawner): (ResMut<FigureSight>, Spawner<PuppetBrick>),
 ) {
     let Memo {
         last,
         forms,
         eye: was_at,
+        judged: judged_actors,
     } = &mut *memo;
-    let Some(book) = files.iter().find_map(PuppetFile::book) else {
+    let Some(table) = puppet.table.as_deref() else {
         return;
     };
     if !skipped.is_empty() {
         return;
     }
-    let table = &book.table.view_test;
+    let forms_table = &table.forms;
+    let table = &table.view_test;
     let outside = test.as_deref().is_some_and(|test| test.outside);
     let followed = watched.as_deref().and_then(|watched| watched.entity);
     let own = followed.filter(|_| !outside);
     let lobby = !outside && lobby.as_deref().is_some_and(|lobby| lobby.camera.is_some());
     stats.edit(|stats| stats.lobby = lobby);
-    let Some(eye) = eye_of((scene.as_deref(), &globals), &cameras, table.aspect_max) else {
+    let Some(eye) = eye_of(scene.as_deref(), &cameras, table.aspect_max) else {
         return;
     };
     let tests = Tests {
         eye,
         table,
         arena: arena.as_deref(),
-        clear: table
-            .see_through
-            .iter()
-            .map(|name| Kind::named(name))
-            .collect(),
     };
-    let now = time.frame;
+    let (frame, now, hold) = (time.frame, time.real_elapsed, f64::from(table.hold_seconds));
     if was_at.is_some_and(|at| at.distance(eye.at) > table.cut_m) {
         last.clear();
     }
     *was_at = Some(eye.at);
-    let mut fresh = Seen {
-        frame: now,
-        ..Seen::default()
-    };
+    let mut fresh = Seen::default();
     let mut judged = |entity: Entity, bounds: Option<Bounds>, exempt: bool| {
         let verdict = bounds.map_or(Verdict::Shown, |bounds| tests.judge(bounds, exempt));
         if verdict == Verdict::Shown {
             last.insert(entity, now);
         }
         let kept = verdict == Verdict::BehindMap
-            && last
-                .get(&entity)
-                .is_some_and(|at| now - at <= table.hold_frames);
+            && last.get(&entity).is_some_and(|at| now - at <= hold);
         (verdict, verdict == Verdict::Shown || kept)
     };
     let counted = |fresh: &mut Seen, (verdict, visible): (Verdict, bool)| {
@@ -295,26 +277,27 @@ pub(super) fn cull(
         }
         visible
     };
-    let scale = form_scale(&eye, &book.table.forms);
+    let scale = form_scale(&eye, forms_table);
+    judged_actors.clear();
     let mut formless: Vec<String> = Vec::new();
-    for (entity, (actor, figure), joints, node, drawn) in &actors {
+    for (entity, (actor, figure_forms), clock, node, drawn) in &actors {
         let revealed = drawn.values.emission != [0.0; 3];
         let exempt = revealed || followed == Some(entity);
-        let bounds = joint_bounds(joints, table.mesh_margin_m);
+        let bounds = fixed_bounds(clock, table.mesh_margin_m);
         let judgement = judged(entity, bounds, exempt);
         let visible = !lobby && counted(&mut fresh, judgement) && own != Some(entity);
-        if figure.forms.is_none() && !formless.contains(&actor.character) {
+        if figure_forms.is_none() && !formless.contains(&actor.character) {
             formless.push(actor.character.clone());
         }
         let distance = bounds.map_or(0.0, |bounds| (bounds.centre() - eye.at).length());
         let was = forms.get(&entity).copied().unwrap_or_default();
-        let form = if figure.forms.is_none() {
+        let form = if figure_forms.is_none() {
             Form::Full
         } else {
-            next_form(was, distance, &book.table.forms, scale)
+            next_form(was, distance, forms_table, scale)
         };
         forms.insert(entity, form);
-        fresh.judged.push(entity);
+        judged_actors.push(entity);
         if visible {
             fresh.shown.push((entity, form, distance));
         }
@@ -334,16 +317,19 @@ pub(super) fn cull(
         let visible = !lobby && counted(&mut fresh, judgement);
         shown(&mut spawner, (entity, node), visible);
     }
-    let alive: Vec<Entity> = actors
-        .iter()
-        .map(|(entity, ..)| entity)
-        .chain(items.iter().map(|(entity, _)| entity))
-        .collect();
-    last.retain(|entity, _| alive.contains(entity));
-    forms.retain(|entity, _| alive.contains(entity));
+    let alive = |entity: &Entity| actors.contains(*entity) || items.contains(*entity);
+    last.retain(|entity, _| alive(entity));
+    forms.retain(|entity, _| alive(entity));
     fresh.shown.sort_unstable_by_key(|(entity, ..)| *entity);
-    fresh.judged.sort_unstable();
-    if *seen != fresh {
-        *seen = fresh;
+    judged_actors.sort_unstable();
+    let shown_same = sight.shown.iter().eq(fresh.shown.iter().map(|(entity, ..)| entity));
+    if sight.judged != *judged_actors || !shown_same {
+        sight.judged.clone_from(judged_actors);
+        sight.shown.clear();
+        sight.shown.extend(fresh.shown.iter().map(|(entity, ..)| *entity));
     }
+    sight.bypass_change_detection().frame = frame;
+    fresh.frame = seen.frame;
+    seen.set_if_neq(fresh);
+    seen.bypass_change_detection().frame = frame;
 }

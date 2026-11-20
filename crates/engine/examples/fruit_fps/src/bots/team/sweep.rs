@@ -4,7 +4,8 @@ use super::tactics::{self, Hold};
 use super::{Plan, Squad, Step};
 use crate::bots::aim::flat_distance;
 use crate::bots::debug::Why;
-use crate::bots::sense::{CallKind, GamePhase, Side};
+use crate::bots::sense::{CallKind, GamePhase};
+use crate::rules::Side;
 
 impl Squad {
     pub(super) fn heard_from(&mut self, kind: CallKind, tick: u64) {

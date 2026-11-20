@@ -10,7 +10,7 @@ use crate::abilities::{self as powers_maths, ActorId, DrawKind, DrawShape, OrbSt
 use crate::bots::{
     self, Brain, BuySense, Call, Gait as BotGait, Heard, Intent, Level, MatchSense, Mate, Member,
     ObjectKind, ObjectSense, OrbSense, Places, Purchase, Role, Seen, Sense, Smoke, SoundKind,
-    Squad, SquadSense, WeaponChoice,
+    Squad, SquadSense, Tactics, WeaponChoice,
 };
 use crate::play::actors::{Actor, Alive, Body, Equip, Gait, Health, Human, Wish};
 use crate::play::arms::{Arms, Drops};
@@ -57,6 +57,9 @@ pub(super) struct Minds {
     reaches: Vec<[Reach; 4]>,
     intents: Vec<(u32, Intent)>,
     wishes: Vec<(u32, WishSummary)>,
+    tactics: Option<Tactics>,
+    sight: Vec<Option<Seen>>,
+    placed: Vec<(usize, ObjectSense)>,
     seen: Vec<Seen>,
     heard: Vec<Heard>,
     mates: Vec<Mate>,
@@ -185,10 +188,11 @@ fn reset(state: &mut Minds, ctx: &Ctx<'_>) {
         .max()
         .unwrap_or(0);
     state.brains = vec![None; slots];
+    state.tactics = None;
     state.squads = [Team::First, Team::Second].map(|team| {
         let count = state.whos.iter().filter(|who| who.team == team).count();
         let mix = (team.index() as u64 + 1).wrapping_mul(SQUAD_MIX);
-        Some(Squad::new(seed ^ mix, count))
+        Some(Squad::new(seed ^ mix, count, team == Team::Second))
     });
     state.calls = [Vec::new(), Vec::new()];
     state.next_calls = [Vec::new(), Vec::new()];
@@ -250,6 +254,16 @@ fn member(who: &Who, view: &View<'_>, carrier: Option<u32>, tools: u16) -> Membe
 
 fn plan(state: &mut Minds, ctx: &Ctx<'_>, games: &[MatchSense; 2]) {
     let carrier = senses::carrier(ctx.round);
+    let tactics = state.tactics.get_or_insert_with(|| {
+        let world = BotWorld {
+            arena: ctx.arena,
+            paths: ctx.paths,
+            team: 0,
+            places: ctx.places,
+            thrower: None,
+        };
+        bots::build_tactics(&world, &ctx.loaded.bots, &mut Vec::new())
+    });
     for team in [Team::First, Team::Second] {
         let index = team.index();
         let members = &mut state.members[index];
@@ -280,30 +294,18 @@ fn plan(state: &mut Minds, ctx: &Ctx<'_>, games: &[MatchSense; 2]) {
             thrower: None,
         };
         if let Some(squad) = state.squads[index].as_mut() {
-            squad.plan(&sense, &world, &ctx.loaded.bots, ctx.tick);
+            squad.plan(&sense, &world, tactics, &ctx.loaded.bots, ctx.tick);
         }
     }
 }
 
-fn gather(state: &mut Minds, ctx: &Ctx<'_>, who: &Who) {
-    let sight = Sight {
-        arena: ctx.arena,
-        powers: ctx.powers,
-        loaded: ctx.loaded,
-    };
-    let carrier = senses::carrier(ctx.round);
+fn gather(state: &mut Minds, ctx: &Ctx<'_>, at: usize) {
+    let who = &state.whos[at];
+    let count = state.whos.len();
     state.seen.clear();
-    if who.alive {
-        for target in state
-            .whos
-            .iter()
-            .filter(|target| target.team != who.team && target.alive)
-        {
-            if let Some(seen) = senses::seen(&sight, who, target, carrier) {
-                state.seen.push(seen);
-            }
-        }
-    }
+    state
+        .seen
+        .extend(state.sight[at * count..(at + 1) * count].iter().flatten());
     state.heard.clear();
     senses::heard(&state.noises, &state.whos, who, &mut state.heard);
     senses::revealed(ctx.powers, &state.whos, who, &mut state.heard);
@@ -336,7 +338,7 @@ fn think_one(
     let me = state.members[index]
         .iter()
         .position(|member| member.id == who.slot)?;
-    gather(state, ctx, &who);
+    gather(state, ctx, at);
     let order = state.squads[index].as_ref()?.order(me);
     let player = ctx.view.players.get(who.slot as usize);
     let level = state
@@ -344,7 +346,7 @@ fn think_one(
         .get(who.slot as usize)
         .and_then(Option::as_ref)
         .map(|brain| brain.debug().level);
-    fill_objects(&mut state.objects, ctx, &who, level);
+    fill_objects(&mut state.objects, &state.placed, ctx, &who, level);
     let sense = Sense {
         me,
         alive: who.alive,
@@ -503,31 +505,40 @@ fn reserve_gifts(state: &mut Minds, ctx: &Ctx<'_>) {
     }
 }
 
-fn team_sight(state: &Minds, ctx: &Ctx<'_>, sight_out: &mut TeamSight) {
+fn sight_table(state: &mut Minds, ctx: &Ctx<'_>) {
     let sight = Sight {
         arena: ctx.arena,
         powers: ctx.powers,
         loaded: ctx.loaded,
     };
     let carrier = senses::carrier(ctx.round);
+    let count = state.whos.len();
+    state.sight.clear();
+    state.sight.resize(count * count, None);
+    for (at, viewer) in state.whos.iter().enumerate().filter(|(_, w)| w.alive) {
+        for (to, target) in state.whos.iter().enumerate() {
+            if target.alive && target.team != viewer.team {
+                state.sight[at * count + to] = senses::seen(&sight, viewer, target, carrier);
+            }
+        }
+    }
+}
+
+fn team_sight(state: &Minds, tick: u64, sight_out: &mut TeamSight) {
+    let count = state.whos.len();
     for team in 0..2 {
         sight_out.seen[team].clear();
-        for viewer in state
-            .whos
-            .iter()
-            .filter(|w| w.alive && w.team.index() == team)
-        {
-            for target in state
-                .whos
-                .iter()
-                .filter(|t| t.alive && t.team.index() != team)
-            {
-                if senses::seen(&sight, viewer, target, carrier).is_some() {
+        for (at, viewer) in state.whos.iter().enumerate() {
+            if viewer.team.index() != team {
+                continue;
+            }
+            for (to, target) in state.whos.iter().enumerate() {
+                if state.sight[at * count + to].is_some() {
                     sight_out.seen[team].push((target.slot, viewer.slot));
                     let last = &mut sight_out.last[team];
                     match last.iter_mut().find(|l| l.0 == target.slot) {
-                        Some(entry) => *entry = (target.slot, ctx.tick, target.feet),
-                        None => last.push((target.slot, ctx.tick, target.feet)),
+                        Some(entry) => *entry = (target.slot, tick, target.feet),
+                        None => last.push((target.slot, tick, target.feet)),
                     }
                 }
             }
@@ -535,14 +546,11 @@ fn team_sight(state: &Minds, ctx: &Ctx<'_>, sight_out: &mut TeamSight) {
     }
 }
 
-fn fill_objects(out: &mut Vec<ObjectSense>, ctx: &Ctx<'_>, who: &Who, level: Option<Level>) {
+fn read_objects(out: &mut Vec<(usize, ObjectSense)>, powers: Option<&Powers>) {
     out.clear();
-    let (Some(powers), Some(level)) = (ctx.powers, level) else {
+    let Some(powers) = powers else {
         return;
     };
-    let play = &ctx.loaded.bots.play;
-    let notice = ctx.loaded.bots.level(level).notice_wire;
-    let team = who.team.index();
     for drawn in powers.drawables() {
         let kind = match drawn.kind {
             DrawKind::Trap => ObjectKind::Trap,
@@ -559,24 +567,46 @@ fn fill_objects(out: &mut Vec<ObjectSense>, ctx: &Ctx<'_>, who: &Who, level: Opt
             DrawShape::Sphere { centre, .. } | DrawShape::Box { centre, .. } => centre,
             DrawShape::Segment { a, .. } => a,
         };
-        let enemy = drawn.team != team;
-        if (at - who.eye).length() > play.object_shoot_m || !ctx.arena.sees(who.eye, at) {
+        let object = ObjectSense {
+            id: drawn.effect.0,
+            kind,
+            at,
+            enemy: false,
+        };
+        out.push((drawn.team, object));
+    }
+}
+
+fn fill_objects(
+    out: &mut Vec<ObjectSense>,
+    placed: &[(usize, ObjectSense)],
+    ctx: &Ctx<'_>,
+    who: &Who,
+    level: Option<Level>,
+) {
+    out.clear();
+    let Some(level) = level else {
+        return;
+    };
+    let play = &ctx.loaded.bots.play;
+    let notice = ctx.loaded.bots.level(level).notice_wire;
+    let team = who.team.index();
+    for (owner, object) in placed {
+        let enemy = *owner != team;
+        if (object.at - who.eye).length() > play.object_shoot_m
+            || !ctx.arena.sees(who.eye, object.at)
+        {
             continue;
         }
-        if kind == ObjectKind::Wire && enemy {
+        if object.kind == ObjectKind::Wire && enemy {
             let mix = u64::from(who.slot)
                 .wrapping_mul(0x9E37_79B9)
-                .wrapping_add(u64::from(drawn.effect.0).wrapping_mul(0x85EB_CA6B));
+                .wrapping_add(u64::from(object.id).wrapping_mul(0x85EB_CA6B));
             if (mix % 1000) as f32 / 1000.0 >= notice {
                 continue;
             }
         }
-        out.push(ObjectSense {
-            id: drawn.effect.0,
-            kind,
-            at,
-            enemy,
-        });
+        out.push(ObjectSense { enemy, ..*object });
     }
 }
 
@@ -608,14 +638,7 @@ fn equip_of(choice: WeaponChoice) -> Equip {
 }
 
 fn cast_of(slot: usize) -> Option<AbilitySlot> {
-    [
-        AbilitySlot::C,
-        AbilitySlot::Q,
-        AbilitySlot::E,
-        AbilitySlot::X,
-    ]
-    .get(slot)
-    .copied()
+    AbilitySlot::ALL.get(slot).copied()
 }
 
 fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, buys: Vec<BuyRequest>) {
@@ -844,8 +867,10 @@ pub(super) fn think(
     );
     read_powers(state, &ctx);
     read_hazards(state, facts.hazards.as_deref());
+    read_objects(&mut state.placed, ctx.powers);
     let games = [0, 1].map(|team| senses::match_sense(round, view, places, view.sides[team]));
-    team_sight(state, &ctx, &mut minds.sight);
+    sight_table(state, &ctx);
+    team_sight(state, tick, &mut minds.sight);
     reserve_gifts(state, &ctx);
     plan(state, &ctx, &games);
     let roles = |slot: u32| {

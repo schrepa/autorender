@@ -10,13 +10,14 @@ mod world;
 use std::sync::Arc;
 
 use engine::prelude::*;
+use engine_core::Assets;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::abilities::{AbilityBook, AbilitySpec, Action, Delivery, TrapShape};
-use crate::bots::{BotNumbers, Level, MapLayout, Places};
+use crate::bots::{BotNumbers, Level, Places};
 use crate::play::bots::BotMinds;
-use crate::play::numbers::Numbers;
+use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::paths::Paths;
 use crate::weapons::{StandJoints, WeaponNumbers};
 
@@ -251,14 +252,14 @@ fn reach_of(spec: &AbilitySpec) -> Reach {
     }
 }
 
-fn load(text: &str, tps: u32, game: &crate::play::numbers::GameNumbers) -> Result<Loaded, String> {
-    let bots =
-        BotNumbers::from_numbers_json(text, tps).map_err(|error| format!("bots: {error}"))?;
-    let senses = serde_json::from_str::<SensesRoot>(text)
+fn load(tps: u32, game: &GameNumbers) -> Result<Loaded, String> {
+    let whole = &game.whole;
+    let bots = BotNumbers::from_numbers(whole, tps).map_err(|error| format!("bots: {error}"))?;
+    let senses = SensesRoot::deserialize(whole)
         .map_err(|error| format!("bots.senses: {error}"))?
         .bots
         .senses;
-    let book = AbilityBook::parse(text, tps)
+    let book = AbilityBook::parse(whole, tps)
         .map_err(|error| format!("abilities {}: {}", error.character, error.message))?;
     let reaches = book
         .characters
@@ -298,23 +299,29 @@ fn level_of(name: &str, choice: LevelChoice) -> Level {
     }
 }
 
-fn places_of(paths: &Paths) -> Result<Option<Places>, String> {
-    let Some(text) = paths.layout() else {
+fn places_of(paths: &Paths, assets: &Assets) -> Result<Option<Places>, String> {
+    let Some(layout) = paths.layout() else {
         return Ok(None);
     };
-    let layout: MapLayout =
-        serde_json::from_str(text).map_err(|error| format!("layout: {error}"))?;
-    Places::from_layout(&layout)
+    let layout = assets
+        .get(layout)
+        .map_err(|error| format!("layout: {error}"))?;
+    Places::from_layout(&layout.map)
         .map(Some)
         .map_err(|error| format!("layout places: {error:?}"))
 }
 
-fn adopt(time: Res<FixedTime>, numbers: Res<Numbers>, paths: Res<Paths>, mut book: ResMut<Book>) {
+fn adopt(
+    time: Res<FixedTime>,
+    numbers: Res<Numbers>,
+    (paths, assets): (Res<Paths>, Res<Assets>),
+    mut book: ResMut<Book>,
+) {
     if book.numbers_revision != Some(numbers.revision())
         && let Some(game) = numbers.get()
     {
         book.numbers_revision = Some(numbers.revision());
-        match load(&game.text, time.rate, game) {
+        match load(time.rate, game) {
             Ok(loaded) => {
                 book.loaded = Some(Arc::new(loaded));
                 book.numbers_problem = None;
@@ -327,7 +334,7 @@ fn adopt(time: Res<FixedTime>, numbers: Res<Numbers>, paths: Res<Paths>, mut boo
     }
     if book.paths_revision != Some(paths.revision()) {
         book.paths_revision = Some(paths.revision());
-        match places_of(&paths) {
+        match places_of(&paths, &assets) {
             Ok(places) => {
                 book.places = places.map(Arc::new);
                 book.places_problem = None;

@@ -2,8 +2,8 @@ use engine::prelude::*;
 use engine_core::{Background, Kept, Landed};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::screen::Options;
 use crate::play::flow::Flow;
+use crate::play::screen::Options;
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
 
@@ -38,6 +38,15 @@ fn current(world: &World) -> Blob {
         character: flow.character.clone(),
         level: flow.level.clone(),
     }
+}
+
+fn same(world: &World, last: &Blob) -> bool {
+    let flow = world.resource::<Flow>();
+    last.controls == *world.resource::<Controls>()
+        && last.volume == *world.resource::<Volume>()
+        && last.options == *world.resource::<Options>()
+        && last.character == flow.character
+        && last.level == flow.level
 }
 
 fn restore(world: &mut World, blob: Blob) -> Result<(), String> {
@@ -100,13 +109,10 @@ pub(super) fn keep_settings(world: &mut World) {
                     }
                 }
             }
-            if !book.restored {
+            if !book.restored || book.last.as_ref().is_some_and(|last| same(world, last)) {
                 return;
             }
             let now = current(world);
-            if book.last.as_ref() == Some(&now) {
-                return;
-            }
             match serde_json::to_vec(&now) {
                 Ok(bytes) => {
                     book.writing = Some(kept.keep(NAME, bytes));

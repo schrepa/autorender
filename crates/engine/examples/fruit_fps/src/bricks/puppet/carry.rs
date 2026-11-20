@@ -1,21 +1,20 @@
 use std::collections::BTreeMap;
 
 use engine::prelude::*;
-use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext, Stats};
+use engine_core::{Mobility, Refusals, Stats};
 
 use engine_core::{GlobalTransforms, Parent};
 
 use super::{CarriedStats, CarriedWeapon, Memories, PuppetBrick, PuppetStats};
-use crate::names::RIGHT_HAND;
-use crate::play::figures::{FigureJoints, GROUND, Held};
-use crate::play::puppet::{ActorMuzzle, Muzzles, PuppetFile, Seen, Tasks};
+use crate::play::figures::GROUND;
+use crate::play::puppet::{ActorMuzzle, Muzzles, Puppet, Seen, Tasks};
+use crate::play::skinned::{FigureClock, FigureJoints, Held, posed};
 
 const HELD_PART: &str = "puppet_held";
 
 type Reads<'w, 's> = (
     Res<'w, FixedTime>,
-    Option<Res<'w, SceneContext>>,
-    Query<'w, 's, &'static PuppetFile>,
+    Res<'w, Puppet>,
     Res<'w, Memories>,
 );
 
@@ -47,7 +46,7 @@ fn moving(visible: bool) -> Node {
 }
 
 pub(super) fn carry(
-    (fixed, scene, files, memories): Reads,
+    (fixed, puppet, memories): Reads,
     carried: Carried,
     ((mut muzzles, mut tasks), mut stats, mut refusals, mut spawner): Writes,
 ) {
@@ -57,11 +56,13 @@ pub(super) fn carry(
         .filter_map(|memory| Some((memory.carry?.slot, memory.task()?)))
         .collect();
     busy.sort_unstable_by_key(|(slot, _)| *slot);
-    tasks.set_if_neq(Tasks {
-        tick: fixed.tick,
-        actors: busy,
-    });
-    let Some(book) = files.iter().find_map(PuppetFile::book) else {
+    if tasks.actors != busy {
+        *tasks = Tasks {
+            tick: fixed.tick,
+            actors: busy,
+        };
+    }
+    let Some(book) = puppet.book.as_deref() else {
         return;
     };
     let mut existing: BTreeMap<u32, (Entity, &Drawn, &Held, &Node)> = BTreeMap::new();
@@ -97,24 +98,9 @@ pub(super) fn carry(
                 direction,
             });
         }
-        let assets = scene.as_deref().map(|scene| &*scene.assets);
-        let mesh = assets.and_then(|assets| assets.meshes.get(&look.files.held_mesh).copied());
-        let material =
-            assets.and_then(|assets| assets.materials.get(&look.files.held_material).copied());
-        let (Some(mesh), Some(material)) = (mesh, material) else {
-            refusals.refuse(
-                carry.actor,
-                HELD_PART,
-                Error::new(ErrorCode::UnknownReference, "$.puppet.weapons").got(format!(
-                    "{} / {}",
-                    look.files.held_mesh, look.files.held_material
-                )),
-            );
-            continue;
-        };
         refusals.accept(carry.actor, HELD_PART);
-        let drawn = Drawn::new(GROUND, mesh, material);
-        let held = Held::on(carry.actor, RIGHT_HAND, carry.offset);
+        let drawn = Drawn::new(GROUND, look.files.held_mesh, look.files.held_material);
+        let held = Held::on(carry.actor, carry.hand, carry.offset);
         if carry.shown {
             shown += 1;
         }
@@ -148,11 +134,12 @@ pub(super) fn carry(
     }
     refusals.keep_part(HELD_PART, |entity| owners.contains(&entity));
     actors.sort_unstable_by_key(|muzzle| muzzle.slot);
-    let fresh = Muzzles {
-        tick: fixed.tick,
-        actors,
-    };
-    muzzles.set_if_neq(fresh);
+    if muzzles.actors != actors {
+        *muzzles = Muzzles {
+            tick: fixed.tick,
+            actors,
+        };
+    }
     stats.edit(|stats| stats.held = shown);
 }
 
@@ -169,32 +156,30 @@ type Checked<'w, 's> = Query<
 
 fn grip_gap(
     (weapon, held): (Entity, &Held),
-    holder: Option<&FigureJoints>,
+    holder: Option<(&FigureJoints, Option<&FigureClock>)>,
     globals: &GlobalTransforms,
 ) -> Option<f32> {
-    let joints = holder?;
-    let at = joints.names.iter().position(|name| name == RIGHT_HAND)?;
-    let hand = joints.joints.get(at).filter(|joint| joint.found)?;
+    let (joints, clock) = holder?;
+    let hand = joints.joints.get(posed::RIGHT_HAND).filter(|joint| joint.found)?;
     let matrix = globals.get(weapon)?.matrix()?;
     let offset = Quat::from_array(held.offset.rotation).normalize();
-    let grip = -(offset.inverse() * Vec3::from_array(held.offset.translation)) * joints.fit;
+    let fit = clock.map_or(1.0, |clock| clock.fit);
+    let grip = -(offset.inverse() * Vec3::from_array(held.offset.translation)) * fit;
     Some(matrix.transform_point3(grip).distance(hand.position))
 }
 
 pub(super) fn checked(
     (globals, seen): (Res<GlobalTransforms>, Option<Res<Seen>>),
     carried: Checked,
-    holders: Query<&FigureJoints>,
+    holders: Query<(&FigureJoints, Option<&FigureClock>)>,
     mut stats: Stats<PuppetStats>,
 ) {
     let mut listed: Vec<CarriedStats> = carried
         .iter()
         .map(|(entity, (weapon, held), node, parent)| {
-            let holder = held.target();
-            let parented = holder.is_some() && parent.map(Parent::parent) == holder;
-            let holder_shown = holder
-                .zip(seen.as_deref())
-                .is_some_and(|(holder, seen)| seen.shows(holder));
+            let holder = held.figure;
+            let parented = parent.map(Parent::parent) == Some(holder);
+            let holder_shown = seen.as_deref().is_some_and(|seen| seen.shows(holder));
             CarriedStats {
                 slot: weapon.slot,
                 parented,
@@ -203,7 +188,7 @@ pub(super) fn checked(
                 drawn: parented && node.visible && holder_shown,
                 grip_gap_m: grip_gap(
                     (entity, held),
-                    holder.and_then(|holder| holders.get(holder).ok()),
+                    holders.get(holder).ok(),
                     &globals,
                 ),
             }

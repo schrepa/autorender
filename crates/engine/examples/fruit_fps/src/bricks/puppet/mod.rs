@@ -4,17 +4,22 @@ mod carry;
 mod choose;
 mod device;
 mod drops;
-mod locomotion;
+mod heads;
 mod props;
 mod seen;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use engine::prelude::*;
+use engine_core::{AssetKind, AssetKinds, Assets, Error};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::play::puppet::{DeviceLamp, Muzzles, PuppetFile, Seen, Tasks};
+use crate::play::puppet::{
+    self, DeviceLamp, Muzzles, PlantedLook, Puppet, PuppetBook, PuppetFile, PuppetTable,
+    PuppetTableFile, Seen, Tasks, WeaponLook,
+};
 
 const PUPPET_PART: &str = "puppet";
 
@@ -184,6 +189,72 @@ struct Memories {
     abilities: Option<(u64, Option<std::sync::Arc<crate::abilities::AbilityBook>>)>,
 }
 
+fn book_of(
+    file: &PuppetFile,
+    table: &Arc<PuppetTable>,
+    assets: &Assets,
+) -> Result<PuppetBook, Error> {
+    let mut weapons = BTreeMap::new();
+    for (key, files) in &file.weapons {
+        let markers = *assets.get(files.markers)?;
+        let files = files.clone();
+        weapons.insert(key.clone(), WeaponLook { files, markers });
+    }
+    let planted = match &file.planted {
+        Some(files) => Some(PlantedLook {
+            files: files.clone(),
+            markers: *assets.get(files.markers)?,
+        }),
+        None => None,
+    };
+    Ok(PuppetBook {
+        table: Arc::clone(table),
+        weapons,
+        planted,
+        hands: file.hands.clone(),
+    })
+}
+
+fn read(table: Option<&PuppetTableFile>, file: Option<&PuppetFile>, assets: &Assets) -> Puppet {
+    let table = match table.map(|table| assets.get(table.file)) {
+        None => return Puppet::default(),
+        Some(Err(error)) => {
+            return Puppet {
+                refusal: Some(error.to_string()),
+                ..Puppet::default()
+            };
+        }
+        Some(Ok(table)) => Arc::clone(table),
+    };
+    match file.map(|file| book_of(file, &table, assets)).transpose() {
+        Ok(book) => Puppet {
+            table: Some(table),
+            book: book.map(Arc::new),
+            refusal: None,
+        },
+        Err(error) => Puppet {
+            table: Some(table),
+            book: None,
+            refusal: Some(error.to_string()),
+        },
+    }
+}
+
+fn adopt(
+    (tables, files): (Query<Ref<PuppetTableFile>>, Query<Ref<PuppetFile>>),
+    assets: Res<Assets>,
+    mut puppet: ResMut<Puppet>,
+) {
+    let (table, file) = (tables.iter().next(), files.iter().next());
+    let added = table.as_ref().is_some_and(|table| table.is_added())
+        || file.as_ref().is_some_and(|file| file.is_added());
+    let gone = (table.is_none() && (puppet.table.is_some() || puppet.refusal.is_some()))
+        || (file.is_none() && puppet.book.is_some());
+    if added || gone {
+        *puppet = read(table.as_deref(), file.as_deref(), &assets);
+    }
+}
+
 pub struct PuppetBrick;
 
 impl Brick for PuppetBrick {
@@ -193,10 +264,15 @@ impl Brick for PuppetBrick {
         bricks
             .join::<SceneComponents>(
                 ComponentKind::of::<PuppetFile>("puppet")
-                    .schema(engine_core::schema_of::<PuppetFile>)
-                    .files(PuppetFile::files)
-                    .prepare(PuppetFile::prepared),
+                    .schema(engine_core::schema_of::<PuppetFile>),
             )
+            .join::<SceneComponents>(
+                ComponentKind::of::<PuppetTableFile>("puppet_table")
+                    .schema(engine_core::schema_of::<PuppetTableFile>),
+            )
+            .join::<AssetKinds>(AssetKind::of("puppet_table", puppet::table))
+            .join::<AssetKinds>(AssetKind::of("markers", puppet::markers))
+            .resource::<Puppet>()
             .resource::<Memories>()
             .resource::<Muzzles>()
             .resource::<Tasks>()
@@ -206,6 +282,7 @@ impl Brick for PuppetBrick {
             .resource::<props::Spins>()
             .resource::<Seen>()
             .moves::<PropShown>(Pace::Tick)
+            .systems(Schedule::BeforeTicks, adopt)
             .systems(Schedule::FixedSimulation, choose::animate)
             .systems(Schedule::FixedSimulation, carry::carry)
             .systems(Schedule::FixedSimulation, drops::lie)

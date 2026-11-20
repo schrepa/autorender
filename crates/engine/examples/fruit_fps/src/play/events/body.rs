@@ -1,8 +1,7 @@
 use engine::prelude::Resource;
+use engine_solids::Kind;
 use glam::Vec3;
 use serde::Serialize;
-
-use crate::solids::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

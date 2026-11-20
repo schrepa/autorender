@@ -1,32 +1,4 @@
-use engine::prelude::{Resource, settings};
-use glam::Vec3;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Anchor {
-    Listener,
-    Point(Vec3),
-    Actor(u32),
-    Barrier,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Cue {
-    pub event: String,
-    pub anchor: Anchor,
-    pub source: Option<u32>,
-    pub gain: f32,
-    pub hold_ticks: Option<u32>,
-    pub tag: Option<u64>,
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct SoundLoad {
-    pub ready: bool,
-    pub asked: u32,
-    pub loaded: u32,
-    pub failed: u32,
-    pub refusal: Option<String>,
-}
+use engine::prelude::settings;
 
 settings! {
     #[section("volume")]

@@ -1,4 +1,5 @@
 use engine::prelude::{Component, Resource};
+use engine_solids::{Hit, Kind};
 use glam::Vec3;
 
 use crate::abilities::{
@@ -7,7 +8,6 @@ use crate::abilities::{
 };
 use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, Team};
-use crate::solids::{Hit, Kind};
 
 pub const SOLID_ID_BASE: u32 = 0;
 

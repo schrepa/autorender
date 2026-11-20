@@ -1,26 +1,26 @@
 use engine::prelude::*;
+use engine_math::ticks;
+use engine_solids::{Hit, Kind};
 use glam::Vec3;
 
 use super::{ArmsBrick, Book, Setup, drop_weapon, thrown_to};
-use crate::names::{HEAD, HIP, SPINE};
 use crate::play::actors::{Actor, Alive, Body, Equip, Health, SpeedFactor, Wish};
 use crate::play::arms::{Arms, Drops, Hand, HandAction, Held};
 use crate::play::events::arms::{
     ArmsEvents, DeathEvent, DropEvent, Handling, HandlingEvent, HitEvent, Inspect, InspectEvent,
     ShotEvent, SwingEvent, Target, Weapon,
 };
-use crate::play::figures::{FigureJoints, LEFT_LEG, RIGHT_LEG};
 use crate::play::powers::Powers;
 use crate::play::round::Round;
+use crate::play::skinned::{FigureClock, FigureJoints, FigurePlay, JointAt, StepJoints, posed};
 use crate::play::view::ViewOffsets;
 use crate::play::world::Arena;
 use crate::rules::{Device, Team};
-use crate::solids::{Hit, Kind};
 use crate::weapons::{
     Aim, ArmsNumbers, Blocker, BodyPart, CharacterId, Fired, Footing, GunKind, HandMotion,
     HitJoints, HitShapes, Inspecting, LoadoutInput, LoadoutTick, Pace, Slot, Struck, Vitals,
-    forward,
-    gun_damage, hit_shapes, joints_from_body, melee, melee_damage, stance_of, ticks, trace, wound,
+    forward, gun_damage, hit_shapes, joints_from_body, melee, melee_damage, stance_of, trace,
+    wound,
 };
 
 struct Known(Option<f32>);
@@ -35,8 +35,18 @@ impl Blocker for Known {
 struct Living {
     slot: u32,
     team: Team,
-    shapes: Option<HitShapes>,
+    entity: Entity,
+    stood: Option<Stood>,
 }
+
+#[derive(Clone, Copy)]
+struct Stood {
+    head_radius: f32,
+    joints: HitJoints,
+    facing: Vec3,
+}
+
+type Ray = (Vec3, Vec3, f32);
 
 #[derive(Clone, Copy)]
 struct Pending {
@@ -59,7 +69,17 @@ type Acting<'a> = (
     &'a mut ViewOffsets,
     &'a mut SpeedFactor,
     Has<Alive>,
+);
+
+type Shaping<'a> = (
+    Option<&'a FigurePlay>,
     Option<&'a FigureJoints>,
+    Option<&'a FigureClock>,
+);
+
+type Posing<'w, 's> = (
+    Query<'w, 's, Shaping<'static>>,
+    ResMut<'w, StepJoints>,
 );
 
 #[expect(
@@ -76,7 +96,7 @@ pub(super) fn act(
     mut book: ResMut<Book>,
     mut drops: ResMut<Drops>,
     mut actors: Query<Acting<'_>>,
-    mut spawner: Spawner<ArmsBrick>,
+    (mut spawner, (figures, mut steps)): (Spawner<ArmsBrick>, Posing),
 ) {
     events.tick = time.tick;
     events.shots.clear();
@@ -99,17 +119,18 @@ pub(super) fn act(
     let living: Vec<Living> = order
         .iter()
         .filter_map(|(_, entity)| {
-            let (_, actor, wish, body, .., alive, posed) = actors.get(*entity).ok()?;
+            let (_, actor, wish, body, .., alive) = actors.get(*entity).ok()?;
             alive.then(|| Living {
                 slot: actor.slot,
                 team: actor.team,
-                shapes: shapes_of(numbers, actor, body, wish.yaw_radians, posed),
+                entity: *entity,
+                stood: stood_of(numbers, actor, body, wish.yaw_radians),
             })
         })
         .collect();
     let mut pending = Vec::new();
     for (_, entity) in &order {
-        let Ok((_, actor, wish, body, mut arms, _, mut offsets, mut speed, alive, _)) =
+        let Ok((_, actor, wish, body, mut arms, _, mut offsets, mut speed, alive)) =
             actors.get_mut(*entity)
         else {
             continue;
@@ -155,13 +176,14 @@ pub(super) fn act(
         let Some(fired) = ticked.fired else {
             continue;
         };
+        let ray = ray_of(numbers, &fired);
         let targets: Vec<HitShapes> = living
             .iter()
             .filter(|other| {
                 other.slot != actor.slot
                     && (numbers.combat.friendly_fire || other.team != actor.team)
             })
-            .filter_map(|other| other.shapes)
+            .filter_map(|other| target(numbers, other, ray, (&figures, &mut steps)))
             .collect();
         let shooter = Shooter {
             slot: actor.slot,
@@ -518,43 +540,99 @@ fn slot_of(equip: Equip) -> Option<Slot> {
     }
 }
 
-fn shapes_of(
-    numbers: &ArmsNumbers,
-    actor: &Actor,
-    body: &Body,
-    yaw_radians: f32,
-    posed: Option<&FigureJoints>,
-) -> Option<HitShapes> {
+fn stood_of(numbers: &ArmsNumbers, actor: &Actor, body: &Body, yaw_radians: f32) -> Option<Stood> {
     let shapes = &numbers.hit_shapes;
     let head_radius = *shapes.head_radius_m.get(&actor.character)?;
     let height_share = (body.eye.y - body.feet.y) / numbers.player.eye_height_m;
-    let (stood, facing) =
+    let (joints, facing) =
         joints_from_body(&shapes.stand_joints_m, body.feet, yaw_radians, height_share);
-    let joints = posed.and_then(posed_joints).unwrap_or(stood);
-    Some(hit_shapes(
-        shapes,
-        CharacterId(actor.slot),
+    Some(Stood {
         head_radius,
-        1.0,
         joints,
         facing,
+    })
+}
+
+fn ray_of(numbers: &ArmsNumbers, fired: &Fired) -> Ray {
+    match fired {
+        Fired::Shot { gun, shot } => (
+            shot.origin,
+            shot.direction,
+            numbers.weapons.gun(*gun).range_m(),
+        ),
+        Fired::Swing { aim, .. } => (
+            aim.eye,
+            forward(aim.yaw_radians, aim.pitch_radians),
+            numbers.weapons.melee.range_m,
+        ),
+    }
+}
+
+fn reaches((origin, direction, range): Ray, [low, high]: [Vec3; 2], pad: f32) -> bool {
+    let (low, high) = (low - Vec3::splat(pad), high + Vec3::splat(pad));
+    let (mut near, mut far) = (0.0, range);
+    for axis in 0..3 {
+        let (from, toward) = (origin[axis], direction[axis]);
+        if toward == 0.0 {
+            if from < low[axis] || from > high[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (first, second) = ((low[axis] - from) / toward, (high[axis] - from) / toward);
+        near = engine::math::max(near, engine::math::min(first, second));
+        far = engine::math::min(far, engine::math::max(first, second));
+        if near > far {
+            return false;
+        }
+    }
+    true
+}
+
+fn target(
+    numbers: &ArmsNumbers,
+    other: &Living,
+    ray: Ray,
+    (figures, steps): (&Query<Shaping<'_>>, &mut StepJoints),
+) -> Option<HitShapes> {
+    let stood = other.stood?;
+    let shapes = &numbers.hit_shapes;
+    let (play, posed, clock) = figures.get(other.entity).ok()?;
+    let pad = shapes.head_lift_m
+        + engine::math::max(
+            stood.head_radius,
+            engine::math::max(shapes.torso_radius_m, shapes.leg_radius_m),
+        );
+    let bounds = posed.and(clock).and_then(|clock| clock.bounds);
+    if bounds.is_some_and(|bounds| !reaches(ray, bounds, pad)) {
+        return None;
+    }
+    let joints = posed.and_then(|posed| {
+        let step = steps.posed(other.entity, play, &posed.asked)?;
+        posed_joints(&step.joints)
+    });
+    Some(hit_shapes(
+        shapes,
+        CharacterId(other.slot),
+        stood.head_radius,
+        1.0,
+        joints.unwrap_or(stood.joints),
+        stood.facing,
     ))
 }
 
-fn posed_joints(posed: &FigureJoints) -> Option<HitJoints> {
-    let at = |name: &str| {
-        let index = posed.names.iter().position(|asked| asked == name)?;
-        posed
-            .joints
+fn posed_joints(joints: &[JointAt]) -> Option<HitJoints> {
+    let at = |index: usize| {
+        joints
             .get(index)
             .filter(|joint| joint.found)
             .map(|joint| joint.position)
     };
     Some(HitJoints {
-        head: at(HEAD)?,
-        spine: at(SPINE)?,
-        hip: at(HIP)?,
-        feet: [at(LEFT_LEG[2])?, at(RIGHT_LEG[2])?],
+        head: at(posed::HEAD)?,
+        spine: at(posed::SPINE)?,
+        hip: at(posed::HIP)?,
+        feet: [at(posed::LEFT_FOOT)?, at(posed::RIGHT_FOOT)?],
     })
 }
 
@@ -795,7 +873,7 @@ impl Wounds {
             }
             let Some((entity, body, mut arms, mut health)) = actors
                 .iter_mut()
-                .find(|(_, actor, .., alive, _)| actor.slot == wounding.victim && *alive)
+                .find(|(_, actor, .., alive)| actor.slot == wounding.victim && *alive)
                 .map(|(entity, _, _, body, arms, health, ..)| (entity, body, arms, health))
             else {
                 continue;

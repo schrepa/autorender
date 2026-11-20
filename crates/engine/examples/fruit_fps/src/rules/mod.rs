@@ -17,7 +17,17 @@ pub type SiteId = usize;
 pub struct WeaponId(pub usize);
 
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum Team {
@@ -44,7 +54,17 @@ impl Team {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
     Attack,
@@ -93,7 +113,7 @@ pub enum RoundEndReason {
     Time,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AbilitySlot {
     C,
     Q,
@@ -102,13 +122,28 @@ pub enum AbilitySlot {
 }
 
 impl AbilitySlot {
-    fn index(self) -> Option<usize> {
+    pub const ALL: [AbilitySlot; 4] = [Self::C, Self::Q, Self::E, Self::X];
+
+    pub fn index(self) -> usize {
         match self {
-            AbilitySlot::C => Some(0),
-            AbilitySlot::Q => Some(1),
-            AbilitySlot::E => Some(2),
-            AbilitySlot::X => None,
+            AbilitySlot::C => 0,
+            AbilitySlot::Q => 1,
+            AbilitySlot::E => 2,
+            AbilitySlot::X => 3,
         }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            AbilitySlot::C => "c",
+            AbilitySlot::Q => "q",
+            AbilitySlot::E => "e",
+            AbilitySlot::X => "x",
+        }
+    }
+
+    fn charged(self) -> Option<usize> {
+        (self != AbilitySlot::X).then_some(self.index())
     }
 }
 
@@ -257,7 +292,7 @@ pub struct Player {
 
 impl Player {
     pub fn ability(&self, slot: AbilitySlot) -> Option<&Ability> {
-        slot.index().and_then(|i| self.abilities.get(i))
+        slot.charged().and_then(|i| self.abilities.get(i))
     }
 }
 
@@ -514,7 +549,7 @@ pub struct Match {
     sides: [Side; 2],
     loss_streak: [u32; 2],
     tick: u64,
-    random: u64,
+    random: engine_math::Random,
     pending: Vec<Event>,
     dropped_by: Option<PlayerId>,
     overtime_rounds: u32,

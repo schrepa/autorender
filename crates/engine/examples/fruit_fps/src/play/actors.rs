@@ -1,47 +1,16 @@
 use engine::prelude::{Component, Entity};
+use engine_solids::Kind;
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::play::walk::Landed;
 use crate::rules::{AbilitySlot, BuyRequest, Team};
-use crate::solids::{Ground, Landed};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum TeamName {
-    First,
-    Second,
-}
-
-mod team_name {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    use super::{Team, TeamName};
-
-    pub(super) fn serialize<S: Serializer>(team: &Team, serializer: S) -> Result<S::Ok, S::Error> {
-        match team {
-            Team::First => TeamName::First,
-            Team::Second => TeamName::Second,
-        }
-        .serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Team, D::Error> {
-        Ok(match TeamName::deserialize(deserializer)? {
-            TeamName::First => Team::First,
-            TeamName::Second => Team::Second,
-        })
-    }
-}
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Actor {
     pub slot: u32,
-    #[serde(with = "team_name")]
-    #[schemars(with = "TeamName")]
     pub team: Team,
     pub character: String,
     #[serde(default)]
@@ -129,6 +98,6 @@ pub struct Body {
     pub crouch: f32,
     pub eye: Vec3,
     pub motion: Motion,
-    pub ground: Option<Ground>,
+    pub ground: Option<Kind>,
     pub landed: Option<Landed>,
 }

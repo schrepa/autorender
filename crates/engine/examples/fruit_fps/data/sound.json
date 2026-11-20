@@ -11,26 +11,6 @@
  "occlusion_every_ticks": 6,
  "occlusion_pullback_m": 0.2,
  "pan_width": 0.8,
- "quiet_step_gain": 0.5,
- "kinds": [
-  "stone",
-  "plaster",
-  "wood",
-  "planks",
-  "metal",
-  "grate",
-  "cloth",
-  "plant",
-  "glass",
-  "water",
-  "dirt"
- ],
- "default_kind": "stone",
- "drop_probe_m": 0.5,
- "barrier_keep_ticks": 120,
- "orb_hold_ticks": 150,
- "break_large_m": 1.0,
- "kill_steps": 5,
  "clashes": [
   {
    "winner": "round_loss",
@@ -38,13 +18,6 @@
    "seconds": 0.5
   }
  ],
- "countdown_seconds": 3,
- "device": {
-  "plant_repeat_seconds": 0.45,
-  "defuse_repeat_seconds": 0.45,
-  "beep_slow_seconds": 1.0,
-  "beep_fast_seconds": 0.12
- },
  "curves": {
   "flat": {
    "flat": true,
@@ -73,7 +46,7 @@
   "step": {
    "flat": false,
    "near_m": 1.0,
-   "far_from": "/player/footstep_heard_m",
+   "far_from": "footstep_heard",
    "floor": 0.0,
    "power": 0.8,
    "occluded": 0.35

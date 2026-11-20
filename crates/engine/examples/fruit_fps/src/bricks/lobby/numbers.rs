@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::play::lobby::LobbyCamera;
 
@@ -179,8 +180,8 @@ fn checked(lobby: LobbyNumbers) -> Result<LobbyNumbers, String> {
     Ok(lobby)
 }
 
-pub(super) fn read(text: &str) -> Result<LobbyNumbers, String> {
-    let file: LobbyFile =
-        serde_json::from_str(text).map_err(|error| format!("numbers.json lobby: {error}"))?;
+pub(super) fn read(whole: &Value) -> Result<LobbyNumbers, String> {
+    let file =
+        LobbyFile::deserialize(whole).map_err(|error| format!("numbers.json lobby: {error}"))?;
     checked(file.lobby)
 }

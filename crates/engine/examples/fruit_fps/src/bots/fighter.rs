@@ -1,16 +1,18 @@
+use engine_math::{clamp, max};
 use glam::Vec3;
 
 use super::aim::{
-    angle_between, clamp, direction, error_radians, flat, flat_distance, look_angles, max, radians,
-    sin_cos, wrap,
+    angle_between, direction, error_radians, flat, flat_distance, look_angles, radians, sin_cos,
+    wrap,
 };
 use super::debug::{Activity, Why};
 use super::memory::{Source, Track};
 use super::sense::{
-    CallKind, DeviceSense, Gait, GamePhase, Intent, ObjectKind, Purchase, Side, WeaponChoice,
+    CallKind, DeviceSense, Gait, GamePhase, Intent, ObjectKind, Purchase, WeaponChoice,
 };
 use super::team::{Duty, Step};
 use super::{Brain, Ctx};
+use crate::rules::Side;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fight {
@@ -623,6 +625,9 @@ fn idle_reload(brain: &Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         .memory
         .lost(ctx.tick, ctx.numbers.ticks(play.reaction_reset_seconds))
         .is_none();
+    if !(low && calm && !gun.reloading && gun.reserve > 0) {
+        return;
+    }
     let exposed = brain
         .memory
         .lost(ctx.tick, ctx.numbers.ticks(ctx.level.memory_seconds))
@@ -635,7 +640,7 @@ fn idle_reload(brain: &Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
                 .map(|heard| heard.at + (ctx.eye - ctx.sense.position)),
         )
         .any(|from| ctx.world.sees(from, ctx.eye));
-    if low && calm && !exposed && !gun.reloading && gun.reserve > 0 {
+    if !exposed {
         intent.reload = true;
     }
 }
@@ -748,7 +753,7 @@ fn orb_wanted(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<Vec3> {
         })
 }
 
-fn orb_stand(brain: &Brain, ctx: &Ctx<'_, '_>, at: Vec3) -> Option<Vec3> {
+fn orb_stand(brain: &mut Brain, ctx: &Ctx<'_, '_>, at: Vec3) -> Option<Vec3> {
     let reach = ctx.numbers.play.orb_stand_m;
     if let Some(stand) = brain
         .orb_spot
@@ -756,12 +761,19 @@ fn orb_stand(brain: &Brain, ctx: &Ctx<'_, '_>, at: Vec3) -> Option<Vec3> {
     {
         return Some(stand);
     }
-    let mut corners = Vec::new();
-    if !ctx.world.path(ctx.sense.position, at, &mut corners) {
+    if brain.orb_refused == Some(at) {
         return None;
     }
-    let stand = corners.last().copied().unwrap_or(at);
-    (flat_distance(stand, at) <= reach).then_some(stand)
+    let mut corners = Vec::new();
+    let stand = ctx
+        .world
+        .path(ctx.sense.position, at, &mut corners)
+        .then(|| corners.last().copied().unwrap_or(at))
+        .filter(|stand| flat_distance(*stand, at) <= reach);
+    if stand.is_none() {
+        brain.orb_refused = Some(at);
+    }
+    stand
 }
 
 fn peek_share(brain: &Brain, ctx: &Ctx<'_, '_>) -> f32 {

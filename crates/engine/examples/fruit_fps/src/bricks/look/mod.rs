@@ -10,6 +10,7 @@ use crate::play::actors::{Actor, Body, Eye, Human, Wish};
 use crate::play::camera::TestCamera;
 use crate::play::lobby::LobbyView;
 use crate::play::numbers::{Numbers, SpectateNumbers};
+use crate::play::turns::eased;
 use crate::play::view::{Controls, CorpseView, ViewOffsets, Watch, Watched};
 
 #[derive(
@@ -86,8 +87,8 @@ impl Brick for LookBrick {
             .dev(|dev| {
                 dev.settings::<LookTest>().stats::<LookStats>();
             })
-            .systems(Schedule::BeforeDraw, lens)
-            .systems(Schedule::BeforeDraw, place);
+            .systems(Schedule::Presentation, lens)
+            .systems(Schedule::Presentation, place);
     }
 }
 
@@ -139,8 +140,7 @@ fn first_person(poses: &Poses<'_>, (eye, wish, offsets): Seen<'_>) -> Option<Sho
 }
 
 fn corpse_shot(corpse: &CorpseView, spectate: &SpectateNumbers, ticks: f32) -> Shot {
-    let progress = math::clamp(ticks / spectate.corpse_seconds, 0.0, 1.0);
-    let eased = progress * progress * (3.0 - 2.0 * progress);
+    let eased = eased(ticks / spectate.corpse_seconds);
     let (sin, cos) = math::sin_cos(corpse.yaw_radians);
     let behind = Vec3::new(sin, 0.0, cos);
     let position =

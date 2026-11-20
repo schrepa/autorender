@@ -1,8 +1,24 @@
 use engine::prelude::Resource;
+use engine::{Error, ErrorCode};
+use engine_solids::{Dropped, Hit, Kind, Solids};
 use glam::{Quat, Vec3};
 
 use crate::rules::Side;
-use crate::solids::{Dropped, Hit, Kind, Solids};
+
+pub const STONE: Kind = Kind::named("stone");
+
+pub fn floor_or_cooked<F, C>(
+    floor: Option<&F>,
+    cooked: Option<&C>,
+    path: &str,
+) -> Result<(), Error> {
+    match (floor, cooked) {
+        (Some(_), None) | (None, Some(_)) => Ok(()),
+        (Some(_), Some(_)) | (None, None) => {
+            Err(Error::new(ErrorCode::InvalidValue, path.to_owned()).variants(["floor", "cooked"]))
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spawn {
@@ -148,5 +164,11 @@ impl Arena {
         [Zone::SiteA, Zone::SiteB]
             .into_iter()
             .position(|zone| self.zone(zone, point))
+    }
+}
+
+impl brick_sound::Occluder for Arena {
+    fn clear(&self, from: Vec3, to: Vec3) -> bool {
+        !self.ready() || self.sees(from, to)
     }
 }

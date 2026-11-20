@@ -3,23 +3,22 @@ use engine::prelude::*;
 use std::collections::BTreeMap;
 
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, DrawnTable, Error, ErrorCode, Expected, Material,
-    MaterialHandle, Poses, SceneContext, Stats, Views,
+    AlphaMode, Asset, Assets, DrawnTable, Error, ErrorCode, Expected, Material, Poses, Stats,
+    Views,
 };
+use engine_drawing::{DetailLimit, SizeSkip, pixel_scale};
 
-use super::chunks::{self, Pieces, Seen, Sized};
-use super::gpu::problems_of;
-use super::numbers::Antialias;
+use super::chunks::{self, Pieces, Seen};
+use super::gpu::{problems_of, srgb_in_linear};
 use super::numbers::{self, LightingNumbers};
-use super::sets::VisibleSets;
+use super::sets::SetIndex;
 use super::{
-    FIELD_HEIGHT, FIELD_MAP, FIELD_RECT, LEVEL_DETAIL, LIGHT_FIELD, LevelStats, MACRO_COLOR,
-    MACRO_ROUGH, MIRROR, PICTURE_MAP, SKY,
+    FIELD_HEIGHT, FIELD_MAP, FIELD_RECT, LEVEL, LEVEL_DETAIL, LIGHT_FIELD, LIGHTMAP_MAP,
+    LevelStats, MACRO_COLOR, MACRO_ROUGH, MIRROR, PICTURE_MAP, SKY,
 };
-use crate::bricks::figures::{LEVEL, LIGHTMAP_MAP};
 use crate::play::actors::{Alive, Body};
 use crate::play::effects::{Blob, GroundMarks};
-use crate::play::light::{Ambient, DetailLimit, Fog, Grade, Light, LightField, Lighting, SkyLook};
+use crate::play::light::{Ambient, Fog, Grade, Light, LightField, Lighting, SkyLook};
 use crate::play::numbers::Numbers;
 use crate::play::world::Arena;
 
@@ -43,7 +42,7 @@ pub(super) fn setup(numbers: Res<Numbers>, mut setup: ResMut<Setup>) {
     }
     setup.revision = Some(numbers.revision());
     setup.radius_m = game.player.moving.radius_m;
-    match numbers::parse(&game.text) {
+    match numbers::parse(&game.whole) {
         Ok(parsed) => {
             setup.parsed = Some(parsed);
             setup.refusal = None;
@@ -124,36 +123,32 @@ fn field_of(material: &Material, path: &str) -> Result<LightField, Error> {
     })
 }
 
-fn field_in(
-    table: &DrawnTable,
-    library: Option<&AssetLibrary>,
-) -> Option<Result<LightField, Error>> {
+fn field_in(table: &DrawnTable, assets: &Assets) -> Option<Result<LightField, Error>> {
     let handle = table
         .batches(LIGHT_FIELD)
         .find_map(|batch| batch.material)?;
-    let material = library?.material(handle)?;
-    Some(field_of(
-        material,
-        &format!("$.materials.{}", handle.slot()),
-    ))
+    let material = assets.get(handle).ok()?;
+    let path = format!("$.materials.{}", handle.slot());
+    Some(field_of(material, &path).and_then(|field| {
+        srgb_in_linear(assets, field.map, &path, FIELD_MAP).map_or(Ok(field), Err)
+    }))
 }
 
 pub(super) fn light(
     setup: Res<Setup>,
     lights: Query<&Light>,
     table: Res<DrawnTable>,
-    library: Option<Res<AssetLibrary>>,
+    assets: Res<Assets>,
     mut lighting: ResMut<Lighting>,
 ) {
     let numbers = setup.parsed.as_ref();
-    let field = field_in(&table, library.as_deref()).and_then(Result::ok);
+    let field = field_in(&table, &assets).and_then(Result::ok);
     let unlit = Lighting {
         grade: numbers.map_or_else(Grade::default, |numbers| Grade {
             exposure: numbers.grade.exposure,
             contrast: numbers.grade.contrast,
             saturation: numbers.grade.saturation,
         }),
-        antialias: numbers.and_then(|numbers| numbers.antialias) == Some(Antialias::Fxaa),
         filtering: numbers.map_or_else(Default::default, |numbers| numbers.filtering),
         detail: numbers.map_or_else(Default::default, |numbers| numbers.detail),
         visible_sets: numbers.is_some_and(|numbers| numbers.visible_sets),
@@ -234,19 +229,13 @@ pub(super) fn blobs(
     }
 }
 
-type LevelAssets<'w> = (
-    Option<Res<'w, AssetLibrary>>,
-    Option<Res<'w, AssetResidency>>,
-    Option<Res<'w, SceneContext>>,
-);
-
 pub(super) fn count(
     setup: Res<Setup>,
     lighting: Res<Lighting>,
     lights: Query<&Light>,
     marks: Res<GroundMarks>,
-    (table, views, pieces, sets): (Res<DrawnTable>, Res<Views>, Res<Pieces>, Res<VisibleSets>),
-    (library, residency, scene): LevelAssets<'_>,
+    (table, views, pieces, sets): (Res<DrawnTable>, Res<Views>, Res<Pieces>, Res<SetIndex>),
+    assets: Res<Assets>,
     mut stats: Stats<LevelStats>,
 ) {
     let mut next = LevelStats {
@@ -261,7 +250,6 @@ pub(super) fn count(
             .count() as u32,
         ..LevelStats::default()
     };
-    let library = library.as_deref();
     let mut materials = Vec::new();
     let batches = table
         .batches(LEVEL)
@@ -273,29 +261,22 @@ pub(super) fn count(
         let instances = batch.instances.len() as u64;
         if let Some(mesh) = batch
             .geometry
-            .zip(library)
-            .and_then(|(geometry, library)| library.mesh(geometry))
+            .and_then(|geometry| assets.get(geometry).ok())
         {
-            next.triangles += mesh.indices().len() as u64 / 3 * instances;
+            next.triangles += u64::from(mesh.description().index_count) / 3 * instances;
         }
         if let Some(handle) = batch.material
             && !materials.contains(&handle)
         {
             materials.push(handle);
-            if let Some(material) = library.and_then(|library| library.material(handle)) {
+            if let Ok(material) = assets.get(handle) {
                 tally(&mut next, material);
             }
         }
     }
     next.materials = materials.len() as u32;
-    let judged = judged(
-        &table,
-        library,
-        residency.as_deref(),
-        scene.as_deref(),
-        &mut next,
-    );
-    let sources = (&*table, library, &*pieces);
+    let judged = judged(&table, &assets, &mut next);
+    let sources = (&*table, &*assets, &*pieces);
     next.sets_loaded = sets.loaded();
     next.sets_unknown = sets.unknown;
     let set = (lighting.visible_sets, &*sets);
@@ -305,11 +286,10 @@ pub(super) fn count(
     next.sky = sky.is_some();
     next.picture = sky
         .and_then(|batch| batch.material)
-        .zip(library)
-        .and_then(|(handle, library)| library.material(handle))
+        .and_then(|handle| assets.get(handle).ok())
         .is_some_and(|material| material.map(PICTURE_MAP).is_some());
     next.draws += u32::from(next.sky);
-    match field_in(&table, library) {
+    match field_in(&table, &assets) {
         Some(Ok(_)) => next.field = true,
         Some(Err(problem)) => next.field_refusal = Some(problem.to_string()),
         None => {}
@@ -324,26 +304,18 @@ enum Judged {
     Waiting,
 }
 
-fn name_of(scene: Option<&SceneContext>, handle: MaterialHandle) -> String {
-    scene
-        .and_then(|scene| {
-            scene
-                .assets
-                .materials
-                .iter()
-                .find(|(_, known)| **known == handle)
-                .map(|(name, _)| name.clone())
-        })
-        .unwrap_or_else(|| format!("$.materials.{}", handle.slot()))
+fn name_of(assets: &Assets, handle: Asset<Material>) -> String {
+    assets.name(handle).map_or_else(
+        || format!("$.materials.{}", handle.slot()),
+        str::to_owned,
+    )
 }
 
 fn judged(
     table: &DrawnTable,
-    library: Option<&AssetLibrary>,
-    residency: Option<&AssetResidency>,
-    scene: Option<&SceneContext>,
+    assets: &Assets,
     next: &mut LevelStats,
-) -> BTreeMap<MaterialHandle, Judged> {
+) -> BTreeMap<Asset<Material>, Judged> {
     let mut judged = BTreeMap::new();
     let used = table
         .batches(LEVEL_DETAIL)
@@ -356,11 +328,11 @@ fn judged(
         if judged.contains_key(&handle) {
             continue;
         }
-        let material = library.and_then(|library| library.material(handle));
+        let material = assets.get(handle).ok();
         let problems = material.map_or_else(Vec::new, |material| {
             problems_of(material, &format!("$.materials.{}", handle.slot()), detail)
         });
-        let resident = residency.is_some_and(|residency| residency.material_resident(handle));
+        let resident = assets.ready(handle);
         let verdict = if !problems.is_empty() {
             Judged::Broken
         } else if resident && material.is_some() {
@@ -369,7 +341,7 @@ fn judged(
             Judged::Waiting
         };
         if !problems.is_empty() {
-            let name = name_of(scene, handle);
+            let name = name_of(assets, handle);
             next.problems.extend(
                 problems
                     .iter()
@@ -383,20 +355,20 @@ fn judged(
 
 fn submitted(
     next: &mut LevelStats,
-    (table, library, pieces): (&DrawnTable, Option<&AssetLibrary>, &Pieces),
+    (table, assets, pieces): (&DrawnTable, &Assets, &Pieces),
     (views, judged, (on, sets)): (
         &Views,
-        &BTreeMap<MaterialHandle, Judged>,
-        (bool, &VisibleSets),
+        &BTreeMap<Asset<Material>, Judged>,
+        (bool, &SetIndex),
     ),
     limit: DetailLimit,
 ) {
     let facts = views.main();
     let set = facts.filter(|_| on).and_then(|facts| sets.at(facts.eye));
     next.sets = set.is_some();
-    next.set_cell = set.map(|set| set.cell);
-    let scale = facts.and_then(chunks::pixel_scale);
-    let mut sized = Sized { limit, held: None };
+    next.set_cell = set.map(|set| set.at.cell);
+    let scale = facts.and_then(pixel_scale);
+    let mut sized = SizeSkip { limit, held: None };
     for batch in table.batches(LEVEL).chain(table.batches(LEVEL_DETAIL)) {
         next.chunks += 1;
         let Some(facts) = facts.filter(|facts| batch.layers.overlaps(facts.layers)) else {
@@ -421,9 +393,8 @@ fn submitted(
         }
         let vertices = batch
             .geometry
-            .zip(library)
-            .and_then(|(geometry, library)| library.mesh(geometry))
-            .map_or(0, |mesh| mesh.indices().len() as u64)
+            .and_then(|geometry| assets.get(geometry).ok())
+            .map_or(0, |mesh| u64::from(mesh.description().index_count))
             * batch.instances.len() as u64;
         let verdict = batch.material.map_or(Judged::Ready, |handle| {
             judged.get(&handle).copied().unwrap_or(Judged::Waiting)

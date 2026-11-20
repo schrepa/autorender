@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine_assets::MeshVertex;
+use engine_meshpack::MeshVertex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 

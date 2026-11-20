@@ -11,12 +11,12 @@ mod previews;
 use std::ops::Range;
 
 use engine::prelude::*;
-use engine_core::{Attributes, DrawKind, KindDecl};
+use engine_core::{DrawKind, KindDecl};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::names::COLOR_PASS;
-use crate::play::effects::EffectsFeed;
+use crate::play::effects::{EffectsFeed, FigureMarks};
 
 pub const EFFECTS: DrawKind = DrawKind("effects");
 
@@ -60,7 +60,8 @@ pub(crate) struct Item {
 #[derive(Resource, Default)]
 pub(crate) struct EffectsDrawing {
     pub items: Vec<Item>,
-    pub glow: Range<u32>,
+    pub pooled: u32,
+    pub glows: Vec<(Range<u32>, u32)>,
     pub solid: Range<u32>,
     pub slab: Range<u32>,
     pub sheet: Range<u32>,
@@ -68,7 +69,6 @@ pub(crate) struct EffectsDrawing {
     pub smoke: Range<u32>,
     pub marks: Range<u32>,
     pub barrier: Range<u32>,
-    pub glow_vertices: u32,
     pub frame: EffectsFrame,
     pub screen: bool,
     pub field: Option<engine_core::TextureRef>,
@@ -177,6 +177,7 @@ impl Brick for EffectsBrick {
                 ComponentKind::of::<Device>("device").schema(engine_core::schema_of::<Device>),
             )
             .resource::<EffectsFeed>()
+            .resource::<FigureMarks>()
             .resource::<gather::Setup>()
             .resource::<gather::Spawns>()
             .resource::<EffectsDrawing>()
@@ -185,14 +186,10 @@ impl Brick for EffectsBrick {
             .moves::<models::ShowcaseModel>(Pace::Tick)
             .draw_kind(KindDecl {
                 kind: DEVICE,
-                needs: Attributes::NONE,
-                streams: &[],
                 passes: &[COLOR_PASS],
             })
             .draw_kind(KindDecl {
                 kind: EFFECTS,
-                needs: Attributes::NONE,
-                streams: &[],
                 passes: &[COLOR_PASS],
             })
             .generated(GENERATED)
@@ -201,8 +198,8 @@ impl Brick for EffectsBrick {
             .systems(Schedule::FixedSimulation, gather::setup)
             .systems(Schedule::FixedSimulation, gather::gather)
             .systems(Schedule::FixedSimulation, gather::place_device)
+            .systems(Schedule::FixedSimulation, foes::mark_figures)
             .systems(Schedule::Presentation, assemble::assemble)
-            .systems(Schedule::Presentation, foes::mark_figures)
             .dev(|dev| {
                 dev.settings::<EffectsShow>()
                     .stats::<EffectsStats>()

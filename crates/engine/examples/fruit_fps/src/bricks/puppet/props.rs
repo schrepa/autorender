@@ -2,16 +2,16 @@ use std::collections::BTreeMap;
 
 use engine::prelude::*;
 use engine_core::math::max;
-use engine_core::{AssetLibrary, SceneContext, Stats};
+use engine_core::{Assets, Stats};
 use glam::{Mat3, Quat, Vec3};
 
 use super::drops::{drawn_of, ground_node};
 use super::{InHandStats, Memories, PropInHand, PropShown, PropStats, PuppetBrick, PuppetStats};
 use crate::abilities::{AbilityBook, Delivery, DrawKind, PropPose, PropState};
 use crate::play::actors::Actor;
-use crate::play::figures::{Held, Offset};
 use crate::play::powers::Powers;
-use crate::play::puppet::{Holding, InHand, PropTrim, PropsLook, PuppetFile};
+use crate::play::puppet::{Holding, InHand, PropTrim, PropsLook, Puppet};
+use crate::play::skinned::{Held, Offset};
 use crate::play::view::Watched;
 
 #[derive(Resource, Default)]
@@ -26,11 +26,10 @@ type Reads<'w, 's> = (
         Option<Res<'w, Powers>>,
         Res<'w, Memories>,
     ),
-    Option<Res<'w, SceneContext>>,
-    Query<'w, 's, &'static PuppetFile>,
+    Res<'w, Puppet>,
     Query<'w, 's, (Entity, &'static PropShown, &'static Drawn)>,
     (
-        Option<Res<'w, AssetLibrary>>,
+        Res<'w, Assets>,
         Option<Res<'w, Watched>>,
         Query<'w, 's, &'static Actor>,
     ),
@@ -50,8 +49,7 @@ type InHands<'w, 's> = Query<
 >;
 
 struct Shelf<'a> {
-    scene: Option<&'a SceneContext>,
-    library: Option<&'a AssetLibrary>,
+    assets: &'a Assets,
     trim: &'a PropTrim,
     viewer: Option<usize>,
 }
@@ -179,9 +177,9 @@ fn spun(spins: &mut Spins, look: &PropsLook, prop: &PropState, delta: f32) {
     };
 }
 
-fn bounds_of(library: Option<&AssetLibrary>, drawn: &Drawn) -> Option<(Vec3, Vec3)> {
-    let bounds = library?.mesh(drawn.geometry?)?.bounds();
-    Some((bounds.min(), bounds.max()))
+fn bounds_of(assets: &Assets, drawn: &Drawn) -> Option<(Vec3, Vec3)> {
+    let bounds = assets.get(drawn.geometry?).ok()?.description().bounds;
+    Some((bounds.min, bounds.max))
 }
 
 fn largest((low, high): (Vec3, Vec3)) -> f32 {
@@ -233,10 +231,9 @@ fn row(key: &str, part: u32, at: &Transform, ally: Option<bool>) -> PropStats {
 pub(super) fn show(
     (
         (fixed, powers, memories),
-        scene,
-        files,
+        puppet,
         shown,
-        (library, watched, actors),
+        (assets, watched, actors),
         (holding, in_hand),
     ): Reads,
     ((mut stats, mut spins), mut spawner, mut moves): Writes,
@@ -246,7 +243,7 @@ pub(super) fn show(
         .and_then(|watched| watched.entity)
         .and_then(|entity| actors.get(entity).ok())
         .map(|actor| actor.team.index());
-    let Some(book) = files.iter().find_map(PuppetFile::book) else {
+    let Some(book) = puppet.book.as_deref() else {
         return;
     };
     let look = &book.table.props;
@@ -282,8 +279,7 @@ pub(super) fn show(
         .filter(|(held, _)| held.holds(fixed.tick))
         .collect();
     let shelf = Shelf {
-        scene: scene.as_deref(),
-        library: library.as_deref(),
+        assets: &assets,
         trim: &look.trim,
         viewer,
     };
@@ -305,7 +301,7 @@ pub(super) fn show(
         if hands.iter().any(|(held, _)| held.hides(made)) {
             continue;
         }
-        let Ok(drawn) = drawn_of(scene.as_deref(), (key, key)) else {
+        let Ok(drawn) = drawn_of(&assets, key) else {
             skipped.push(key.to_owned());
             continue;
         };
@@ -362,14 +358,14 @@ fn in_hand_shown(
     let mut kept = Vec::new();
     let mut rows = Vec::new();
     for &(held, first_person) in hands {
-        let Ok(drawn) = drawn_of(shelf.scene, (&held.prop, &held.prop)) else {
+        let Ok(drawn) = drawn_of(shelf.assets, &held.prop) else {
             continue;
         };
         let ally = shelf.viewer.map(|team| team == held.team);
         let drawn = trimmed(drawn, shelf.trim, ally);
-        let bounds = bounds_of(shelf.library, &drawn);
+        let bounds = bounds_of(shelf.assets, &drawn);
         let seat = bounds.map(|bounds| fitted(held, bounds));
-        let wanted = Held::on(held.holder, held.socket.clone(), seat.unwrap_or(held.seat));
+        let wanted = Held::on(held.holder, held.socket, seat.unwrap_or(held.seat));
         let found = existing
             .iter()
             .find(|(_, mark, ..)| mark.holder == held.holder);
@@ -412,7 +408,7 @@ fn in_hand_shown(
             owner: held.owner,
             first_person,
             prop: held.prop.clone(),
-            joint: held.socket.clone(),
+            joint: held.socket.0.to_string(),
             size_m: held.size_m,
             extent_m: bounds.map(largest),
             scale: seat.map(|seat| seat.scale),

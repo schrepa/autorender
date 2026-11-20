@@ -12,6 +12,8 @@ pub struct Preview {
     pub shape: DrawShape,
     pub path: Vec<Vec3>,
     pub valid: bool,
+    pub placed: bool,
+    pub aim: Aim,
 }
 
 struct Sandbox<'a, W: World>(&'a W);
@@ -153,11 +155,14 @@ pub fn preview(
         });
         if let Some((cue, at, size)) = landed {
             path.push(at);
+            let valid = placed(world, spec, aim);
             return Some(Preview {
                 at,
                 shape: footprint(&effects, cue, at, size, throw_radius),
                 path,
-                valid: placed(world, spec, aim),
+                valid,
+                placed: valid,
+                aim,
             });
         }
     }
@@ -170,5 +175,7 @@ pub fn preview(
         },
         path,
         valid: false,
+        placed: false,
+        aim,
     })
 }

@@ -1,7 +1,6 @@
+use engine::math;
+use engine_solids::{Capsule, Solids, Work};
 use glam::{Quat, Vec3};
-
-use super::shapes::most;
-use super::{Capsule, Solids};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Opening {
@@ -36,7 +35,7 @@ pub fn openings(
         let along = rotation * across;
         let span = half.dot(across.abs());
         let face = centre + normal * half.dot(axis.abs());
-        let columns = most((2.0 * span / probe.column_m).ceil(), 1.0) as u32;
+        let columns = math::max((2.0 * span / probe.column_m).ceil(), 1.0) as u32;
         let width = 2.0 * span / columns as f32;
         let at = |column: u32| face + along * (width * column as f32 - span);
         let mut start = None;
@@ -71,8 +70,8 @@ fn passable(solids: &Solids, (middle, normal, high): (Vec3, Vec3, f32), probe: P
         height: probe.height_m - probe.step_m,
         radius: probe.radius_m,
     };
-    !solids.capsule_overlaps(capsule)
+    !solids.capsule_overlaps(capsule, &mut Work::default())
         && solids
-            .capsule_sweep(capsule, normal * (2.0 * clear))
+            .capsule_sweep(capsule, normal * (2.0 * clear), &mut Work::default())
             .is_none()
 }

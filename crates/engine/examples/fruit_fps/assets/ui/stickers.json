@@ -9,7 +9,7 @@
  "padding_px": 2,
  "mips": "cells on even coordinates with a 2 px gap; every sticker keeps 3 px clear inside its cell",
  "portraits": "char_<fruit> head sticker; char_<fruit>_<attack|defend> on the team disc (palette attack / defend)",
- "icons": {
+ "cells": {
   "ability_bunch": [
    700,
    546,

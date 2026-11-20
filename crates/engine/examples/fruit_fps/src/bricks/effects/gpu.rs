@@ -2,27 +2,21 @@ use std::ops::Range;
 
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
-use engine_core::{Entry, Error, Sampler, TextureRef, Var, ViewFacts};
-use engine_render::{
-    Access, BatchGroup, Encode, FULLSCREEN, GroupEntry, Own, PerBatch, Scene, Texture,
-};
+use engine_core::{Entry, Error, TextureRef, Var, ViewFacts};
+use engine_drawing::StandIn;
+use engine_render::{Access, BatchGroup, Encode, FULLSCREEN, GroupEntry, Own, PerBatch, Scene};
 
 use super::assemble::BOX_VERTICES;
 use super::shaders::effects::{barrier, field, glow, items, screen, sheet, slab, solid, volume};
 use super::{EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
 use crate::names::{COLOR, COLOR_PASS, DEPTH};
+use crate::play::light::{CLAMP, REPEAT};
 
 const FULLSCREEN_VERTICES: u32 = 3;
 
 const QUAD_VERTICES: u32 = 6;
 
 const SLAB_VERTICES: u32 = 54;
-
-const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
-    width: 1,
-    height: 1,
-    depth_or_array_layers: 1,
-};
 
 pub(super) struct EffectsGpu {
     glow: Pipeline<Self, Scene>,
@@ -37,10 +31,10 @@ pub(super) struct EffectsGpu {
     items: Buffer<Self>,
     frame: Buffer<Self>,
     field_group: BatchGroup<Self>,
-    unlit: Texture<Self>,
+    unlit: StandIn<Self>,
     field_bound: Option<Option<TextureRef>>,
     sent: Option<EffectsFrame>,
-    glow_range: Range<u32>,
+    glows: Vec<(Range<u32>, u32)>,
     solid_range: Range<u32>,
     slab_range: Range<u32>,
     sheet_range: Range<u32>,
@@ -48,7 +42,6 @@ pub(super) struct EffectsGpu {
     smoke_range: Range<u32>,
     marks_range: Range<u32>,
     barrier_range: Range<u32>,
-    glow_vertices: u32,
     screened: bool,
     own: bool,
 }
@@ -130,11 +123,7 @@ impl GpuPart for EffectsGpu {
         ];
         cx.frame(volume::EFFECTS_DEPTH, Bind::Target(DEPTH))?;
         let field_group = cx.batch_group(field::MODULE, 1, &[])?;
-        let unlit = cx.texture(
-            "effects_unlit_field",
-            wgpu::TextureFormat::Rgba8Unorm,
-            Lifetime::Kept,
-        );
+        let unlit = StandIn::install(cx, "effects_unlit_field", [0; 4]);
         let scene = Scene::named(COLOR_PASS);
         let over = [(blended(), wgpu::ColorWrites::ALL)];
         let opaque = [(None, wgpu::ColorWrites::ALL)];
@@ -217,7 +206,7 @@ impl GpuPart for EffectsGpu {
             unlit,
             field_bound: None,
             sent: None,
-            glow_range: 0..0,
+            glows: Vec::new(),
             solid_range: 0..0,
             slab_range: 0..0,
             sheet_range: 0..0,
@@ -225,7 +214,6 @@ impl GpuPart for EffectsGpu {
             smoke_range: 0..0,
             marks_range: 0..0,
             barrier_range: 0..0,
-            glow_vertices: 0,
             screened: false,
             own: false,
         })
@@ -236,7 +224,12 @@ impl GpuPart for EffectsGpu {
         (drawing, skipped): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let slots = drawing.items.len().max(1).next_power_of_two();
+        let slots = drawing
+            .items
+            .len()
+            .max(drawing.pooled as usize)
+            .max(1)
+            .next_power_of_two();
         let _ = cx.allocate_buffer(self.items, (slots * size_of::<Item>()) as u64);
         if !drawing.items.is_empty() {
             cx.write(self.items, 0, &drawing.items);
@@ -251,7 +244,7 @@ impl GpuPart for EffectsGpu {
             cx.write(self.frame, 0, &[frame]);
             self.sent = Some(frame);
         }
-        self.glow_range = drawing.glow.clone();
+        self.glows.clone_from(&drawing.glows);
         self.solid_range = drawing.solid.clone();
         self.slab_range = drawing.slab.clone();
         self.sheet_range = drawing.sheet.clone();
@@ -259,7 +252,6 @@ impl GpuPart for EffectsGpu {
         self.smoke_range = drawing.smoke.clone();
         self.marks_range = drawing.marks.clone();
         self.barrier_range = drawing.barrier.clone();
-        self.glow_vertices = drawing.glow_vertices;
         self.screened = drawing.screen;
         self.own = skipped.is_empty() && drawing.own_pass();
     }
@@ -290,20 +282,14 @@ impl EffectsGpu {
         wanted: Option<TextureRef>,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<TextureRef> {
-        if cx.allocate(self.unlit, TEXEL) == Allocation::Fresh {
-            let layout = wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            };
-            cx.write_texture(self.unlit, wgpu::Origin3d::ZERO, &[0_u8; 4], layout, TEXEL);
+        if self.unlit.written(cx) {
             self.field_bound = None;
         }
         let shown = wanted.filter(|map| cx.texture_resident(map.texture));
         if self.field_bound != Some(shown) {
             let (texture, sampler) = match shown {
-                Some(map) => (GroupEntry::Asset(map.texture), map.sampler),
-                None => (GroupEntry::Texture(self.unlit), Sampler::CLAMP),
+                Some(map) => (GroupEntry::Asset(map.texture), map.sampler.unwrap_or(REPEAT)),
+                None => (GroupEntry::Texture(self.unlit.texture()), CLAMP),
             };
             let entries = [
                 (field::EFFECTS_FIELD_MAP, texture),
@@ -330,8 +316,8 @@ impl EffectsGpu {
         if !self.sheet_range.is_empty() {
             draw.draw(&self.sheet, pulled(BOX_VERTICES, &self.sheet_range));
         }
-        if !self.glow_range.is_empty() {
-            draw.draw(&self.glow, pulled(self.glow_vertices, &self.glow_range));
+        for (range, vertices) in &self.glows {
+            draw.draw(&self.glow, pulled(*vertices, range));
         }
         if !self.barrier_range.is_empty() {
             draw.draw(&self.barrier, pulled(QUAD_VERTICES, &self.barrier_range));

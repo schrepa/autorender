@@ -24,6 +24,7 @@ pub struct Mover {
     stuck_count: u32,
     lane: f32,
     lift: Vec3,
+    turn: (u64, u64),
 }
 
 impl Mover {
@@ -38,12 +39,14 @@ impl Mover {
             stuck_count: 0,
             lane: 0.0,
             lift: Vec3::ZERO,
+            turn: (0, 1),
         }
     }
 
-    pub fn set_lane(&mut self, lane: f32, lift: Vec3) {
+    pub fn set_lane(&mut self, lane: f32, lift: Vec3, (me, members): (usize, usize)) {
         self.lane = lane;
         self.lift = lift;
+        self.turn = (me as u64, members.max(1) as u64);
     }
 
     pub fn clear(&mut self) {
@@ -139,9 +142,10 @@ impl Mover {
         tick: u64,
     ) -> Steering {
         let play = &numbers.play;
-        let moved_goal = self
-            .goal
-            .is_none_or(|g| flat_distance(g, goal) > play.repath_m);
+        let (me, members) = self.turn;
+        let moved_goal = self.goal.is_none_or(|g| {
+            flat_distance(g, goal) > play.repath_m && (tick + me).is_multiple_of(members)
+        });
         if moved_goal {
             self.goal = Some(goal);
             self.detour = None;

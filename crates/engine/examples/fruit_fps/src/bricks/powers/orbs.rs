@@ -1,8 +1,9 @@
+use engine_core::Assets;
 use glam::Vec3;
-use serde::Deserialize;
 
 use super::{Book, OrbChannelStat, OrbEventStat, OrbStat, PowerStats, RECENT_ORBS};
 use crate::abilities::{ActorId, OrbEvent, OrbNumbers, OrbState, Orbs, Stop, Taker};
+use crate::play::layout::Layout;
 use crate::play::paths::Paths;
 use crate::play::powers::Powers;
 use crate::play::round::Round;
@@ -12,26 +13,12 @@ use crate::rules::{Phase, PointReason};
 const FLOOR_SEARCH_FROM_M: f32 = 3.0;
 const FLOOR_SEARCH_DEPTH_M: f32 = 10.0;
 
-#[derive(Deserialize)]
-struct Layout {
-    callouts: Vec<Callout>,
-}
-
-#[derive(Deserialize)]
-struct Callout {
-    name: String,
-    pos: [f32; 2],
-}
-
-fn spots(numbers: &OrbNumbers, layout: &str, arena: &Arena) -> Result<Vec<(String, Vec3)>, String> {
-    let layout: Layout =
-        serde_json::from_str(layout).map_err(|error| format!("map callouts: {error}"))?;
+fn spots(numbers: &OrbNumbers, layout: &Layout, arena: &Arena) -> Result<Vec<(String, Vec3)>, String> {
     numbers
         .spots
         .iter()
         .map(|name| {
-            let callout = layout
-                .callouts
+            let callout = (layout.map.callouts)
                 .iter()
                 .find(|callout| &callout.name == name)
                 .ok_or_else(|| format!("orb spot `{name}` is not a callout of the map"))?;
@@ -44,14 +31,27 @@ fn spots(numbers: &OrbNumbers, layout: &str, arena: &Arena) -> Result<Vec<(Strin
         .collect()
 }
 
-pub(super) fn placed(book: &mut Book, powers: &mut Powers, paths: Option<&Paths>, arena: &Arena) {
+pub(super) fn placed(
+    book: &mut Book,
+    powers: &mut Powers,
+    (paths, (assets_changed, assets)): (Option<&Paths>, (bool, &Assets)),
+    arena: &Arena,
+) {
     if powers.orbs.rules.is_some() {
         return;
     }
     let (Some(numbers), Some(layout)) = (book.orbs.as_ref(), paths.and_then(Paths::layout)) else {
         return;
     };
-    match spots(numbers, layout, arena) {
+    let tried = (book.revision, arena.revision(), layout);
+    if book.orb_tried == Some(tried) && !assets_changed {
+        return;
+    }
+    book.orb_tried = Some(tried);
+    let found = (assets.get(layout))
+        .map_err(|error| format!("map callouts: {error}"))
+        .and_then(|layout| spots(numbers, layout, arena));
+    match found {
         Ok(found) => {
             powers.orbs.place(numbers.rules, found);
             book.orb_problem = None;

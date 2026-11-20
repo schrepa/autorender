@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use glam::Vec3;
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::effects::{Actor, ActorId};
 
@@ -25,13 +26,13 @@ struct RawOrbs {
 }
 
 impl OrbNumbers {
-    pub fn parse(numbers_json: &str, ticks_per_second: u32) -> Result<OrbNumbers, String> {
-        let raw = serde_json::from_str::<Root>(numbers_json)
+    pub fn parse(whole: &Value, ticks_per_second: u32) -> Result<OrbNumbers, String> {
+        let raw = Root::deserialize(whole)
             .map_err(|error| format!("ultimate_orbs: {error}"))?
             .ultimate_orbs;
         Ok(OrbNumbers {
             rules: OrbRules {
-                channel_ticks: (raw.channel_seconds * ticks_per_second as f32).round() as u32,
+                channel_ticks: engine_math::ticks(raw.channel_seconds, ticks_per_second),
                 reach_m: raw.reach_m,
             },
             spots: raw.spots,

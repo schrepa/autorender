@@ -1,11 +1,13 @@
+use engine_math::min;
 use glam::Vec3;
 
-use super::aim::{flat, flat_distance, min};
+use super::aim::{flat, flat_distance};
 use super::debug::{SquadDebug, Why};
 use super::numbers::BotNumbers;
 use super::places::{Places, ZoneId};
 use super::rng::Rng;
-use super::sense::{Block, Call, CallKind, GamePhase, MatchSense, Side, World};
+use super::sense::{Block, Call, CallKind, GamePhase, MatchSense, World};
+use crate::rules::Side;
 pub use tactics::{Hold, SiteTactics, Tactics, Way, build as build_tactics};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -226,7 +228,7 @@ pub struct Squad {
     rng: Rng,
     orders: Vec<Order>,
     slots: Vec<Slot>,
-    tactics: Option<Tactics>,
+    second: bool,
     buffer: Vec<Vec3>,
     intel: Vec<Intel>,
     round: u32,
@@ -294,13 +296,13 @@ fn spaced(at: Vec3, face: Vec3, rank: usize, spacing: f32) -> Vec3 {
 }
 
 impl Squad {
-    pub fn new(seed: u64, members: usize) -> Squad {
+    pub fn new(seed: u64, members: usize, second: bool) -> Squad {
         Squad {
             seed,
             rng: Rng::new(seed),
             orders: vec![Order::idle(Vec3::ZERO); members],
             slots: vec![BLANK; members],
-            tactics: None,
+            second,
             buffer: Vec::with_capacity(64),
             intel: Vec::with_capacity(32),
             round: u32::MAX,
@@ -358,6 +360,7 @@ impl Squad {
         &mut self,
         sense: &SquadSense<'_>,
         world: &dyn World,
+        tactics: &Tactics,
         numbers: &BotNumbers,
         tick: u64,
     ) {
@@ -367,19 +370,21 @@ impl Squad {
             self.entry_way.resize(sense.members.len(), None);
             self.slots.resize(sense.members.len(), BLANK);
         }
-        let built = match self.tactics.take() {
-            Some(t) => t,
-            None => tactics::build(world, numbers, &mut self.buffer),
-        };
-        self.absorb(sense, world, &built, numbers, tick);
+        self.absorb(sense, world, tactics, numbers, tick);
         let changed = sense.game.phase != self.phase || sense.game.round != self.round;
         if changed || tick >= self.next_plan {
-            self.next_plan = tick + numbers.ticks(numbers.play.plan_seconds).max(1);
+            let period = numbers.ticks(numbers.play.plan_seconds).max(1);
+            let wait = if changed && self.second {
+                (period / 2).max(1)
+            } else {
+                period
+            };
+            self.next_plan = tick + wait;
             let plan = Plan {
                 sense,
                 world,
                 numbers,
-                tactics: &built,
+                tactics,
                 tick,
             };
             if changed {
@@ -388,7 +393,6 @@ impl Squad {
             self.revise(&plan);
             self.spread(&plan);
         }
-        self.tactics = Some(built);
     }
 
     fn absorb(

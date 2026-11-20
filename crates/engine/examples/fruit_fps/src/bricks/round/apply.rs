@@ -1,4 +1,5 @@
 use engine::prelude::*;
+use engine_math::Random;
 
 use super::RoundBook;
 use crate::play::actors::{Actor, Alive, Body, Health, Motion, Wish};
@@ -9,13 +10,6 @@ use crate::play::round::Round;
 use crate::play::world::{Arena, Spawn};
 use crate::rules::{Event, PlayerId, Side, View};
 use crate::weapons::{GunKind, Loadout, actor_rng};
-
-fn mixed(seed: u64) -> u64 {
-    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
 
 fn shuffled_spawn(
     spawns: &[Spawn],
@@ -31,10 +25,10 @@ fn shuffled_spawn(
         Side::Attack => 0,
         Side::Defend => 1,
     };
-    let mut state = mixed(seed ^ (u64::from(round) << 1 | side_bit));
+    let mut state = Random::new(seed ^ (u64::from(round) << 1 | side_bit)).next_u64();
     let mut order: Vec<usize> = (0..spawns.len()).collect();
     for i in (1..order.len()).rev() {
-        state = mixed(state);
+        state = Random::new(state).next_u64();
         let j = (state % (i as u64 + 1)) as usize;
         order.swap(i, j);
     }

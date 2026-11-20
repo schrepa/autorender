@@ -1,12 +1,13 @@
 use engine::prelude::*;
-use engine_core::math::sin_cos;
-use engine_core::{Error, ErrorCode, Refusals, SceneContext};
-use glam::{Quat, Vec3};
+use engine_core::{Error, ErrorCode, Refusals};
+use glam::Vec3;
 
-use super::drops::{drawn_of, ground_node, lying_at};
+use super::drops::{ground_node, lying_at};
 use super::{DeviceShown, PuppetBrick};
-use crate::play::puppet::{DEVICE, DeviceLamp, PuppetBook, PuppetFile};
+use crate::play::figures::GROUND;
+use crate::play::puppet::{DEVICE, DeviceLamp, Puppet, PuppetBook, PuppetFile};
 use crate::play::round::{DeviceSpot, Round};
+use crate::play::turns::about_y;
 
 const DEVICE_PART: &str = "puppet_device";
 
@@ -33,32 +34,23 @@ fn yaw_of(spot: DeviceSpot) -> f32 {
     }
 }
 
-fn turned(yaw: f32) -> Quat {
-    let (sin, cos) = sin_cos((yaw + std::f32::consts::PI) * 0.5);
-    Quat::from_xyzw(0.0, sin, 0.0, cos)
-}
-
-fn shown_as(
-    book: &PuppetBook,
-    scene: Option<&SceneContext>,
-    (form, yaw): (Form, f32),
-) -> Result<(Transform, Drawn), Error> {
+fn shown_as(book: &PuppetBook, (form, yaw): (Form, f32)) -> Result<(Transform, Drawn), Error> {
     match form {
         Form::Dropped(at) => {
             let look = book.weapons.get(DEVICE).ok_or_else(|| {
                 Error::new(ErrorCode::UnknownReference, "$.puppet.weapons").got(DEVICE)
             })?;
-            let drawn = drawn_of(scene, (&look.files.held_mesh, &look.files.held_material))?;
+            let drawn = Drawn::new(GROUND, look.files.held_mesh, look.files.held_material);
             Ok((lying_at(book, at, 0, 1.0), drawn))
         }
         Form::Planted(at) => {
             let planted = book.planted.as_ref().ok_or_else(|| {
                 Error::new(ErrorCode::UnknownReference, "$.puppet.planted").got("absent")
             })?;
-            let drawn = drawn_of(scene, (&planted.files.mesh, &planted.files.material))?;
+            let drawn = Drawn::new(GROUND, planted.files.mesh, planted.files.material);
             let placed = Transform {
                 translation: at,
-                rotation: turned(yaw),
+                rotation: about_y(yaw + std::f32::consts::PI),
                 scale: Vec3::ONE,
             };
             Ok((placed, drawn))
@@ -68,12 +60,12 @@ fn shown_as(
 
 type Reads<'w, 's> = (
     Option<Res<'w, Round>>,
-    Option<Res<'w, SceneContext>>,
-    Query<'w, 's, (Entity, &'static PuppetFile)>,
+    Res<'w, Puppet>,
+    Query<'w, 's, Entity, With<PuppetFile>>,
 );
 
 pub(super) fn place(
-    (round, scene, files): Reads,
+    (round, puppet, files): Reads,
     shown: Query<(Entity, &DeviceShown)>,
     (mut lamp, mut refusals, mut spawner): (
         ResMut<DeviceLamp>,
@@ -81,10 +73,7 @@ pub(super) fn place(
         Spawner<PuppetBrick>,
     ),
 ) {
-    let Some((owner, book)) = files
-        .iter()
-        .find_map(|(entity, file)| file.book().map(|book| (entity, book)))
-    else {
+    let (Some(owner), Some(book)) = (files.iter().next(), puppet.book.as_deref()) else {
         return;
     };
     let form = round.as_deref().and_then(|round| form_of(round.device));
@@ -94,7 +83,7 @@ pub(super) fn place(
             .planted
             .as_ref()
             .and_then(|planted| planted.markers.light)
-            .map(|light| at + turned(yaw) * light),
+            .map(|light| at + about_y(yaw + std::f32::consts::PI) * light),
         Some(Form::Dropped(at)) => book
             .weapons
             .get(DEVICE)
@@ -116,7 +105,7 @@ pub(super) fn place(
     }
     let verdict = match form {
         Some(form) if !kept => {
-            shown_as(book, scene.as_deref(), (form, yaw)).map(|(placed, drawn)| {
+            shown_as(book, (form, yaw)).map(|(placed, drawn)| {
                 spawner.spawn((placed, ground_node(), drawn, DeviceShown { form }));
             })
         }

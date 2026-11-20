@@ -7,14 +7,19 @@ use std::sync::Arc;
 
 use engine::math;
 use engine::prelude::*;
-use engine_core::Stats;
+use engine_core::{Assets, Stats};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::play::figures::{BaseLayer, Figure, FigureJoints, FigurePlay, UpperLayer};
+use crate::play::figures::biped;
 use crate::play::flow::{Flow, Stage};
 use crate::play::lobby::{LobbyCamera, LobbyView};
 use crate::play::numbers::Numbers;
+use crate::play::puppet::Puppet;
+use crate::play::skinned::{
+    BaseLayer, ClipNo, Figure, FigureClock, FigureFit, FigureJoints, FigureLimbs, FigurePlay,
+    JointNo, UpperLayer,
+};
 use crate::play::world::Arena;
 
 use numbers::{Clips, LobbyNumbers};
@@ -92,6 +97,50 @@ struct LobbyBook {
     shot: Option<Shot>,
     chosen: String,
     cues: BTreeMap<Entity, Cue>,
+    bound: BTreeMap<Entity, Bound>,
+}
+
+struct Bound {
+    lobby: Arc<LobbyNumbers>,
+    picked: Picked,
+    missing: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+struct Picked {
+    idle: Option<ClipNo>,
+    pick: Option<ClipNo>,
+    from: Option<JointNo>,
+}
+
+fn bound(
+    book: &mut LobbyBook,
+    (entity, figure, assets): (Entity, &Ref<Figure>, &Assets),
+    (lobby, clips, character): (&Arc<LobbyNumbers>, &Clips, &str),
+    problems: &mut Vec<String>,
+) -> Picked {
+    let fresh = (book.bound.get(&entity)).is_some_and(|held| {
+        Arc::ptr_eq(&held.lobby, lobby) && held.picked.from.is_some() && !figure.is_changed()
+    });
+    if !fresh {
+        let mut missing = Vec::new();
+        clips_missing(clips, (character, figure), &mut missing);
+        let skeleton = assets.get(figure.skeleton).ok();
+        let picked = Picked {
+            idle: figure.clip(&clips.idle),
+            pick: figure.clip(&clips.pick.clip),
+            from: skeleton.and_then(|skeleton| skeleton.find(&lobby.pick.from)).map(JointNo),
+        };
+        let made = Bound {
+            lobby: Arc::clone(lobby),
+            picked,
+            missing,
+        };
+        book.bound.insert(entity, made);
+    }
+    let held = &book.bound[&entity];
+    problems.extend(held.missing.iter().cloned());
+    held.picked
 }
 
 pub struct LobbyBrick;
@@ -122,7 +171,7 @@ fn numbers_of(book: &mut LobbyBook, numbers: &Numbers) -> Option<Read> {
         .as_ref()
         .is_none_or(|(revision, _)| *revision != numbers.revision());
     if fresh {
-        let read = numbers::read(&game.text).map(Arc::new);
+        let read = numbers::read(&game.whole).map(Arc::new);
         book.numbers = Some((numbers.revision(), read));
     }
     book.numbers.as_ref().map(|(_, read)| read.clone())
@@ -246,6 +295,8 @@ fn cue_up(
     }
     book.cues
         .retain(|entity, _| listed.iter().any(|(known, _)| known == entity));
+    book.bound
+        .retain(|entity, _| listed.iter().any(|(known, _)| known == entity));
     let timings = lobby.timings;
     for (entity, _) in listed {
         let cue = book.cues.entry(*entity).or_default();
@@ -265,14 +316,14 @@ fn cue_up(
 
 fn picked(
     lobby: &LobbyNumbers,
-    (clips, joints): (&Clips, Option<&FigureJoints>),
+    (clips, bound, clock): (&Clips, Picked, Option<&FigureClock>),
     cue: &mut Cue,
     now: f64,
 ) -> Option<UpperLayer> {
     if !cue.picking {
         return None;
     }
-    let ended = joints.is_some_and(|joints| joints.upper_cue == Some(cue.cue) && joints.upper_done);
+    let ended = clock.is_some_and(|clock| clock.upper_cue == Some(cue.cue) && clock.upper_done);
     if ended && cue.done_at.is_none() {
         cue.done_at = Some(now);
     }
@@ -287,10 +338,10 @@ fn picked(
         return None;
     }
     Some(UpperLayer {
-        clip: clips.pick.clip.clone(),
+        clip: bound.pick?,
         weight: clips.pick.weight * share as f32,
         looping: false,
-        from: lobby.pick.from.clone(),
+        from: bound.from?,
         feather: 0,
         speed: 1.0,
         cue: cue.cue,
@@ -304,10 +355,10 @@ fn picked(
 
 fn played(
     lobby: &LobbyNumbers,
-    (wanted, clips, joints): (&Wanted, &Clips, Option<&FigureJoints>),
+    (wanted, clips, bound, clock): (&Wanted, &Clips, Picked, Option<&FigureClock>),
     cue: &mut Cue,
     now: f64,
-) -> (FigurePlay, bool) {
+) -> (Option<FigurePlay>, bool) {
     let timings = lobby.timings;
     let warming = now < cue.warm_until;
     let speed = if warming && timings.warm_seconds > 0.0 {
@@ -315,9 +366,9 @@ fn played(
     } else {
         wanted.speed
     };
-    let play = FigurePlay {
+    let play = bound.idle.map(|idle| FigurePlay {
         base: BaseLayer {
-            clip: clips.idle.clone(),
+            clip: idle,
             speed,
             looping: true,
             fade_seconds: timings.idle_fade_seconds,
@@ -327,12 +378,12 @@ fn played(
             stride: None,
             synced: false,
         },
-        upper: picked(lobby, (clips, joints), cue, now),
+        upper: picked(lobby, (clips, bound, clock), cue, now),
         aim: None,
         hold: None,
         crouch: None,
         pin_feet: None,
-    };
+    });
     (play, !warming)
 }
 
@@ -391,15 +442,16 @@ type Figures<'w, 's> = Query<
     (
         Entity,
         &'static LobbyFigure,
-        &'static Figure,
+        Ref<'static, Figure>,
         &'static Node,
         Option<&'static mut FigurePlay>,
-        Option<&'static FigureJoints>,
+        (Option<&'static FigureJoints>, Option<&'static FigureClock>),
+        (Option<&'static FigureLimbs>, Option<&'static FigureFit>),
     ),
 >;
 
 type Reads<'w> = (
-    Res<'w, Numbers>,
+    (Res<'w, Numbers>, Res<'w, Puppet>, Res<'w, Assets>),
     Res<'w, Flow>,
     (Res<'w, FrameTime>, Res<'w, FixedTime>),
     Option<Res<'w, Arena>>,
@@ -417,6 +469,7 @@ struct Scene<'a> {
     camera: LobbyCamera,
     drifted: (Vec3, Vec3, f32),
     arena: Option<&'a Arena>,
+    fit: Option<FigureFit>,
     now: f64,
 }
 
@@ -442,7 +495,7 @@ fn hide(
 }
 
 fn stage(
-    (numbers, flow, (frame, fixed), arena): Reads,
+    ((numbers, puppet, assets), flow, (frame, fixed), arena): Reads,
     mut figures: Figures,
     (mut book, mut view, mut stats, (mut moves, mut spawner)): Writes,
 ) {
@@ -466,7 +519,7 @@ fn stage(
     let (Some(lobby), Some(shot)) = (lobby, shot) else {
         book.shot = None;
         view.set_if_neq(LobbyView::default());
-        for (entity, _, _, node, play, joints) in &figures {
+        for (entity, _, _, node, play, (joints, _), _) in &figures {
             hide(
                 &mut spawner,
                 (entity, node, play.is_some(), joints.is_some()),
@@ -511,10 +564,11 @@ fn stage(
         camera,
         drifted,
         arena: arena.as_deref(),
+        fit: puppet.eye_fit(&numbers),
         now,
     };
     let mut rows = Vec::new();
-    for (entity, lobby_figure, figure, node, play, joints) in &mut figures {
+    for (entity, lobby_figure, figure, node, play, (joints, clock), given) in &mut figures {
         let character = lobby_figure.character.as_str();
         let clips = lobby.clips.get(character);
         if clips.is_none() {
@@ -531,13 +585,14 @@ fn stage(
             rows.push((character, None));
             continue;
         };
-        clips_missing(clips, (character, figure), &mut problems);
+        let picks = (&lobby, clips, character);
+        let picked = bound(book, (entity, &figure, &assets), picks, &mut problems);
         let cue = book.cues.entry(entity).or_default();
         let shown = placed(
             &scene,
-            (wanted, clips),
+            (wanted, clips, picked),
             cue,
-            (entity, node, play, joints),
+            (entity, node, play, (joints, clock), given),
             (&mut moves, &mut spawner, &mut problems),
         );
         rows.push((character, Some(shown)));
@@ -565,6 +620,7 @@ struct Shown<'a> {
     weight: Option<f32>,
     visible: bool,
     joints: Option<&'a FigureJoints>,
+    clock: Option<&'a FigureClock>,
 }
 
 fn row(scene: &Scene<'_>, character: &str, shown: Option<Shown<'_>>) -> LobbyFigureStats {
@@ -574,14 +630,14 @@ fn row(scene: &Scene<'_>, character: &str, shown: Option<Shown<'_>>) -> LobbyFig
             ..LobbyFigureStats::default()
         };
     };
-    let (checks, joints) = (scene.lobby.checks, shown.joints);
+    let (checks, joints, clock) = (scene.lobby.checks, shown.joints, shown.clock);
     LobbyFigureStats {
         character: character.to_owned(),
         position: shown.feet.to_array(),
         facing_degrees: shown.yaw.to_degrees(),
         clip: Some(shown.clips.idle.clone()),
-        seconds: joints.map_or(0.0, |joints| joints.base_seconds),
-        pick_seconds: shown.weight.and(joints).map(|joints| joints.upper_seconds),
+        seconds: clock.map_or(0.0, |clock| clock.base_seconds),
+        pick_seconds: shown.weight.and(clock).map(|clock| clock.upper_seconds),
         pick_weight: shown.weight.unwrap_or(0.0),
         pick: shown.weight.map(|_| shown.clips.pick.clip.clone()),
         shown: shown.visible,
@@ -593,22 +649,25 @@ fn row(scene: &Scene<'_>, character: &str, shown: Option<Shown<'_>>) -> LobbyFig
             }),
         feet_frame: framed(scene.drifted, checks.frame_aspect, shown.feet),
         head_frame_y: joints
-            .and_then(|joints| joints.head_top)
+            .and_then(|joints| joints.top)
             .and_then(|top| framed(scene.drifted, checks.frame_aspect, top))
             .map(|[_, y]| y),
     }
 }
 
+type Standing<'r, 'a> = (
+    Entity,
+    &'r Node,
+    Option<Mut<'r, FigurePlay>>,
+    (Option<&'a FigureJoints>, Option<&'a FigureClock>),
+    (Option<&'r FigureLimbs>, Option<&'r FigureFit>),
+);
+
 fn placed<'a>(
     scene: &Scene<'_>,
-    (wanted, clips): (&Wanted, &'a Clips),
+    (wanted, clips, picked): (&Wanted, &'a Clips, Picked),
     cue: &mut Cue,
-    (entity, node, play, joints): (
-        Entity,
-        &Node,
-        Option<Mut<FigurePlay>>,
-        Option<&'a FigureJoints>,
-    ),
+    (entity, node, play, (joints, clock), (limbs, fit)): Standing<'_, 'a>,
     (moves, spawner, problems): (
         &mut Moves<LobbyBrick>,
         &mut Spawner<LobbyBrick>,
@@ -627,16 +686,28 @@ fn placed<'a>(
         };
         transform.set_if_neq(next);
     }
-    let (wanted_play, shown) = played(lobby, (wanted, clips, joints), cue, scene.now);
-    let weight = wanted_play.upper.as_ref().map(|upper| upper.weight);
-    match play {
-        Some(mut play) => {
+    let (wanted_play, shown) = played(lobby, (wanted, clips, picked, clock), cue, scene.now);
+    let weight = (wanted_play.as_ref())
+        .and_then(|play| play.upper)
+        .map(|upper| upper.weight);
+    match (play, wanted_play) {
+        (Some(mut play), Some(wanted_play)) => {
             play.set_if_neq(wanted_play);
         }
-        None => spawner.insert(entity, wanted_play),
+        (None, Some(wanted_play)) => spawner.insert(entity, wanted_play),
+        (_, None) => {}
     }
     if joints.is_none() {
         spawner.insert(entity, FigureJoints::default());
+    }
+    if limbs.is_none() {
+        spawner.insert(entity, biped());
+    }
+    if fit != scene.fit.as_ref() {
+        match &scene.fit {
+            Some(fit) => spawner.insert(entity, fit.clone()),
+            None => spawner.remove::<FigureFit>(entity),
+        }
     }
     if node.visible != shown {
         spawner.insert(
@@ -654,6 +725,7 @@ fn placed<'a>(
         weight,
         visible: shown,
         joints,
+        clock,
     }
 }
 

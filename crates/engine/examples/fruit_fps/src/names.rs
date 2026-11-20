@@ -4,9 +4,11 @@ pub const COLOR: TargetName = TargetName("color");
 pub const DEPTH: TargetName = TargetName("depth");
 
 pub const COLOR_PASS: &str = "color";
-pub const COMPOSITE_PASS: &str = "composite";
 
 pub const CAMERA: &str = "camera";
+
+pub const TITLE_GROUP: &str = "title";
+pub const MATCH_GROUP: &str = "match";
 
 pub const HIP: &str = "Hip";
 pub const SPINE: &str = "Spine01";

@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use engine::prelude::*;
 use engine_core::DevSetting;
 
-use super::start::{SeatNumbers, StartNumbers, seats, start_numbers};
+use super::start::{Listed, StartNumbers, seated, seats, start_numbers};
 use super::test::MatchTest;
 use super::{Chosen, MatchSetup, RoundBook};
 use crate::play::actors::{Actor, Body, Health, Human, Wish};
@@ -9,10 +11,10 @@ use crate::play::arms::{Arms, Held};
 use crate::play::events::arms::{ArmsEvents, Weapon};
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
-use crate::play::figures::FigureJoints;
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::round::{DeviceSpot, Round, Seat};
+use crate::play::skinned::FigureClock;
 use crate::play::world::{Arena, Zone};
 use crate::rules::{
     Catalog, Device, Event, Holding, Match, Phase, PlayerFacts, Side, TickInput, WeaponId, ticks,
@@ -26,7 +28,7 @@ type ActorRow<'a> = (
     &'a Health,
     Has<Human>,
     Option<&'a Arms>,
-    Option<&'a FigureJoints>,
+    Option<&'a FigureClock>,
 );
 
 fn fresh_match(
@@ -59,7 +61,7 @@ fn wants_fresh(
     book: &RoundBook,
     chosen: Chosen,
     revision: u64,
-    seats: &[Seat],
+    seated: &[Option<Entity>],
     flow: Option<&Flow>,
 ) -> bool {
     let over = flow.is_none() && round.phase() == Some(Phase::Over) && round.restart_ticks == 0;
@@ -72,7 +74,7 @@ fn wants_fresh(
             .seats
             .iter()
             .map(|s| s.entity)
-            .ne(seats.iter().map(|s| s.entity))
+            .ne(seated.iter().copied())
 }
 
 fn prepare(
@@ -83,31 +85,26 @@ fn prepare(
     (round, book): (&mut Round, &mut RoundBook),
     actors: &Query<ActorRow<'_>>,
     flow: Option<&Flow>,
-) -> Result<StartNumbers, String> {
+) -> Result<Arc<StartNumbers>, String> {
     let start = match &book.start {
         Some((read, start)) if *read == revision => start.clone()?,
         Some(_) | None => {
-            let start = start_numbers(&numbers.text);
+            let start = start_numbers(&numbers.whole).map(Arc::new);
             book.start = Some((revision, start.clone()));
             start?
         }
     };
-    let mut chosen = start.clone();
-    if let Some(flow) = flow.filter(|flow| !flow.roster.is_empty()) {
-        chosen.roster = flow
-            .roster
-            .iter()
-            .map(|seat| SeatNumbers {
-                team: seat.team,
-                character: seat.character.clone(),
-                control: seat.control,
-                level: seat.level.clone(),
-            })
-            .collect();
-    }
-    let seated = seats(&chosen, actors.iter().map(|row| (row.0, row.1, row.5)))?;
+    let roster: Vec<Listed<'_>> = match flow.filter(|flow| !flow.roster.is_empty()) {
+        Some(flow) => (flow.roster.iter())
+            .map(|seat| (seat.team, seat.character.as_str(), seat.control, seat.level.as_str()))
+            .collect(),
+        None => (start.roster.iter())
+            .map(|seat| (seat.team, seat.character.as_str(), seat.control, seat.level.as_str()))
+            .collect(),
+    };
+    let seated = seated(&roster, actors.iter().map(|row| (row.0, row.1, row.5)))?;
     if !wants_fresh(round, book, setup, revision, &seated, flow) {
-        return Ok(start);
+        return Ok(start.clone());
     }
     book.flow_game = flow.map(|flow| flow.game);
     let fresh_setup = book.applied != Some(setup) || book.numbers_revision != revision;
@@ -119,13 +116,14 @@ fn prepare(
     if fresh_setup {
         round.matches = 0;
     }
-    fresh_match(numbers, setup.skip_buy, seated, seed, tps, round)?;
+    let seats = seats(&roster, &seated);
+    fresh_match(numbers, setup.skip_buy, seats, seed, tps, round)?;
     book.applied = Some(setup);
     book.numbers_revision = revision;
     book.recent.clear();
     book.planted = None;
     book.unplaced = 0;
-    Ok(start)
+    Ok(start.clone())
 }
 
 fn facts_of(
@@ -161,7 +159,7 @@ fn facts_of(
 fn set_down(
     arena: &Arena,
     start: &StartNumbers,
-    (body, wish, posed): (&Body, &Wish, Option<&FigureJoints>),
+    (body, wish, posed): (&Body, &Wish, Option<&FigureClock>),
     site: usize,
 ) -> Vec3 {
     let place = &start.device_set_down;
@@ -306,6 +304,12 @@ fn weapon_id(catalog: &Catalog, gun: Option<&crate::weapons::Gun>) -> Option<Wea
     catalog.weapon_id(Weapon::Gun(gun?.kind()).key())
 }
 
+fn wait_for(waiting: &mut Option<String>, [head, tail]: [&str; 2]) {
+    if (waiting.as_deref()).and_then(|held| held.strip_prefix(head)) != Some(tail) {
+        *waiting = Some([head, tail].concat());
+    }
+}
+
 fn remember(book: &mut RoundBook, events: &[Event]) {
     for event in events {
         book.recent.push(super::event_kind(event));
@@ -336,11 +340,11 @@ pub(super) fn advance(
     out.events.clear();
     let flow = flow.as_deref();
     if let Some(flow) = flow.filter(|flow| flow.stage != Stage::Playing) {
-        book.waiting = Some(format!("flow stage is {}", flow.stage.key()));
+        wait_for(&mut book.waiting, ["flow stage is ", flow.stage.key()]);
         return;
     }
     let Some(game_numbers) = numbers.get() else {
-        book.waiting = Some("numbers.json not read yet".to_owned());
+        wait_for(&mut book.waiting, ["numbers.json not read yet", ""]);
         return;
     };
     let tps = time.rate;
@@ -376,19 +380,17 @@ pub(super) fn advance(
         &start,
         &actors,
     );
-    let readied: Vec<usize> = (round.seats.iter().enumerate())
-        .filter(|(_, seat)| {
-            seat.entity
-                .and_then(|entity| actors.get(entity).ok())
-                .is_some_and(|row| row.3.ready)
-        })
-        .map(|(slot, _)| slot)
-        .collect();
-    let Some(game) = round.game.as_mut() else {
+    let Round {
+        game, seats: held, ..
+    } = &mut *round;
+    let Some(game) = game.as_mut() else {
         return;
     };
-    for slot in readied {
-        game.mark_ready(slot);
+    for (slot, seat) in held.iter().enumerate() {
+        let row = seat.entity.and_then(|entity| actors.get(entity).ok());
+        if row.is_some_and(|row| row.3.ready) {
+            game.mark_ready(slot);
+        }
     }
     let events = game.tick(&input);
     let Some(view) = round.view() else {

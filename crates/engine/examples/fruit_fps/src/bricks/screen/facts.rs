@@ -12,15 +12,15 @@ use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
 use crate::play::numbers::Numbers;
 use crate::play::round::{DeviceSpot, Round};
-use crate::play::screen::{DamageMark, FeedLine, HudFacts, MapItem, ResultFacts};
 use crate::play::view::{Watch, Watched};
 use crate::rules::{
     AbilitySlot, Cause, Event, Phase, Player, RoundEndReason, Team, View, WeaponId,
 };
 use crate::weapons::Stance;
 
+use super::hud::{DamageMark, FeedLine, HudFacts, MapItem, ResultFacts, Shown};
 use super::live::{self, character_key, character_name, named, set, tone, worded};
-use super::{ScreenSetup, ScreenSource, Words};
+use super::{DamageEdge, Loaded, ScreenLoad, ScreenSetup, ScreenSource, Words};
 
 const WALL_SECONDS: f64 = 1.0;
 const DEVICE_ICON: &str = "device";
@@ -67,12 +67,7 @@ fn cause_icon(line: &mut FeedLine, view: &View<'_>, killer: Option<usize>, cause
             }
         }
         Cause::Ability(slot) => {
-            let index = match slot {
-                AbilitySlot::C => 0,
-                AbilitySlot::Q => 1,
-                AbilitySlot::E => 2,
-                AbilitySlot::X => 3,
-            };
+            let index = slot.index();
             let name = killer
                 .and_then(|killer| view.players.get(killer))
                 .and_then(|player| catalog.characters.get(player.character))
@@ -351,7 +346,7 @@ type Sources<'w, 's> = (
     Option<Res<'w, Round>>,
     (Option<Res<'w, RoundEvents>>, Option<Res<'w, PowerEvents>>),
     Option<Res<'w, ArmsEvents>>,
-    Query<'w, 's, &'static ScreenSource>,
+    (Query<'w, 's, &'static ScreenSource>, Res<'w, ScreenLoad>),
     Res<'w, FrameTime>,
 );
 
@@ -371,7 +366,7 @@ fn powers_part(recent: &mut Recent, events: &PowerEvents, now: f64) {
 }
 
 pub(super) fn collect(
-    (round, (events, powers), arms, sources, time): Sources,
+    (round, (events, powers), arms, (sources, load), time): Sources,
     humans: Query<&Actor, With<Human>>,
     bodies: Query<(&Actor, &Body)>,
     mut recent: ResMut<Recent>,
@@ -459,7 +454,8 @@ pub(super) fn collect(
         recent.feed.drain(..extra);
     }
     if let Some(arms) = arms.filter(|arms| recent.arms_tick != Some(arms.tick)) {
-        arms_part(recent, &arms, (&bodies, human), (source, now));
+        let edge = load.loaded().map(|_| &source.marks.damage);
+        arms_part(recent, &arms, (&bodies, human), (edge, now));
     }
 }
 
@@ -467,12 +463,9 @@ fn arms_part(
     recent: &mut Recent,
     arms: &ArmsEvents,
     (bodies, human): (&Query<(&Actor, &Body)>, Option<usize>),
-    (source, now): (&ScreenSource, f64),
+    (edge, now): (Option<&DamageEdge>, f64),
 ) {
     recent.arms_tick = Some(arms.tick);
-    let edge = source
-        .loaded()
-        .and_then(|loaded| loaded.layout.damage_edge.as_ref());
     recent.walls.retain(|(born, _)| now - born < WALL_SECONDS);
     for hit in arms.hits.iter().filter(|hit| hit.killed) {
         let walled = arms.shots.iter().any(|shot| {
@@ -628,10 +621,7 @@ fn marks_part(
         set(&mut kill.label, &words[at]);
     }
     facts.damage.clear();
-    let fade = source
-        .loaded()
-        .and_then(|loaded| loaded.layout.damage_edge.as_ref())
-        .map_or(0.0, |edge| edge.fade_seconds);
+    let fade = marks.damage.fade_seconds;
     let (Some(wish), Some(body)) = (wish, body) else {
         return;
     };
@@ -679,7 +669,7 @@ fn minimap_part(
     actors: &Query<Placed<'_>>,
 ) {
     let team = view.players.get(slot).map(|player| player.team);
-    let tone = team.map(|team| live::tone(view.side_of(team)));
+    let tone = team.map(|team| live::tone(view.side_of(team)).key());
     let minimap = &mut facts.minimap;
     minimap.me.clear();
     if let (Some(wish), Some(body)) = (wish, body) {
@@ -813,10 +803,7 @@ fn vitals_part(
     );
 }
 
-fn poor_part(facts: &mut HudFacts, poor: bool, source: &ScreenSource) {
-    let Some(loaded) = source.loaded() else {
-        return;
-    };
+fn poor_part(facts: &mut HudFacts, poor: bool, loaded: &Loaded) {
     let shown = facts.buy.weapons.iter_mut().zip(&loaded.demo.buy.weapons);
     for (index, (card, base)) in shown.enumerate() {
         let short = poor && !base.owned;
@@ -831,7 +818,11 @@ fn poor_part(facts: &mut HudFacts, poor: bool, source: &ScreenSource) {
     }
 }
 
-fn demo_part(facts: &mut HudFacts, setup: &ScreenSetup, source: &ScreenSource) {
+fn demo_part(
+    facts: &mut HudFacts,
+    setup: &ScreenSetup,
+    (source, loaded): (&ScreenSource, &Loaded),
+) {
     facts.blind = setup.demo_blind;
     facts.spectate.active = setup.demo_spectate;
     let orb = &mut facts.orb;
@@ -843,7 +834,7 @@ fn demo_part(facts: &mut HudFacts, setup: &ScreenSetup, source: &ScreenSource) {
         0.0
     };
     let words = &source.words;
-    if setup.show == super::Showing::MatchEnd {
+    if setup.show == Some(Shown::MatchEnd) {
         worded(
             &mut facts.result.title,
             &words.victory,
@@ -852,7 +843,7 @@ fn demo_part(facts: &mut HudFacts, setup: &ScreenSetup, source: &ScreenSource) {
     } else {
         set(&mut facts.result.title, &words.round_won);
     }
-    poor_part(facts, setup.demo_poor, source);
+    poor_part(facts, setup.demo_poor, loaded);
     facts.scope_ease = setup.demo_scope;
     facts.scope = u32::from(setup.demo_scope > 0.0);
     facts.armor_break = setup.demo_armor.then_some(0.1);
@@ -869,14 +860,14 @@ pub(super) fn fill(
     humans: Query<HumanRow, With<Human>>,
     rows: Query<HumanRow>,
     actors: Query<Placed>,
-    sources: Query<&ScreenSource>,
+    (sources, load): (Query<&ScreenSource>, Res<ScreenLoad>),
     mut recent: ResMut<Recent>,
     mut facts: ResMut<HudFacts>,
 ) {
     let Some(source) = sources.iter().next() else {
         return;
     };
-    let Some(loaded) = source.loaded() else {
+    let Some(loaded) = load.loaded() else {
         return;
     };
     let view = round.as_deref().and_then(Round::view);
@@ -889,7 +880,7 @@ pub(super) fn fill(
             recent.demo_shown = true;
         }
         if let Some(setup) = setup {
-            demo_part(&mut facts, setup, source);
+            demo_part(&mut facts, setup, (source, loaded));
         }
         return;
     };
@@ -924,14 +915,15 @@ pub(super) fn fill(
         .as_deref()
         .and_then(Numbers::get)
         .map(|numbers| &numbers.weapons);
-    live::buy_part(
-        facts,
-        &view,
-        (slot, player),
-        (lows, words),
-        (weapons, &mut recent.order),
-    );
-    live::board_part(facts, &view, (slot, player.team, &recent.dealt), words);
+    if facts.phase == Some(Phase::Buy) || facts.screen == Some(Shown::Buy) {
+        live::buy_part(
+            facts,
+            &view,
+            (slot, player),
+            (lows, words),
+            (weapons, &mut recent.order),
+        );
+    }
     vitals_part(facts, &view, (seen_player, seen_health), lows);
     facts.player.credits = player.credits;
     if let Some(numbers) = numbers.as_deref() {
@@ -953,4 +945,32 @@ pub(super) fn fill(
     round.ready_left = if round.ready { round.time } else { 0.0 };
     round.ready_count = round.ready_left.ceil() as u32;
     recent_part(facts, recent, source, time.elapsed);
+}
+
+pub(super) fn fill_board(
+    round: Option<Res<Round>>,
+    humans: Query<&Actor, With<Human>>,
+    (sources, recent): (Query<&ScreenSource>, Res<Recent>),
+    mut facts: ResMut<HudFacts>,
+) {
+    if recent.demo_shown || !matches!(facts.screen, Some(Shown::Scoreboard | Shown::MatchEnd)) {
+        return;
+    }
+    let (Some(source), Some(view), Some(actor)) = (
+        sources.iter().next(),
+        round.as_deref().and_then(Round::view),
+        humans.iter().next(),
+    ) else {
+        return;
+    };
+    let slot = actor.slot as usize;
+    let Some(player) = view.players.get(slot) else {
+        return;
+    };
+    live::board_part(
+        &mut facts,
+        &view,
+        (slot, player.team, &recent.dealt),
+        &source.words,
+    );
 }

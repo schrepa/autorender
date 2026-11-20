@@ -1,5 +1,6 @@
 use engine::prelude::*;
 use engine_core::DevSetting;
+use engine_math::ticks;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,7 @@ use super::{ArmsBrick, Book, Setup, drop_weapon};
 use crate::play::actors::{Actor, Alive, Body, Health};
 use crate::play::arms::{Arms, Drops};
 use crate::play::events::arms::{ArmsEvents, DeathEvent};
-use crate::weapons::{BodyPart, GunKind, Vitals, ticks, wound};
+use crate::weapons::{BodyPart, GunKind, Vitals, wound};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -17,19 +18,10 @@ pub struct Hurt {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum Given {
-    Sidearm,
-    Smg,
-    Rifle,
-    Sniper,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Give {
     pub slot: u32,
-    pub weapon: Given,
+    pub weapon: GunKind,
 }
 
 settings! {
@@ -39,15 +31,6 @@ settings! {
     pub struct ArmsTest {
         pub hurt: Option<Hurt> = None => any,
         pub give: Option<Give> = None => any,
-    }
-}
-
-fn kind_of(given: Given) -> GunKind {
-    match given {
-        Given::Sidearm => GunKind::Sidearm,
-        Given::Smg => GunKind::Smg,
-        Given::Rifle => GunKind::Rifle,
-        Given::Sniper => GunKind::Sniper,
     }
 }
 
@@ -88,7 +71,7 @@ pub(super) fn door(
             && alive
         {
             arms.loadout
-                .give(&numbers.weapons, kind_of(give.weapon), tps);
+                .give(&numbers.weapons, give.weapon, tps);
         }
     }
     let Some(hurt) = test.hurt else {

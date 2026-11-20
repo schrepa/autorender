@@ -7,20 +7,19 @@ mod scene;
 mod sets;
 
 use engine::prelude::*;
-use engine_core::{
-    Attribute, AttributeFormat, Attributes, DrawKind, GpuStruct, KindDecl, StreamShape,
-};
+use engine_core::{AssetKind, AssetKinds, DrawKind, GpuStruct, KindDecl};
 
-use crate::bricks::figures::LEVEL;
 use crate::names::COLOR_PASS;
 use crate::play::effects::GroundMarks;
 use crate::play::light::Lighting;
 
 pub use numbers::{
-    AmbientNumbers, Antialias, BlobNumbers, FogNumbers, GradeNumbers, LightingNumbers, SkyNumbers,
+    AmbientNumbers, BlobNumbers, FogNumbers, GradeNumbers, LightingNumbers, SkyNumbers,
 };
 
 pub const SKY: DrawKind = DrawKind("sky");
+
+pub const LEVEL: DrawKind = DrawKind("level");
 
 pub const LEVEL_DETAIL: DrawKind = DrawKind("level_detail");
 
@@ -34,14 +33,11 @@ pub const FIELD_HEIGHT: &str = "height_m";
 
 pub const MIRROR: &str = "mirror";
 
-pub const COLOR_STREAM: StreamShape = StreamShape {
-    name: "color",
-    format: AttributeFormat::Unorm16x4,
-};
-
 pub const LIGHTMAP_SCALE: &str = "lightmap_scale";
 
 pub const LIGHTMAP_CURVE: &str = "lightmap_curve";
+
+pub const LIGHTMAP_MAP: &str = "lightmap";
 
 pub const MACRO_MAP: &str = "macro";
 
@@ -70,6 +66,7 @@ pub const SKY_TURNS: &str = "turns";
 const GENERATED: &[&str] = &[
     <gpu::LevelLight as GpuStruct>::WGSL,
     <gpu::LevelSurface as GpuStruct>::WGSL,
+    engine_meshpack::WGSL,
 ];
 
 stats! {
@@ -123,39 +120,30 @@ impl Brick for LevelBrick {
             .resource::<GroundMarks>()
             .resource::<scene::Setup>()
             .resource::<chunks::Pieces>()
-            .resource::<sets::VisibleSets>()
+            .resource::<sets::SetIndex>()
             .join::<SceneComponents>(
                 ComponentKind::of::<sets::LevelSets>("level_sets")
-                    .schema(engine_core::schema_of::<sets::LevelSets>)
-                    .files(sets::LevelSets::files)
-                    .prepare(sets::LevelSets::prepared),
+                    .schema(engine_core::schema_of::<sets::LevelSets>),
             )
+            .join::<AssetKinds>(AssetKind::of("level_sets", sets::parsed))
             .join::<SceneComponents>(
                 ComponentKind::of::<chunks::LevelPiece>("level_piece")
                     .schema(engine_core::schema_of::<chunks::LevelPiece>),
             )
             .draw_kind(KindDecl {
                 kind: LEVEL,
-                needs: Attributes::BASE.with(Attribute::Uv1),
-                streams: &[],
                 passes: &[COLOR_PASS],
             })
             .draw_kind(KindDecl {
                 kind: LEVEL_DETAIL,
-                needs: Attributes::BASE,
-                streams: &[COLOR_STREAM],
                 passes: &[COLOR_PASS],
             })
             .draw_kind(KindDecl {
                 kind: LIGHT_FIELD,
-                needs: Attributes::NONE,
-                streams: &[],
                 passes: &[COLOR_PASS],
             })
             .draw_kind(KindDecl {
                 kind: SKY,
-                needs: Attributes::NONE,
-                streams: &[],
                 passes: &[COLOR_PASS],
             })
             .generated(GENERATED)

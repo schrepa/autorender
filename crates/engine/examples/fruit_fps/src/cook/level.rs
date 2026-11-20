@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use cook::{Kind, Refusal, Step};
 use cook_model::{
-    Built, MapKind, Material, MaterialNames, MaterialPlan, Source, TextureVariant, budget,
-    counted, identifier, item, map_kinds, markers, materials, write_markers, write_materials,
-    write_meshes, write_textures,
+    Built, MapKind, MapPlan, Maps, Material, MaterialNames, MaterialPlan, Source, TextureVariant,
+    budget, counted, identifier, item, map_kinds, markers, materials, write_markers,
+    write_materials, write_meshes, write_textures,
 };
 use engine::scene::SceneMap;
-use engine_assets::Mesh;
+use engine_core::MeshFile;
+use engine_meshpack::POSITION;
 use glam::{Mat4, Vec3};
 use gltf::material::AlphaMode;
 use serde::{Deserialize, Serialize};
@@ -19,11 +21,11 @@ use crate::sets::{Occluder, occluders_file};
 
 pub static LEVEL: Kind = Kind {
     name: "level",
-    version: 1,
+    version: 2,
     run: level,
 };
 
-const BAKED_STREAMS: [&str; 2] = ["uv1", "color"];
+const BAKED_STREAMS: [&str; 2] = ["lightmap", "color"];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -218,7 +220,7 @@ fn baked(
             .any(|mesh| mesh.material == index && flag(mesh))
     };
     let streams = [
-        ("uv1", held(|mesh| mesh.uv1)),
+        ("lightmap", held(|mesh| mesh.uv1)),
         ("color", held(|mesh| mesh.colored)),
     ];
     for (stream, carried) in streams {
@@ -285,7 +287,7 @@ fn pieces(
     (of_mesh, baked): (&BTreeMap<String, String>, &BTreeMap<String, Baked>),
 ) -> Result<(), Refusal> {
     for mesh in &drawn.built {
-        let stream = if mesh.colored { "color" } else { "uv1" };
+        let stream = if mesh.colored { "color" } else { "lightmap" };
         let plan = baked.get(stream).ok_or_else(|| {
             let detail = format!("the mesh carries {stream} but `baked.{stream}` names no kind to draw it");
             source.refuse("BakedKind", format!("mesh {}", mesh.stem), detail)
@@ -305,16 +307,16 @@ fn occluders(source: &Source, meshes: &[Built]) -> Result<Vec<u8>, Refusal> {
     let materials: Vec<gltf::Material<'_>> = source.gltf.materials().collect();
     let mut held = Vec::with_capacity(meshes.len());
     for mesh in meshes {
-        let read = Mesh::from_record(&mesh.bytes)
-            .map_err(|error| source.refuse("MeshReadBack", &mesh.stem, error))?;
+        let refused = |error| source.refuse("MeshReadBack", &mesh.stem, error);
+        let read = MeshFile::read(Arc::from(mesh.bytes.as_slice()), &mesh.stem).map_err(refused)?;
         let material = &materials[mesh.material];
         held.push(Occluder {
             id: mesh.stem.clone(),
             material: material.name().unwrap_or_default().to_owned(),
             opaque: material.alpha_mode() == AlphaMode::Opaque,
             two_sided: material.double_sided(),
-            positions: read.vertices().iter().map(|vertex| vertex.position).collect(),
-            indices: read.indices().to_vec(),
+            positions: read.floats3(POSITION, &mesh.stem).map_err(refused)?,
+            indices: read.index_values(),
         });
     }
     Ok(occluders_file(&held))
@@ -324,13 +326,13 @@ fn merged(step: &mut Step<'_>, source: &Source, level: &Level) -> Result<(), Ref
     for rule in &level.merge {
         let size = (level.scale, level.tolerance);
         let merged = meshes::merged(source, (&rule.prefix, &rule.output), size)?;
-        let triangles = merged.built.triangles;
+        let triangles = merged.triangles;
         budget(source, "BudgetMergedTriangles", triangles, rule.triangles)?;
-        let (count, vertices) = (merged.meshes.len(), merged.built.vertices);
+        let (count, vertices) = (merged.meshes.len(), merged.vertices);
         step.note(json!({"merged": {"output": rule.output, "meshes": count, "vertices": vertices, "triangles": triangles}}));
         let listing = serde_json::to_string_pretty(&json!({"meshes": merged.meshes}))
             .expect("merge_listing_serializes");
-        step.write(&format!("{}.emb", rule.output), merged.built.bytes);
+        step.write(&format!("{}.emb", rule.output), merged.bytes);
         step.write(&format!("{}.json", rule.output), listing.into_bytes());
     }
     Ok(())
@@ -358,21 +360,23 @@ fn level(step: &mut Step<'_>) -> Result<(), Refusal> {
     used.sort_unstable();
     used.dedup();
     budget(&source, "BudgetMaterials", used.len(), budgets.materials)?;
-    let plan = MaterialPlan {
-        names: &level.material,
+    let maps = MapPlan {
         size: level.texture_size,
         sizes: &level.map_sizes,
-        kinds,
-        textures: &level.textures,
         material_sizes: Some(&level.material_sizes),
+        textures: &level.textures,
         exact_alpha: &[],
-        shared: None,
+    };
+    let plan = MaterialPlan {
+        names: &level.material,
+        kinds,
+        maps: Maps::Own(maps),
     };
     let mut made = materials(step, &source, &name, &drawn.built, &plan)?;
     for material in &mut made.materials {
         baked(&source, material, &drawn.built, &level)?;
     }
-    write_textures(step, &source, &made.maps, &plan)?;
+    write_textures(step, &source, &made.maps, &maps)?;
     write_materials(step, &made.materials);
     write_meshes(step, &drawn.built);
     pieces(step, &source, &drawn, (&made.of_mesh, &level.baked))?;

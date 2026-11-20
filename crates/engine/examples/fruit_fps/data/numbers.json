@@ -124,8 +124,9 @@
     "walk_factor": 0.5,
     "crouch_factor": 0.4,
     "jump_height_m": 0.9,
-    "ground_accel_mps2": 11.1,
-    "ground_friction": 6,
+    "ground_accel_per_s": 5.5,
+    "ground_friction": 5.2,
+    "stop_speed_mps": 1.524,
     "braking_friction": 6,
     "braking_decel_mps2": 18.3,
     "air_accel_per_s": 12,
@@ -1953,6 +1954,21 @@
       "most_scale": 3.0
     }
   },
+  "sound_cues": {
+    "quiet_step_gain": 0.5,
+    "drop_probe_m": 0.5,
+    "barrier_keep_ticks": 120,
+    "orb_hold_ticks": 150,
+    "break_large_m": 1.0,
+    "kill_steps": 5,
+    "countdown_seconds": 3,
+    "device": {
+      "plant_repeat_seconds": 0.45,
+      "defuse_repeat_seconds": 0.45,
+      "beep_slow_seconds": 1.0,
+      "beep_fast_seconds": 0.12
+    }
+  },
   "spectate": {
     "corpse_seconds": 1.5,
     "pull_back_m": 2.5,
@@ -2008,7 +2024,6 @@
       "floor_m": 0.0,
       "black_floor": 0.06
     },
-    "antialias": "fxaa",
     "filtering": {
       "base_color": {
         "anisotropy": 4,
@@ -2045,6 +2060,9 @@
       "never_m": 1.0
     },
     "visible_sets": true
+  },
+  "flow": {
+    "loading_min_seconds": 2.5
   },
   "lobby": {
     "place": {

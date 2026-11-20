@@ -1,25 +1,25 @@
 use std::collections::BTreeMap;
 
+use brick_sound::{Anchor, Cue};
 use engine::math;
 use glam::Vec3;
 
-use crate::abilities::{ActorId, CueKind, EffectId, Event as PowerEvent, Orb, OrbEvent, Slot};
+use crate::abilities::{ActorId, CueKind, EffectId, Event as PowerEvent, Orb, OrbEvent};
 use crate::play::arms::Drops;
 use crate::play::events::arms::{ArmsEvents, Handling, Weapon};
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
-use crate::play::sound::{Anchor, Cue};
 use crate::play::world::{Arena, Barrier};
 use crate::rules::{AbilitySlot, CreditReason, Event, Phase, Team};
 use crate::weapons::BodyPart;
 
-use super::table::Table;
+use super::numbers::CueNumbers;
 
 pub(super) fn cue(event: impl Into<String>, anchor: Anchor, source: Option<u32>) -> Cue {
     Cue {
         event: event.into(),
         anchor,
-        source,
+        source: source.map(u64::from),
         gain: 1.0,
         hold_ticks: None,
         tag: None,
@@ -45,21 +45,21 @@ impl Human {
 pub(super) fn arms(
     events: &ArmsEvents,
     (human, round_kills): (Human, Option<u32>),
-    table: &Table,
+    numbers: &CueNumbers,
     out: &mut Vec<Cue>,
 ) {
     for shot in &events.shots {
         let weight = if shot.heavy { "_heavy" } else { "" };
         out.push(cue(
-            format!("shot.{}{weight}", shot.weapon.key()),
-            Anchor::Actor(shot.shooter),
+            ["shot.", shot.weapon.key(), weight].concat(),
+            Anchor::Follow(u64::from(shot.shooter)),
             Some(shot.shooter),
         ));
         let entry = shot.pierced.zip(shot.pierced_kind);
         let end = shot.kind.map(|kind| (shot.end, kind));
         for (at, kind) in entry.into_iter().chain(end) {
             out.push(cue(
-                format!("impact.{}", table.kind(kind)),
+                ["impact.", numbers.kind(kind)].concat(),
                 Anchor::Point(at),
                 Some(shot.shooter),
             ));
@@ -77,7 +77,11 @@ pub(super) fn arms(
             (Weapon::Gun(_), BodyPart::Body) => "hit.body",
             (Weapon::Gun(_), BodyPart::Leg) => "hit.leg",
         };
-        out.push(cue(event, Anchor::Actor(hit.victim), Some(hit.shooter)));
+        out.push(cue(
+            event,
+            Anchor::Follow(u64::from(hit.victim)),
+            Some(hit.shooter),
+        ));
         if hit.armor_broke && human.is(hit.shooter as usize) {
             out.push(cue(
                 "armor.break.dealt",
@@ -98,7 +102,10 @@ pub(super) fn arms(
             equipped.push(handling.slot);
         }
         let key = handling.weapon.key();
-        let here = (Anchor::Actor(handling.slot), Some(handling.slot));
+        let here = (
+            Anchor::Follow(u64::from(handling.slot)),
+            Some(handling.slot),
+        );
         let names: &[&str] = match handling.kind {
             Handling::Equip => &["equip"],
             Handling::ReloadStarted => &["mag_out"],
@@ -106,15 +113,15 @@ pub(super) fn arms(
             Handling::DryFire => &["dry"],
         };
         for name in names {
-            out.push(cue(format!("{name}.{key}"), here.0, here.1));
+            out.push(cue([name, ".", key].concat(), here.0, here.1));
         }
     }
     for death in &events.deaths {
         if death.killer.is_some_and(|killer| human.is(killer as usize)) {
-            let step = round_kills.unwrap_or(1).clamp(1, table.kill_steps);
+            let step = round_kills.unwrap_or(1).clamp(1, numbers.kill_steps);
             out.push(cue("kill.confirm", Anchor::Listener, death.killer));
             out.push(cue(
-                format!("kill.confirm.{step}"),
+                numbers.kill_confirms[step as usize - 1].clone(),
                 Anchor::Listener,
                 death.killer,
             ));
@@ -153,8 +160,8 @@ impl Repeaters {
         *self = Repeaters::default();
     }
 
-    pub fn tick(&mut self, now: u64, tps: u32, table: &Table, out: &mut Vec<Cue>) {
-        let timing = &table.device;
+    pub fn tick(&mut self, now: u64, tps: u32, numbers: &CueNumbers, out: &mut Vec<Cue>) {
+        let timing = &numbers.device;
         for (held, event, seconds) in [
             (
                 &mut self.plant,
@@ -200,7 +207,7 @@ pub(super) fn round(
 ) {
     let actor = |player: usize| {
         let slot = u32::try_from(player).unwrap_or(u32::MAX);
-        (Anchor::Actor(slot), Some(slot))
+        (Anchor::Follow(u64::from(slot)), Some(slot))
     };
     for event in events {
         match event {
@@ -298,7 +305,7 @@ pub(super) fn bodies(
     events: &BodyEvents,
     listener: Option<u32>,
     slowed: impl Fn(u32) -> bool,
-    table: &Table,
+    numbers: &CueNumbers,
     out: &mut Vec<Cue>,
 ) {
     for step in &events.footsteps {
@@ -307,12 +314,12 @@ pub(super) fn bodies(
             continue;
         }
         let mut heard = cue(
-            format!("step.{}", table.kind(step.kind)),
+            ["step.", numbers.kind(step.kind)].concat(),
             Anchor::Point(step.position),
             Some(step.slot),
         );
         if !step.loud {
-            heard.gain = table.quiet_step_gain;
+            heard.gain = numbers.quiet_step_gain;
         }
         out.push(heard);
     }
@@ -322,25 +329,25 @@ pub(super) fn bodies(
     for landing in &events.landings {
         let weight = if landing.hard { "hard" } else { "soft" };
         out.push(cue(
-            format!("land.{weight}.{}", table.kind(landing.kind)),
+            ["land.", weight, ".", numbers.kind(landing.kind)].concat(),
             Anchor::Point(landing.position),
             Some(landing.slot),
         ));
     }
 }
 
-pub(super) fn countdown(ticks_left: u32, tps: u32, table: &Table, out: &mut Vec<Cue>) {
+pub(super) fn countdown(ticks_left: u32, tps: u32, numbers: &CueNumbers, out: &mut Vec<Cue>) {
     if ticks_left > 0
-        && ticks_left <= table.countdown_seconds * tps
+        && ticks_left <= numbers.countdown_seconds * tps
         && ticks_left.is_multiple_of(tps)
     {
         out.push(cue("round.countdown", Anchor::Listener, None));
     }
 }
 
-fn cue_name(kind: CueKind, slot: Slot) -> &'static str {
+fn cue_name(kind: CueKind, slot: AbilitySlot) -> &'static str {
     match kind {
-        CueKind::Cast if slot == Slot::X => "power.ultimate",
+        CueKind::Cast if slot == AbilitySlot::X => "power.ultimate",
         CueKind::Cast => "power.cast",
         CueKind::Throw => "power.throw",
         CueKind::Bounce => "power.bounce",
@@ -380,9 +387,9 @@ fn held(event: &'static str, anchor: Anchor, source: Option<u32>, ticks: u64) ->
 pub(super) struct Heard<'a> {
     pub human: Human,
     pub listener: Option<u32>,
-    pub casters: &'a [(u32, Team, String)],
+    pub casters: &'a [super::Row<'a>],
     pub now: u64,
-    pub table: &'a Table,
+    pub numbers: &'a CueNumbers,
     pub orbs: &'a [Orb],
 }
 
@@ -404,7 +411,7 @@ fn orbs(events: &PowerEvents, heard: &Heard<'_>, out: &mut Vec<Cue>, stops: &mut
             OrbEvent::Started { orb, actor } => {
                 if let Some(at) = heard.orbs.get(*orb).map(|orb| orb.at) {
                     out.push(Cue {
-                        hold_ticks: Some(heard.table.orb_hold_ticks),
+                        hold_ticks: Some(heard.numbers.orb_hold_ticks),
                         tag: Some(orb_tag(*orb, *actor)),
                         ..cue("orb.channel", Anchor::Point(at), Some(actor.0))
                     });
@@ -439,7 +446,7 @@ pub(super) fn powers(
                 size,
                 ticks,
                 ..
-            } => cued(*kind, ability.slot, (*at, *size, *ticks), heard.table, out),
+            } => cued(*kind, ability.slot, (*at, *size, *ticks), heard.numbers, out),
             PowerEvent::Damage { .. }
             | PowerEvent::Heal { .. }
             | PowerEvent::Shield { .. }
@@ -469,16 +476,16 @@ fn ultimates(events: &PowerEvents, heard: &Heard<'_>, out: &mut Vec<Cue>) {
         .iter()
         .filter(|cast| cast.ability == AbilitySlot::X)
     {
-        let Some((_, team, character)) = heard.casters.iter().find(|row| row.0 == cast.slot) else {
+        let Some(row) = heard.casters.iter().find(|row| row.slot == cast.slot) else {
             continue;
         };
-        let side = if heard.human.team == Some(*team) {
+        let side = if heard.human.team == Some(row.team) {
             "ally"
         } else {
             "enemy"
         };
         out.push(cue(
-            format!("ult.{character}.{side}"),
+            ["ult.", row.character, ".", side].concat(),
             Anchor::Listener,
             None,
         ));
@@ -487,9 +494,9 @@ fn ultimates(events: &PowerEvents, heard: &Heard<'_>, out: &mut Vec<Cue>) {
 
 fn cued(
     kind: CueKind,
-    slot: Slot,
+    slot: AbilitySlot,
     (at, size, ticks): (Vec3, f32, u32),
-    table: &Table,
+    numbers: &CueNumbers,
     out: &mut Vec<Cue>,
 ) {
     let anchor = Anchor::Point(at);
@@ -501,7 +508,7 @@ fn cued(
             out.push(cue("power.heal_start", anchor, None));
             out.push(held("power.heal_loop", anchor, None, hold));
         }
-        CueKind::Destroyed if size >= table.break_large_m => {
+        CueKind::Destroyed if size >= numbers.break_large_m => {
             out.push(cue("power.destroyed.large", anchor, None));
         }
         CueKind::Destroyed => out.push(cue("power.destroyed.small", anchor, None)),
@@ -559,7 +566,7 @@ fn status(event: &PowerEvent, heard: &Heard<'_>, out: &mut Vec<Cue>, stops: &mut
             tag: Some(wire_tag(*effect)),
             ..held(
                 "wire.taut",
-                Anchor::Actor(actor.0),
+                Anchor::Follow(u64::from(actor.0)),
                 None,
                 until.saturating_sub(now),
             )
@@ -624,52 +631,57 @@ pub(super) fn drops(
     drops: &Drops,
     seen: &mut Vec<u32>,
     arena: Option<&Arena>,
-    table: &Table,
+    numbers: &CueNumbers,
     out: &mut Vec<Cue>,
 ) {
     for item in &drops.items {
         if seen.contains(&item.id) {
             continue;
         }
-        let lift = Vec3::new(0.0, table.drop_probe_m, 0.0);
+        let lift = Vec3::new(0.0, numbers.drop_probe_m, 0.0);
         let kind = arena
-            .and_then(|arena| arena.ground_under(item.position + lift, table.drop_probe_m * 2.0))
-            .map_or(table.default_kind.as_str(), |hit| table.kind(hit.kind));
+            .and_then(|arena| arena.ground_under(item.position + lift, numbers.drop_probe_m * 2.0))
+            .map_or(numbers.default_kind.as_str(), |hit| numbers.kind(hit.kind));
         out.push(cue(
-            format!("drop.{kind}"),
+            ["drop.", kind].concat(),
             Anchor::Point(item.position),
             None,
         ));
     }
-    *seen = drops.items.iter().map(|item| item.id).collect();
+    seen.clear();
+    seen.extend(drops.items.iter().map(|item| item.id));
 }
 
 pub(super) fn scopes(
-    now: &[(u32, Option<(Weapon, usize)>)],
+    now: &[super::Row<'_>],
     was: &mut BTreeMap<u32, (Weapon, usize)>,
-    fired: &[u32],
+    arms: Option<&ArmsEvents>,
     out: &mut Vec<Cue>,
 ) {
-    for (slot, scope) in now {
-        let before = was.get(slot).copied();
-        let here = (Anchor::Actor(*slot), Some(*slot));
-        match (before, *scope) {
+    let fired = |slot: u32| {
+        arms.is_some_and(|arms| arms.shots.iter().any(|shot| shot.shooter == slot))
+    };
+    for row in now {
+        let slot = row.slot;
+        let before = was.get(&slot).copied();
+        let here = (Anchor::Follow(u64::from(slot)), Some(slot));
+        match (before, row.scope) {
             (Some((weapon, from)), Some((held, to))) if weapon == held && to > from => {
-                out.push(cue(format!("scope.in.{}", held.key()), here.0, here.1));
+                out.push(cue(["scope.in.", held.key()].concat(), here.0, here.1));
             }
-            (Some((weapon, from)), Some((held, 0)))
-                if weapon == held && from > 0 && !fired.contains(slot) =>
-            {
-                out.push(cue(format!("scope.out.{}", held.key()), here.0, here.1));
+            (Some((weapon, from)), Some((held, 0))) if weapon == held && from > 0 && !fired(slot) => {
+                out.push(cue(["scope.out.", held.key()].concat(), here.0, here.1));
             }
             (None, Some((held, to))) if to > 0 => {
-                out.push(cue(format!("scope.in.{}", held.key()), here.0, here.1));
+                out.push(cue(["scope.in.", held.key()].concat(), here.0, here.1));
             }
             (Some(_) | None, Some(_) | None) => {}
         }
     }
-    *was = now
-        .iter()
-        .filter_map(|(slot, scope)| scope.map(|scope| (*slot, scope)))
-        .collect();
+    was.retain(|slot, _| now.iter().any(|row| row.slot == *slot && row.scope.is_some()));
+    for row in now {
+        if let Some(scope) = row.scope {
+            was.insert(row.slot, scope);
+        }
+    }
 }

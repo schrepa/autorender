@@ -1,19 +1,35 @@
+use brick_interface::{Element, InterfaceDraw};
 use engine::prelude::*;
 use engine::{CursorMode, Devices};
 use engine_core::{Closing, DevSetting};
 
+use crate::play::camera::TestCamera;
 use crate::play::flow::{Flow, Stage};
-use crate::play::numbers::{KeyMap, Numbers};
-use crate::play::screen::{Card, HudFacts, Reticle, ScreenBuys, ScreenDraw, ScreenState, Shown};
+use crate::play::numbers::Numbers;
+use crate::play::screen::{Options, ScreenBuys, ScreenState};
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
 use crate::rules::{BuyRequest, Phase};
 
-use super::layout::{CardList, Layout};
-use super::menu::{self, MenuState, Nav, Options, OptionsWrite, Values};
-use super::{Loaded, ScreenBook, ScreenSetup, ScreenSource, Showing};
+use super::hud::{Card, HudFacts, Reticle, Shown};
+use super::menu::{self, MenuState, Nav, OptionsWrite, Values};
+use super::{
+    Loaded, ScreenBook, ScreenLoad, ScreenSetup, ScreenSource, Showing, hud_hidden, paths,
+};
 
-fn automatic(facts: &HudFacts, state: ScreenState) -> Shown {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CardList {
+    Weapons,
+    Armor,
+    Abilities,
+    Team,
+}
+
+fn card_of(element: &Element) -> Option<(CardList, usize)> {
+    element.style_conditions().find_map(paths::card)
+}
+
+fn automatic(facts: &HudFacts, state: Showing) -> Shown {
     match facts.phase {
         Some(Phase::Over) => Shown::MatchEnd,
         Some(Phase::Buy | Phase::Live | Phase::Planted | Phase::RoundEnd) | None => {
@@ -27,22 +43,6 @@ fn automatic(facts: &HudFacts, state: ScreenState) -> Shown {
                 Shown::Hud
             }
         }
-    }
-}
-
-fn chosen(show: Showing) -> Option<Shown> {
-    match show {
-        Showing::Auto => None,
-        Showing::Hud => Some(Shown::Hud),
-        Showing::Buy => Some(Shown::Buy),
-        Showing::Scoreboard => Some(Shown::Scoreboard),
-        Showing::RoundEnd => Some(Shown::RoundEnd),
-        Showing::MatchEnd => Some(Shown::MatchEnd),
-        Showing::Title => Some(Shown::Title),
-        Showing::CharacterSelect => Some(Shown::Select),
-        Showing::Loading => Some(Shown::Loading),
-        Showing::Pause => Some(Shown::Pause),
-        Showing::Settings => Some(Shown::Settings),
     }
 }
 
@@ -67,25 +67,18 @@ fn actions(
     }
 }
 
-fn hovered(layout: &Layout, draw: &ScreenDraw, pointer: Option<Vec2>) -> Option<(CardList, usize)> {
-    let pointer = pointer?;
-    let screen = layout.screens.get(&Shown::Buy)?;
-    screen.elements.iter().rev().find_map(|element| {
-        let card = element.card?;
-        draw.place(element.rect, element.anchor)
-            .contains(pointer)
-            .then_some(card)
-    })
+fn hovered(draw: &InterfaceDraw, pointer: Option<Vec2>) -> Option<(CardList, usize)> {
+    draw.under(Shown::Buy as usize, pointer?).find_map(card_of)
 }
 
 fn buying(
-    (devices, loaded, draw): (&Devices, &Loaded, &ScreenDraw),
+    (devices, loaded, draw): (&Devices, &Loaded, &InterfaceDraw),
     facts: &HudFacts,
     buys: &mut ScreenBuys,
     book: &mut ScreenBook,
 ) {
     let keys = &loaded.keys;
-    let over = hovered(&loaded.layout, draw, book.pointer);
+    let over = hovered(draw, book.pointer);
     book.hovered = over;
     let mut asked = |request| {
         if let Some(request) = request {
@@ -94,15 +87,15 @@ fn buying(
         }
     };
     if let Some((take, give_back)) = over.map(|over| actions(facts, over)) {
-        if KeyMap::pressed(devices, &keys.take) {
+        if engine_bindings::pressed(devices, &keys.take) {
             asked(take);
         }
-        if KeyMap::pressed(devices, &keys.give_back) {
+        if engine_bindings::pressed(devices, &keys.give_back) {
             asked(give_back);
         }
     }
     for (binding, found) in keys.pick.iter().zip(facts.cards()) {
-        if KeyMap::pressed(devices, std::slice::from_ref(binding)) {
+        if engine_bindings::pressed(devices, std::slice::from_ref(binding)) {
             asked(found.buy);
         }
     }
@@ -110,11 +103,11 @@ fn buying(
 
 fn menus(
     nav: &Nav<'_>,
-    (flow, state): (&mut Flow, &mut ScreenState),
+    (flow, state): (&mut Flow, &mut Showing),
     facts: &mut HudFacts,
     (menu_state, values): (&mut MenuState, &mut Values),
 ) {
-    let escape = KeyMap::pressed(nav.devices, &nav.keys.back);
+    let escape = engine_bindings::pressed(nav.devices, &nav.keys.back);
     if flow.stage == Stage::Playing && !flow.settings_open {
         if escape && state.buy_open {
             state.buy_open = false;
@@ -129,15 +122,17 @@ fn menus(
 
 fn options_facts(
     facts: &mut HudFacts,
-    (source, flow): (&ScreenSource, Option<&Flow>),
-    values: &Values,
+    (source, loaded, flow): (&ScreenSource, &Loaded, Option<&Flow>),
+    (values, shown): (&Values, bool),
     numbers: Option<&Numbers>,
 ) {
     let settings = &mut facts.menu.settings;
-    if let Some(flow) = flow {
-        super::live::set(&mut settings.level, &flow.level);
+    if shown {
+        if let Some(flow) = flow {
+            settings.level = source.menu.levels.iter().position(|level| *level == flow.level);
+        }
+        menu::slider_facts(&mut settings.sliders, &source.menu.sliders, values);
     }
-    menu::slider_facts(&mut settings.sliders, &source.menu.sliders, values);
     settings.crosshair = values.options.crosshair as usize;
     settings.invert = values.controls.invert_pitch;
     let options = &values.options;
@@ -158,34 +153,30 @@ fn options_facts(
         return;
     };
     let names = &source.key_names;
-    menu::key_rows(
-        &mut settings.keys,
-        (&source.menu.key_rows, names),
-        &numbers.keys,
-    );
-    let shop = source.loaded().map(|loaded| {
-        [
-            ("take", &loaded.keys.take),
-            ("give_back", &loaded.keys.give_back),
-        ]
-    });
-    let all = menu::bindings(&numbers.keys)
-        .into_iter()
-        .chain(shop.into_iter().flatten());
+    if shown {
+        menu::key_rows(
+            &mut settings.keys,
+            (&source.menu.key_rows, names),
+            &numbers.keys,
+        );
+    }
+    let shop = [&loaded.keys.take, &loaded.keys.give_back];
+    let all = menu::bindings(&numbers.keys).into_iter().chain(shop);
     menu::key_facts(&mut facts.keys, all, names);
 }
 
 type Reads<'w> = (
     Res<'w, Devices>,
     DevSetting<'w, ScreenSetup>,
-    Res<'w, ScreenDraw>,
+    Res<'w, InterfaceDraw>,
     Option<Res<'w, Numbers>>,
     (Res<'w, Controls>, Res<'w, Options>, Res<'w, Volume>),
+    (Res<'w, ScreenLoad>, Option<Res<'w, TestCamera>>),
 );
 
 type Writes<'w> = (
     ResMut<'w, CursorMode>,
-    ResMut<'w, ScreenState>,
+    (ResMut<'w, ScreenState>, ResMut<'w, Showing>),
     ResMut<'w, ScreenBuys>,
     ResMut<'w, ScreenBook>,
     ResMut<'w, MenuState>,
@@ -193,16 +184,16 @@ type Writes<'w> = (
 );
 
 pub(super) fn control(
-    (devices, setup, draw, numbers, (controls, options, volume)): Reads,
+    (devices, setup, draw, numbers, (controls, options, volume), (load, camera)): Reads,
     sources: Query<&ScreenSource>,
-    (mut cursor, mut state, mut buys, mut book, mut menu_state, mut writes): Writes,
+    (mut cursor, (mut state, mut showing), mut buys, mut book, mut menu_state, mut writes): Writes,
     (mut flow, mut closing): (Option<ResMut<Flow>>, ResMut<Closing>),
     mut facts: ResMut<HudFacts>,
 ) {
     let Some(source) = sources.iter().next() else {
         return;
     };
-    let Some(loaded) = source.loaded() else {
+    let Some(loaded) = load.loaded() else {
         return;
     };
     let facts = &mut *facts;
@@ -210,7 +201,7 @@ pub(super) fn control(
         .as_deref()
         .and_then(Numbers::get)
         .map(|numbers| &numbers.keys);
-    let mut next = *state;
+    let mut next = *showing;
     let mut values = Values {
         controls: controls.clone(),
         options: options.clone(),
@@ -220,7 +211,6 @@ pub(super) fn control(
         let nav = Nav {
             devices: &devices,
             keys: &loaded.menu_keys,
-            layout: &loaded.layout,
             draw: &draw,
             source: &source.menu,
             can_quit: closing.offered(),
@@ -248,37 +238,40 @@ pub(super) fn control(
     if values.options != *options {
         writes.options_wanted(values.options.clone());
     }
-    options_facts(
-        facts,
-        (source, flow.as_deref()),
-        &values,
-        numbers.as_deref(),
-    );
     let playing = flow
         .as_deref()
         .is_none_or(|flow| flow.stage == Stage::Playing && !flow.settings_open);
     if facts.phase != Some(Phase::Buy) || !playing {
         next.buy_open = false;
-    } else if map.is_some_and(|map| KeyMap::pressed(&devices, &map.buy_menu)) {
+    } else if map.is_some_and(|map| engine_bindings::pressed(&devices, &map.buy_menu)) {
         next.buy_open = !next.buy_open;
     }
-    next.board_held = playing && map.is_some_and(|map| KeyMap::held(&devices, &map.scoreboard));
+    next.board_held =
+        playing && map.is_some_and(|map| engine_bindings::held(&devices, &map.scoreboard));
     let flowing = flow.as_deref().and_then(menu::chosen_screen);
     next.shown = setup
         .get()
-        .and_then(|setup| chosen(setup.show))
+        .and_then(|setup| setup.show)
         .or(flowing)
         .unwrap_or_else(|| automatic(facts, next));
-    next.holds_pointer =
+    let holds_pointer =
         next.shown == Shown::Buy || flow.as_deref().is_some_and(Flow::holds_pointer);
-    if next.holds_pointer != state.holds_pointer {
-        cursor.set_if_neq(if next.holds_pointer {
+    if holds_pointer != state.holds_pointer {
+        cursor.set_if_neq(if holds_pointer {
             CursorMode::Free
         } else {
             CursorMode::Captured
         });
     }
-    state.set_if_neq(next);
+    state.set_if_neq(ScreenState { holds_pointer });
+    showing.set_if_neq(next);
+    options_facts(
+        facts,
+        (source, loaded, flow.as_deref()),
+        (&values, next.shown == Shown::Settings),
+        numbers.as_deref(),
+    );
+    facts.screen = (!hud_hidden(camera.as_deref(), next.shown)).then_some(next.shown);
     book.pointer = devices.mouse.position_pixels;
     book.hovered = None;
     if next.shown == Shown::Buy {

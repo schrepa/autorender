@@ -1,7 +1,8 @@
+use engine_drawing::DetailLimit;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::play::light::{DetailLimit, Filtering};
+use crate::play::light::Filtering;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -54,13 +55,6 @@ pub struct AmbientNumbers {
     pub black_floor: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Antialias {
-    Off,
-    Fxaa,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LightingNumbers {
@@ -71,8 +65,6 @@ pub struct LightingNumbers {
     pub blob: BlobNumbers,
     #[serde(default)]
     pub ambient: Option<AmbientNumbers>,
-    #[serde(default)]
-    pub antialias: Option<Antialias>,
     pub filtering: Filtering,
     pub detail: DetailLimit,
     pub visible_sets: bool,
@@ -83,11 +75,11 @@ struct FilePart {
     lighting: LightingNumbers,
 }
 
-pub(super) fn parse(text: &str) -> Result<LightingNumbers, String> {
-    let lighting = serde_json::from_str::<FilePart>(text)
+pub(super) fn parse(whole: &serde_json::Value) -> Result<LightingNumbers, String> {
+    let lighting = FilePart::deserialize(whole)
         .map(|part| part.lighting)
         .map_err(|error| error.to_string())?;
     lighting.filtering.checked()?;
-    lighting.detail.checked()?;
+    lighting.detail.checked("$.lighting.detail")?;
     Ok(lighting)
 }

@@ -1,45 +1,33 @@
-use crate::play::screen::{
+use brick_interface::{Area, Facts, Pen, Point, Seg, Slot, Val};
+
+use super::control::CardList;
+use super::hud::{
     AbilityCard, AbilityFacts, ActionFacts, BoardRow, BuyFacts, Card, CastFacts, FeedLine,
-    HudFacts, KeyRow, LoadingFacts, MapItem, Mate, MenuFacts, MinimapFacts, PickupFacts,
-    PlateFacts, PlayerFacts, ResultFacts, RoundFacts, SelectCard, SelectFacts, SettingsFacts,
-    Shown, Slider, TeamFacts, WeaponFacts,
+    HudFacts, KeyRow, KillFacts, LoadingFacts, MapItem, Mate, MinimapFacts, OrbFacts, PickupFacts,
+    PlaceFacts, PlateFacts, PlayerFacts, PointFacts, ResultFacts, RoundFacts, SelectCard,
+    SettingsFacts, Shown, Slider, SpectateFacts, StatusFacts, TeamFacts, UltFacts, WeaponFacts,
 };
+use super::{ScreenSource, menu, pieces};
 
-use super::layout::Seg;
+macro_rules! fields {
+    ($kind:ty, $me:ident { $($name:literal => $value:expr),* $(,)? }) => {
+        impl $kind {
+            const FIELDS: &'static [&'static str] = &[$($name),*];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Val<'a> {
-    Unknown,
-    Missing,
-    Bool(bool),
-    Num(f32),
-    Text(&'a str),
-}
-
-impl<'a> Val<'a> {
-    pub(super) fn truthy(self) -> bool {
-        match self {
-            Val::Unknown | Val::Missing => false,
-            Val::Bool(value) => value,
-            Val::Num(value) => value != 0.0,
-            Val::Text(text) => !text.is_empty(),
+            fn field(&self, field: u32) -> Val<'_> {
+                let $me = self;
+                let mut at = 0;
+                $(
+                    if field == at {
+                        return $value;
+                    }
+                    at += 1;
+                )*
+                let _ = at;
+                Val::Unknown
+            }
         }
-    }
-
-    pub(super) fn number(self) -> Option<f32> {
-        match self {
-            Val::Num(value) => Some(value),
-            Val::Bool(value) => Some(f32::from(u8::from(value))),
-            Val::Unknown | Val::Missing | Val::Text(_) => None,
-        }
-    }
-
-    pub(super) fn text(self) -> Option<&'a str> {
-        match self {
-            Val::Text(text) => Some(text),
-            Val::Unknown | Val::Missing | Val::Bool(_) | Val::Num(_) => None,
-        }
-    }
+    };
 }
 
 fn whole(value: u32) -> Val<'static> {
@@ -50,371 +38,289 @@ fn maybe(value: Option<u32>) -> Val<'static> {
     value.map_or(Val::Missing, whole)
 }
 
-fn key(path: &[Seg]) -> Option<(&str, &[Seg])> {
-    match path {
-        [Seg::Key(name), rest @ ..] => Some((name.as_str(), rest)),
-        [Seg::Index(_), ..] | [] => None,
-    }
-}
+fields!(RoundFacts, me {
+    "time" => Val::Num(me.time),
+    "number" => whole(me.number),
+    "planted" => Val::Bool(me.planted),
+    "fuse" => Val::Num(me.fuse),
+    "site" => Val::Text(&me.site),
+    "time_low" => Val::Bool(me.time_low),
+    "fuse_low" => Val::Bool(me.fuse_low),
+    "overtime" => Val::Bool(me.overtime),
+    "decider" => Val::Bool(me.decider),
+    "swapped" => Val::Bool(me.swapped),
+    "last_of_half" => Val::Bool(me.last_of_half),
+    "device" => Val::Text(&me.device),
+    "buying" => Val::Bool(me.buying),
+    "ready" => Val::Bool(me.ready),
+    "ready_left" => Val::Num(me.ready_left),
+    "ready_count" => whole(me.ready_count),
+    "go" => Val::Bool(me.go),
+});
 
-fn side_index(seg: &Seg) -> Option<usize> {
-    match seg {
-        Seg::Index(index) => Some(*index),
-        Seg::Key(name) => match name.as_str() {
-            "left" => Some(0),
-            "right" => Some(1),
-            _ => None,
-        },
-    }
-}
+fields!(TeamFacts, me {
+    "color" => Val::Text(me.color.key()),
+    "name" => Val::Text(&me.name),
+});
 
-fn picked<'a, T>(
-    list: &'a [T],
-    path: &'a [Seg],
-) -> Result<(Option<&'a T>, &'a [Seg]), Val<'static>> {
-    match path {
-        [seg, rest @ ..] => match side_index(seg) {
-            Some(index) => Ok((list.get(index), rest)),
-            None => Err(Val::Unknown),
-        },
-        [] => Err(Val::Unknown),
-    }
-}
+fields!(PlateFacts, me {
+    "icon" => Val::Text(&me.icon),
+    "alive" => Val::Bool(me.alive),
+    "health" => Val::Num(me.health),
+    "ult_ready" => Val::Bool(me.ult_ready),
+});
 
-fn within<'a, T>(
-    list: &'a [T],
-    path: &'a [Seg],
-    field: impl Fn(&'a T, &'a [Seg]) -> Val<'a>,
-) -> Val<'a> {
-    match picked(list, path) {
-        Ok((Some(item), rest)) => field(item, rest),
-        Ok((None, _)) => Val::Missing,
-        Err(unknown) => unknown,
-    }
-}
+fields!(PickupFacts, me {
+    "active" => Val::Bool(me.active),
+    "key" => Val::Text(&me.key),
+    "weapon" => Val::Text(&me.weapon),
+    "icon" => Val::Text(&me.icon),
+});
 
-fn leaf<'a>(path: &[Seg], field: impl Fn(&str) -> Val<'a>) -> Val<'a> {
-    match key(path) {
-        Some((name, [])) => field(name),
-        Some((_, [_, ..])) | None => Val::Unknown,
-    }
-}
+fields!(CastFacts, me {
+    "active" => Val::Bool(me.active),
+    "key" => Val::Text(&me.key),
+    "icon" => Val::Text(&me.icon),
+});
 
-impl RoundFacts {
-    fn value(&self, path: &[Seg]) -> Val<'_> {
-        leaf(path, |name| match name {
-            "time" => Val::Num(self.time),
-            "number" => whole(self.number),
-            "planted" => Val::Bool(self.planted),
-            "fuse" => Val::Num(self.fuse),
-            "site" => Val::Text(&self.site),
-            "time_low" => Val::Bool(self.time_low),
-            "fuse_low" => Val::Bool(self.fuse_low),
-            "overtime" => Val::Bool(self.overtime),
-            "decider" => Val::Bool(self.decider),
-            "swapped" => Val::Bool(self.swapped),
-            "last_of_half" => Val::Bool(self.last_of_half),
-            "device" => Val::Text(&self.device),
-            "buying" => Val::Bool(self.buying),
-            "ready" => Val::Bool(self.ready),
-            "ready_left" => Val::Num(self.ready_left),
-            "ready_count" => whole(self.ready_count),
-            "go" => Val::Bool(self.go),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(FeedLine, me {
+    "killer" => Val::Text(&me.killer),
+    "killer_color" => Val::Text(me.killer_color.key()),
+    "weapon" => Val::Text(&me.weapon),
+    "headshot" => Val::Bool(me.headshot),
+    "victim" => Val::Text(&me.victim),
+    "victim_color" => Val::Text(me.victim_color.key()),
+    "mine" => Val::Bool(me.mine),
+    "ability" => Val::Text(&me.ability),
+    "world" => Val::Bool(me.world),
+    "killer_char" => Val::Text(&me.killer_char),
+    "victim_char" => Val::Text(&me.victim_char),
+    "wall" => Val::Bool(me.wall),
+    "assist_char" => Val::Text(&me.assist_char),
+    "assist_color" => Val::Text(me.assist_color.key()),
+    "assist_more" => whole(me.assist_more),
+    "assisted" => Val::Bool(me.assisted),
+});
 
-impl TeamFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "color" => Val::Text(self.color.key()),
-            "name" => Val::Text(&self.name),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(PlayerFacts, me {
+    "health" => Val::Num(me.health),
+    "health_low" => Val::Bool(me.health_low),
+    "armor" => Val::Num(me.armor),
+    "armor_icon" => Val::Text(&me.armor_icon),
+    "credits" => whole(me.credits),
+    "char_name" => Val::Text(&me.char_name),
+    "role" => Val::Text(&me.role),
+    "icon" => Val::Text(&me.icon),
+});
 
-impl PlateFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        if path.is_empty() {
-            return Val::Bool(true);
-        }
-        leaf(path, |name| match name {
-            "icon" => Val::Text(&self.icon),
-            "alive" => Val::Bool(self.alive),
-            "health" => Val::Num(self.health),
-            "ult_ready" => Val::Bool(self.ult_ready),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(AbilityFacts, me {
+    "icon" => Val::Text(&me.icon),
+    "max" => whole(me.max),
+    "charges" => whole(me.charges),
+    "empty" => Val::Bool(me.empty),
+    "cooling" => Val::Bool(me.cooling),
+    "cooldown" => Val::Num(me.cooldown),
+    "cooldown_frac" => Val::Num(me.cooldown_frac),
+    "equipped" => Val::Bool(me.equipped),
+    "points" => whole(me.points),
+    "points_needed" => whole(me.points_needed),
+    "ready" => Val::Bool(me.ready),
+});
 
-impl PickupFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "active" => Val::Bool(self.active),
-            "key" => Val::Text(&self.key),
-            "weapon" => Val::Text(&self.weapon),
-            "icon" => Val::Text(&self.icon),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(WeaponFacts, me {
+    "name" => Val::Text(&me.name),
+    "icon" => Val::Text(&me.icon),
+    "mag" => maybe(me.mag),
+    "mag_size" => maybe(me.mag_size),
+    "reserve" => maybe(me.reserve),
+    "low" => Val::Bool(me.low),
+    "reload" => me.reload.map_or(Val::Missing, Val::Num),
+    "down" => Val::Bool(me.down),
+    "down_left" => Val::Num(me.down_left),
+});
 
-impl CastFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "active" => Val::Bool(self.active),
-            "key" => Val::Text(&self.key),
-            "icon" => Val::Text(&self.icon),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(ActionFacts, me {
+    "active" => Val::Bool(me.active),
+    "label" => Val::Text(&me.label),
+    "left" => Val::Num(me.left),
+    "progress" => Val::Num(me.progress),
+    "color" => Val::Text(me.color.key()),
+    "checkpoint" => Val::Bool(me.checkpoint),
+    "kind" => Val::Text(&me.kind),
+});
 
-impl FeedLine {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        if path.is_empty() {
-            return Val::Bool(true);
-        }
-        leaf(path, |name| match name {
-            "killer" => Val::Text(&self.killer),
-            "killer_color" => Val::Text(self.killer_color.key()),
-            "weapon" => Val::Text(&self.weapon),
-            "headshot" => Val::Bool(self.headshot),
-            "victim" => Val::Text(&self.victim),
-            "victim_color" => Val::Text(self.victim_color.key()),
-            "mine" => Val::Bool(self.mine),
-            "ability" => Val::Text(&self.ability),
-            "world" => Val::Bool(self.world),
-            "killer_char" => Val::Text(&self.killer_char),
-            "victim_char" => Val::Text(&self.victim_char),
-            "wall" => Val::Bool(self.wall),
-            "assist_char" => Val::Text(&self.assist_char),
-            "assist_color" => Val::Text(self.assist_color.key()),
-            "assist_more" => whole(self.assist_more),
-            "assisted" => Val::Bool(self.assisted),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(Card, me {
+    "points" => whole(me.points),
+    "kind" => Val::Text(&me.kind),
+    "name" => Val::Text(&me.name),
+    "icon" => Val::Text(&me.icon),
+    "price" => Val::Text(&me.price),
+    "owned" => Val::Bool(me.owned),
+    "afford" => Val::Bool(me.afford),
+    "focus" => Val::Bool(me.focus),
+    "need" => whole(me.need),
+    "closed" => Val::Bool(me.closed),
+    "ask" => Val::Bool(me.ask),
+    "asked" => Val::Bool(me.asked),
+    "sell" => whole(me.sell_credits),
+    "max" => whole(me.max),
+    "charges" => whole(me.charges),
+    "stats.damage" => Val::Num(me.stats.damage),
+    "stats.rate" => Val::Num(me.stats.rate),
+    "stats.range" => Val::Num(me.stats.range),
+});
 
-impl PlayerFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "health" => Val::Num(self.health),
-            "health_low" => Val::Bool(self.health_low),
-            "armor" => Val::Num(self.armor),
-            "armor_icon" => Val::Text(&self.armor_icon),
-            "credits" => whole(self.credits),
-            "char_name" => Val::Text(&self.char_name),
-            "role" => Val::Text(&self.role),
-            "icon" => Val::Text(&self.icon),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(BuyFacts, me {
+    "time" => Val::Num(me.time),
+    "time_low" => Val::Bool(me.time_low),
+    "reward_win" => whole(me.reward_win),
+    "gate" => Val::Text(&me.gate),
+    "reward_loss" => whole(me.reward_loss),
+});
 
-impl AbilityFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "icon" => Val::Text(&self.icon),
-            "max" => whole(self.max),
-            "charges" => whole(self.charges),
-            "empty" => Val::Bool(self.empty),
-            "cooling" => Val::Bool(self.cooling),
-            "cooldown" => Val::Num(self.cooldown),
-            "cooldown_frac" => Val::Num(self.cooldown_frac),
-            "equipped" => Val::Bool(self.equipped),
-            "points" => whole(self.points),
-            "points_needed" => whole(self.points_needed),
-            "ready" => Val::Bool(self.ready),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(Mate, me {
+    "name" => Val::Text(&me.name),
+    "icon" => Val::Text(&me.icon),
+    "credits" => whole(me.credits),
+    "can_rifle" => Val::Bool(me.can_rifle),
+    "asked" => Val::Bool(me.asked),
+    "ask_icon" => Val::Text(&me.ask_icon),
+    "ask_price" => whole(me.ask_price),
+    "giveable" => Val::Bool(me.giveable),
+    "focus" => Val::Bool(me.focus),
+});
 
-impl WeaponFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "name" => Val::Text(&self.name),
-            "icon" => Val::Text(&self.icon),
-            "mag" => maybe(self.mag),
-            "mag_size" => maybe(self.mag_size),
-            "reserve" => maybe(self.reserve),
-            "low" => Val::Bool(self.low),
-            "reload" => self.reload.map_or(Val::Missing, Val::Num),
-            "down" => Val::Bool(self.down),
-            "down_left" => Val::Num(self.down_left),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(BoardRow, me {
+    "name" => Val::Text(&me.name),
+    "icon" => Val::Text(&me.icon),
+    "k" => whole(me.k),
+    "d" => whole(me.d),
+    "a" => whole(me.a),
+    "adr" => whole(me.adr),
+    "loadout" => Val::Text(&me.loadout),
+    "credits" => Val::Text(&me.credits),
+    "ult" => whole(me.ult),
+    "ult_need" => whole(me.ult_need),
+    "ult_ready" => Val::Bool(me.ult_ready),
+    "alive" => Val::Bool(me.alive),
+    "me" => Val::Bool(me.me),
+});
 
-impl ActionFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "active" => Val::Bool(self.active),
-            "label" => Val::Text(&self.label),
-            "left" => Val::Num(self.left),
-            "progress" => Val::Num(self.progress),
-            "color" => Val::Text(self.color.key()),
-            "checkpoint" => Val::Bool(self.checkpoint),
-            "kind" => Val::Text(&self.kind),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(ResultFacts, me {
+    "title" => Val::Text(&me.title),
+    "reason" => Val::Text(&me.reason),
+    "color" => Val::Text(me.color.key()),
+    "mvp" => Val::Text(&me.mvp),
+    "mvp_icon" => Val::Text(&me.mvp_icon),
+    "mvp_color" => Val::Text(me.mvp_color.key()),
+    "mvp_portrait" => Val::Text(&me.mvp_portrait),
+    "mvp_name" => Val::Text(&me.mvp_name),
+    "mvp_stats" => Val::Text(&me.mvp_stats),
+    "mvp_char" => Val::Text(&me.mvp_char),
+    "next_seconds" => Val::Num(me.next_seconds),
+});
 
-impl Card {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        if path.is_empty() {
-            return Val::Bool(!self.name.is_empty());
-        }
-        if let Some(("stats", rest)) = key(path) {
-            let stats = self.stats;
-            return leaf(rest, |name| match name {
-                "damage" => Val::Num(stats.damage),
-                "rate" => Val::Num(stats.rate),
-                "range" => Val::Num(stats.range),
-                _ => Val::Unknown,
-            });
-        }
-        leaf(path, |name| match name {
-            "points" => whole(self.points),
-            "kind" => Val::Text(&self.kind),
-            "name" => Val::Text(&self.name),
-            "icon" => Val::Text(&self.icon),
-            "price" => Val::Text(&self.price),
-            "owned" => Val::Bool(self.owned),
-            "afford" => Val::Bool(self.afford),
-            "focus" => Val::Bool(self.focus),
-            "need" => whole(self.need),
-            "closed" => Val::Bool(self.closed),
-            "ask" => Val::Bool(self.ask),
-            "asked" => Val::Bool(self.asked),
-            "sell" => whole(self.sell_credits),
-            "max" => whole(self.max),
-            "charges" => whole(self.charges),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(Slider, me {
+    "frac" => Val::Num(me.frac),
+    "text" => Val::Text(&me.text),
+});
 
-impl BuyFacts {
-    fn value<'a>(&'a self, path: &'a [Seg]) -> Val<'a> {
-        match key(path) {
-            Some(("time", [])) => Val::Num(self.time),
-            Some(("time_low", [])) => Val::Bool(self.time_low),
-            Some(("weapons", rest)) => within(&self.weapons, rest, Card::value),
-            Some(("armor", rest)) => within(&self.armor, rest, Card::value),
-            Some(("abilities", rest)) => within(&self.abilities, rest, Card::value),
-            Some(("reward_win", [])) => whole(self.reward_win),
-            Some(("gate", [])) => Val::Text(&self.gate),
-            Some(("reward_loss", [])) => whole(self.reward_loss),
-            Some(("team", rest)) => within(&self.team, rest, Mate::value),
-            Some(("signature", rest)) => self.signature.value(rest),
-            Some(_) | None => Val::Unknown,
-        }
-    }
-}
+fields!(KeyRow, me {
+    "action" => Val::Text(&me.action),
+    "binding" => Val::Text(&me.binding),
+});
 
-impl Mate {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        if path.is_empty() {
-            return Val::Bool(true);
-        }
-        leaf(path, |name| match name {
-            "name" => Val::Text(&self.name),
-            "icon" => Val::Text(&self.icon),
-            "credits" => whole(self.credits),
-            "can_rifle" => Val::Bool(self.can_rifle),
-            "asked" => Val::Bool(self.asked),
-            "ask_icon" => Val::Text(&self.ask_icon),
-            "ask_price" => whole(self.ask_price),
-            "giveable" => Val::Bool(self.giveable),
-            "focus" => Val::Bool(self.focus),
-            _ => Val::Unknown,
-        })
-    }
-}
+fields!(SettingsFacts, me {
+    "crosshair_color" => Val::Text(&me.crosshair_color),
+    "invert" => Val::Bool(me.invert),
+    "crosshair_dot" => Val::Bool(me.reticle.dot),
+});
+
+fields!(AbilityCard, me {
+    "icon" => Val::Text(&me.icon),
+    "key" => Val::Text(&me.key),
+    "name" => Val::Text(&me.name),
+    "desc" => Val::Text(&me.desc),
+    "ultimate" => Val::Bool(me.ultimate),
+});
+
+fields!(SelectCard, me {
+    "key" => Val::Text(&me.key),
+    "name" => Val::Text(&me.name),
+    "role" => Val::Text(&me.role),
+    "selected" => Val::Bool(me.selected),
+});
+
+fields!(LoadingFacts, me {
+    "map" => Val::Text(&me.map),
+    "mode" => Val::Text(&me.mode),
+    "percent" => whole(me.percent),
+    "progress" => Val::Num(me.progress),
+    "site_a_note" => Val::Text(&me.site_a_note),
+    "site_b_note" => Val::Text(&me.site_b_note),
+});
+
+fields!(SpectateFacts, me {
+    "active" => Val::Bool(me.active),
+    "name" => Val::Text(&me.name),
+    "icon" => Val::Text(&me.icon),
+    "color" => Val::Text(&me.color),
+});
+
+fields!(PlaceFacts, me {
+    "callout" => Val::Text(&me.callout),
+});
+
+fields!(PointFacts, me {
+    "active" => Val::Bool(me.active),
+    "reason" => Val::Text(&me.reason),
+});
+
+fields!(OrbFacts, me {
+    "hint" => Val::Bool(me.hint),
+    "channel" => Val::Bool(me.channel),
+    "progress" => Val::Num(me.progress),
+});
+
+fields!(StatusFacts, me {
+    "kind" => Val::Text(&me.kind),
+    "label" => Val::Text(&me.label),
+    "left" => Val::Num(me.left),
+});
+
+fields!(KillFacts, me {
+    "active" => Val::Bool(me.active),
+    "count" => whole(me.count),
+    "label" => Val::Text(&me.label),
+    "victim_icon" => Val::Text(&me.victim_icon),
+});
+
+fields!(UltFacts, me {
+    "active" => Val::Bool(me.active),
+    "ally" => Val::Bool(me.ally),
+    "name" => Val::Text(&me.name),
+    "icon" => Val::Text(&me.icon),
+    "ultimate" => Val::Text(&me.ultimate),
+    "color" => Val::Text(me.color.key()),
+});
+
+const MINIMAP: [&str; 9] = [
+    "me", "players", "device", "planted", "orbs", "enemies", "lost", "smokes", "utility",
+];
 
 impl MinimapFacts {
-    fn list(&self, name: &str) -> Option<&[MapItem]> {
-        Some(match name {
-            "me" => &self.me,
-            "players" => &self.players,
-            "device" => &self.device,
-            "planted" => &self.planted,
-            "orbs" => &self.orbs,
-            "enemies" => &self.enemies,
-            "lost" => &self.lost,
-            "smokes" => &self.smokes,
-            "utility" => &self.utility,
-            _ => return None,
-        })
-    }
-
-    fn value(&self, path: &[Seg]) -> Val<'static> {
-        leaf(path, |name| {
-            self.list(name)
-                .map_or(Val::Unknown, |items| whole(items.len() as u32))
-        })
-    }
-}
-
-impl BoardRow {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        if path.is_empty() {
-            return Val::Bool(true);
+    fn list(&self, index: usize) -> &[MapItem] {
+        match index {
+            0 => &self.me,
+            1 => &self.players,
+            2 => &self.device,
+            3 => &self.planted,
+            4 => &self.orbs,
+            5 => &self.enemies,
+            6 => &self.lost,
+            7 => &self.smokes,
+            _ => &self.utility,
         }
-        leaf(path, |name| match name {
-            "name" => Val::Text(&self.name),
-            "icon" => Val::Text(&self.icon),
-            "k" => whole(self.k),
-            "d" => whole(self.d),
-            "a" => whole(self.a),
-            "adr" => whole(self.adr),
-            "loadout" => Val::Text(&self.loadout),
-            "credits" => Val::Text(&self.credits),
-            "ult" => whole(self.ult),
-            "ult_need" => whole(self.ult_need),
-            "ult_ready" => Val::Bool(self.ult_ready),
-            "alive" => Val::Bool(self.alive),
-            "me" => Val::Bool(self.me),
-            _ => Val::Unknown,
-        })
-    }
-}
-
-impl ResultFacts {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "title" => Val::Text(&self.title),
-            "reason" => Val::Text(&self.reason),
-            "color" => Val::Text(self.color.key()),
-            "mvp" => Val::Text(&self.mvp),
-            "mvp_icon" => Val::Text(&self.mvp_icon),
-            "mvp_color" => Val::Text(self.mvp_color.key()),
-            "mvp_portrait" => Val::Text(&self.mvp_portrait),
-            "mvp_name" => Val::Text(&self.mvp_name),
-            "mvp_stats" => Val::Text(&self.mvp_stats),
-            "mvp_char" => Val::Text(&self.mvp_char),
-            "next_seconds" => Val::Num(self.next_seconds),
-            _ => Val::Unknown,
-        })
-    }
-}
-
-fn listed<'a, T>(
-    list: &'a [T],
-    path: &'a [Seg],
-    field: impl Fn(&'a T, &'a [Seg]) -> Val<'a>,
-) -> Val<'a> {
-    match path {
-        [Seg::Index(index)] => Val::Bool(*index < list.len()),
-        [Seg::Index(_), _, ..] | [Seg::Key(_), ..] | [] => within(list, path, field),
     }
 }
 
@@ -432,279 +338,451 @@ const SLIDERS: [&str; 11] = [
     "footsteps",
 ];
 
-impl Slider {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "frac" => Val::Num(self.frac),
-            "text" => Val::Text(&self.text),
-            _ => Val::Unknown,
-        })
+const ABILITY_SLOTS: [&str; 4] = ["c", "q", "e", "x"];
+const CARD_LISTS: [&str; 3] = ["weapons", "armor", "abilities"];
+
+const WHOLE: u32 = 0xFF;
+
+const ROUND: u32 = 1;
+const KEYS: u32 = 2;
+const SCORE: u32 = 3;
+const TEAMS: u32 = 4;
+const PLAYERS: u32 = 5;
+const FEED: u32 = 6;
+const PLAYER: u32 = 7;
+const ABILITIES: u32 = 8;
+const WEAPON: u32 = 9;
+const ACTION: u32 = 10;
+const BUY: u32 = 11;
+const BUY_CARDS: u32 = 12;
+const BUY_TEAM: u32 = 13;
+const BUY_SIGNATURE: u32 = 14;
+const BOARD: u32 = 15;
+const RESULT: u32 = 16;
+const LISTS: u32 = 17;
+const FOCUS: u32 = 18;
+const CAN_QUIT: u32 = 19;
+const SELECT_CARDS: u32 = 20;
+const SELECT_ABILITIES: u32 = 21;
+const LEVEL: u32 = 22;
+const LOADING: u32 = 23;
+const TIPS: u32 = 24;
+const SETTINGS: u32 = 25;
+const SETTINGS_KEYS: u32 = 26;
+const CROSSHAIR: u32 = 27;
+const SLIDER: u32 = 28;
+const SPECTATE: u32 = 29;
+const PLACE: u32 = 30;
+const SCOPE: u32 = 31;
+const PICKUP: u32 = 32;
+const POINT: u32 = 33;
+const CAST: u32 = 34;
+const ORB: u32 = 35;
+const STATUSES: u32 = 36;
+const BLIND: u32 = 37;
+const KILL: u32 = 38;
+const ULT: u32 = 39;
+
+fn pack(group: u32, a: usize, b: usize, field: u32) -> Option<Slot> {
+    let small = |value: usize| u32::try_from(value).ok().filter(|value| *value < 0xFF);
+    Some((group << 24) | (small(a)? << 16) | (small(b)? << 8) | field)
+}
+
+fn unpack(slot: Slot) -> (u32, usize, usize, u32) {
+    (
+        slot >> 24,
+        ((slot >> 16) & 0xFF) as usize,
+        ((slot >> 8) & 0xFF) as usize,
+        slot & 0xFF,
+    )
+}
+
+fn key(path: &[Seg]) -> Option<(&str, &[Seg])> {
+    match path {
+        [Seg::Key(name), rest @ ..] => Some((name.as_str(), rest)),
+        [Seg::Index(_), ..] | [] => None,
     }
 }
 
-impl KeyRow {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "action" => Val::Text(&self.action),
-            "binding" => Val::Text(&self.binding),
-            _ => Val::Unknown,
-        })
+fn leaf(path: &[Seg]) -> Option<&str> {
+    match key(path)? {
+        (name, []) => Some(name),
+        (_, [_, ..]) => None,
     }
 }
 
-impl SettingsFacts {
-    fn value<'a>(&'a self, path: &'a [Seg]) -> Val<'a> {
-        match key(path) {
-            Some(("crosshair_color", [])) => Val::Text(&self.crosshair_color),
-            Some(("invert", [])) => Val::Bool(self.invert),
-            Some(("crosshair_dot", [])) => Val::Bool(self.reticle.dot),
-            Some(("keys", rest)) => listed(&self.keys, rest, KeyRow::value),
-            Some((name, rest)) => {
-                if let Some(level) = name.strip_prefix("bots_") {
-                    return if rest.is_empty() {
-                        Val::Bool(level == self.level)
-                    } else {
-                        Val::Unknown
-                    };
+fn pick(path: &[Seg]) -> Option<(usize, &[Seg])> {
+    let (seg, rest) = path.split_first()?;
+    let index = match seg {
+        Seg::Index(index) => *index,
+        Seg::Key(name) => match name.as_str() {
+            "left" => 0,
+            "right" => 1,
+            _ => return None,
+        },
+    };
+    Some((index, rest))
+}
+
+fn among(names: &[&str], name: &str) -> Option<usize> {
+    names.iter().position(|known| *known == name)
+}
+
+fn named(fields: &[&str], path: &[Seg]) -> Option<u32> {
+    let mut name = String::new();
+    for seg in path {
+        let Seg::Key(part) = seg else {
+            return None;
+        };
+        if !name.is_empty() {
+            name.push('.');
+        }
+        name.push_str(part);
+    }
+    among(fields, &name).and_then(|at| u32::try_from(at).ok())
+}
+
+fn item(fields: &[&str], path: &[Seg]) -> Option<u32> {
+    if path.is_empty() {
+        return Some(WHOLE);
+    }
+    named(fields, path)
+}
+
+fn one(group: u32, fields: &[&str], path: &[Seg]) -> Option<Slot> {
+    pack(group, 0, 0, named(fields, path)?)
+}
+
+fn listed(group: u32, fields: &[&str], path: &[Seg]) -> Option<Slot> {
+    let (index, rest) = pick(path)?;
+    pack(group, index, 0, item(fields, rest)?)
+}
+
+fn sided(group: u32, fields: &[&str], path: &[Seg]) -> Option<Slot> {
+    let (side, rest) = pick(path)?;
+    let (index, rest) = pick(rest)?;
+    pack(group, side, index, item(fields, rest)?)
+}
+
+fn focus(shown: Shown, path: &[Seg]) -> Option<Slot> {
+    let button = leaf(path)?.strip_prefix("focus_")?;
+    let buttons: &[&str] = match shown {
+        Shown::Title => &menu::TITLE,
+        Shown::Pause => &menu::PAUSE,
+        Shown::MatchEnd => &menu::MATCH_END,
+        Shown::Settings => &menu::SETTINGS_ROWS,
+        Shown::Select => &menu::SELECT,
+        Shown::Loading | Shown::Hud | Shown::Buy | Shown::Scoreboard | Shown::RoundEnd => &[],
+    };
+    pack(FOCUS, shown as usize, among(buttons, button)?, 0)
+}
+
+fn level(look: &ScreenSource, (place, name): (usize, &str)) -> Option<Slot> {
+    let level = name.strip_prefix("bots_")?;
+    let index = look.menu.levels.iter().position(|known| known == level)?;
+    pack(LEVEL, place, index, 0)
+}
+
+fn select(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
+    match key(path)? {
+        ("cards", rest) => {
+            let (card, rest) = pick(rest)?;
+            match key(rest)? {
+                ("abilities", rest) => {
+                    let (ability, rest) = pick(rest)?;
+                    pack(SELECT_ABILITIES, card, ability, named(AbilityCard::FIELDS, rest)?)
                 }
-                if let Some(index) = name
-                    .strip_prefix("crosshair_")
-                    .and_then(|at| at.parse::<usize>().ok())
-                {
-                    return if rest.is_empty() {
-                        Val::Bool(self.crosshair == index)
-                    } else {
-                        Val::Unknown
-                    };
-                }
-                match SLIDERS.iter().position(|slider| *slider == name) {
-                    Some(index) => self.sliders[index].value(rest),
-                    None => Val::Unknown,
-                }
+                _ => pack(SELECT_CARDS, card, 0, named(SelectCard::FIELDS, rest)?),
             }
-            None => Val::Unknown,
         }
+        (name, []) => level(look, (0, name)),
+        (_, [_, ..]) => None,
     }
 }
 
-impl AbilityCard {
-    fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
-        leaf(path, |name| match name {
-            "icon" => Val::Text(&self.icon),
-            "key" => Val::Text(&self.key),
-            "name" => Val::Text(&self.name),
-            "desc" => Val::Text(&self.desc),
-            "ultimate" => Val::Bool(self.ultimate),
-            _ => Val::Unknown,
-        })
+fn loading(path: &[Seg]) -> Option<Slot> {
+    match key(path)? {
+        ("tips", rest) => match pick(rest)? {
+            (index, []) => pack(TIPS, index, 0, 0),
+            (_, [_, ..]) => None,
+        },
+        _ => one(LOADING, LoadingFacts::FIELDS, path),
     }
 }
 
-impl SelectCard {
-    fn value<'a>(&'a self, path: &'a [Seg]) -> Val<'a> {
-        if let Some(("abilities", rest)) = key(path) {
-            return within(&self.abilities, rest, AbilityCard::value);
-        }
-        leaf(path, |name| match name {
-            "key" => Val::Text(&self.key),
-            "name" => Val::Text(&self.name),
-            "role" => Val::Text(&self.role),
-            "selected" => Val::Bool(self.selected),
-            _ => Val::Unknown,
-        })
+fn settings(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
+    let (name, rest) = key(path)?;
+    if name == "keys" {
+        return listed(SETTINGS_KEYS, KeyRow::FIELDS, rest);
+    }
+    if let Some(found) = one(SETTINGS, SettingsFacts::FIELDS, path) {
+        return Some(found);
+    }
+    if rest.is_empty() && name.starts_with("bots_") {
+        return level(look, (1, name));
+    }
+    if let Some(index) = name
+        .strip_prefix("crosshair_")
+        .and_then(|at| at.parse::<usize>().ok())
+    {
+        return if rest.is_empty() {
+            pack(CROSSHAIR, index, 0, 0)
+        } else {
+            None
+        };
+    }
+    pack(SLIDER, among(&SLIDERS, name)?, 0, named(Slider::FIELDS, rest)?)
+}
+
+fn menu_screen(look: &ScreenSource, shown: Shown, path: &[Seg]) -> Option<Slot> {
+    if let Some(found) = focus(shown, path) {
+        return Some(found);
+    }
+    match shown {
+        Shown::Select => select(look, path),
+        Shown::Loading => loading(path),
+        Shown::Settings => settings(look, path),
+        Shown::Title => match leaf(path)? {
+            "can_quit" => pack(CAN_QUIT, 0, 0, 0),
+            _ => None,
+        },
+        Shown::Pause
+        | Shown::MatchEnd
+        | Shown::Hud
+        | Shown::Buy
+        | Shown::Scoreboard
+        | Shown::RoundEnd => None,
     }
 }
 
-impl SelectFacts {
-    fn value<'a>(&'a self, path: &'a [Seg]) -> Val<'a> {
-        match key(path) {
-            Some(("cards", rest)) => within(&self.cards, rest, SelectCard::value),
-            Some((name, [])) => match name.strip_prefix("bots_") {
-                Some(level) => Val::Bool(level == self.level),
-                None => Val::Unknown,
-            },
-            Some(_) | None => Val::Unknown,
-        }
+fn buy(path: &[Seg]) -> Option<Slot> {
+    let (name, rest) = key(path)?;
+    if let Some(list) = among(&CARD_LISTS, name) {
+        let (index, rest) = pick(rest)?;
+        return pack(BUY_CARDS, list, index, item(Card::FIELDS, rest)?);
     }
-}
-
-impl LoadingFacts {
-    fn value<'a>(&'a self, path: &'a [Seg]) -> Val<'a> {
-        match key(path) {
-            Some(("tips", rest)) => within(&self.tips, rest, |tip, rest| {
-                if rest.is_empty() {
-                    Val::Text(tip)
-                } else {
-                    Val::Unknown
-                }
-            }),
-            Some(_) | None => leaf(path, |name| match name {
-                "map" => Val::Text(&self.map),
-                "mode" => Val::Text(&self.mode),
-                "percent" => whole(self.percent),
-                "progress" => Val::Num(self.progress),
-                "site_a_note" => Val::Text(&self.site_a_note),
-                "site_b_note" => Val::Text(&self.site_b_note),
-                _ => Val::Unknown,
-            }),
-        }
-    }
-}
-
-impl MenuFacts {
-    fn focused(&self, shown: Shown, path: &[Seg]) -> Option<Val<'static>> {
-        match path {
-            [Seg::Key(name)] => {
-                let button = name.strip_prefix("focus_")?;
-                Some(Val::Bool(
-                    self.screen == Some(shown) && self.focus == button,
-                ))
-            }
-            [Seg::Key(_), _, ..] | [Seg::Index(_), ..] | [] => None,
-        }
-    }
-
-    fn value<'a>(&'a self, shown: Shown, path: &'a [Seg]) -> Val<'a> {
-        if let Some(found) = self.focused(shown, path) {
-            return found;
-        }
-        match shown {
-            Shown::Select => self.select.value(path),
-            Shown::Loading => self.loading.value(path),
-            Shown::Settings => self.settings.value(path),
-            Shown::Title => match path {
-                [Seg::Key(name)] if name == "can_quit" => Val::Bool(self.can_quit),
-                [Seg::Key(_), ..] | [Seg::Index(_), ..] | [] => Val::Unknown,
-            },
-            Shown::Pause
-            | Shown::MatchEnd
-            | Shown::Hud
-            | Shown::Buy
-            | Shown::Scoreboard
-            | Shown::RoundEnd => Val::Unknown,
-        }
-    }
-}
-
-fn ability_slot(name: &str) -> Option<usize> {
     match name {
-        "c" => Some(0),
-        "q" => Some(1),
-        "e" => Some(2),
-        "x" => Some(3),
+        "team" => listed(BUY_TEAM, Mate::FIELDS, rest),
+        "signature" => pack(BUY_SIGNATURE, 0, 0, item(Card::FIELDS, rest)?),
+        _ => one(BUY, BuyFacts::FIELDS, path),
+    }
+}
+
+fn resolve(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
+    let (name, rest) = key(path)?;
+    match name {
+        "round" => one(ROUND, RoundFacts::FIELDS, rest),
+        "keys" => pack(KEYS, menu::action(leaf(rest)?)?, 0, 0),
+        "score" => match pick(rest)? {
+            (side, []) => pack(SCORE, side, 0, 0),
+            (_, [_, ..]) => None,
+        },
+        "teams" => {
+            let (side, rest) = pick(rest)?;
+            pack(TEAMS, side, 0, named(TeamFacts::FIELDS, rest)?)
+        }
+        "players" => sided(PLAYERS, PlateFacts::FIELDS, rest),
+        "feed" => listed(FEED, FeedLine::FIELDS, rest),
+        "player" => one(PLAYER, PlayerFacts::FIELDS, rest),
+        "abilities" => {
+            let (slot, rest) = key(rest)?;
+            pack(
+                ABILITIES,
+                among(&ABILITY_SLOTS, slot)?,
+                0,
+                named(AbilityFacts::FIELDS, rest)?,
+            )
+        }
+        "weapon" => one(WEAPON, WeaponFacts::FIELDS, rest),
+        "action" => one(ACTION, ActionFacts::FIELDS, rest),
+        "buy" => buy(rest),
+        "board" => sided(BOARD, BoardRow::FIELDS, rest),
+        "result" => one(RESULT, ResultFacts::FIELDS, rest),
+        "minimap" => pack(LISTS, among(&MINIMAP, leaf(rest)?)?, 0, 0),
+        "spectate" => one(SPECTATE, SpectateFacts::FIELDS, rest),
+        "place" => one(PLACE, PlaceFacts::FIELDS, rest),
+        "scope" if rest.is_empty() => pack(SCOPE, 0, 0, 0),
+        "pickup" => one(PICKUP, PickupFacts::FIELDS, rest),
+        "point" => one(POINT, PointFacts::FIELDS, rest),
+        "cast" => one(CAST, CastFacts::FIELDS, rest),
+        "orb" => one(ORB, OrbFacts::FIELDS, rest),
+        "statuses" => listed(STATUSES, StatusFacts::FIELDS, rest),
+        "blind" if rest.is_empty() => pack(BLIND, 0, 0, 0),
+        "kill" => one(KILL, KillFacts::FIELDS, rest),
+        "ult" => one(ULT, UltFacts::FIELDS, rest),
+        "title" => menu_screen(look, Shown::Title, rest),
+        "pause" => menu_screen(look, Shown::Pause, rest),
+        "match_end" => menu_screen(look, Shown::MatchEnd, rest),
+        "select" => menu_screen(look, Shown::Select, rest),
+        "loading" => menu_screen(look, Shown::Loading, rest),
+        "settings" => menu_screen(look, Shown::Settings, rest),
         _ => None,
     }
 }
 
-impl HudFacts {
-    pub(super) fn map_items(&self, path: &[Seg]) -> Option<&[MapItem]> {
-        match key(path) {
-            Some(("minimap", [Seg::Key(name)])) => self.minimap.list(name),
-            Some(_) | None => None,
+pub(super) fn card(slot: Slot) -> Option<(CardList, usize)> {
+    let (group, a, b, _) = unpack(slot);
+    match group {
+        BUY_CARDS => Some((
+            [CardList::Weapons, CardList::Armor, CardList::Abilities].get(a).copied()?,
+            b,
+        )),
+        BUY_TEAM => Some((CardList::Team, a)),
+        _ => None,
+    }
+}
+
+fn item_of<'a, T>(
+    list: &'a [T],
+    index: usize,
+    field: u32,
+    read: impl FnOnce(&'a T, u32) -> Val<'a>,
+) -> Val<'a> {
+    match list.get(index) {
+        None => Val::Missing,
+        Some(_) if field == WHOLE => Val::Bool(true),
+        Some(found) => read(found, field),
+    }
+}
+
+fn card_of(card: &Card, field: u32) -> Val<'_> {
+    if field == WHOLE {
+        return Val::Bool(!card.name.is_empty());
+    }
+    card.field(field)
+}
+
+fn level_is(level: Option<usize>, index: usize) -> Val<'static> {
+    Val::Bool(level == Some(index))
+}
+
+impl Facts for HudFacts {
+    type Look = ScreenSource;
+    const SCREENS: &'static [&'static str] = &Shown::KEYS;
+    const PIECES: &'static [&'static str] = &pieces::PIECES;
+
+    fn slot(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
+        resolve(look, path)
+    }
+
+    fn spot(look: &ScreenSource, id: &str) -> Option<Slot> {
+        menu::spot(look, id)
+    }
+
+    fn version(&self) -> u64 {
+        self.version
+    }
+
+    fn screen(&self) -> Option<usize> {
+        self.screen.map(|shown| shown as usize)
+    }
+
+    fn points(&self, slot: Slot, each: &mut dyn FnMut(Point<'_>)) {
+        let (group, list, _, _) = unpack(slot);
+        if group != LISTS {
+            return;
+        }
+        for item in self.minimap.list(list) {
+            each(Point {
+                pos: item.pos,
+                yaw_degrees: item.yaw_degrees,
+                color: item.color,
+                fade: item.fade,
+                radius_m: item.radius_m,
+                icon: &item.icon,
+            });
         }
     }
 
-    pub(super) fn value<'a>(&'a self, path: &'a [Seg]) -> Val<'a> {
-        let Some((name, rest)) = key(path) else {
-            return Val::Unknown;
-        };
-        match name {
-            "round" => self.round.value(rest),
-            "keys" => leaf(rest, |name| {
-                self.keys
-                    .iter()
-                    .find(|(known, _)| known == name)
-                    .map_or(Val::Unknown, |(_, spoken)| Val::Text(spoken))
+    fn piece(&self, look: &ScreenSource, piece: usize, area: Area, pen: &mut Pen<'_>) {
+        pieces::piece(self, look, piece, area, pen);
+    }
+
+    fn read(&self, slot: Slot) -> Val<'_> {
+        let (group, a, b, field) = unpack(slot);
+        let menu = &self.menu;
+        match group {
+            ROUND => self.round.field(field),
+            KEYS => self
+                .keys
+                .get(a)
+                .map_or(Val::Missing, |spoken| Val::Text(spoken)),
+            SCORE => self.score.get(a).map_or(Val::Missing, |score| whole(*score)),
+            TEAMS => self.teams.get(a).map_or(Val::Missing, |team| team.field(field)),
+            PLAYERS => self.players.get(a).map_or(Val::Missing, |team| {
+                item_of(team, b, field, PlateFacts::field)
             }),
-            "score" => match picked(&self.score, rest) {
-                Ok((Some(score), [])) => whole(*score),
-                Ok((None, [])) => Val::Missing,
-                Ok((_, [_, ..])) | Err(_) => Val::Unknown,
-            },
-            "teams" => within(&self.teams, rest, |team, rest| team.value(rest)),
-            "players" => match picked(&self.players, rest) {
-                Ok((Some(team), rest)) => within(team, rest, |plate, rest| plate.value(rest)),
-                Ok((None, _)) => Val::Missing,
-                Err(unknown) => unknown,
-            },
-            "feed" => within(&self.feed, rest, |line, rest| line.value(rest)),
-            "player" => self.player.value(rest),
-            "abilities" => match key(rest) {
-                Some((slot, rest)) => match ability_slot(slot) {
-                    Some(index) => self.abilities[index].value(rest),
-                    None => Val::Unknown,
-                },
-                None => Val::Unknown,
-            },
-            "weapon" => self.weapon.value(rest),
-            "action" => self.action.value(rest),
-            "buy" => self.buy.value(rest),
-            "board" => match picked(&self.board, rest) {
-                Ok((Some(team), rest)) => within(team, rest, |row, rest| row.value(rest)),
-                Ok((None, _)) => Val::Missing,
-                Err(unknown) => unknown,
-            },
-            "result" => self.result.value(rest),
-            "minimap" => self.minimap.value(rest),
-            "title" => self.menu.value(Shown::Title, rest),
-            "pause" => self.menu.value(Shown::Pause, rest),
-            "match_end" => self.menu.value(Shown::MatchEnd, rest),
-            "select" => self.menu.value(Shown::Select, rest),
-            "loading" => self.menu.value(Shown::Loading, rest),
-            "settings" => self.menu.value(Shown::Settings, rest),
-            "spectate" => leaf(rest, |name| match name {
-                "active" => Val::Bool(self.spectate.active),
-                "name" => Val::Text(&self.spectate.name),
-                "icon" => Val::Text(&self.spectate.icon),
-                "color" => Val::Text(&self.spectate.color),
-                _ => Val::Unknown,
-            }),
-            "place" => leaf(rest, |name| match name {
-                "callout" => Val::Text(&self.place.callout),
-                _ => Val::Unknown,
-            }),
-            "scope" if rest.is_empty() => whole(self.scope),
-            "pickup" => self.pickup.value(rest),
-            "point" => leaf(rest, |name| match name {
-                "active" => Val::Bool(self.point.active),
-                "reason" => Val::Text(&self.point.reason),
-                _ => Val::Unknown,
-            }),
-            "cast" => self.cast.value(rest),
-            "orb" => leaf(rest, |name| match name {
-                "hint" => Val::Bool(self.orb.hint),
-                "channel" => Val::Bool(self.orb.channel),
-                "progress" => Val::Num(self.orb.progress),
-                _ => Val::Unknown,
-            }),
-            "statuses" => within(&self.statuses, rest, |status, rest| {
-                if rest.is_empty() {
-                    return Val::Bool(true);
-                }
-                leaf(rest, |name| match name {
-                    "kind" => Val::Text(&status.kind),
-                    "label" => Val::Text(&status.label),
-                    "left" => Val::Num(status.left),
-                    _ => Val::Unknown,
-                })
-            }),
-            "blind" if rest.is_empty() => Val::Num(self.blind),
-            "kill" => leaf(rest, |name| match name {
-                "active" => Val::Bool(self.kill.active),
-                "count" => whole(self.kill.count),
-                "label" => Val::Text(&self.kill.label),
-                "victim_icon" => Val::Text(&self.kill.victim_icon),
-                _ => Val::Unknown,
-            }),
-            "ult" => leaf(rest, |name| match name {
-                "active" => Val::Bool(self.ult.active),
-                "ally" => Val::Bool(self.ult.ally),
-                "name" => Val::Text(&self.ult.name),
-                "icon" => Val::Text(&self.ult.icon),
-                "ultimate" => Val::Text(&self.ult.ultimate),
-                "color" => Val::Text(self.ult.color.key()),
-                _ => Val::Unknown,
-            }),
+            FEED => item_of(&self.feed, a, field, FeedLine::field),
+            PLAYER => self.player.field(field),
+            ABILITIES => self
+                .abilities
+                .get(a)
+                .map_or(Val::Missing, |ability| ability.field(field)),
+            WEAPON => self.weapon.field(field),
+            ACTION => self.action.field(field),
+            BUY => self.buy.field(field),
+            BUY_CARDS => {
+                let lists = [&self.buy.weapons, &self.buy.armor, &self.buy.abilities];
+                lists
+                    .get(a)
+                    .and_then(|cards| cards.get(b))
+                    .map_or(Val::Missing, |card| card_of(card, field))
+            }
+            BUY_TEAM => item_of(&self.buy.team, a, field, Mate::field),
+            BUY_SIGNATURE => card_of(&self.buy.signature, field),
+            BOARD => self
+                .board
+                .get(a)
+                .map_or(Val::Missing, |rows| item_of(rows, b, field, BoardRow::field)),
+            RESULT => self.result.field(field),
+            LISTS => whole(self.minimap.list(a).len() as u32),
+            FOCUS => Val::Bool(
+                menu.screen.map(|shown| shown as usize) == Some(a) && menu.focus == Some(b),
+            ),
+            CAN_QUIT => Val::Bool(menu.can_quit),
+            SELECT_CARDS => menu
+                .select
+                .cards
+                .get(a)
+                .map_or(Val::Missing, |card| card.field(field)),
+            SELECT_ABILITIES => menu
+                .select
+                .cards
+                .get(a)
+                .and_then(|card| card.abilities.get(b))
+                .map_or(Val::Missing, |ability| ability.field(field)),
+            LEVEL if a == 0 => level_is(menu.select.level, b),
+            LEVEL => level_is(menu.settings.level, b),
+            LOADING => menu.loading.field(field),
+            TIPS => menu
+                .loading
+                .tips
+                .get(a)
+                .map_or(Val::Missing, |tip| Val::Text(tip)),
+            SETTINGS => menu.settings.field(field),
+            SETTINGS_KEYS if field == WHOLE => Val::Bool(a < menu.settings.keys.len()),
+            SETTINGS_KEYS => menu
+                .settings
+                .keys
+                .get(a)
+                .map_or(Val::Missing, |row| row.field(field)),
+            CROSSHAIR => Val::Bool(menu.settings.crosshair == a),
+            SLIDER => menu
+                .settings
+                .sliders
+                .get(a)
+                .map_or(Val::Missing, |slider| slider.field(field)),
+            SPECTATE => self.spectate.field(field),
+            PLACE => self.place.field(field),
+            SCOPE => whole(self.scope),
+            PICKUP => self.pickup.field(field),
+            POINT => self.point.field(field),
+            CAST => self.cast.field(field),
+            ORB => self.orb.field(field),
+            STATUSES => item_of(&self.statuses, a, field, StatusFacts::field),
+            BLIND => Val::Num(self.blind),
+            KILL => self.kill.field(field),
+            ULT => self.ult.field(field),
             _ => Val::Unknown,
         }
     }

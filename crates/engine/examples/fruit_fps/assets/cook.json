@@ -52,7 +52,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 26000,
@@ -81,7 +82,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 26000,
@@ -110,7 +112,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 26000,
@@ -139,7 +142,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 26000,
@@ -168,7 +172,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 26000,
@@ -334,28 +339,6 @@
     },
     {
       "kind": "model",
-      "name": "ground",
-      "sources": [
-        "source/static_ground.glb"
-      ],
-      "params": {
-        "kind": "static",
-        "scale": 1.0,
-        "texture_size": 1024,
-        "material": {
-          "slot": "figure",
-          "module": "figure",
-          "lighting": "figure"
-        },
-        "budgets": {
-          "triangles": 2000,
-          "vertices": 1000
-        },
-        "textures": "maps"
-      }
-    },
-    {
-      "kind": "model",
       "name": "rifle",
       "sources": [
         "source/fp_rifle.glb"
@@ -372,7 +355,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 12000,
@@ -401,7 +385,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 12000,
@@ -430,7 +415,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 12000,
@@ -459,7 +445,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 12000,
@@ -483,7 +470,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 2500,
@@ -505,7 +493,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 2500,
@@ -527,7 +516,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 2500,
@@ -549,7 +539,8 @@
         "material": {
           "slot": "figure",
           "module": "figure",
-          "lighting": "figure"
+          "lighting": "figure",
+          "cull": "back"
         },
         "budgets": {
           "triangles": 2500,
@@ -651,7 +642,7 @@
           "orm": 512
         },
         "baked": {
-          "uv1": {
+          "lightmap": {
             "kind": "level",
             "maps": {
               "lightmap": {
@@ -661,7 +652,8 @@
                   "wrap_u": "clamp_to_edge",
                   "wrap_v": "clamp_to_edge",
                   "mag_filter": "linear",
-                  "min_filter": "linear"
+                  "min_filter": "linear",
+                  "mipmap_filter": "linear"
                 }
               }
             },
@@ -1228,15 +1220,30 @@
       }
     },
     {
+      "kind": "material_maps",
+      "name": "abilities",
+      "sources": [
+        "source/prop_peel.glb"
+      ],
+      "params": {
+        "material": "abilities_atlas",
+        "texture_size": 1024,
+        "textures": "maps",
+        "exact_alpha": [
+          "orm"
+        ]
+      }
+    },
+    {
       "kind": "model",
       "name": "prop_peel",
       "sources": [
         "source/prop_peel.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1245,13 +1252,6 @@
         "budgets": {
           "triangles": 800,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "make": "abilities"
         }
       }
     },
@@ -1262,9 +1262,9 @@
         "source/prop_ripe_flash.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1273,13 +1273,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1290,9 +1283,9 @@
         "source/prop_jam_pool.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1301,13 +1294,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1318,9 +1304,9 @@
         "source/prop_seed_sensor.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1329,13 +1315,6 @@
         "budgets": {
           "triangles": 800,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1346,9 +1325,9 @@
         "source/prop_sweet_spot.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1357,13 +1336,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1374,9 +1346,9 @@
         "source/prop_zest_bomb.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1385,13 +1357,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1402,9 +1367,9 @@
         "source/prop_pulp_cloud.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1413,13 +1378,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1430,9 +1388,9 @@
         "source/prop_seed_grenade.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1441,13 +1399,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1458,9 +1409,9 @@
         "source/prop_melon_drop.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1469,13 +1420,6 @@
         "budgets": {
           "triangles": 800,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1486,9 +1430,9 @@
         "source/prop_nightshade.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1497,13 +1441,6 @@
         "budgets": {
           "triangles": 300,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },
@@ -1514,9 +1451,9 @@
         "source/prop_vine_wire.glb"
       ],
       "params": {
-        "kind": "static",
+        "kind": "borrowing",
         "scale": 1.0,
-        "texture_size": 1024,
+        "maps_of": "abilities",
         "material": {
           "slot": "figure",
           "module": "figure",
@@ -1525,13 +1462,6 @@
         "budgets": {
           "triangles": 800,
           "vertices": 1000
-        },
-        "textures": "maps",
-        "exact_alpha": [
-          "orm"
-        ],
-        "shared_maps": {
-          "use": "abilities"
         }
       }
     },

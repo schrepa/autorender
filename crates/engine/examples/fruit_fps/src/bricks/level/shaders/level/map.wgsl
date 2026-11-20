@@ -1,5 +1,6 @@
 import package::engine::drawn::{drawn_model, drawn_slot};
 import package::engine::view::{camera, stable_normalize, view_clip};
+import package::generated::level::{MeshBase, MeshColor, MeshLightmap, mesh_normal};
 import package::level::light::level_light;
 import package::level::material::{level_baked, level_broken, level_sky_map, level_sky_sampler,
     level_surface, level_texels};
@@ -14,20 +15,6 @@ const LEVEL_REFLECTANCE: f32 = 0.04;
 const LEVEL_SMALLEST_ALPHA: f32 = 0.002;
 const LEVEL_SMALLEST_COSINE: f32 = 1.0e-4;
 
-struct LevelVertex {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec2<f32>,
-    @location(3) uv0: vec2<f32>,
-    @location(4) uv1: vec2<f32>,
-}
-
-struct LevelDetailVertex {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec2<f32>,
-    @location(3) uv0: vec2<f32>,
-    @location(6) color: vec4<f32>,
-}
-
 struct LevelCorner {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) world: vec3<f32>,
@@ -36,14 +23,6 @@ struct LevelCorner {
     @location(3) uv1: vec2<f32>,
     @location(4) color: vec4<f32>,
     @location(5) fog: f32,
-}
-
-fn level_octahedral(packed: vec2<f32>) -> vec3<f32> {
-    var normal = vec3<f32>(packed, 1.0 - abs(packed.x) - abs(packed.y));
-    let fold = max(-normal.z, 0.0);
-    normal.x += select(fold, -fold, normal.x >= 0.0);
-    normal.y += select(fold, -fold, normal.y >= 0.0);
-    return normalize(normal);
 }
 
 fn level_deflected(normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>, sampled: vec3<f32>)
@@ -72,30 +51,31 @@ fn level_pow5(x: f32) -> f32 {
     return squared * squared * x;
 }
 
-fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f32>) -> LevelCorner {
+fn level_corner(index: u32, base: MeshBase) -> LevelCorner {
     let model = drawn_model(drawn_slot(index));
-    let world = (model * vec4<f32>(position, 1.0)).xyz;
+    let world = (model * vec4<f32>(base.position, 1.0)).xyz;
     var out: LevelCorner;
     out.clip_position = view_clip(world);
     out.world = world;
-    out.normal = (model * vec4<f32>(level_octahedral(normal), 0.0)).xyz;
-    out.uv0 = uv0;
-    out.uv1 = uv0;
+    out.normal = (model * vec4<f32>(mesh_normal(base.normal), 0.0)).xyz;
+    out.uv0 = base.uv0;
+    out.uv1 = base.uv0;
     out.color = vec4<f32>(1.0);
-    out.fog = level_fog(world);
     return out;
 }
 
-@vertex fn vs_level(vertex: LevelVertex, @builtin(instance_index) index: u32) -> LevelCorner {
-    var out = level_corner(index, vertex.position, vertex.normal, vertex.uv0);
-    out.uv1 = vertex.uv1;
-    return out;
-}
-
-@vertex fn vs_level_detail(vertex: LevelDetailVertex, @builtin(instance_index) index: u32)
+@vertex fn vs_level(base: MeshBase, lightmap: MeshLightmap, @builtin(instance_index) index: u32)
         -> LevelCorner {
-    var out = level_corner(index, vertex.position, vertex.normal, vertex.uv0);
-    out.color = vertex.color;
+    var out = level_corner(index, base);
+    out.uv1 = lightmap.uv1;
+    return out;
+}
+
+@vertex fn vs_level_detail(base: MeshBase, color: MeshColor, @builtin(instance_index) index: u32)
+        -> LevelCorner {
+    var out = level_corner(index, base);
+    out.color = color.color;
+    out.fog = level_fog(out.world);
     return out;
 }
 

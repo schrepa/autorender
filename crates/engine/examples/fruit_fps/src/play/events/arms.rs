@@ -1,8 +1,8 @@
 use engine::prelude::Resource;
+use engine_solids::Kind;
 use glam::Vec3;
 
 use crate::rules::{AbilitySlot, Catalog, Cause, Death};
-use crate::solids::Kind;
 use crate::weapons::{BodyPart, GunKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

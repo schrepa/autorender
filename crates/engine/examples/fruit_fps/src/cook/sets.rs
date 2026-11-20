@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 
 use cook::{Kind, Refusal, Step};
 use engine::math::{cos, sin};
+use engine_visible_sets::VisibleSets;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-const MAGIC: &[u8; 4] = b"LVS1";
+use cook_rays::{Gpu, NONE, Occluders};
 
 pub static VISIBLE_SETS: Kind = Kind {
     name: "visible_sets",
-    version: 1,
+    version: 2,
     run: visible_sets,
 };
 
@@ -214,10 +214,6 @@ fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
 fn crosses(from: [f32; 3], to: [f32; 3], held: &Bounds) -> bool {
     let (mut near, mut far) = (0.0_f32, 1.0_f32);
     for axis in 0..3 {
@@ -246,209 +242,6 @@ fn crosses(from: [f32; 3], to: [f32; 3], held: &Bounds) -> bool {
         }
     }
     true
-}
-
-fn wide(value: [f32; 3]) -> [f64; 3] {
-    value.map(f64::from)
-}
-
-fn sub_wide(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn cross_wide(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn dot_wide(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-#[derive(Clone, Copy)]
-struct Triangle {
-    corner: [f64; 3],
-    first: [f64; 3],
-    second: [f64; 3],
-    two_sided: bool,
-}
-
-impl Triangle {
-    fn hit(&self, from: [f64; 3], step: [f64; 3], reach: f64) -> bool {
-        let p = cross_wide(step, self.second);
-        let det = dot_wide(self.first, p);
-        if det == 0.0 || (!self.two_sided && det < 0.0) {
-            return false;
-        }
-        let inverse = 1.0 / det;
-        let s = sub_wide(from, self.corner);
-        let u = dot_wide(s, p) * inverse;
-        if !(0.0..=1.0).contains(&u) {
-            return false;
-        }
-        let q = cross_wide(s, self.first);
-        let v = dot_wide(step, q) * inverse;
-        if v < 0.0 || u + v > 1.0 {
-            return false;
-        }
-        let t = dot_wide(self.second, q) * inverse;
-        t > 0.0 && t < reach
-    }
-}
-
-struct Node {
-    bounds: Bounds,
-    start: u32,
-    count: u32,
-}
-
-struct Tree {
-    nodes: Vec<Node>,
-    triangles: Vec<Triangle>,
-}
-
-struct Item {
-    bounds: Bounds,
-    centre: [f32; 3],
-    triangle: Triangle,
-}
-
-fn build_node(items: &mut [Item], first: usize, nodes: &mut Vec<Node>, at: usize) {
-    let mut bounds = Bounds::empty();
-    let mut centres = Bounds::empty();
-    for item in items.iter() {
-        bounds.join(&item.bounds);
-        centres.grow(item.centre);
-    }
-    let count = u32::try_from(items.len()).expect("tree_items_fit_u32");
-    let start = u32::try_from(first).expect("tree_items_fit_u32");
-    if items.len() <= 4 {
-        nodes[at] = Node {
-            bounds,
-            start,
-            count,
-        };
-        return;
-    }
-    let size = sub(centres.high, centres.low);
-    let axis = if size[0] >= size[1] && size[0] >= size[2] {
-        0
-    } else if size[1] >= size[2] {
-        1
-    } else {
-        2
-    };
-    let middle = items.len() / 2;
-    items.select_nth_unstable_by(middle, |a, b| a.centre[axis].total_cmp(&b.centre[axis]));
-    let left = nodes.len();
-    for _ in 0..2 {
-        nodes.push(Node {
-            bounds,
-            start: 0,
-            count: 0,
-        });
-    }
-    nodes[at] = Node {
-        bounds,
-        start: u32::try_from(left).expect("tree_nodes_fit_u32"),
-        count: 0,
-    };
-    let (low, high) = items.split_at_mut(middle);
-    build_node(low, first, nodes, left);
-    build_node(high, first + middle, nodes, left + 1);
-}
-
-impl Tree {
-    fn new(chunks: &[Chunk], pad: f32) -> Self {
-        let mut items: Vec<Item> = Vec::new();
-        for chunk in chunks.iter().filter(|chunk| chunk.occludes) {
-            for triangle in chunk.indices.as_chunks::<3>().0 {
-                let [a, b, c] = triangle.map(|corner| chunk.positions[corner as usize]);
-                let mut bounds = Bounds::empty();
-                for point in [a, b, c] {
-                    bounds.grow(point);
-                }
-                for axis in 0..3 {
-                    bounds.low[axis] -= pad;
-                    bounds.high[axis] += pad;
-                }
-                let corner = wide(a);
-                items.push(Item {
-                    bounds,
-                    centre: [0, 1, 2].map(|axis| (a[axis] + b[axis] + c[axis]) / 3.0),
-                    triangle: Triangle {
-                        corner,
-                        first: sub_wide(wide(b), corner),
-                        second: sub_wide(wide(c), corner),
-                        two_sided: chunk.two_sided,
-                    },
-                });
-            }
-        }
-        let mut nodes = vec![Node {
-            bounds: Bounds::empty(),
-            start: 0,
-            count: 0,
-        }];
-        if !items.is_empty() {
-            build_node(&mut items, 0, &mut nodes, 0);
-        }
-        Self {
-            nodes,
-            triangles: items.into_iter().map(|item| item.triangle).collect(),
-        }
-    }
-
-    fn enters(bounds: &Bounds, from: [f32; 3], inverse: [f32; 3], reach: f32) -> bool {
-        let (mut near, mut far) = (0.0_f32, reach);
-        for axis in 0..3 {
-            let mut enter = (bounds.low[axis] - from[axis]) * inverse[axis];
-            let mut leave = (bounds.high[axis] - from[axis]) * inverse[axis];
-            if enter > leave {
-                std::mem::swap(&mut enter, &mut leave);
-            }
-            if enter > near {
-                near = enter;
-            }
-            if leave < far {
-                far = leave;
-            }
-        }
-        near <= far
-    }
-
-    fn blocked(&self, from: [f32; 3], to: [f32; 3], reach: f32) -> bool {
-        if self.triangles.is_empty() {
-            return false;
-        }
-        let step = sub(to, from);
-        let inverse = step.map(|value| 1.0 / value);
-        let (start, ray, limit) = (wide(from), sub_wide(wide(to), wide(from)), f64::from(reach));
-        let mut stack = [0_u32; 64];
-        let mut depth = 1;
-        while depth > 0 {
-            depth -= 1;
-            let node = &self.nodes[stack[depth] as usize];
-            if !Self::enters(&node.bounds, from, inverse, reach) {
-                continue;
-            }
-            if node.count == 0 {
-                stack[depth] = node.start;
-                stack[depth + 1] = node.start + 1;
-                depth += 2;
-                continue;
-            }
-            let first = node.start as usize;
-            let held = &self.triangles[first..first + node.count as usize];
-            if held.iter().any(|triangle| triangle.hit(start, ray, limit)) {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 enum Solid {
@@ -844,7 +637,6 @@ struct Addition {
     centre: [f32; 3],
 }
 
-
 struct Built {
     bytes: Vec<u8>,
     summary: Value,
@@ -884,82 +676,67 @@ fn by_boxes(cell: &Cell, world: &World, targets: &[(Bounds, Vec<[f32; 3]>)]) -> 
 }
 
 fn by_triangles(
-    (plan, tree, chunks): (&SetsPlan, &Tree, &[Chunk]),
-    cell: &Cell,
-    at: [u32; 2],
-    kept: &[bool],
-) -> (Vec<Addition>, u64) {
-    let mut rays = 0_u64;
-    let mut found = Vec::new();
-    for (index, chunk) in chunks.iter().enumerate() {
-        if kept[index] {
-            continue;
+    (plan, gpu, occluders): (&SetsPlan, &Gpu, &Occluders),
+    (chunks, cells, kept): (&[Chunk], &[Cell], &[Vec<bool>]),
+    place: impl Fn(usize) -> [u32; 2],
+) -> Result<(Vec<Addition>, u64), String> {
+    let mut centres = Vec::new();
+    let mut spans = Vec::new();
+    for chunk in chunks {
+        let start = centres.len();
+        for triangle in chunk.indices.as_chunks::<3>().0 {
+            let [a, b, c] = triangle.map(|corner| chunk.positions[corner as usize]);
+            centres.push([0, 1, 2].map(|axis| (a[axis] + b[axis] + c[axis]) / 3.0));
         }
-        'chunk: for &(eye_at, eye) in &cell.eyes {
-            for (triangle_at, triangle) in chunk.indices.as_chunks::<3>().0.iter().enumerate() {
-                let [a, b, c] = triangle.map(|corner| chunk.positions[corner as usize]);
-                let centre = [0, 1, 2].map(|axis| (a[axis] + b[axis] + c[axis]) / 3.0);
-                let length = dot(sub(centre, eye), sub(centre, eye)).sqrt();
-                rays += 1;
-                if length <= plan.target_gap_m
-                    || !tree.blocked(eye, centre, 1.0 - plan.target_gap_m / length)
-                {
-                    found.push(Addition {
-                        cell: at,
-                        chunk: index,
-                        eye: eye_at,
-                        eye_at: eye,
-                        triangle: triangle_at,
-                        centre,
-                    });
-                    break 'chunk;
-                }
+        spans.push(start..centres.len());
+    }
+    let mut eyes = Vec::new();
+    let mut first_eye = Vec::new();
+    for cell in cells {
+        first_eye.push(eyes.len());
+        eyes.extend(cell.eyes.iter().map(|(_, eye)| *eye));
+    }
+    let (mut work, mut items) = (Vec::new(), Vec::new());
+    for (chunk, span) in spans.iter().enumerate() {
+        for (at, cell) in cells.iter().enumerate() {
+            if kept[at][chunk] || span.is_empty() {
+                continue;
+            }
+            for eye in 0..cell.eyes.len() {
+                work.push((at, chunk, eye));
+                items.push(
+                    [first_eye[at] + eye, span.start, span.len()]
+                        .map(|value| u32::try_from(value).expect("work_fits_u32")),
+                );
             }
         }
     }
-    (found, rays)
-}
-
-fn bits(row: &[bool]) -> Vec<u8> {
-    let mut out = vec![0_u8; row.len().div_ceil(8)];
-    for (at, held) in row.iter().enumerate() {
-        if *held {
-            out[at / 8] |= 1 << (at % 8);
+    let answers = gpu.first_unblocked(occluders, &centres, &eyes, &items, plan.target_gap_m)?;
+    let mut rays = 0_u64;
+    let mut found: Vec<Addition> = Vec::new();
+    for ((at, chunk, eye), (item, answer)) in work.into_iter().zip(items.iter().zip(answers)) {
+        rays += u64::from(if answer == NONE { item[2] } else { answer + 1 });
+        let cell = place(at);
+        if answer == NONE
+            || found
+                .last()
+                .is_some_and(|held| held.cell == cell && held.chunk == chunk)
+        {
+            continue;
         }
+        let (eye, eye_at) = cells[at].eyes[eye];
+        let triangle = answer as usize;
+        found.push(Addition {
+            cell,
+            chunk,
+            eye,
+            eye_at,
+            triangle,
+            centre: centres[spans[chunk].start + triangle],
+        });
     }
-    out
-}
-
-fn written(
-    plan: &SetsPlan,
-    world: &World,
-    chunks: &[Chunk],
-    (floors, kept): (&[f32], &[Vec<bool>]),
-) -> Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    out.extend_from_slice(MAGIC);
-    for value in world.cells {
-        out.extend_from_slice(&value.to_le_bytes());
-    }
-    for value in [world.origin[0], world.origin[1], plan.cell_m, plan.top_m] {
-        out.extend_from_slice(&value.to_le_bytes());
-    }
-    let count = u32::try_from(chunks.len()).map_err(|_| "too many chunks".to_owned())?;
-    out.extend_from_slice(&count.to_le_bytes());
-    for chunk in chunks {
-        let length = u16::try_from(chunk.id.len())
-            .map_err(|_| format!("chunk id `{}` is longer than 65535 bytes", chunk.id))?;
-        out.extend_from_slice(&length.to_le_bytes());
-        out.extend_from_slice(chunk.id.as_bytes());
-    }
-    out.resize(out.len().div_ceil(4) * 4, 0);
-    for floor in floors {
-        out.extend_from_slice(&floor.to_le_bytes());
-    }
-    for row in kept {
-        out.extend(bits(row));
-    }
-    Ok(out)
+    found.sort_by_key(|held| (held.cell[1], held.cell[0], held.chunk));
+    Ok((found, rays))
 }
 
 fn padded(
@@ -995,21 +772,19 @@ fn padded(
         .collect()
 }
 
-struct Timed {
-    started: Instant,
+struct Counted {
     from_boxes: Vec<usize>,
     box_rays: u64,
-    box_seconds: f64,
     truth_rays: u64,
-    truth_seconds: f64,
     occluding: usize,
+    adapter: (String, &'static str),
 }
 
 fn summary(
     (plan, world, chunks): (&SetsPlan, &World, &[Chunk]),
     (cells, kept): (&[Cell], &[Vec<bool>]),
     additions: &[Addition],
-    (timed, file_bytes): (&Timed, usize),
+    (counted, file_bytes): (&Counted, usize),
 ) -> Value {
     let walkable: Vec<usize> = (0..cells.len())
         .filter(|at| !cells[*at].eyes.is_empty())
@@ -1039,17 +814,16 @@ fn summary(
         "eyes_per_cell": plan.eye_heights_m.len() * 5,
         "chunks": chunks.len(),
         "occluders": {"named": world.occluder_names, "kept_after_shrink": world.occluders.len()},
-        "occluding_triangles": timed.occluding,
-        "set_chunks": {"mean_from_boxes": share(walkable.iter().map(|at| timed.from_boxes[*at]).sum()), "mean": mean(|size| size.0), "largest": largest(|size| size.0)},
+        "occluding_triangles": counted.occluding,
+        "set_chunks": {"mean_from_boxes": share(walkable.iter().map(|at| counted.from_boxes[*at]).sum()), "mean": mean(|size| size.0), "largest": largest(|size| size.0)},
         "set_triangles": {"mean": mean(|size| size.1), "largest": largest(|size| size.1), "map": triangles.iter().sum::<usize>()},
-        "box_rays": timed.box_rays,
-        "box_seconds": timed.box_seconds,
-        "truth_rays": timed.truth_rays,
-        "truth_seconds": timed.truth_seconds,
+        "box_rays": counted.box_rays,
+        "truth_rays": counted.truth_rays,
         "added_pairs": additions.len(),
         "additions": additions.iter().map(|held| json!({"cell": held.cell, "chunk": chunks[held.chunk].id, "eye": held.eye, "eye_position": held.eye_at, "triangle": held.triangle, "triangle_centre": held.centre})).collect::<Vec<Value>>(),
         "file_bytes": file_bytes,
-        "seconds": timed.started.elapsed().as_secs_f64(),
+        "adapter": counted.adapter.0,
+        "backend": counted.adapter.1,
     })
 }
 
@@ -1059,7 +833,7 @@ fn place_index(cell: [u32; 2], cells_x: usize) -> usize {
 
 fn build(plan: &SetsPlan, data: &Value, chunks: &[Chunk]) -> Result<Built, String> {
     checked(plan)?;
-    let started = Instant::now();
+    let gpu = Gpu::new()?;
     let world = world(plan, data)?;
     let cells_x = world.cells[0] as usize;
     let count = cells_x * world.cells[1] as usize;
@@ -1082,47 +856,52 @@ fn build(plan: &SetsPlan, data: &Value, chunks: &[Chunk]) -> Result<Built, Strin
         .collect();
     let boxed = workers(count, |at| by_boxes(&cells[at], &world, &targets));
     let mut kept = padded(&world, &cells, &boxed, plan.padding_cells);
-    let box_seconds = started.elapsed().as_secs_f64();
-    let truth_started = Instant::now();
-    let tree = Tree::new(chunks, plan.target_gap_m);
-    let checked_rows = workers(count, |at| {
-        by_triangles((plan, &tree, chunks), &cells[at], place(at), &kept[at])
-    });
-    let timed = Timed {
-        started,
+    let occluders = Occluders::new(
+        chunks
+            .iter()
+            .filter(|chunk| chunk.occludes)
+            .flat_map(|chunk| {
+                (chunk.indices.as_chunks::<3>().0.iter()).map(|triangle| {
+                    (
+                        triangle.map(|corner| chunk.positions[corner as usize]),
+                        chunk.two_sided,
+                    )
+                })
+            }),
+        plan.target_gap_m,
+    );
+    let (additions, truth_rays) =
+        by_triangles((plan, &gpu, &occluders), (chunks, &cells, &kept), place)?;
+    let counted = Counted {
         from_boxes: kept
             .iter()
             .map(|row| row.iter().filter(|held| **held).count())
             .collect(),
         box_rays: boxed.iter().map(|(_, rays)| rays).sum(),
-        box_seconds,
-        truth_rays: checked_rows.iter().map(|(_, rays)| rays).sum(),
-        truth_seconds: truth_started.elapsed().as_secs_f64(),
-        occluding: tree.triangles.len(),
+        truth_rays,
+        occluding: occluders.count(),
+        adapter: gpu.adapter(),
     };
-    let mut additions = Vec::new();
-    for (at, (found, _)) in checked_rows.into_iter().enumerate() {
-        for addition in found {
-            kept[at][addition.chunk] = true;
-            additions.push(addition);
-        }
-    }
-    if let Some(missing) = additions
-        .iter()
-        .find(|held| !kept[place_index(held.cell, cells_x)][held.chunk])
-    {
-        return Err(format!(
-            "cell {:?}: chunk `{}` is seen by the triangle check but not kept",
-            missing.cell, chunks[missing.chunk].id
-        ));
+    for addition in &additions {
+        kept[place_index(addition.cell, cells_x)][addition.chunk] = true;
     }
     let floors: Vec<f32> = cells.iter().map(|cell| cell.floor).collect();
-    let bytes = written(plan, &world, chunks, (&floors, &kept))?;
+    let ids = chunks.iter().map(|chunk| chunk.id.clone()).collect();
+    let bytes = VisibleSets::new(
+        world.origin,
+        plan.cell_m,
+        world.cells,
+        plan.top_m,
+        ids,
+        floors,
+        &kept,
+    )?
+    .write();
     let summary = summary(
         (plan, &world, chunks),
         (&cells, &kept),
         &additions,
-        (&timed, bytes.len()),
+        (&counted, bytes.len()),
     );
     Ok(Built { bytes, summary })
 }

@@ -1,6 +1,7 @@
+use engine_math::max;
 use glam::Vec3;
 
-use crate::bots::aim::{flat, flat_distance, max, radians, sin_cos};
+use crate::bots::aim::{flat, flat_distance, radians, sin_cos};
 use crate::bots::numbers::BotNumbers;
 use crate::bots::places::{Places, Site, ZoneId};
 use crate::bots::sense::World;

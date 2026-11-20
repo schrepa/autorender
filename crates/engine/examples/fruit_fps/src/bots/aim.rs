@@ -1,3 +1,4 @@
+use engine_math::{clamp, max, min};
 use glam::{Vec2, Vec3};
 
 use super::numbers::{LevelNumbers, PlayNumbers};
@@ -6,18 +7,6 @@ use super::rng::Rng;
 pub const PI: f32 = std::f32::consts::PI;
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
 const TAU: f32 = std::f32::consts::TAU;
-
-pub fn min(a: f32, b: f32) -> f32 {
-    if b < a { b } else { a }
-}
-
-pub fn max(a: f32, b: f32) -> f32 {
-    if a < b { b } else { a }
-}
-
-pub fn clamp(x: f32, low: f32, high: f32) -> f32 {
-    min(max(x, low), high)
-}
 
 pub fn radians(degrees: f32) -> f32 {
     degrees * (PI / 180.0)

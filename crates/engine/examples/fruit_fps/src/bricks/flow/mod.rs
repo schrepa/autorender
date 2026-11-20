@@ -5,14 +5,14 @@ mod roster;
 
 use std::sync::Arc;
 
+use brick_sound::SoundLoad;
 use engine::prelude::*;
-use engine_core::{DevSetting, Host, Pause, Readiness, Stats};
+use engine_core::{Assets, DevSetting, GroupReport, GroupStage, Host, Pause, Readiness, Stats};
 
-use crate::bricks::screen::ScreenSource;
+use crate::names::MATCH_GROUP;
 use crate::play::flow::{Flow, SeatChoice, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::round::Round;
-use crate::play::sound::SoundLoad;
 use crate::rules::{Control, Phase};
 
 use roster::Seated;
@@ -28,11 +28,11 @@ settings! {
     }
 }
 
-type DefaultSeats = Result<Arc<[SeatChoice]>, String>;
+type Defaults = (Arc<[SeatChoice]>, f64);
 
 #[derive(Resource, Default)]
 struct FlowBook {
-    defaults: Option<(u64, DefaultSeats)>,
+    defaults: Option<(u64, Result<Defaults, String>)>,
     jumped: bool,
     seated_game: Option<u64>,
     loading_since: f64,
@@ -84,7 +84,7 @@ impl Brick for FlowBrick {
     }
 }
 
-fn defaults(book: &mut FlowBook, numbers: &Numbers) -> Option<Arc<[SeatChoice]>> {
+fn defaults(book: &mut FlowBook, numbers: &Numbers) -> Option<Defaults> {
     let game = numbers.get()?;
     let fresh = book
         .defaults
@@ -93,14 +93,14 @@ fn defaults(book: &mut FlowBook, numbers: &Numbers) -> Option<Arc<[SeatChoice]>>
     if fresh {
         book.defaults = Some((
             numbers.revision(),
-            roster::default_roster(&game.text).map(Arc::from),
+            roster::default_roster(&game.whole).map(|(seats, least)| (Arc::from(seats), least)),
         ));
     }
     match book.defaults.as_ref().map(|(_, read)| read) {
-        Some(Ok(seats)) => {
-            let seats = Arc::clone(seats);
+        Some(Ok((seats, least))) => {
+            let read = (Arc::clone(seats), *least);
             book.problem = None;
-            Some(seats)
+            Some(read)
         }
         Some(Err(problem)) => {
             book.problem = Some(problem.clone());
@@ -137,10 +137,23 @@ fn loaded_share(readiness: Option<&Readiness>) -> f32 {
     }
 }
 
+fn landed(group: Option<&GroupReport>) -> bool {
+    group.is_some_and(|group| group.stage == GroupStage::Ready)
+}
+
+fn match_share(group: Option<&GroupReport>) -> f32 {
+    match group {
+        Some(group) if group.stage == GroupStage::Ready => 1.0,
+        Some(group) if group.files > 0 => group.files_in as f32 / group.files as f32,
+        Some(_) | None => 0.0,
+    }
+}
+
 fn loading(
     flow: &mut Flow,
     book: &mut FlowBook,
     (host, sound, readiness): (&Host, Option<&SoundLoad>, Option<&Readiness>),
+    matched: Option<&GroupReport>,
     (now, least): (f64, f64),
 ) {
     let waited = now - book.loading_since;
@@ -153,11 +166,13 @@ fn loading(
     let host_ready = host.showing;
     let sound_ready = sound.is_none_or(|sound| sound.ready);
     let seated = book.seated_game == Some(flow.game);
+    let match_ready = landed(matched);
     let share = if host_ready {
         time_share
     } else {
         engine::math::min(loaded_share(readiness), time_share)
     };
+    let share = engine::math::min(share, match_share(matched));
     flow.progress = engine::math::clamp(share, 0.0, 1.0);
     let waiting = &mut book.waiting;
     waiting.clear();
@@ -170,6 +185,15 @@ fn loading(
             sound.loaded, sound.asked, sound.failed
         ));
     }
+    if !match_ready {
+        waiting.push(match matched {
+            Some(group) => format!(
+                "{MATCH_GROUP} group {:?}, {}/{} files",
+                group.stage, group.files_in, group.files
+            ),
+            None => format!("no {MATCH_GROUP} group"),
+        });
+    }
     if waited < least {
         waiting.push(format!(
             "min time {waited:.2}/{least:.2} s of FrameTime.real_elapsed"
@@ -178,22 +202,22 @@ fn loading(
     if !seated {
         waiting.push("seating the roster".to_owned());
     }
-    if host_ready && sound_ready && waited >= least && seated {
+    if host_ready && sound_ready && match_ready && waited >= least && seated {
         flow.stage = Stage::Playing;
     }
 }
-type Reads<'w, 's> = (
+type Reads<'w> = (
     Option<Res<'w, Numbers>>,
     Option<Res<'w, Round>>,
     Option<Res<'w, Readiness>>,
     (Res<'w, FrameTime>, Res<'w, Host>),
     DevSetting<'w, FlowSetup>,
-    Query<'w, 's, &'static ScreenSource>,
     Option<Res<'w, SoundLoad>>,
+    Res<'w, Assets>,
 );
 
 fn steer(
-    (numbers, round, readiness, (time, host), setup, sources, sound): Reads,
+    (numbers, round, readiness, (time, host), setup, sound, assets): Reads,
     actors: Query<Seated<'_>>,
     mut commands: Commands,
     mut flow: ResMut<Flow>,
@@ -203,12 +227,18 @@ fn steer(
     let book = &mut *book;
     let flow = &mut *flow;
     let now = time.real_elapsed;
-    let seats = numbers
+    let read = numbers
         .as_deref()
         .and_then(|numbers| defaults(book, numbers));
+    let least = read.as_ref().map_or(0.0, |(_, least)| *least);
+    let seats = read.map(|(seats, _)| seats);
     let play_now = setup.get().is_some_and(|setup| setup.play_now);
+    let matched = assets.group(MATCH_GROUP);
     if let Some(seats) = seats.as_deref().filter(|_| flow.restored) {
         choose_defaults(flow, seats);
+    }
+    let seats = seats.filter(|_| flow.restored && landed(matched.as_ref()));
+    if let Some(seats) = seats.as_deref() {
         if play_now && !book.jumped {
             flow.roster.clear();
             roster::seat_human(&mut commands, seats, &actors);
@@ -228,14 +258,11 @@ fn steer(
         }
     }
     if flow.stage == Stage::Loading {
-        let least = sources
-            .iter()
-            .next()
-            .map_or(0.0, |source| source.menu.loading.min_seconds);
         loading(
             flow,
             book,
             (&host, sound.as_deref(), readiness.as_deref()),
+            matched.as_ref(),
             (now, least),
         );
     } else {

@@ -1,6 +1,6 @@
 use engine::math;
 use engine::prelude::*;
-use engine_core::{DevSetting, Mobility, SceneContext};
+use engine_core::{Assets, DevSetting, Material, MeshFile, Mobility};
 use glam::{Quat, Vec3};
 
 use super::gather::{Setup, view_direction};
@@ -46,7 +46,7 @@ type Reads<'w, 's> = (
         DevSetting<'w, EffectsShow>,
         Res<'w, Setup>,
     ),
-    Option<Res<'w, SceneContext>>,
+    Res<'w, Assets>,
     Query<'w, 's, (&'static Body, &'static Wish), With<Human>>,
     Query<'w, 's, (Entity, &'static ShowcaseModel)>,
 );
@@ -57,38 +57,34 @@ type Writes<'w, 's> = (
     Moves<'w, 's, EffectsBrick>,
 );
 
-fn drawn(scene: &SceneContext, name: &str) -> Option<Drawn> {
-    let mesh = scene.assets.meshes.get(name).copied()?;
-    let material = scene.assets.materials.get(name).copied()?;
+fn drawn(assets: &Assets, name: &str) -> Option<Drawn> {
+    let mesh = assets.named::<MeshFile>(name)?;
+    let material = assets.named::<Material>(name)?;
     Some(Drawn::new(GROUND, mesh, material))
 }
 
-fn cycled(scene: &SceneContext, prefix: &str, step: u64) -> Option<String> {
-    let mut names: Vec<&String> = scene
-        .assets
-        .meshes
-        .iter()
-        .map(|(name, _)| name)
-        .filter(|name| {
-            name.starts_with(prefix) && scene.assets.materials.get(name.as_str()).is_some()
-        })
+fn cycled(assets: &Assets, prefix: &str, step: u64) -> Option<String> {
+    let mut names: Vec<&str> = assets
+        .each::<MeshFile>()
+        .filter_map(|(mesh, _)| assets.name(mesh))
+        .filter(|name| name.starts_with(prefix) && assets.named::<Material>(name).is_some())
         .collect();
-    names.sort();
+    names.sort_unstable();
     let at = usize::try_from(step).ok()? % names.len().max(1);
-    names.get(at).map(|name| (*name).clone())
+    names.get(at).map(|name| (*name).to_owned())
 }
 
 fn wanted(
     (show, case, now): (Show, &ShowcaseLook, f64),
     (body, wish): (&Body, &Wish),
-    scene: &SceneContext,
+    assets: &Assets,
 ) -> Vec<(String, Vec3)> {
     let models: &TrapModels = &case.trap_models;
     if show == Show::Models {
         let every = f64::from(math::max(case.every_seconds, 0.1)) * 2.0;
         let toward = view_direction(wish);
         let flat = Vec3::new(toward.x, 0.0, toward.z).normalize_or(Vec3::NEG_Z);
-        cycled(scene, &case.model_prefix, (now / every) as u64)
+        cycled(assets, &case.model_prefix, (now / every) as u64)
             .map(|name| vec![(name, body.feet + flat * case.model_m)])
             .unwrap_or_default()
     } else if show == Show::Traps {
@@ -106,13 +102,13 @@ fn wanted(
 }
 
 pub(super) fn showcase_models(
-    ((fixed, show, setup), scene, humans, shown): Reads,
+    ((fixed, show, setup), assets, humans, shown): Reads,
     (mut models, mut spawner, mut moves): Writes,
 ) {
     let show = show.get().map_or(Show::Off, |show| show.show);
     let case = setup.parsed.as_ref().map(|parsed| &parsed.look.showcase);
     let human = humans.iter().next();
-    let (Some(case), Some(scene), Some((body, wish))) = (case, scene.as_deref(), human) else {
+    let (Some(case), Some((body, wish))) = (case, human) else {
         for (entity, _) in &shown {
             spawner.despawn(entity);
         }
@@ -123,10 +119,10 @@ pub(super) fn showcase_models(
     let flat = Vec3::new(toward.x, 0.0, toward.z).normalize_or(Vec3::NEG_Z);
     let facing = Quat::from_rotation_arc(Vec3::Z, -flat);
     let list: Vec<(String, Drawn, Transform)> =
-        wanted((show, case, fixed.elapsed_seconds), (body, wish), scene)
+        wanted((show, case, fixed.elapsed_seconds), (body, wish), &assets)
             .into_iter()
             .filter_map(|(name, at)| {
-                let drawn = drawn(scene, &name)?;
+                let drawn = drawn(&assets, &name)?;
                 Some((
                     name,
                     drawn,

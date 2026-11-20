@@ -1,4 +1,7 @@
-use super::cast::{Asked, SLOTS, slot_key};
+use engine::prelude::{Entity, Query};
+
+use super::apply::Row;
+use super::cast::Asked;
 use super::{
     ActorPowers, Book, CastStat, Count, CueStat, HeldStat, PowerSetup, PowerStats, PropStat,
     SlotStat,
@@ -11,15 +14,15 @@ use crate::play::effects::{
 };
 use crate::play::events::powers::PowerEvents;
 use crate::play::paths::{Hazard, HazardKind, Hazards, SmokeCloud};
-use crate::play::powers::{Held, PowerActor, Powers};
-use crate::rules::Team;
+use crate::play::powers::{Held, PowerActor, Powers, SlotView};
+use crate::rules::{AbilitySlot, Team};
 
 pub(super) struct Sheet<'a> {
     pub(super) book: &'a Book,
     pub(super) powers: &'a Powers,
     pub(super) asked: &'a Asked<'a>,
     pub(super) tick: u64,
-    pub(super) human: Option<(u32, String)>,
+    pub(super) human: Option<(u32, &'a str)>,
     pub(super) human_damage: f32,
     pub(super) events: &'a [crate::abilities::Event],
 }
@@ -183,45 +186,43 @@ impl Sheet<'_> {
         }
     }
 
-    pub(super) fn feed(&self) -> EffectsFeed {
-        let cues = self
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Cue {
-                    cue,
-                    at,
-                    size,
-                    ticks,
-                    ..
-                } => cue_look(*cue).map(|look| Cue {
-                    look,
-                    at: *at,
-                    size: *size,
-                    ticks: *ticks,
-                }),
-                Event::Damage { .. }
-                | Event::Heal { .. }
-                | Event::Shield { .. }
-                | Event::BuffStarted { .. }
-                | Event::BuffEnded { .. }
-                | Event::Blinded { .. }
-                | Event::RevealStarted { .. }
-                | Event::RevealEnded { .. }
-                | Event::Moved { .. }
-                | Event::SolidAdded { .. }
-                | Event::SolidRemoved { .. }
-                | Event::TrapArmed { .. }
-                | Event::TrapTriggered { .. }
-                | Event::WireChained { .. }
-                | Event::WireReleased { .. }
-                | Event::Destroyed { .. }
-                | Event::Transformed { .. }
-                | Event::TransformEnded { .. }
-                | Event::Ended { .. } => None,
-            })
-            .collect();
-        let human = self
+    pub(super) fn feed(&self, feed: &mut EffectsFeed) {
+        feed.tick = self.tick;
+        feed.cues.clear();
+        feed.cues.extend(self.events.iter().filter_map(|event| match event {
+            Event::Cue {
+                cue,
+                at,
+                size,
+                ticks,
+                ..
+            } => cue_look(*cue).map(|look| Cue {
+                look,
+                at: *at,
+                size: *size,
+                ticks: *ticks,
+            }),
+            Event::Damage { .. }
+            | Event::Heal { .. }
+            | Event::Shield { .. }
+            | Event::BuffStarted { .. }
+            | Event::BuffEnded { .. }
+            | Event::Blinded { .. }
+            | Event::RevealStarted { .. }
+            | Event::RevealEnded { .. }
+            | Event::Moved { .. }
+            | Event::SolidAdded { .. }
+            | Event::SolidRemoved { .. }
+            | Event::TrapArmed { .. }
+            | Event::TrapTriggered { .. }
+            | Event::WireChained { .. }
+            | Event::WireReleased { .. }
+            | Event::Destroyed { .. }
+            | Event::Transformed { .. }
+            | Event::TransformEnded { .. }
+            | Event::Ended { .. } => None,
+        }));
+        feed.human = self
             .human
             .as_ref()
             .map_or(HumanScreen::default(), |(slot, _)| HumanScreen {
@@ -229,88 +230,78 @@ impl Sheet<'_> {
                 sight_limit_m: self.powers.sight_limit(*slot),
                 damage: self.human_damage,
             });
-        EffectsFeed {
-            tick: self.tick,
-            shown: self
-                .powers
-                .drawables()
-                .iter()
-                .map(|drawable| self.shown(drawable))
-                .collect(),
-            cues,
-            human,
-            props: self.props(),
-        }
+        feed.shown.clear();
+        feed.shown.extend(self.powers.drawables().iter().map(|drawable| self.shown(drawable)));
+        self.props(&mut feed.props);
     }
 
-    pub(super) fn props(&self) -> Vec<PropShown> {
+    pub(super) fn props(&self, props: &mut Vec<PropShown>) {
+        props.clear();
         let Some(book) = self.book.abilities.as_ref() else {
-            return Vec::new();
+            return;
         };
         let tps = self.book.ticks_per_second as f32;
-        self.powers
-            .effects
-            .props()
-            .into_iter()
-            .filter_map(|state| {
-                let spec = book.ability(state.ability);
-                let prop = spec.prop.clone()?;
-                let place = match state.pose {
-                    PropPose::Flying {
-                        centre,
-                        velocity_per_tick,
-                        resting,
-                    } => PropPlace::Thrown {
-                        centre,
-                        velocity_mps: velocity_per_tick * tps,
-                        resting,
-                    },
-                    PropPose::Placed {
-                        contact,
-                        normal,
-                        facing,
-                    } => PropPlace::Placed {
-                        contact,
-                        normal,
-                        facing,
-                    },
-                    PropPose::Wire {
-                        a,
-                        b,
-                        normal_a,
-                        normal_b,
-                    } => PropPlace::Wire {
-                        a,
-                        b,
-                        normal_a,
-                        normal_b,
-                    },
-                    PropPose::Falling {
+        props.extend(self.powers.effects.props().into_iter().filter_map(|state| {
+            let spec = book.ability(state.ability);
+            let prop = spec.prop.clone()?;
+            let place = match state.pose {
+                PropPose::Flying {
+                    centre,
+                    velocity_per_tick,
+                    resting,
+                } => PropPlace::Thrown {
+                    centre,
+                    velocity_mps: velocity_per_tick * tps,
+                    resting,
+                },
+                PropPose::Placed {
+                    contact,
+                    normal,
+                    facing,
+                } => PropPlace::Placed {
+                    contact,
+                    normal,
+                    facing,
+                },
+                PropPose::Wire {
+                    a,
+                    b,
+                    normal_a,
+                    normal_b,
+                } => PropPlace::Wire {
+                    a,
+                    b,
+                    normal_a,
+                    normal_b,
+                },
+                PropPose::Falling {
+                    target,
+                    impact_tick,
+                } => {
+                    let drop = spec.drop?;
+                    PropPlace::Drop {
                         target,
+                        height_m: drop.height_m,
+                        fall_starts_tick: impact_tick.saturating_sub(u64::from(drop.ticks)),
                         impact_tick,
-                    } => {
-                        let drop = spec.drop?;
-                        PropPlace::Drop {
-                            target,
-                            height_m: drop.height_m,
-                            fall_starts_tick: impact_tick.saturating_sub(u64::from(drop.ticks)),
-                            impact_tick,
-                        }
                     }
-                };
-                Some(PropShown {
-                    effect: state.effect.0,
-                    prop,
-                    team: team_of(state.team),
-                    place,
-                    enemy_share: spec.enemy_visibility,
-                })
+                }
+            };
+            Some(PropShown {
+                effect: state.effect.0,
+                prop,
+                team: team_of(state.team),
+                place,
+                enemy_share: spec.enemy_visibility,
             })
-            .collect()
+        }));
     }
 
-    pub(super) fn hazards(&self) -> Hazards {
-        let mut hazards = Hazards::default();
+    pub(super) fn hazards(&self, hazards: &mut Hazards) {
+        for list in &mut hazards.teams {
+            list.clear();
+        }
+        hazards.smokes.clear();
         for team in Team::BOTH {
             for danger in self.powers.dangers(team) {
                 match hazard_kind(danger.kind) {
@@ -327,35 +318,55 @@ impl Sheet<'_> {
                 }
             }
         }
-        hazards
     }
 
-    pub(super) fn actor_views(&self, actors: &[(u32, Team, String, bool)]) -> Vec<PowerActor> {
-        actors
-            .iter()
-            .map(|(slot, team, character, _)| PowerActor {
-                slot: *slot,
-                team: *team,
-                blindness: self.powers.blindness(*slot),
-                sight_limit_m: self.powers.sight_limit(*slot),
-                modifiers: self.powers.modifiers(*slot),
-                revealed_to: Team::BOTH.map(|to| self.powers.revealed(*slot, to)),
-                slots: self.asked.slots(*slot, character),
-                held: self.powers.held(*slot).map(|held| held.ability),
-                weapon_down_until: self.powers.weapon_down_until(*slot),
-            })
-            .collect()
+    pub(super) fn actor_views(
+        &self,
+        rows: &Query<Row<'_>>,
+        order: &[(u32, Entity)],
+        actors: &mut Vec<PowerActor>,
+    ) {
+        let mut count = 0;
+        for (_, entity) in order {
+            let Ok(row) = rows.get(*entity) else {
+                continue;
+            };
+            let (slot, team) = (row.1.slot, row.1.team);
+            let mut slots = (actors.get_mut(count))
+                .map(|held| std::mem::take(&mut held.slots))
+                .unwrap_or_default();
+            self.asked.slots(slot, &row.1.character, &mut slots);
+            let view = PowerActor {
+                slot,
+                team,
+                blindness: self.powers.blindness(slot),
+                sight_limit_m: self.powers.sight_limit(slot),
+                modifiers: self.powers.modifiers(slot),
+                revealed_to: Team::BOTH.map(|to| self.powers.revealed(slot, to)),
+                slots,
+                held: self.powers.held(slot).map(|held| held.ability),
+                weapon_down_until: self.powers.weapon_down_until(slot),
+            };
+            match actors.get_mut(count) {
+                Some(held) => *held = view,
+                None => actors.push(view),
+            }
+            count += 1;
+        }
+        actors.truncate(count);
     }
 
     pub(super) fn human_slots(&self) -> Vec<SlotStat> {
-        let Some((slot, character)) = self.human.as_ref() else {
+        let Some(&(slot, character)) = self.human.as_ref() else {
             return Vec::new();
         };
-        SLOTS
+        let mut views: [SlotView; 4] = Default::default();
+        self.asked.slots(slot, character, &mut views);
+        AbilitySlot::ALL
             .into_iter()
-            .zip(self.asked.slots(*slot, character))
+            .zip(views)
             .map(|(ability, view)| SlotStat {
-                slot: slot_key(ability).to_owned(),
+                slot: ability.key().to_owned(),
                 name: view.name,
                 block: view.block,
                 charges: view.charges,
@@ -441,7 +452,7 @@ fn shape_key(shape: &DrawShape) -> &'static str {
 fn held_stat(held: &Held) -> HeldStat {
     HeldStat {
         slot: held.slot,
-        ability: slot_key(held.ability).to_owned(),
+        ability: held.ability.key().to_owned(),
         name: held.name.clone(),
         since: held.since,
         preview: held.preview.is_some(),
@@ -469,7 +480,7 @@ pub(super) fn write_tick_stats(stats: &mut PowerStats, events: &PowerEvents, pow
         .map(|cast| CastStat {
             tick: events.tick,
             slot: cast.slot,
-            ability: slot_key(cast.ability).to_owned(),
+            ability: cast.ability.key().to_owned(),
             reason: None,
         })
         .collect();
@@ -479,7 +490,7 @@ pub(super) fn write_tick_stats(stats: &mut PowerStats, events: &PowerEvents, pow
         .map(|refused| CastStat {
             tick: events.tick,
             slot: refused.slot,
-            ability: slot_key(refused.ability).to_owned(),
+            ability: refused.ability.key().to_owned(),
             reason: Some(refused.reason.key().to_owned()),
         })
         .collect();
@@ -494,7 +505,7 @@ pub(super) fn write_tick_stats(stats: &mut PowerStats, events: &PowerEvents, pow
         .map(|hold| CastStat {
             tick: events.tick,
             slot: hold.slot,
-            ability: slot_key(hold.ability).to_owned(),
+            ability: hold.ability.key().to_owned(),
             reason: Some(hold.change.key().to_owned()),
         })
         .collect();
@@ -512,7 +523,7 @@ pub(super) fn write_tick_stats(stats: &mut PowerStats, events: &PowerEvents, pow
             damage_taken: actor.modifiers.damage_taken,
             spread: actor.modifiers.spread,
             revealed_to: actor.revealed_to,
-            held: actor.held.map(|ability| slot_key(ability).to_owned()),
+            held: actor.held.map(|ability| ability.key().to_owned()),
             weapon_down_until: actor.weapon_down_until,
         })
         .collect();

@@ -1,8 +1,9 @@
+use engine_math::{clamp, max, min};
 use glam::Vec3;
 
 use super::tactics::{self, Hold, SiteTactics};
 use super::{Duty, Line, LineKind, Order, Plan, Role, Slot, Squad, Step, Utility, spaced};
-use crate::bots::aim::{clamp, flat, flat_distance, max, min};
+use crate::bots::aim::{flat, flat_distance};
 use crate::bots::debug::Why;
 use crate::bots::sense::{Block, DeviceSense, GamePhase};
 

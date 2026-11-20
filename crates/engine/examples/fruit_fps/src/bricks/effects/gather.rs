@@ -1,6 +1,7 @@
 use engine::math;
 use engine::prelude::*;
 use engine_core::DevSetting;
+use engine_solids::Kind;
 
 use super::numbers::{self, EffectsNumbers, Parsed};
 use super::{Device, EffectsBrick, EffectsShow, Show};
@@ -15,7 +16,6 @@ use crate::play::round::{DeviceSpot, Round};
 use crate::play::view::Watched;
 use crate::play::world::Arena;
 use crate::rules::Team;
-use crate::solids::Kind;
 
 #[derive(Clone, Debug)]
 pub(super) struct Pool<T> {
@@ -279,7 +279,7 @@ pub(super) fn setup(numbers: Res<Numbers>, mut setup: ResMut<Setup>) {
         return;
     }
     setup.revision = Some(numbers.revision());
-    match numbers::parse(&game.text) {
+    match numbers::parse(&game.whole) {
         Ok(parsed) => {
             setup.parsed = Some(parsed);
             setup.refusal = None;

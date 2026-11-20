@@ -2,21 +2,22 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cull, Error, ErrorCode, Expected,
-    FIRST_NAMED_LOCATION, GeometryStream, Material, MaterialHandle, Sampler, TextureHandle,
-    TextureRef, Var, gpu_struct,
+    AlphaMode, Asset, Assets, ColorSpace, Cull, Drawn, Error, ErrorCode, Expected, Material,
+    TextureRef, Var, VertexStream, gpu_struct,
 };
+use engine_drawing::{MaterialBinds, StandIn};
+use engine_meshpack::{BASE, SKIN};
 use engine_render::{
-    Allocation, BatchGroup, Bind, Buffer, DepthUse, Draw, GpuPart, GroupEntry, Install, Lifetime,
-    PerBatch, Pipeline, Prepare, RenderPipeline, Scene, Texture, Variant, wgpu,
+    Allocation, BatchGroup, Bind, Buffer, DepthUse, Draw, DrawOrder, GpuPart, GroupEntry, Install,
+    Lifetime, PerBatch, Pipeline, Prepare, RenderPipeline, Scene, Variant, wgpu,
 };
+use engine_rig::PaletteRow;
 
-use super::play::FigureDrawing;
 use super::shaders::figures::{figure, ground, light, material, reveal};
-use super::{JOINTS, WEIGHTS};
 use crate::names::COLOR_PASS;
-use crate::play::light::{Light, LightField, Lighting};
-use crate::play::puppet::{PuppetFile, ShadeMaps};
+use crate::play::light::{CLAMP, Light, LightField, Lighting, REPEAT};
+use crate::play::puppet::{Puppet, ShadeMaps};
+use crate::play::skinned::{Figure, FigurePalette};
 
 gpu_struct! {
     pub struct FigureLight {
@@ -31,27 +32,11 @@ gpu_struct! {
     }
 }
 
-const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
-    width: 1,
-    height: 1,
-    depth_or_array_layers: 1,
-};
+const ROW_BYTES: u64 = size_of::<PaletteRow>() as u64;
 
-const ROW_BYTES: u64 = 48;
+const FIGURE_STREAMS: [VertexStream; 2] = [BASE, SKIN];
 
-const FIGURE_STREAMS: [GeometryStream; 3] = [
-    GeometryStream::Vertex,
-    GeometryStream::Named {
-        shape: JOINTS,
-        location: FIRST_NAMED_LOCATION,
-    },
-    GeometryStream::Named {
-        shape: WEIGHTS,
-        location: FIRST_NAMED_LOCATION + 1,
-    },
-];
-
-const GROUND_STREAMS: [GeometryStream; 1] = [GeometryStream::Vertex];
+const GROUND_STREAMS: [VertexStream; 1] = [BASE];
 
 const MAPS: [(&str, Var, Var); 3] = [
     (
@@ -70,11 +55,6 @@ enum Lights {
     Several(usize),
 }
 
-struct Held {
-    revision: u64,
-    textures: Vec<(TextureHandle, u64)>,
-}
-
 pub(super) struct FiguresGpu {
     figure: Pipeline<Self, Scene>,
     ground: Pipeline<Self, Scene>,
@@ -84,14 +64,14 @@ pub(super) struct FiguresGpu {
     palette: Buffer<Self>,
     sent: Option<FigureLight>,
     lights: Option<Lights>,
-    held: BTreeMap<MaterialHandle, Held>,
-    synced: Option<u64>,
-    unlit: Texture<Self>,
+    binds: MaterialBinds<(), ()>,
+    again: bool,
+    unlit: StandIn<Self>,
     field_bound: Option<Option<TextureRef>>,
     maps: Option<ShadeMaps>,
 }
 
-fn pipeline<'a>(vertex: engine_core::Entry, vertices: &'a [GeometryStream]) -> RenderPipeline<'a> {
+fn pipeline<'a>(vertex: engine_core::Entry, vertices: &'a [VertexStream]) -> RenderPipeline<'a> {
     RenderPipeline {
         vertex,
         fragment: Some(light::FS_FIGURES),
@@ -221,14 +201,11 @@ fn lights_problem(lights: Lights) -> Option<Error> {
 
 impl GpuPart for FiguresGpu {
     type Reads = (
-        Res<'static, FigureDrawing>,
+        Res<'static, FigurePalette>,
         Query<'static, 'static, (Entity, &'static Light)>,
-        Option<Res<'static, AssetResidency>>,
-        Option<Res<'static, AssetLibrary>>,
-        (
-            Option<Res<'static, Lighting>>,
-            Query<'static, 'static, &'static PuppetFile>,
-        ),
+        Res<'static, Assets>,
+        (Option<Res<'static, Lighting>>, Res<'static, Puppet>),
+        Query<'static, 'static, &'static Figure, With<Drawn>>,
     );
     const NAME: &'static str = "figures";
 
@@ -236,11 +213,7 @@ impl GpuPart for FiguresGpu {
         let light = cx.buffer("figures_light", Lifetime::Kept);
         let palette = cx.buffer("figures_palette", Lifetime::Kept);
         let group = cx.batch_group(material::MODULE, 1, &[])?;
-        let unlit = cx.texture(
-            "figures_unlit_field",
-            wgpu::TextureFormat::Rgba8Unorm,
-            Lifetime::Kept,
-        );
+        let unlit = StandIn::install(cx, "figures_unlit_field", [0; 4]);
         let scene = Scene::named(COLOR_PASS);
         let lit = (light::FIGURE_LIGHT, Bind::Buffer(light));
         let figure = cx.render_pipeline(
@@ -264,8 +237,8 @@ impl GpuPart for FiguresGpu {
             palette,
             sent: None,
             lights: None,
-            held: BTreeMap::new(),
-            synced: None,
+            binds: MaterialBinds::default(),
+            again: false,
             unlit,
             field_bound: None,
             maps: None,
@@ -274,19 +247,16 @@ impl GpuPart for FiguresGpu {
 
     fn prepare(
         &mut self,
-        (book, lights, residency, library, (lighting, files)): SystemParamItem<'_, '_, Self::Reads>,
+        (book, lights, assets, (lighting, puppet), figures): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         let field = lighting.as_deref().and_then(|lighting| lighting.field);
         let bound = self.bind_field(field.map(|field| field.map), cx);
-        let shade = files
-            .iter()
-            .find_map(PuppetFile::book)
-            .map(|book| book.table.shade);
+        let shade = puppet.table.as_ref().map(|table| table.shade);
         let floor = shade.map_or(0.0, |shade| shade.indirect_floor);
         self.filter(shade.map(|shade| shade.maps), cx);
-        if let (Some(residency), Some(library), Some(maps)) = (residency, library, self.maps) {
-            self.sync(&residency, &library, maps, cx);
+        if let Some(maps) = self.maps {
+            self.sync(&assets, maps, cx);
         }
         let mut listed: Vec<(Entity, Light)> = lights
             .iter()
@@ -314,14 +284,17 @@ impl GpuPart for FiguresGpu {
             cx.write(self.light, 0, &[shown]);
             self.sent = Some(shown);
         }
-        let rows = book.rows.len().max(1).next_power_of_two() as u64;
+        let held: usize = figures
+            .iter()
+            .filter_map(|figure| assets.get(figure.skeleton).ok())
+            .map(|skeleton| skeleton.len())
+            .sum();
+        let rows = book.rows.len().max(held).max(1).next_power_of_two() as u64;
         let _ = cx.allocate_buffer(self.palette, rows * ROW_BYTES);
-        for &(at, length) in &book.written {
-            cx.write(
-                self.palette,
-                at as u64 * ROW_BYTES,
-                &book.rows[at..at + length],
-            );
+        let first = book.written.iter().map(|&(at, _)| at).min();
+        let end = book.written.iter().map(|&(at, length)| at + length).max();
+        if let (Some(first), Some(end)) = (first, end) {
+            cx.write(self.palette, first as u64 * ROW_BYTES, &book.rows[first..end]);
         }
     }
 }
@@ -330,11 +303,10 @@ fn fielded(shown: FigureLight, field: Option<LightField>, floor: f32) -> FigureL
     let Some(field) = field else {
         return shown;
     };
-    let [min_x, min_z, max_x, max_z] = field.rect;
-    let across = |low: f32, high: f32| if high > low { 1.0 / (high - low) } else { 0.0 };
+    let (rect, [height, scale]) = field.uniform();
     FigureLight {
-        field: [min_x, min_z, across(min_x, max_x), across(min_z, max_z)],
-        field_shape: [field.height_m, field.scale, 1.0, floor],
+        field: rect,
+        field_shape: [height, scale, 1.0, floor],
         ..shown
     }
 }
@@ -345,22 +317,16 @@ impl FiguresGpu {
         wanted: Option<TextureRef>,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<TextureRef> {
-        if cx.allocate(self.unlit, TEXEL) == Allocation::Fresh {
-            let layout = wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            };
-            cx.write_texture(self.unlit, wgpu::Origin3d::ZERO, &[0_u8; 4], layout, TEXEL);
+        if self.unlit.written(cx) {
             self.field_bound = None;
         }
         let shown = wanted.filter(|map| cx.texture_resident(map.texture));
         if self.field_bound != Some(shown) {
             self.field_bound = Some(shown);
-            for handle in std::mem::take(&mut self.held).into_keys() {
+            for handle in self.binds.clear() {
                 cx.clear_batch(self.group, Some(handle));
             }
-            self.synced = None;
+            self.again = true;
         }
         shown
     }
@@ -370,16 +336,16 @@ impl FiguresGpu {
             return;
         }
         self.maps = maps;
-        for handle in std::mem::take(&mut self.held).into_keys() {
+        for handle in self.binds.clear() {
             cx.clear_batch(self.group, Some(handle));
         }
-        self.synced = None;
+        self.again = true;
     }
 
     fn field_entries(&self) -> [(Var, GroupEntry<Self>); 2] {
         let (texture, sampler) = match self.field_bound.flatten() {
-            Some(map) => (GroupEntry::Asset(map.texture), map.sampler),
-            None => (GroupEntry::Texture(self.unlit), Sampler::CLAMP),
+            Some(map) => (GroupEntry::Asset(map.texture), map.sampler.unwrap_or(REPEAT)),
+            None => (GroupEntry::Texture(self.unlit.texture()), CLAMP),
         };
         [
             (material::FIGURE_FIELD_MAP, texture),
@@ -391,74 +357,50 @@ impl FiguresGpu {
     }
 
     pub(super) fn draw_figures(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.figure, 0..0, |_| Some(0));
+        draw.batches(&self.figure, 0..0, DrawOrder::Sorted);
     }
 
     pub(super) fn draw_revealed(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.revealed, 0..0, |_| Some(0));
+        draw.batches(&self.revealed, 0..0, DrawOrder::Sorted);
     }
 
     pub(super) fn draw_ground(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.ground, 0..0, |_| Some(0));
+        draw.batches(&self.ground, 0..0, DrawOrder::Sorted);
     }
 
-    fn sync(
-        &mut self,
-        residency: &AssetResidency,
-        library: &AssetLibrary,
-        maps: ShadeMaps,
-        cx: &mut Prepare<'_, Self>,
-    ) {
+    fn sync(&mut self, assets: &Assets, maps: ShadeMaps, cx: &mut Prepare<'_, Self>) {
         let filters = [maps.base_color, maps.normal, maps.orm];
-        let generation = residency.revision();
-        if self.synced == Some(generation) {
+        if !(self.binds.changed(assets) | std::mem::take(&mut self.again)) {
             return;
         }
-        let gone: Vec<MaterialHandle> =
-            self.held
-                .iter()
-                .filter(|(handle, held)| {
-                    !residency.material_resident(**handle)
-                        || held.textures.iter().any(|(texture, revision)| {
-                            library.revision_of(*texture) != Some(*revision)
-                        })
-                })
-                .map(|(handle, _)| *handle)
-                .collect();
-        for handle in gone {
-            self.held.remove(&handle);
+        let wanted: BTreeMap<Asset<Material>, ()> = assets
+            .each::<Material>()
+            .map(|(handle, _)| (handle, ()))
+            .collect();
+        for (handle, _) in self.binds.dropped(assets, &wanted) {
             cx.clear_batch(self.group, Some(handle));
         }
-        let mut waiting = false;
-        for (handle, revision) in residency.materials() {
-            if self
-                .held
-                .get(&handle)
-                .is_some_and(|held| held.revision == revision)
-            {
-                continue;
-            }
-            let Some(material) = library.material(handle) else {
-                continue;
-            };
+        for (handle, revision, (), material) in self.binds.fresh(assets, &wanted) {
             let path = format!("$.materials.{}", handle.slot());
             let maps = match mapped(material, &path) {
                 Ok(maps) => maps,
                 Err(problem) => {
-                    cx.report(problem);
-                    self.held.insert(
-                        handle,
-                        Held {
-                            revision,
-                            textures: Vec::new(),
-                        },
-                    );
-                    cx.clear_batch(self.group, Some(handle));
+                    self.refuse((handle, revision), (vec![problem], &[]), assets, cx);
                     continue;
                 }
             };
             if maps.iter().any(|map| !cx.texture_resident(map.texture)) {
-                waiting = true;
+                self.again = true;
+                continue;
+            }
+            let refused: Vec<Error> = MAPS
+                .iter()
+                .zip(&maps)
+                .skip(1)
+                .filter_map(|((name, _, _), map)| srgb_in_linear(assets, *map, &path, name))
+                .collect();
+            if !refused.is_empty() {
+                self.refuse((handle, revision), (refused, &maps), assets, cx);
                 continue;
             }
             if material.alpha_mode() != AlphaMode::Opaque {
@@ -483,19 +425,32 @@ impl FiguresGpu {
             if let Err(error) = cx.set_batch(self.group, Some(handle), &entries, Some(variant)) {
                 cx.report(error);
             }
-            let textures = maps
-                .iter()
-                .map(|map| {
-                    let known = library.revision_of(map.texture).unwrap_or_default();
-                    (map.texture, known)
-                })
-                .collect();
-            self.held.insert(handle, Held { revision, textures });
-        }
-        if !waiting {
-            self.synced = Some(generation);
+            self.binds.keep(assets, (handle, revision, ()), &maps, None);
         }
     }
+
+    fn refuse(
+        &mut self,
+        (handle, revision): (Asset<Material>, u64),
+        (problems, textures): (Vec<Error>, &[TextureRef]),
+        assets: &Assets,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        for problem in problems {
+            cx.report(problem);
+        }
+        self.binds.keep(assets, (handle, revision, ()), textures, None);
+        cx.clear_batch(self.group, Some(handle));
+    }
+}
+
+fn srgb_in_linear(assets: &Assets, map: TextureRef, path: &str, name: &str) -> Option<Error> {
+    let space = assets.get(map.texture).ok()?.color_space();
+    (space == ColorSpace::Srgb).then(|| {
+        Error::new(ErrorCode::InvalidTexture, format!("{path}.maps.{name}"))
+            .expected(Expected::Matching)
+            .got("the file states Srgb, the slot reads linear")
+    })
 }
 
 fn mapped(material: &Material, path: &str) -> Result<Vec<TextureRef>, Error> {

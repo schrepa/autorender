@@ -291,42 +291,52 @@ impl Casting<'_> {
         self.placed_cast(rows, order, (powers, events, ticked));
     }
 
-    pub(super) fn previews(
+    fn preview_of(
         &self,
         arena: &Arena,
         rows: &Query<Row<'_>>,
         (order, watched): (&[(u32, Entity)], Option<u32>),
+        (held, kept): (&Held, Option<Preview>),
+        powers: &Powers,
+    ) -> Option<Preview> {
+        let (_, actor, wish, body, _, _, _, offsets, _, human) =
+            rows.get(entity_of(order, held.slot)?).ok()?;
+        if watched != Some(held.slot) && !human {
+            return None;
+        }
+        let spec = self.asked.spec(&actor.character, held.ability)?;
+        let caster = power_actor(actor, body, wish, offsets, self.parts);
+        let aim = Aim {
+            origin: caster.eye,
+            direction: caster.view,
+        };
+        let mut preview = match kept.filter(|kept| kept.aim == aim) {
+            Some(kept) => kept,
+            None => powers.landing(arena, &caster, spec, aim)?,
+        };
+        preview.valid = preview.placed
+            && self
+                .asked
+                .buy_zone(held.slot)
+                .is_none_or(|zone| arena.zone(zone, preview.at));
+        Some(preview)
+    }
+
+    pub(super) fn previews(
+        &self,
+        arena: &Arena,
+        rows: &Query<Row<'_>>,
+        seen: (&[(u32, Entity)], Option<u32>),
         powers: &mut Powers,
     ) {
-        let viewers: Vec<u32> = order
-            .iter()
-            .filter(|(slot, entity)| {
-                watched == Some(*slot) || rows.get(*entity).is_ok_and(|row| row.9)
-            })
-            .map(|(slot, _)| *slot)
-            .collect();
-        let found: Vec<Option<Preview>> = powers
+        let mut found: Vec<Option<Preview>> = powers
             .held
-            .iter()
-            .map(|held| {
-                if !viewers.contains(&held.slot) {
-                    return None;
-                }
-                let (_, actor, wish, body, _, _, _, offsets, _, _) =
-                    rows.get(entity_of(order, held.slot)?).ok()?;
-                let spec = self.asked.spec(&actor.character, held.ability)?;
-                let caster = power_actor(actor, body, wish, offsets, self.parts);
-                let aim = Aim {
-                    origin: caster.eye,
-                    direction: caster.view,
-                };
-                let mut preview = powers.landing(arena, &caster, spec, aim)?;
-                if let Some(zone) = self.asked.buy_zone(held.slot) {
-                    preview.valid = preview.valid && arena.zone(zone, preview.at);
-                }
-                Some(preview)
-            })
+            .iter_mut()
+            .map(|held| held.preview.take())
             .collect();
+        for (held, preview) in powers.held.iter().zip(found.iter_mut()) {
+            *preview = self.preview_of(arena, rows, seen, (held, preview.take()), powers);
+        }
         for (held, preview) in powers.held.iter_mut().zip(found) {
             held.preview = preview;
         }

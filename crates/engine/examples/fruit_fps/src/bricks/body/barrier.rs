@@ -4,7 +4,8 @@ use crate::play::numbers::{Numbers, PlayerNumbers};
 use crate::play::round::Round;
 use crate::play::world::{Arena, Barrier, BarrierFace, Zone, ZoneBox};
 use crate::rules::Side;
-use crate::solids::{self, Probe};
+
+use super::openings::{Probe, openings};
 
 fn faces(arena: &Arena, player: &PlayerNumbers) -> Vec<BarrierFace> {
     let probe = Probe {
@@ -21,7 +22,7 @@ fn faces(arena: &Arena, player: &PlayerNumbers) -> Vec<BarrierFace> {
     (arena.zones().iter())
         .filter_map(sided)
         .flat_map(|(side, zone)| {
-            solids::openings(
+            openings(
                 arena.solids(),
                 (zone.centre, zone.rotation, zone.half),
                 probe,

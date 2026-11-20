@@ -1,10 +1,8 @@
 use std::fmt::Write;
 
+use brick_interface::thousands;
 use engine::math;
 
-use crate::play::screen::{
-    AbilityFacts, BoardRow, Card, HudFacts, Mate, PlateFacts, Tone, WeaponStats,
-};
 use crate::rules::{
     AbilitySlot, ArmorTier, BuyRefusal, BuyRequest, Catalog, Defusing, Device, Item, Phase, Player,
     PlayerId, Refund, Side, Team, View, WeaponId, WeaponSlot,
@@ -12,6 +10,7 @@ use crate::rules::{
 
 use crate::weapons::{GunKind, GunNumbers, WeaponNumbers};
 
+use super::hud::{AbilityFacts, BoardRow, Card, HudFacts, Mate, PlateFacts, Tone, WeaponStats};
 use super::{Lows, Words};
 
 const RIFLE_KEY: &str = "rifle";
@@ -39,25 +38,6 @@ pub(super) fn named(out: &mut String, prefix: &str, name: &str) {
         } else {
             out.extend(character.to_lowercase());
         }
-    }
-}
-
-pub(super) fn credits_into(out: &mut String, value: u32) {
-    out.clear();
-    let mut place = 1_u32;
-    while place.saturating_mul(1000) <= value && place < 1_000_000_000 {
-        place *= 1000;
-    }
-    let mut first = true;
-    while place > 0 {
-        let group = (value / place) % 1000;
-        let _ = if first {
-            write!(out, "{group}")
-        } else {
-            write!(out, ",{group:03}")
-        };
-        first = false;
-        place /= 1000;
     }
 }
 
@@ -384,7 +364,8 @@ fn settle(
     } else {
         0
     };
-    credits_into(&mut card.price, quote.unwrap_or(cost));
+    card.price.clear();
+    thousands(i64::from(quote.unwrap_or(cost)), &mut card.price);
     card.buy = quote.is_ok().then_some(BuyRequest::Buy(item));
     card.ask = false;
     card.asked = false;
@@ -655,7 +636,8 @@ pub(super) fn board_part(
             row.adr = adr(view, dealt, slot);
             gear(&mut row.loadout, catalog, player);
             if listed == team {
-                credits_into(&mut row.credits, player.credits);
+                row.credits.clear();
+                thousands(i64::from(player.credits), &mut row.credits);
             } else {
                 set(&mut row.credits, &words.hidden);
             }

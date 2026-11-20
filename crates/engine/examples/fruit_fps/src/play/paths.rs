@@ -1,10 +1,14 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use engine::prelude::Resource;
+use engine_core::Asset;
+use engine_nav::{Costs, NavMesh, Path, Scratch, Spot};
 use glam::Vec3;
 
-use crate::nav::{Costs, CoverSpot, Eyes, NavMesh, NavNumbers, Path, Spot, Tactics};
+use crate::play::cover::Tactics;
+use crate::play::layout::Layout;
+use crate::play::numbers::NavNumbers;
 use crate::play::world::Arena;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,14 +82,13 @@ pub struct Built {
     pub plain: Costs,
     pub tactics: Tactics,
     pub zones: Vec<ZoneArea>,
-    pub layout: Option<Arc<str>>,
+    pub layout: Option<Asset<Layout>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tuning {
     pub nav: NavNumbers,
     pub radius: f32,
-    pub eyes: Eyes,
 }
 
 #[derive(Resource, Default)]
@@ -96,6 +99,7 @@ pub struct Paths {
     revision: u64,
     queries: AtomicU32,
     expanded: AtomicU32,
+    scratch: Mutex<Scratch>,
 }
 
 impl Paths {
@@ -141,8 +145,8 @@ impl Paths {
         self.built.as_deref()
     }
 
-    pub fn layout(&self) -> Option<&Arc<str>> {
-        self.built()?.layout.as_ref()
+    pub fn layout(&self) -> Option<Asset<Layout>> {
+        self.built()?.layout
     }
 
     pub fn costs(&self, team: usize) -> Option<&Costs> {
@@ -182,9 +186,14 @@ impl Paths {
     pub fn path(&self, from: Vec3, to: Vec3, team: Option<usize>) -> Option<Path> {
         let (built, tuning) = self.parts()?;
         let (start, goal) = (self.locate(from)?, self.locate(to)?);
-        let path = built
-            .mesh
-            .path(start, goal, tuning.radius, self.costs_for(team)?);
+        let mut scratch = self.scratch.lock().unwrap_or_else(PoisonError::into_inner);
+        let path = built.mesh.path(
+            start,
+            goal,
+            tuning.radius,
+            self.costs_for(team)?,
+            &mut scratch,
+        );
         self.count(path.as_ref().map_or(0, |path| path.expanded));
         path
     }
@@ -204,28 +213,6 @@ impl Paths {
         true
     }
 
-    pub fn cover_from(
-        &self,
-        arena: &Arena,
-        threat: Vec3,
-        near: Vec3,
-        max_distance: f32,
-    ) -> Vec<CoverSpot> {
-        let (Some((built, tuning)), Some(near)) = (self.parts(), self.locate(near)) else {
-            return Vec::new();
-        };
-        self.count(0);
-        built.tactics.positions_with_cover_from(
-            &built.mesh,
-            threat,
-            near,
-            tuning.eyes,
-            tuning.radius,
-            max_distance,
-            |eye, target| arena.sees(eye, target),
-        )
-    }
-
     pub fn best_cover(
         &self,
         arena: &Arena,
@@ -233,9 +220,20 @@ impl Paths {
         near: Vec3,
         max_distance: f32,
     ) -> Option<Vec3> {
-        self.cover_from(arena, threat, near, max_distance)
-            .first()
-            .map(|cover| cover.spot.point)
+        let (built, tuning) = self.parts()?;
+        let near = self.locate(near)?;
+        self.count(0);
+        built
+            .tactics
+            .best_cover_from(
+                &built.mesh,
+                threat,
+                near,
+                tuning.radius,
+                max_distance,
+                |eye, target| arena.sees(eye, target),
+            )
+            .map(|spot| spot.point)
     }
 
     pub fn place_at(&self, point: Vec3) -> Option<&PlaceName> {

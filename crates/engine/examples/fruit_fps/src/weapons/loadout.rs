@@ -1,6 +1,8 @@
+use engine_math::{Random, ticks};
+
 use super::gun::{Gun, GunInput, GunTick, GunView, Pace};
-use super::numbers::{GunKind, WeaponNumbers, ticks};
-use super::recoil::{Aim, Kick, Recoil, Shot, ShotRng, Stance};
+use super::numbers::{GunKind, WeaponNumbers};
+use super::recoil::{Aim, Kick, Recoil, Shot, Stance};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
@@ -94,7 +96,7 @@ pub struct Loadout {
     melee_idle: u32,
     strike: Option<Strike>,
     inspect: Option<(GunKind, u32)>,
-    rng: ShotRng,
+    rng: Random,
     pace: Pace,
 }
 
@@ -102,7 +104,7 @@ impl Loadout {
     pub fn new(
         numbers: &WeaponNumbers,
         primary: Option<GunKind>,
-        rng: ShotRng,
+        rng: Random,
         ticks_per_second: u32,
     ) -> Self {
         let mut loadout = Self {
@@ -129,7 +131,7 @@ impl Loadout {
         loadout
     }
 
-    pub fn rng(&self) -> ShotRng {
+    pub fn rng(&self) -> Random {
         self.rng
     }
 
@@ -519,10 +521,10 @@ impl Loadout {
     }
 }
 
-pub fn actor_rng(match_seed: u64, slot: u32) -> ShotRng {
+pub fn actor_rng(match_seed: u64, slot: u32) -> Random {
     let mut mixed =
         match_seed ^ (u64::from(slot).wrapping_add(1)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     mixed = (mixed ^ (mixed >> 33)).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     mixed ^= mixed >> 33;
-    ShotRng::new(mixed)
+    Random::new(mixed)
 }

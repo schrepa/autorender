@@ -156,23 +156,6 @@
    "face": "display_bold",
    "size": 18,
    "color": "ink"
-  },
-  "damage_edge": {
-   "about": "the screen-edge damage arc toward the attacker, drawn by code: centred on the screen centre at radius_share x the window height, length_deg long, a band_px damage_mark band with a rim_px ink rim each side (the level-0 outline) and the damage_tip sticker at its middle (scale tip_scale, its 8 px ink then matches the rim), pointing out; full strength at once, fading to nothing over fade_seconds (alpha (1 - t)^2)",
-   "radius_share": 0.46,
-   "length_deg": 30,
-   "band_px": 10,
-   "rim_px": 5,
-   "color": "damage_mark",
-   "tip_scale": 0.6,
-   "fade_seconds": 1.0
-  },
-  "crosshair": {
-   "about": "the crosshair is drawn by code with settings' outline width in palette ink (opaque); over the bright paving (235, 225, 205) ink is 12.4:1, the white fill alone 1.3:1",
-   "outline": "ink"
-  },
-  "damage_tip": {
-   "icon": "damage_tip"
   }
  },
  "stacks": [
@@ -247,39 +230,34 @@
   "watermelon": "#3DDC84FF",
   "eggplant": "#9B6BFFFF"
  },
- "kinds": "(all are rounded-rect quads, glyph quads or icon quads):\n  plate  rounded rect: fill, radius, optional stroke {width, color}: an SDF border band inside the\n         plate starting stroke_rim px in from the edge, over the fill, so a dark rim frames it on\n         light scenes\n  text   glyph run from font_atlas.json: text (template, see below), size, weight (= face: regular,\n         bold), align, color; baseline = rect.y + rect.h / 2 + cap_height * size / em_px / 2\n  icon   icon atlas quad, fitted (contain) and centred in rect, tinted by color; fit \"trim\" fits the\n         icon's drawn part (icons_atlas.json \"trim\") instead of its whole cell\n  bar    track plate + fill plate; fill length = value/max along dir (ltr, rtl, btt); optional \"knob\"\n         {size, fill, ring}: a disc centred on the end of the fill (sliders)\n  pips   count small rounded rects aligned in rect (align: center or left); the first `value` use `on`, the rest `off`;\n         when value >= count and `full` is set every pip uses `full`\n  image  a texture quad (file named by \"image\", a template, e.g. minimap.png), fitted in rect (\"fit\":\n         \"contain\" (default) or \"cover\": fills rect, cropping the overflow equally on both sides; \"image_small\"\n         is the same picture at 1280 x 720 for windows up to 720 px tall),\n         tinted by color; with \"atlas\" (e.g. portraits.json) and \"key\" (template) it shows that atlas cell\n  markers one atlas icon per item of the list at data path \"items\": each item has pos (map metres),\n         optional yaw (compass degrees, rotates the quad about its centre when \"rotate\" is true) and\n         optional color (palette key, else the element's color); positions go through the map's json\n         (\"map\", e.g. minimap.json: map_to_px) into rect; \"outline\" draws \"outline_icon\" (a grown copy\n         of the icon, same quad) in that colour first; \"backing\" draws a disc of that fill under the icon\n  flow   one plate that fits its content, aligned in rect (left, center, right); items laid left to right with gap\n         (text width = chars * 0.6 * size for the monospace font, icons use their w)\n\nShared fields: id, kind, rect [x, y, w, h], anchor, when, style_if.\n  unscaled  true keeps reference pixels at every window size (crosshair): only the anchor moves\n  text sizes never go below font.min_px after scaling\n  when      a data path that must be truthy; a leading \"!\" negates\n  style_if  [{\"when\": path, \"set\": {field: value}}] applied in order before drawing\n  colors    a palette key, or \"@path\" whose value is a palette key\n  templates \"{path}\" or \"{path|format}\"; formats: int, clock (seconds -> m:ss), credits (1,234),\n            sec1 (one decimal + s), upper\nFields Juice adds to the format:\n  text.face        one of \"fonts\" (display, display_bold, text, text_bold)\n  icon.atlas       \"stickers\": the full-colour sticker atlas (stickers.json), drawn untinted (no color)\n  arc              ring sweep: rect (square), value, max, width, color, track, start_deg (0 = 12 o'clock), clockwise\n  shadows          also on flow, bar and image (plate and text as before)\n  when             a list = all must hold; \"path=value\" compares a text value\n  stack            \"<row>\" of the top-level stacks: the centre column's rows keep their place unless they meet a\n                   row placed before them, then move to the next free place below (above if that passes the floor)\n  reticle          the live crosshair at its real pixel size, centred on the rect\n  flow.padding     the end padding beside text; flow.inset the end padding beside a sticker or key cap\n  pips.track       {fill, pad}: one pill behind the pips, sized to them; pips shrink to fit the rect\n  fit              rules.fit: a text or flow wider than its rect shrinks to fit, down to floor x its size, then\n                   the longest text is cut and ends in mark",
- "texts": {
-  "abilities": {
-   "Peel": "Floor trap, stuns 1.2s",
-   "Ripe Flash": "Flash, blinds up to 1.6s",
-   "Split": "Dash 7 m, back on 2 kills",
-   "Bunch": "10s faster, fires faster",
-   "Jam Pool": "Slows all in 5 m for 8s",
-   "Seed Sensor": "Hidden sensor, reveals 3s",
-   "Sweet Spot": "Heals 12/s in 4 m",
-   "Sugar Rush": "Heals team, +25 shield",
-   "Zest Bomb": "10 damage/s for 7s",
-   "Citrus Curtain": "16 m wall of juice, 12s",
-   "Pulp Cloud": "Smoke 4.5 m, 15s, 2 charges",
-   "Juice Flood": "12 m flood, slows, reveals",
-   "Seed Grenade": "Grenade, up to 80 damage",
-   "Rind Wall": "Solid wall, 800 health",
-   "Thump": "Reveals foes in 18 m",
-   "Melon Drop": "Drops in 2.5s, up to 150",
-   "Nightshade": "Cloud, sight cut to 5 m",
-   "Vine Wire": "Tripwire, slows, reveals",
-   "Glare": "90 deg glare, blinds 1.4s",
-   "Made Man": "12s: +100 shield, steady aim"
-  },
-  "tips": [
-   "Walking is silent. Running is heard 28 m away.",
-   "Past halfway, a defuse keeps its progress.",
-   "A plant pays the whole team 300 credits."
-  ]
- },
+ "kinds": "(all are rounded-rect quads, glyph quads or icon quads):\n  plate  rounded rect: fill, radius, optional stroke {width, color}: an SDF border band inside the\n         plate starting stroke_rim px in from the edge, over the fill, so a dark rim frames it on\n         light scenes\n  text   glyph run from font_atlas.json: text (template, see below), size, weight (= face: regular,\n         bold), align, color; baseline = rect.y + rect.h / 2 + cap_height * size / em_px / 2\n  icon   icon atlas quad, fitted (contain) and centred in rect, tinted by color; fit \"trim\" fits the\n         icon's drawn part (icons_atlas.json \"trim\") instead of its whole cell\n  bar    track plate + fill plate; fill length = value/max along dir (ltr, rtl, btt); optional \"knob\"\n         {size, fill, ring}: a disc centred on the end of the fill (sliders)\n  pips   count small rounded rects aligned in rect (align: center or left); the first `value` use `on`, the rest `off`;\n         when value >= count and `full` is set every pip uses `full`\n  image  a texture quad (file named by \"image\", a template, e.g. minimap.png), fitted in rect (\"fit\":\n         \"contain\" (default) or \"cover\": fills rect, cropping the overflow equally on both sides; \"image_small\"\n         is the same picture at 1280 x 720 for windows up to 720 px tall),\n         tinted by color; with \"atlas\" (e.g. portraits.json) and \"key\" (template) it shows that atlas cell\n  markers one atlas icon per item of the list at data path \"items\": each item has pos (map metres),\n         optional yaw (compass degrees, rotates the quad about its centre when \"rotate\" is true) and\n         optional color (palette key, else the element's color); positions go through the map's json\n         (\"map\", e.g. minimap.json: map_to_px) into rect; \"outline\" draws \"outline_icon\" (a grown copy\n         of the icon, same quad) in that colour first; \"backing\" draws a disc of that fill under the icon\n  flow   one plate that fits its content, aligned in rect (left, center, right); items laid left to right with gap\n         (text width = chars * 0.6 * size for the monospace font, icons use their w)\n\nShared fields: id, kind, rect [x, y, w, h], anchor, when, style_if.\n  unscaled  true keeps reference pixels at every window size (crosshair): only the anchor moves\n  text sizes never go below font.min_px after scaling\n  when      a data path that must be truthy; a leading \"!\" negates\n  style_if  [{\"when\": path, \"set\": {field: value}}] applied in order before drawing\n  colors    a palette key, or \"@path\" whose value is a palette key\n  templates \"{path}\" or \"{path|format}\"; formats: int, clock (seconds -> m:ss), thousands (1,234),\n            tenths (one decimal), upper\nFields Juice adds to the format:\n  text.face        one of \"fonts\" (display, display_bold, text, text_bold)\n  icon.atlas       \"stickers\": the full-colour sticker atlas (stickers.json), drawn untinted (no color)\n  arc              ring sweep: rect (square), value, max, width, color, track, start_deg (0 = 12 o'clock), clockwise\n  shadows          also on flow, bar and image (plate and text as before)\n  when             a list = all must hold; \"path=value\" compares a text value\n  stack            \"<row>\" of the top-level stacks: the centre column's rows keep their place unless they meet a\n                   row placed before them, then move to the next free place below (above if that passes the floor)\n  reticle          the live crosshair at its real pixel size, centred on the rect\n  flow.padding     the end padding beside text; flow.inset the end padding beside a sticker or key cap\n  pips.track       {fill, pad}: one pill behind the pips, sized to them; pips shrink to fit the rect\n  fit              rules.fit: a text or flow wider than its rect shrinks to fit, down to floor x its size, then\n                   the longest text is cut and ends in mark",
  "screens": {
   "hud": {
    "elements": [
+    {
+     "id": "blind",
+     "kind": "piece",
+     "piece": "blind",
+     "rect": [
+      0,
+      0,
+      1920,
+      1080
+     ],
+     "anchor": "stretch"
+    },
+    {
+     "id": "scope",
+     "kind": "piece",
+     "piece": "scope",
+     "rect": [
+      0,
+      0,
+      1920,
+      1080
+     ],
+     "anchor": "stretch"
+    },
     {
      "id": "minimap",
      "kind": "image",
@@ -545,7 +523,7 @@
       },
       {
        "type": "text",
-       "text": "{player.credits|credits}",
+       "text": "{player.credits|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -3257,7 +3235,7 @@
       36
      ],
      "anchor": "bottom_left",
-     "text": "{statuses.0.left|sec1}",
+     "text": "{statuses.0.left|tenths}s",
      "size": 18,
      "face": "display_bold",
      "weight": "bold",
@@ -3372,7 +3350,7 @@
       36
      ],
      "anchor": "bottom_left",
-     "text": "{statuses.1.left|sec1}",
+     "text": "{statuses.1.left|tenths}s",
      "size": 18,
      "face": "display_bold",
      "weight": "bold",
@@ -3487,7 +3465,7 @@
       36
      ],
      "anchor": "bottom_left",
-     "text": "{statuses.2.left|sec1}",
+     "text": "{statuses.2.left|tenths}s",
      "size": 18,
      "face": "display_bold",
      "weight": "bold",
@@ -3602,7 +3580,7 @@
       36
      ],
      "anchor": "bottom_left",
-     "text": "{statuses.3.left|sec1}",
+     "text": "{statuses.3.left|tenths}s",
      "size": 18,
      "face": "display_bold",
      "weight": "bold",
@@ -5358,7 +5336,7 @@
       },
       {
        "type": "text",
-       "text": "{weapon.down_left|sec1}",
+       "text": "{weapon.down_left|tenths}s",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -5541,7 +5519,7 @@
       36
      ],
      "anchor": "center",
-     "text": "{action.left|sec1}",
+     "text": "{action.left|tenths}s",
      "size": 30,
      "face": "display_bold",
      "weight": "bold",
@@ -7026,11 +7004,35 @@
       }
      ],
      "stack": "kill"
+    },
+    {
+     "id": "hud_marks",
+     "kind": "piece",
+     "piece": "hud_marks",
+     "rect": [
+      0,
+      0,
+      1920,
+      1080
+     ],
+     "anchor": "stretch"
     }
    ]
   },
   "round_end": {
    "elements": [
+    {
+     "id": "blind",
+     "kind": "piece",
+     "piece": "blind",
+     "rect": [
+      0,
+      0,
+      1920,
+      1080
+     ],
+     "anchor": "stretch"
+    },
     {
      "id": "overtime",
      "kind": "plate",
@@ -7523,7 +7525,7 @@
      "items": [
       {
        "type": "text",
-       "text": "WIN +{buy.reward_win|credits}",
+       "text": "WIN +{buy.reward_win|thousands}",
        "size": 25,
        "face": "text_bold",
        "weight": "bold",
@@ -7531,7 +7533,7 @@
       },
       {
        "type": "text",
-       "text": "LOSS +{buy.reward_loss|credits}",
+       "text": "LOSS +{buy.reward_loss|thousands}",
        "size": 25,
        "face": "text_bold",
        "weight": "bold",
@@ -7666,7 +7668,7 @@
       84
      ],
      "anchor": "center",
-     "text": "{player.credits|credits}",
+     "text": "{player.credits|thousands}",
      "size": 56,
      "face": "display_bold",
      "weight": "bold",
@@ -7836,7 +7838,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.weapons.0.sell|credits}",
+       "text": "+{buy.weapons.0.sell|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -7875,7 +7877,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.weapons.0.need|credits}",
+       "text": "{buy.weapons.0.need|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -8230,7 +8232,7 @@
       52
      ],
      "anchor": "center",
-     "text": "{buy.weapons.0.price|credits}",
+     "text": "{buy.weapons.0.price|thousands}",
      "size": 35,
      "face": "display_bold",
      "weight": "bold",
@@ -8530,7 +8532,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.weapons.1.sell|credits}",
+       "text": "+{buy.weapons.1.sell|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -8569,7 +8571,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.weapons.1.need|credits}",
+       "text": "{buy.weapons.1.need|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -8924,7 +8926,7 @@
       52
      ],
      "anchor": "center",
-     "text": "{buy.weapons.1.price|credits}",
+     "text": "{buy.weapons.1.price|thousands}",
      "size": 35,
      "face": "display_bold",
      "weight": "bold",
@@ -9224,7 +9226,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.weapons.2.sell|credits}",
+       "text": "+{buy.weapons.2.sell|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -9263,7 +9265,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.weapons.2.need|credits}",
+       "text": "{buy.weapons.2.need|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -9618,7 +9620,7 @@
       52
      ],
      "anchor": "center",
-     "text": "{buy.weapons.2.price|credits}",
+     "text": "{buy.weapons.2.price|thousands}",
      "size": 35,
      "face": "display_bold",
      "weight": "bold",
@@ -9918,7 +9920,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.weapons.3.sell|credits}",
+       "text": "+{buy.weapons.3.sell|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -9957,7 +9959,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.weapons.3.need|credits}",
+       "text": "{buy.weapons.3.need|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -10312,7 +10314,7 @@
       52
      ],
      "anchor": "center",
-     "text": "{buy.weapons.3.price|credits}",
+     "text": "{buy.weapons.3.price|thousands}",
      "size": 35,
      "face": "display_bold",
      "weight": "bold",
@@ -10564,7 +10566,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.armor.0.price|credits}",
+     "text": "{buy.armor.0.price|thousands}",
      "size": 28,
      "face": "display_bold",
      "weight": "bold",
@@ -10635,7 +10637,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.armor.0.sell|credits}",
+       "text": "+{buy.armor.0.sell|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -10783,7 +10785,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.armor.1.price|credits}",
+     "text": "{buy.armor.1.price|thousands}",
      "size": 28,
      "face": "display_bold",
      "weight": "bold",
@@ -10854,7 +10856,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.armor.1.sell|credits}",
+       "text": "+{buy.armor.1.sell|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -11002,7 +11004,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.abilities.0.price|credits}",
+     "text": "{buy.abilities.0.price|thousands}",
      "size": 28,
      "face": "display_bold",
      "weight": "bold",
@@ -11081,7 +11083,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.abilities.0.sell|credits}",
+       "text": "+{buy.abilities.0.sell|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -11223,7 +11225,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.abilities.1.price|credits}",
+     "text": "{buy.abilities.1.price|thousands}",
      "size": 28,
      "face": "display_bold",
      "weight": "bold",
@@ -11302,7 +11304,7 @@
       },
       {
        "type": "text",
-       "text": "+{buy.abilities.1.sell|credits}",
+       "text": "+{buy.abilities.1.sell|thousands}",
        "size": 22,
        "face": "display_bold",
        "weight": "bold",
@@ -11421,7 +11423,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.team.0.credits|credits}",
+     "text": "{buy.team.0.credits|thousands}",
      "size": 30,
      "face": "display_bold",
      "weight": "bold",
@@ -11494,7 +11496,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.team.0.ask_price|credits}",
+       "text": "{buy.team.0.ask_price|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -11634,7 +11636,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.team.1.credits|credits}",
+     "text": "{buy.team.1.credits|thousands}",
      "size": 30,
      "face": "display_bold",
      "weight": "bold",
@@ -11707,7 +11709,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.team.1.ask_price|credits}",
+       "text": "{buy.team.1.ask_price|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -11847,7 +11849,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.team.2.credits|credits}",
+     "text": "{buy.team.2.credits|thousands}",
      "size": 30,
      "face": "display_bold",
      "weight": "bold",
@@ -11920,7 +11922,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.team.2.ask_price|credits}",
+       "text": "{buy.team.2.ask_price|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -12060,7 +12062,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.team.3.credits|credits}",
+     "text": "{buy.team.3.credits|thousands}",
      "size": 30,
      "face": "display_bold",
      "weight": "bold",
@@ -12133,7 +12135,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.team.3.ask_price|credits}",
+       "text": "{buy.team.3.ask_price|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -12273,7 +12275,7 @@
       44
      ],
      "anchor": "center",
-     "text": "{buy.team.4.credits|credits}",
+     "text": "{buy.team.4.credits|thousands}",
      "size": 30,
      "face": "display_bold",
      "weight": "bold",
@@ -12346,7 +12348,7 @@
       },
       {
        "type": "text",
-       "text": "{buy.team.4.ask_price|credits}",
+       "text": "{buy.team.4.ask_price|thousands}",
        "size": 18,
        "face": "display_bold",
        "weight": "bold",
@@ -12583,6 +12585,18 @@
   },
   "scoreboard": {
    "elements": [
+    {
+     "id": "blind",
+     "kind": "piece",
+     "piece": "blind",
+     "rect": [
+      0,
+      0,
+      1920,
+      1080
+     ],
+     "anchor": "stretch"
+    },
     {
      "id": "scrim",
      "kind": "plate",
@@ -13136,7 +13150,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.left.0.credits|credits}",
+     "text": "{board.left.0.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -13415,7 +13429,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.left.1.credits|credits}",
+     "text": "{board.left.1.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -13694,7 +13708,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.left.2.credits|credits}",
+     "text": "{board.left.2.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -13973,7 +13987,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.left.3.credits|credits}",
+     "text": "{board.left.3.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -14252,7 +14266,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.left.4.credits|credits}",
+     "text": "{board.left.4.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -14691,7 +14705,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.right.0.credits|credits}",
+     "text": "{board.right.0.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -14970,7 +14984,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.right.1.credits|credits}",
+     "text": "{board.right.1.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -15249,7 +15263,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.right.2.credits|credits}",
+     "text": "{board.right.2.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -15528,7 +15542,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.right.3.credits|credits}",
+     "text": "{board.right.3.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -15807,7 +15821,7 @@
       60
      ],
      "anchor": "center",
-     "text": "{board.right.4.credits|credits}",
+     "text": "{board.right.4.credits|thousands}",
      "size": 26,
      "face": "display_bold",
      "weight": "bold",
@@ -18799,7 +18813,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -18897,7 +18913,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -18995,7 +19013,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -19093,7 +19113,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -19208,7 +19230,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -19441,7 +19465,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -19539,7 +19565,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -19877,7 +19905,8 @@
     },
     {
      "id": "preview_paving_reticle",
-     "kind": "reticle",
+     "kind": "piece",
+     "piece": "reticle",
      "rect": [
       708.0,
       242,
@@ -19940,7 +19969,8 @@
     },
     {
      "id": "preview_hall_reticle",
-     "kind": "reticle",
+     "kind": "piece",
+     "piece": "reticle",
      "rect": [
       991.0,
       242,
@@ -20347,7 +20377,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -20445,7 +20477,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -20543,7 +20577,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {
@@ -20641,7 +20677,9 @@
      "knob": {
       "size": 30,
       "fill": "paper",
-      "ring": "ink"
+      "ring": "ink",
+      "ring_px": 6,
+      "inset_px": 2
      },
      "shadows": [
       {

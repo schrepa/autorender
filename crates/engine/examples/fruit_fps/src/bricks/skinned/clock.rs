@@ -2,40 +2,40 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::Error;
+use engine_core::glam::Mat4;
 use engine_core::math::{clamp, max, min};
+use engine_core::{Error, ErrorCode};
 
-use super::files::Rig;
-use crate::play::figures::{BaseLayer, Figure, FigurePlay, UpperLayer};
+use super::rig::{FigureFiles, Rig};
+use crate::play::skinned::{ClipNo, FigureClock, FigurePlay, UpperLayer};
 
-pub(super) struct Readout {
-    pub(super) base_seconds: f32,
-    pub(super) base_done: bool,
-    pub(super) base_cue: u32,
-    pub(super) upper_seconds: f32,
-    pub(super) upper_done: bool,
-    pub(super) upper_cue: Option<u32>,
-    pub(super) upper_rate: f32,
+pub(super) fn clip_in(rig: &Rig, clip: ClipNo, path: &str) -> Result<usize, Error> {
+    (clip.0 < rig.clips.len())
+        .then_some(clip.0)
+        .ok_or_else(|| Error::new(ErrorCode::UnknownReference, path.to_owned()).got(clip.0))
 }
 
-fn fitted(rig: &Rig, clip: &str, fit: Option<f32>, speed: f32) -> f32 {
+pub(super) fn clips_in(rig: &Rig, play: &FigurePlay) -> Result<(usize, Option<usize>), Error> {
+    let base = clip_in(rig, play.base.clip, "$.figure_play.base.clip")?;
+    for blended in &play.base.blend {
+        clip_in(rig, blended.clip, "$.figure_play.base.blend")?;
+    }
+    let upper = (play.upper.as_ref())
+        .map(|upper| clip_in(rig, upper.clip, "$.figure_play.upper.clip"))
+        .transpose()?;
+    Ok((base, upper))
+}
+
+fn fitted(rig: &Rig, clip: usize, fit: Option<f32>, speed: f32) -> f32 {
     match fit {
         Some(fit) if fit > 0.0 => rig.duration(clip) / fit,
         Some(_) | None => speed,
     }
 }
 
-fn rate(rig: &Rig, base: &BaseLayer) -> f32 {
-    fitted(rig, &base.clip, base.fit_seconds, base.speed)
-}
-
-fn upper_rate(rig: &Rig, upper: &UpperLayer) -> f32 {
-    fitted(rig, &upper.clip, upper.fit_seconds, upper.speed)
-}
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(super) struct LayerClock {
-    pub(super) clip: String,
+    pub(super) clip: usize,
     cue: u32,
     speed: f32,
     looping: bool,
@@ -46,9 +46,9 @@ pub(super) struct LayerClock {
 }
 
 impl LayerClock {
-    fn started(clip: &str, cue: u32, speed: f32, looping: bool) -> Self {
+    fn started(clip: usize, cue: u32, speed: f32, looping: bool) -> Self {
         Self {
-            clip: clip.to_owned(),
+            clip,
             cue,
             speed,
             looping,
@@ -71,7 +71,7 @@ impl LayerClock {
         self.end.map_or(duration, |end| min(end, duration))
     }
 
-    fn restarts(&self, clip: &str, cue: u32) -> bool {
+    fn restarts(&self, clip: usize, cue: u32) -> bool {
         self.clip != clip || self.cue != cue
     }
 
@@ -101,7 +101,7 @@ impl LayerClock {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(super) struct Fade {
     pub(super) from: LayerClock,
     elapsed: f32,
@@ -115,13 +115,24 @@ impl Fade {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+pub(super) type Mask = Result<Arc<[f32]>, Error>;
+
+#[derive(Clone, Debug)]
 pub(super) struct Upper {
     pub(super) clock: LayerClock,
     pub(super) layer: UpperLayer,
+    pub(super) mask: Mask,
+    pub(super) played: Option<Mask>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+fn masked(files: &mut FigureFiles, rig: &Rig, layer: &UpperLayer) -> (Mask, Option<Mask>) {
+    let mask = files.mask(rig, layer.from.0, layer.feather, "$.figure_play.upper.from");
+    let played = (layer.played_from)
+        .map(|from| files.mask(rig, from.0, 0, "$.figure_play.upper.played_from"));
+    (mask, played)
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct UpperFade {
     pub(super) from: Option<Upper>,
     elapsed: f32,
@@ -155,45 +166,57 @@ fn faded(old: Option<Upper>, new: Option<&Upper>) -> Option<UpperFade> {
     })
 }
 
+#[derive(Clone)]
 pub(super) struct Clocks {
-    pub(super) figure: Figure,
+    pub(super) limbed: bool,
     pub(super) rig: Result<Arc<Rig>, Error>,
     pub(super) base: Option<LayerClock>,
     pub(super) fade: Option<Fade>,
     pub(super) upper: Option<Upper>,
     pub(super) upper_fade: Option<UpperFade>,
     pub(super) fit: f32,
+    pub(super) fit_rest: Option<f32>,
+    pub(super) fitted: bool,
+    pub(super) top: Option<f32>,
+    pub(super) world: Option<Mat4>,
 }
 
 impl Clocks {
-    pub(super) fn new(figure: Figure, rig: Result<Arc<Rig>, Error>) -> Self {
+    pub(super) fn new(limbed: bool, rig: Result<Arc<Rig>, Error>) -> Self {
         Self {
-            figure,
+            limbed,
             rig,
             base: None,
             fade: None,
             upper: None,
             upper_fade: None,
             fit: 1.0,
+            fit_rest: None,
+            fitted: false,
+            top: None,
+            world: None,
         }
     }
 
-    pub(super) fn tick(&mut self, play: Option<&FigurePlay>, delta: f32) {
-        let Ok(rig) = &self.rig else {
-            return;
-        };
+    pub(super) fn tick(
+        &mut self,
+        (rig, play): (&Rig, Option<&FigurePlay>),
+        files: &mut FigureFiles,
+        delta: f32,
+    ) -> Result<(), Error> {
         let Some(play) = play else {
             self.base = None;
             self.fade = None;
             self.upper = None;
             self.upper_fade = None;
-            return;
+            return Ok(());
         };
+        let (base_clip, upper_clip) = clips_in(rig, play)?;
         if let Some(fade) = &mut self.fade {
             if fade.elapsed >= fade.seconds {
                 self.fade = None;
             } else {
-                fade.from.advance(rig.duration(&fade.from.clip), delta);
+                fade.from.advance(rig.duration(fade.from.clip), delta);
                 let before = fade.elapsed;
                 fade.elapsed = min(before + delta, fade.seconds);
                 fade.step = fade.elapsed - before;
@@ -204,27 +227,27 @@ impl Clocks {
             && let Some(clock) = &mut self.base
             && clock.synced
             && clock.cue == base.cue
-            && clock.clip != base.clip
+            && clock.clip != base_clip
         {
-            let before = rig.duration(&clock.clip);
+            let before = rig.duration(clock.clip);
             let share = if before > 0.0 {
                 clock.seconds / before
             } else {
                 0.0
             };
-            clock.clip.clone_from(&base.clip);
-            clock.seconds = share * rig.duration(&base.clip);
+            clock.clip = base_clip;
+            clock.seconds = share * rig.duration(base_clip);
             clock.step = 0.0;
         }
+        let rate = fitted(rig, base_clip, base.fit_seconds, base.speed);
         match &mut self.base {
-            Some(clock) if !clock.restarts(&base.clip, base.cue) => {
-                clock.speed = rate(rig, base);
+            Some(clock) if !clock.restarts(base_clip, base.cue) => {
+                clock.speed = rate;
                 clock.looping = base.looping;
-                clock.advance(rig.duration(&base.clip), delta);
+                clock.advance(rig.duration(base_clip), delta);
             }
             Some(_) | None => {
-                let started =
-                    LayerClock::started(&base.clip, base.cue, rate(rig, base), base.looping);
+                let started = LayerClock::started(base_clip, base.cue, rate, base.looping);
                 let old = self.base.replace(started);
                 self.fade = old.filter(|_| base.fade_seconds > 0.0).map(|from| Fade {
                     from,
@@ -237,19 +260,24 @@ impl Clocks {
         if let Some(clock) = &mut self.base {
             clock.synced = base.synced;
         }
-        self.upper_tick(play.upper.as_ref(), delta);
+        let wanted = play.upper.as_ref().zip(upper_clip);
+        self.upper_tick(rig, wanted, files, delta);
+        Ok(())
     }
 
-    fn upper_tick(&mut self, wanted: Option<&UpperLayer>, delta: f32) {
-        let Ok(rig) = &self.rig else {
-            return;
-        };
+    fn upper_tick(
+        &mut self,
+        rig: &Rig,
+        wanted: Option<(&UpperLayer, usize)>,
+        files: &mut FigureFiles,
+        delta: f32,
+    ) {
         if let Some(fade) = &mut self.upper_fade {
             if fade.elapsed >= fade.seconds {
                 self.upper_fade = None;
             } else {
                 if let Some(from) = &mut fade.from {
-                    from.clock.advance(rig.duration(&from.clock.clip), delta);
+                    from.clock.advance(rig.duration(from.clock.clip), delta);
                 }
                 let before = fade.elapsed;
                 fade.elapsed = min(before + delta, fade.seconds);
@@ -258,24 +286,31 @@ impl Clocks {
         }
         match (wanted, &mut self.upper) {
             (None, None) => {}
-            (Some(upper), Some(held)) if !held.clock.restarts(&upper.clip, upper.cue) => {
-                held.clock.speed = upper_rate(rig, upper);
+            (Some((upper, clip)), Some(held)) if !held.clock.restarts(clip, upper.cue) => {
+                held.clock.speed = fitted(rig, clip, upper.fit_seconds, upper.speed);
                 held.clock.looping = upper.looping;
-                held.clock.advance(rig.duration(&upper.clip), delta);
+                held.clock.advance(rig.duration(clip), delta);
                 if held.layer != *upper {
-                    held.layer.clone_from(upper);
+                    let remask = held.layer.from != upper.from
+                        || held.layer.feather != upper.feather
+                        || held.layer.played_from != upper.played_from;
+                    held.layer = *upper;
+                    if remask {
+                        (held.mask, held.played) = masked(files, rig, upper);
+                    }
                 }
             }
             (Some(_) | None, Some(_) | None) => {
-                let started = wanted.map(|upper| Upper {
-                    clock: LayerClock::started(
-                        &upper.clip,
-                        upper.cue,
-                        upper_rate(rig, upper),
-                        upper.looping,
-                    )
-                    .windowed(upper.window),
-                    layer: upper.clone(),
+                let started = wanted.map(|(upper, clip)| {
+                    let (mask, played) = masked(files, rig, upper);
+                    let speed = fitted(rig, clip, upper.fit_seconds, upper.speed);
+                    Upper {
+                        clock: LayerClock::started(clip, upper.cue, speed, upper.looping)
+                            .windowed(upper.window),
+                        layer: *upper,
+                        mask,
+                        played,
+                    }
                 });
                 let old = std::mem::replace(&mut self.upper, started);
                 self.upper_fade = faded(old, self.upper.as_ref());
@@ -283,33 +318,23 @@ impl Clocks {
         }
     }
 
-    pub(super) fn readout(&self) -> Readout {
-        let duration = |clock: &LayerClock| {
-            self.rig
-                .as_ref()
-                .map_or(0.0, |rig| rig.duration(&clock.clip))
-        };
+    pub(super) fn read(&self, rig: &Rig, facts: &mut FigureClock) {
         let of = |clock: Option<&LayerClock>| {
             clock.map_or((0.0, false), |clock| {
-                (clock.seconds, clock.done(duration(clock)))
+                (clock.seconds, clock.done(rig.duration(clock.clip)))
             })
         };
         let upper = self.upper.as_ref().map(|upper| &upper.clock);
-        let (base_seconds, base_done) = of(self.base.as_ref());
-        let (upper_seconds, upper_done) = of(upper);
-        Readout {
-            base_seconds,
-            base_done,
-            base_cue: self.base.as_ref().map_or(0, |clock| clock.cue),
-            upper_seconds,
-            upper_done,
-            upper_cue: upper.map(|clock| clock.cue),
-            upper_rate: upper.map_or(0.0, |clock| clock.speed),
-        }
+        (facts.base_seconds, facts.base_done) = of(self.base.as_ref());
+        (facts.upper_seconds, facts.upper_done) = of(upper);
+        facts.base_cue = self.base.as_ref().map_or(0, |clock| clock.cue);
+        facts.upper_cue = upper.map(|clock| clock.cue);
+        facts.upper_rate = upper.map_or(0.0, |clock| clock.speed);
+        facts.fit = self.fit;
     }
 }
 
 #[derive(Resource, Default)]
 pub struct FigureClocks {
-    pub(super) held: BTreeMap<Entity, Clocks>,
+    pub(super) held: Arc<BTreeMap<Entity, Clocks>>,
 }

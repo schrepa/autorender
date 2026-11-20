@@ -82,7 +82,7 @@ stats! {
 struct RoundBook {
     applied: Option<Chosen>,
     numbers_revision: u64,
-    start: Option<(u64, Result<start::StartNumbers, String>)>,
+    start: Option<(u64, Result<std::sync::Arc<start::StartNumbers>, String>)>,
     recent: Vec<&'static str>,
     waiting: Option<String>,
     unplaced: u32,

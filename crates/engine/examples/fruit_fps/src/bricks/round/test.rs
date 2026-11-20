@@ -15,13 +15,6 @@ pub struct Credits {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum Winner {
-    Attack,
-    Defend,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
 pub enum By {
     Elimination,
     Time,
@@ -31,7 +24,7 @@ pub enum By {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EndRound {
-    pub winner: Winner,
+    pub winner: Side,
     pub by: By,
 }
 
@@ -65,10 +58,7 @@ pub(super) fn door(test: DevSetting<MatchTest>, mut round: ResMut<Round>) {
         game.mark_ready(slot as usize);
     }
     if let Some(end) = test.end_round {
-        let side = match end.winner {
-            Winner::Attack => Side::Attack,
-            Winner::Defend => Side::Defend,
-        };
+        let side = end.winner;
         let reason = match (end.by, side) {
             (By::Elimination, _) => RoundEndReason::Elimination,
             (By::Time, _) => RoundEndReason::Time,

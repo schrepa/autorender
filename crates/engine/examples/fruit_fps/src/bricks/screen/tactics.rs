@@ -6,12 +6,12 @@ use crate::play::actors::{Actor, Body, Human};
 use crate::play::bots::{BotMinds, TeamSight};
 use crate::play::powers::Powers;
 use crate::play::round::Round;
-use crate::play::screen::{HudFacts, MapItem, StatusFacts};
 use crate::play::view::{Watch, Watched};
 use crate::rules::{Catalog, Team, View};
 
 use super::ScreenSource;
 use super::facts::{Recent, spot};
+use super::hud::{HudFacts, MapItem, StatusFacts};
 use super::live::{character_key, character_name, named, set, tone};
 
 const SLOWED: &str = "slowed";
@@ -98,18 +98,32 @@ fn drawn_at(drawable: &Drawable) -> (Vec3, f32) {
     }
 }
 
+fn put<'a>(list: &'a mut Vec<MapItem>, count: &mut usize) -> &'a mut MapItem {
+    if list.len() == *count {
+        list.push(MapItem::default());
+    }
+    let item = &mut list[*count];
+    *count += 1;
+    item.pos = [0.0; 2];
+    item.yaw_degrees = 0.0;
+    item.color = None;
+    item.fade = 0.0;
+    item.radius_m = 0.0;
+    item.icon.clear();
+    item
+}
+
 fn utility_part(facts: &mut HudFacts, powers: &Powers, (catalog, team): (&Catalog, Team)) {
     let minimap = &mut facts.minimap;
-    minimap.smokes.clear();
-    minimap.utility.clear();
+    let (mut smokes, mut utility) = (0, 0);
     for drawable in powers.drawables() {
         let (at, radius) = drawn_at(&drawable);
         match drawable.kind {
-            DrawKind::Smoke => minimap.smokes.push(MapItem {
-                pos: spot(at),
-                radius_m: radius,
-                ..MapItem::default()
-            }),
+            DrawKind::Smoke => {
+                let item = put(&mut minimap.smokes, &mut smokes);
+                item.pos = spot(at);
+                item.radius_m = radius;
+            }
             DrawKind::Trap
             | DrawKind::Wire
             | DrawKind::Sensor
@@ -118,12 +132,9 @@ fn utility_part(facts: &mut HudFacts, powers: &Powers, (catalog, team): (&Catalo
             | DrawKind::Zone
                 if drawable.team == team.index() =>
             {
-                let mut item = MapItem {
-                    pos: spot(at),
-                    ..MapItem::default()
-                };
+                let item = put(&mut minimap.utility, &mut utility);
+                item.pos = spot(at);
                 ability_icon(&mut item.icon, catalog, drawable.ability);
-                minimap.utility.push(item);
             }
             DrawKind::Projectile
             | DrawKind::Zone
@@ -135,15 +146,17 @@ fn utility_part(facts: &mut HudFacts, powers: &Powers, (catalog, team): (&Catalo
             | DrawKind::StrikeMark => {}
         }
     }
+    minimap.smokes.truncate(smokes);
+    minimap.utility.truncate(utility);
 }
 
 fn enemies_part(
-    facts: &mut HudFacts,
+    (facts, shown): (&mut HudFacts, &mut Vec<u32>),
     (sight, view, team): (&TeamSight, &View<'_>, Team),
     bodies: &Query<(&Actor, &Body)>,
     (tick, step, keep): (u64, f32, f32),
 ) {
-    let side = tone(view.side_of(team.other()));
+    let side = tone(view.side_of(team.other())).key();
     let index = team.index();
     let alive = |slot: u32| {
         view.players
@@ -151,9 +164,8 @@ fn enemies_part(
             .filter(|player| player.team != team && player.alive)
     };
     let minimap = &mut facts.minimap;
-    minimap.enemies.clear();
-    minimap.lost.clear();
-    let mut shown: Vec<u32> = Vec::new();
+    let (mut enemies, mut lost) = (0, 0);
+    shown.clear();
     let seen = sight.seen.get(index).map_or(&[][..], Vec::as_slice);
     for &(enemy, _) in seen {
         if shown.contains(&enemy) {
@@ -165,16 +177,13 @@ fn enemies_part(
         ) else {
             continue;
         };
-        let mut item = MapItem {
-            pos: spot(body.feet),
-            color: Some(side),
-            ..MapItem::default()
-        };
+        let item = put(&mut minimap.enemies, &mut enemies);
+        item.pos = spot(body.feet);
+        item.color = Some(side);
         named(&mut item.icon, "char_", character_key(view.catalog, player));
         item.icon.push('_');
-        item.icon.push_str(side.key());
+        item.icon.push_str(side);
         shown.push(enemy);
-        minimap.enemies.push(item);
     }
     let last = sight.last.get(index).map_or(&[][..], Vec::as_slice);
     for &(enemy, at_tick, feet) in last {
@@ -182,14 +191,14 @@ fn enemies_part(
         if shown.contains(&enemy) || alive(enemy).is_none() || keep <= 0.0 || age >= keep {
             continue;
         }
-        minimap.lost.push(MapItem {
-            pos: spot(feet),
-            color: Some(side),
-            fade: age / keep,
-            radius_m: LOST_RADIUS_M,
-            ..MapItem::default()
-        });
+        let item = put(&mut minimap.lost, &mut lost);
+        item.pos = spot(feet);
+        item.color = Some(side);
+        item.fade = age / keep;
+        item.radius_m = LOST_RADIUS_M;
     }
+    minimap.enemies.truncate(enemies);
+    minimap.lost.truncate(lost);
 }
 
 fn ultimate_part(
@@ -244,6 +253,7 @@ pub(super) fn fill_tactics(
     bodies: Query<(&Actor, &Body)>,
     minds: Option<Res<BotMinds>>,
     mut facts: ResMut<HudFacts>,
+    mut shown: Local<Vec<u32>>,
 ) {
     if recent.shows_demo() {
         return;
@@ -282,7 +292,7 @@ pub(super) fn fill_tactics(
     let sight = minds.as_deref().map(|minds| &minds.sight);
     if let Some(sight) = sight {
         enemies_part(
-            facts,
+            (facts, &mut shown),
             (sight, &view, team),
             &bodies,
             (tick, fixed.delta_seconds, source.low.lost_seconds),

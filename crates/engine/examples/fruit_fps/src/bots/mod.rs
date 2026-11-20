@@ -21,13 +21,13 @@ pub use numbers::{
     BotCombat, BotNumbers, BotPlayer, BotRound, BotsTable, Level, LevelNumbers, Levels, PlayNumbers,
 };
 pub use places::{
-    Angle, CoverBox, Gate, LayoutCallout, LayoutChoke, LayoutCover, LayoutPlant, LayoutPortal,
-    LayoutSpawn, LayoutZone, MapLayout, Places, PlacesError, Site, Spot, Zone, ZoneId,
+    Angle, CoverBox, Gate, LayoutCallout, LayoutChoke, LayoutClass, LayoutCover, LayoutPlant,
+    LayoutPortal, LayoutSpawn, LayoutZone, MapLayout, Places, PlacesError, Site, Spot, Zone, ZoneId,
 };
 pub use sense::{
     AbilitySense, AbilityUse, Block, BuySense, Call, CallKind, DeviceSense, Gait, GamePhase,
     GunClass, GunSense, Hazard, Heard, Intent, MatchSense, Mate, ObjectKind, ObjectSense, OrbSense,
-    Purchase, Seen, Sense, Side, Smoke, SoundKind, WeaponChoice, World, tools_of,
+    Purchase, Seen, Sense, Smoke, SoundKind, WeaponChoice, World, tools_of,
 };
 pub use team::{
     Approach, Duty, Hold, Line, LineKind, Member, Order, Role, SiteTactics, Squad, SquadSense, Step,
@@ -61,6 +61,7 @@ pub struct Brain {
     reveal_spot: Option<Vec3>,
     hazard_spot: Option<Vec3>,
     orb_spot: Option<Vec3>,
+    orb_refused: Option<Vec3>,
     debug: BotDebug,
     last_magazine: u32,
     last_fire: bool,
@@ -103,6 +104,7 @@ impl Brain {
             reveal_spot: None,
             hazard_spot: None,
             orb_spot: None,
+            orb_refused: None,
             debug: BotDebug {
                 level,
                 duty: order.duty,
@@ -126,13 +128,15 @@ impl Brain {
         self.mover.clear();
         self.fight = Fight::new();
         self.glance = Glance::new();
-        let counts = self.utilities.counts;
+        let (counts, answers) = (self.utilities.counts, self.utilities.answers);
         self.utilities = Utilities::new();
         self.utilities.counts = counts;
+        self.utilities.answers = answers;
         self.aim.synced = false;
         self.buy_tick = None;
         self.bought = false;
         self.orb_spot = None;
+        self.orb_refused = None;
         self.hesitate_until = 0;
         self.last_heard_call = None;
         self.debug.why = Why::RoundStart;
@@ -296,7 +300,9 @@ pub fn think(
     };
     brain.take_order(&ctx);
     let lane = ctx.sense.me as f32 * numbers.play.spacing_m * 0.5;
-    brain.mover.set_lane(lane, ctx.up * 0.5);
+    brain
+        .mover
+        .set_lane(lane, ctx.up * 0.5, (ctx.sense.me, ctx.sense.mates.len() + 1));
     let look = Look {
         eye: ctx.eye,
         yaw: brain.aim.yaw,

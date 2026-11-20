@@ -2,6 +2,7 @@ use glam::Vec3;
 
 use super::places::{Places, ZoneId};
 use super::team::Order;
+use crate::rules::Side;
 
 pub trait World {
     fn sees(&self, from: Vec3, to: Vec3) -> bool;
@@ -197,12 +198,6 @@ pub enum GamePhase {
     Live,
     Planted,
     Ended,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Side {
-    Attack,
-    Defend,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -2,15 +2,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine::prelude::{Component, Entity, Resource};
-use engine_core::{Error, ErrorCode, SceneCx};
+use engine_core::{Asset, Error, ErrorCode, Material, MeshFile};
 use glam::{Mat3, Quat, Vec3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::events::arms::{SwingEvent, Weapon};
-use crate::play::figures::{ChestFrame, Figure, Form, Offset};
+use crate::play::figures::{Form, LEFT_EYE, RIGHT_EYE};
+use crate::play::files;
+use crate::play::gait::Gaits;
 use crate::play::light::MapFilter;
-use crate::rules::AbilitySlot;
+use crate::play::numbers::Numbers;
+use crate::play::skinned::{ChestFrame, Figure, FigureFit, JointNo, Offset};
 use crate::weapons::{Loadout, Slot};
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -55,10 +58,6 @@ pub struct Casts {
 }
 
 impl Casts {
-    pub fn named(&self, cast: &CastClip, weapon: &str) -> Option<String> {
-        Some(format!("{}{}", cast.clip, self.suffix.get(weapon)?))
-    }
-
     pub fn clips(&self) -> Vec<String> {
         self.clips
             .values()
@@ -268,45 +267,6 @@ pub struct PinFeet {
     pub clips: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Band {
-    pub min: f32,
-    pub max: f32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Heading {
-    Forward,
-    Left,
-    Right,
-    Back,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Gait {
-    pub clip: String,
-    pub planted_mps: f32,
-    pub direction: Heading,
-    pub from_mps: f32,
-    pub to_mps: f32,
-    pub crouch: bool,
-    pub dropped: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Locomotion {
-    pub gaits: Vec<Gait>,
-    pub speed_fade_mps: f32,
-    pub fade_seconds: f32,
-    pub hip_turn_limit_radians: f32,
-    pub rate: Band,
-    pub stride: Band,
-}
-
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ViewTest {
@@ -316,7 +276,7 @@ pub struct ViewTest {
     pub map_pad_m: f32,
     pub aspect_max: f32,
     pub item_radius_m: f32,
-    pub hold_frames: u64,
+    pub hold_seconds: f32,
     pub cut_m: f32,
     pub see_through: Vec<String>,
 }
@@ -335,17 +295,12 @@ pub struct FormsTable {
 pub struct Seen {
     pub frame: u64,
     pub shown: Vec<(Entity, Form, f32)>,
-    pub judged: Vec<Entity>,
     pub frustum: u32,
     pub map: u32,
     pub held: u32,
 }
 
 impl Seen {
-    pub fn judges(&self, entity: Entity) -> bool {
-        self.judged.binary_search(&entity).is_ok()
-    }
-
     pub fn shows(&self, entity: Entity) -> bool {
         self.form(entity).is_some()
     }
@@ -587,7 +542,7 @@ pub struct PuppetTable {
     pub forms: FormsTable,
     pub crouch: CrouchTable,
     pub still_below_mps: f32,
-    pub locomotion: Locomotion,
+    pub locomotion: Gaits,
     pub idle: BaseClip,
     pub turn: BaseClip,
     pub look: LookTable,
@@ -620,11 +575,11 @@ pub struct PuppetTable {
 #[serde(deny_unknown_fields)]
 pub struct WeaponFiles {
     pub figure: Figure,
-    pub markers: String,
-    pub mesh: String,
-    pub material: String,
-    pub held_mesh: String,
-    pub held_material: String,
+    pub markers: Asset<Markers>,
+    pub mesh: Asset<MeshFile>,
+    pub material: Asset<Material>,
+    pub held_mesh: Asset<MeshFile>,
+    pub held_material: Asset<Material>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -648,9 +603,9 @@ pub struct WeaponLook {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlantedFiles {
-    pub mesh: String,
-    pub material: String,
-    pub markers: String,
+    pub mesh: Asset<MeshFile>,
+    pub material: Asset<Material>,
+    pub markers: Asset<Markers>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -663,13 +618,13 @@ pub struct PlantedLook {
 #[serde(deny_unknown_fields)]
 pub struct HandsFiles {
     pub figure: Figure,
-    pub mesh: String,
-    pub material: String,
+    pub mesh: Asset<MeshFile>,
+    pub material: Asset<Material>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PuppetBook {
-    pub table: PuppetTable,
+    pub table: Arc<PuppetTable>,
     pub weapons: BTreeMap<String, WeaponLook>,
     pub planted: Option<PlantedLook>,
     pub hands: Option<HandsFiles>,
@@ -688,28 +643,50 @@ struct MarkerFile {
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct PuppetTableFile {
+    pub file: Asset<Arc<PuppetTable>>,
+}
+
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PuppetFile {
-    pub file: String,
     pub weapons: BTreeMap<String, WeaponFiles>,
     #[serde(default)]
     pub planted: Option<PlantedFiles>,
     #[serde(default)]
     pub hands: Option<HandsFiles>,
-    #[serde(skip)]
-    book: Option<Arc<PuppetBook>>,
 }
 
-fn text_of(cx: &SceneCx<'_>, uri: &str, at: &str) -> Result<Option<String>, Error> {
-    let Some(bytes) = cx.buffer(uri, at)? else {
-        return Ok(None);
-    };
-    String::from_utf8(bytes.to_vec())
-        .map(Some)
-        .map_err(|_| Error::new(ErrorCode::InvalidRecord, at.to_owned()).got(uri))
+#[derive(Resource, Default)]
+pub struct Puppet {
+    pub table: Option<Arc<PuppetTable>>,
+    pub book: Option<Arc<PuppetBook>>,
+    pub refusal: Option<String>,
 }
 
-fn markers_of(text: &str, at: &str) -> Result<Markers, Error> {
-    let file: MarkerFile = engine::bricks::parse_json(text).map_err(|error| error.within(at))?;
+impl Puppet {
+    pub fn eye_fit(&self, numbers: &Numbers) -> Option<FigureFit> {
+        let fit = self.table.as_deref()?.eye_fit.as_ref()?;
+        Some(FigureFit {
+            joints: vec![LEFT_EYE.to_owned(), RIGHT_EYE.to_owned()],
+            clip: fit.reference.clone(),
+            height_m: numbers.get()?.player.eye_height_m,
+        })
+    }
+}
+
+pub fn table(bytes: Arc<[u8]>, uri: &str) -> Result<Arc<PuppetTable>, Error> {
+    let table: PuppetTable = files::json(bytes, uri)?;
+    table
+        .shade
+        .maps
+        .checked("$.shade.maps")
+        .map_err(|error| error.within(uri))?;
+    Ok(Arc::new(table))
+}
+
+pub fn markers(bytes: Arc<[u8]>, uri: &str) -> Result<Markers, Error> {
+    let file: MarkerFile = files::json(bytes, uri)?;
     let find = |name: &str| {
         file.markers
             .iter()
@@ -726,76 +703,6 @@ fn markers_of(text: &str, at: &str) -> Result<Markers, Error> {
         light: find("light"),
         tip: find("tip"),
     })
-}
-
-impl PuppetFile {
-    pub fn files(&self) -> Vec<String> {
-        let mut files = vec![self.file.clone()];
-        for weapon in self.weapons.values() {
-            files.extend(weapon.figure.files());
-            files.push(weapon.markers.clone());
-        }
-        files.extend(self.planted.iter().map(|planted| planted.markers.clone()));
-        files.extend(self.hands.iter().flat_map(|hands| hands.figure.files()));
-        files
-    }
-
-    pub fn book(&self) -> Option<&Arc<PuppetBook>> {
-        self.book.as_ref()
-    }
-
-    pub fn prepared(mut self, cx: &SceneCx<'_>, path: &str) -> Result<Self, Error> {
-        let at = format!("{path}.file");
-        let Some(text) = text_of(cx, &self.file, &at)? else {
-            return Ok(self);
-        };
-        let table: PuppetTable =
-            engine::bricks::parse_json(&text).map_err(|error| error.within(&at))?;
-        table
-            .shade
-            .maps
-            .checked("$.shade.maps")
-            .map_err(|error| error.within(&at))?;
-        let mut weapons = BTreeMap::new();
-        for (key, files) in std::mem::take(&mut self.weapons) {
-            let figure_at = format!("{path}.weapons.{key}.figure");
-            let figure = files.figure.clone().present(cx, &figure_at)?;
-            let markers_at = format!("{path}.weapons.{key}.markers");
-            let markers = match text_of(cx, &files.markers, &markers_at)? {
-                Some(text) => markers_of(&text, &markers_at)?,
-                None => Markers::default(),
-            };
-            let files = WeaponFiles { figure, ..files };
-            self.weapons.insert(key.clone(), files.clone());
-            weapons.insert(key, WeaponLook { files, markers });
-        }
-        let planted = match self.planted.clone() {
-            Some(files) => {
-                let at = format!("{path}.planted.markers");
-                let markers = match text_of(cx, &files.markers, &at)? {
-                    Some(text) => markers_of(&text, &at)?,
-                    None => Markers::default(),
-                };
-                Some(PlantedLook { files, markers })
-            }
-            None => None,
-        };
-        let hands = match self.hands.clone() {
-            Some(files) => {
-                let figure = files.figure.present(cx, &format!("{path}.hands.figure"))?;
-                Some(HandsFiles { figure, ..files })
-            }
-            None => None,
-        };
-        self.hands.clone_from(&hands);
-        self.book = Some(Arc::new(PuppetBook {
-            table,
-            weapons,
-            planted,
-            hands,
-        }));
-        Ok(self)
-    }
 }
 
 impl Axes {
@@ -894,7 +801,6 @@ impl Muzzles {
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct ViewModel {
-    pub tick: u64,
     pub slot: Option<u32>,
     pub weapon: Option<&'static str>,
     pub clip: String,
@@ -912,7 +818,7 @@ pub struct Holding {
 #[derive(Clone, Debug, PartialEq)]
 pub struct InHand {
     pub holder: Entity,
-    pub socket: String,
+    pub socket: JointNo,
     pub seat: Offset,
     pub prop: String,
     pub size_m: f32,
@@ -940,13 +846,4 @@ pub fn leave_tick(cast: u64, seconds: f32, delta: f32) -> u64 {
         0
     };
     cast + ticks
-}
-
-pub fn ability_index(slot: AbilitySlot) -> usize {
-    match slot {
-        AbilitySlot::C => 0,
-        AbilitySlot::Q => 1,
-        AbilitySlot::E => 2,
-        AbilitySlot::X => 3,
-    }
 }

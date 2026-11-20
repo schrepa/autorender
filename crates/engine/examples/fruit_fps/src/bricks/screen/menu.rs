@@ -1,18 +1,21 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use brick_interface::{Area, InterfaceDraw, Slot};
 use engine::prelude::*;
 use engine::{Devices, MouseButton};
+use engine_bindings::{Binding, Input};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::flow::{Flow, Stage};
-use crate::play::numbers::{Binding, Input, KeyMap, Spin};
-use crate::play::screen::{Area, HudFacts, KeyRow, ScreenDraw, Shown, Slider};
+use crate::play::numbers::KeyMap;
+use crate::play::screen::Options;
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
 
-use super::layout::Layout;
+use super::ScreenSource;
+use super::hud::{HudFacts, KeyRow, Shown, Slider};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -74,7 +77,6 @@ pub struct LoadingNumbers {
     pub mode: String,
     pub site_a_note: String,
     pub site_b_note: String,
-    pub min_seconds: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -97,19 +99,6 @@ pub(super) struct MenuInputs {
     pub left: Vec<Input>,
     pub right: Vec<Input>,
     pub levels: Vec<Input>,
-}
-
-settings! {
-    #[section("options")]
-    #[serde(deny_unknown_fields)]
-    pub struct Options {
-        pub crosshair: u32 = 2 => any,
-        pub crosshair_gap: f32 = 4.0 => range(0.0, 20.0),
-        pub crosshair_length: f32 = 6.0 => range(1.0, 20.0),
-        pub crosshair_thickness: f32 = 2.0 => range(1.0, 6.0),
-        pub crosshair_outline: f32 = 2.0 => range(0.0, 3.0),
-        pub crosshair_dot: bool = true => any,
-    }
 }
 
 #[derive(Resource, Default)]
@@ -164,11 +153,12 @@ pub(super) fn write_options(world: &mut World) {
     }
 }
 
-const TITLE: [&str; 3] = ["play", "settings", "quit"];
+pub(super) const TITLE: [&str; 3] = ["play", "settings", "quit"];
 const TITLE_NO_QUIT: [&str; 2] = ["play", "settings"];
-const PAUSE: [&str; 3] = ["resume", "settings", "quit"];
-const MATCH_END: [&str; 2] = ["play", "quit"];
-const SETTINGS_ROWS: [&str; 16] = [
+pub(super) const PAUSE: [&str; 3] = ["resume", "settings", "quit"];
+pub(super) const MATCH_END: [&str; 2] = ["play", "quit"];
+pub(super) const SELECT: [&str; 1] = ["play"];
+pub(super) const SETTINGS_ROWS: [&str; 16] = [
     "master",
     "effects",
     "footsteps",
@@ -193,6 +183,54 @@ const DOT_ROW: usize = 14;
 const BOTS_ROW: usize = 8;
 const BACK_ROW: usize = 15;
 
+const BUTTONS: [&str; 8] = [
+    "button_play",
+    "button_settings",
+    "button_quit",
+    "button_resume",
+    "button_again",
+    "button_back",
+    "invert_off",
+    "dot_off",
+];
+const PLAY: Slot = 0;
+const SETTINGS: Slot = 1;
+const QUIT: Slot = 2;
+const RESUME: Slot = 3;
+const AGAIN: Slot = 4;
+const BACK: Slot = 5;
+const INVERT: Slot = 6;
+const DOT: Slot = 7;
+const SLIDER: Slot = 100;
+const ROSTER: Slot = 200;
+const BOTS: Slot = 300;
+const CROSSHAIR: Slot = 400;
+const RANGE: usize = 100;
+
+fn ranged(base: Slot, index: Option<usize>) -> Option<Slot> {
+    let index = index.filter(|index| *index < RANGE)?;
+    Some(base + index as Slot)
+}
+
+pub(super) fn spot(look: &ScreenSource, id: &str) -> Option<Slot> {
+    let menu = &look.menu;
+    let numbered = |prefix: &str| id.strip_prefix(prefix)?.parse::<usize>().ok();
+    let named = |names: &[&str]| names.iter().position(|name| *name == id);
+    let level = || {
+        let level = id.strip_prefix("bots_")?;
+        menu.levels.iter().position(|known| known == level)
+    };
+    ranged(0, named(&BUTTONS))
+        .or_else(|| ranged(SLIDER, named(&SLIDER_IDS)))
+        .or_else(|| ranged(ROSTER, numbered("roster_")))
+        .or_else(|| ranged(BOTS, level()))
+        .or_else(|| ranged(CROSSHAIR, numbered("crosshair_")))
+}
+
+fn spot_of(base: Slot, index: usize) -> Slot {
+    ranged(base, Some(index)).unwrap_or(Slot::MAX)
+}
+
 #[derive(Resource, Default)]
 pub(super) struct MenuState {
     focus: usize,
@@ -204,38 +242,29 @@ pub(super) struct MenuState {
 pub(super) struct Nav<'a> {
     pub devices: &'a Devices,
     pub keys: &'a MenuInputs,
-    pub layout: &'a Layout,
-    pub draw: &'a ScreenDraw,
+    pub draw: &'a InterfaceDraw,
     pub source: &'a MenuSource,
     pub can_quit: bool,
 }
 
 impl Nav<'_> {
     fn pressed(&self, binding: &[Input]) -> bool {
-        KeyMap::pressed(self.devices, binding)
+        engine_bindings::pressed(self.devices, binding)
     }
 
     fn clicked(&self) -> bool {
-        self.devices
-            .mouse
-            .buttons
-            .pressed
-            .contains(&MouseButton::Left)
+        self.devices.mouse.buttons.pressed(MouseButton::Left)
     }
 
-    fn area(&self, shown: Shown, id: &str) -> Option<Area> {
-        let screen = self.layout.screens.get(&shown)?;
-        let element = screen.elements.iter().find(|element| element.id == id)?;
-        Some(self.draw.place(element.rect, element.anchor))
-    }
-
-    fn over(&self, shown: Shown, id: &str) -> Option<Area> {
+    fn over(&self, shown: Shown, spot: Slot) -> Option<Area> {
         let pointer = self.devices.mouse.position_pixels?;
-        self.area(shown, id).filter(|area| area.contains(pointer))
+        self.draw
+            .element(shown as usize, spot)
+            .filter(|area| area.contains(pointer))
     }
 
-    fn hovered<const N: usize>(&self, shown: Shown, ids: [&str; N]) -> Option<usize> {
-        ids.iter().position(|id| self.over(shown, id).is_some())
+    fn hovered<const N: usize>(&self, shown: Shown, spots: [Slot; N]) -> Option<usize> {
+        spots.iter().position(|spot| self.over(shown, *spot).is_some())
     }
 
     fn step(&self, focus: usize, count: usize) -> usize {
@@ -256,9 +285,9 @@ fn buttons<const N: usize>(
     nav: &Nav<'_>,
     state: &mut MenuState,
     shown: Shown,
-    (names, ids): ([&'static str; N], [&str; N]),
+    (names, spots): ([&'static str; N], [Slot; N]),
 ) -> Option<&'static str> {
-    if let Some(hover) = nav.hovered(shown, ids) {
+    if let Some(hover) = nav.hovered(shown, spots) {
         state.focus = hover;
         if nav.clicked() {
             return Some(names[hover]);
@@ -279,14 +308,14 @@ fn title(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
             nav,
             state,
             Shown::Title,
-            (TITLE, ["button_play", "button_settings", "button_quit"]),
+            (TITLE, [PLAY, SETTINGS, QUIT]),
         )
     } else {
         buttons(
             nav,
             state,
             Shown::Title,
-            (TITLE_NO_QUIT, ["button_play", "button_settings"]),
+            (TITLE_NO_QUIT, [PLAY, SETTINGS]),
         )
     };
     match chosen {
@@ -306,7 +335,7 @@ fn pause(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
         nav,
         state,
         Shown::Pause,
-        (PAUSE, ["button_resume", "button_settings", "button_quit"]),
+        (PAUSE, [RESUME, SETTINGS, QUIT]),
     );
     match chosen {
         Some("resume") => flow.stage = Stage::Playing,
@@ -321,7 +350,7 @@ fn match_end(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
         nav,
         state,
         Shown::MatchEnd,
-        (MATCH_END, ["button_again", "button_quit"]),
+        (MATCH_END, [AGAIN, QUIT]),
     );
     match chosen {
         Some("play") => flow.stage = Stage::Select,
@@ -345,11 +374,8 @@ fn select(nav: &Nav<'_>, facts: &HudFacts, flow: &mut Flow) {
     } else if nav.pressed(&nav.keys.left) && !cards.is_empty() {
         at = (at + cards.len() - 1) % cards.len();
     }
-    let mut id = String::new();
     for index in 0..cards.len() {
-        id.clear();
-        let _ = write!(id, "roster_{index}");
-        if nav.clicked() && nav.over(Shown::Select, &id).is_some() {
+        if nav.clicked() && nav.over(Shown::Select, spot_of(ROSTER, index)).is_some() {
             at = index;
         }
     }
@@ -358,19 +384,17 @@ fn select(nav: &Nav<'_>, facts: &HudFacts, flow: &mut Flow) {
     }
     let levels = &nav.source.levels;
     for (index, level) in levels.iter().enumerate() {
-        id.clear();
-        let _ = write!(id, "bots_{level}");
         let keyed = nav
             .keys
             .levels
             .get(index)
             .is_some_and(|key| nav.pressed(std::slice::from_ref(key)));
-        if keyed || (nav.clicked() && nav.over(Shown::Select, &id).is_some()) {
+        if keyed || (nav.clicked() && nav.over(Shown::Select, spot_of(BOTS, index)).is_some()) {
             flow.level.clone_from(level);
         }
     }
     if nav.pressed(&nav.keys.confirm)
-        || (nav.clicked() && nav.over(Shown::Select, "button_play").is_some())
+        || (nav.clicked() && nav.over(Shown::Select, PLAY).is_some())
     {
         start(flow);
     }
@@ -523,18 +547,18 @@ fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut 
 }
 
 fn settings_click(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut Values) {
-    if nav.over(Shown::Settings, "invert_off").is_some() {
+    if nav.over(Shown::Settings, INVERT).is_some() {
         values.controls.invert_pitch = !values.controls.invert_pitch;
         state.focus = INVERT_ROW;
     }
-    if nav.over(Shown::Settings, "dot_off").is_some() {
+    if nav.over(Shown::Settings, DOT).is_some() {
         values.options.crosshair_dot = !values.options.crosshair_dot;
         state.focus = DOT_ROW;
     }
     let sliders = &nav.source.sliders;
-    for (slider, id) in SLIDER_IDS.iter().enumerate() {
+    for (slider, &row) in SLIDER_ROWS.iter().enumerate() {
         if let (Some(area), Some(pointer)) = (
-            nav.over(Shown::Settings, id),
+            nav.over(Shown::Settings, spot_of(SLIDER, slider)),
             nav.devices.mouse.position_pixels,
         ) {
             let frac = if area.w > 0.0 {
@@ -543,27 +567,22 @@ fn settings_click(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values:
                 0.0
             };
             values.set_slider(slider, value_of(frac, numbers_of(sliders, slider)));
-            state.focus = SLIDER_ROWS[slider];
+            state.focus = row;
         }
     }
-    let mut id = String::new();
     for index in 0..nav.source.crosshairs.len() as u32 {
-        id.clear();
-        let _ = write!(id, "crosshair_{index}");
-        if nav.over(Shown::Settings, &id).is_some() {
+        if nav.over(Shown::Settings, spot_of(CROSSHAIR, index as usize)).is_some() {
             values.options.crosshair = index;
             state.focus = CROSSHAIR_ROW;
         }
     }
-    for level in &nav.source.levels {
-        id.clear();
-        let _ = write!(id, "bots_{level}");
-        if nav.over(Shown::Settings, &id).is_some() {
+    for (index, level) in nav.source.levels.iter().enumerate() {
+        if nav.over(Shown::Settings, spot_of(BOTS, index)).is_some() {
             flow.level.clone_from(level);
             state.focus = BOTS_ROW;
         }
     }
-    if nav.over(Shown::Settings, "button_back").is_some() {
+    if nav.over(Shown::Settings, BACK).is_some() {
         flow.settings_open = false;
     }
 }
@@ -611,17 +630,12 @@ pub(super) fn navigate(
     }
     let menu = &mut facts.menu;
     menu.screen = shown;
-    menu.focus.clear();
-    let focus = match shown {
-        Some(Shown::Title) => TITLE.get(state.focus).copied(),
-        Some(Shown::Pause) => PAUSE.get(state.focus).copied(),
-        Some(Shown::MatchEnd) => MATCH_END.get(state.focus).copied(),
-        Some(Shown::Settings) => SETTINGS_ROWS.get(state.focus).copied(),
-        Some(Shown::Select) => Some("play"),
+    menu.focus = match shown {
+        Some(Shown::Title | Shown::Pause | Shown::MatchEnd | Shown::Settings) => Some(state.focus),
+        Some(Shown::Select) => Some(0),
         Some(Shown::Loading | Shown::Hud | Shown::Buy | Shown::Scoreboard | Shown::RoundEnd)
         | None => None,
     };
-    menu.focus.push_str(focus.unwrap_or(""));
 }
 
 pub(super) fn slider_facts(sliders: &mut [Slider; 11], source: &SliderSet, values: &Values) {
@@ -642,57 +656,78 @@ pub(super) fn slider_facts(sliders: &mut [Slider; 11], source: &SliderSet, value
 
 pub(super) type KeyNames = BTreeMap<String, String>;
 
-fn input_code(input: &Input) -> &str {
-    match input {
-        Input::Key(code) => code,
-        Input::Mouse(MouseButton::Left) => "MouseLeft",
-        Input::Mouse(MouseButton::Middle) => "MouseMiddle",
-        Input::Mouse(MouseButton::Right) => "MouseRight",
-        Input::Mouse(MouseButton::Back) => "MouseBack",
-        Input::Mouse(MouseButton::Forward) => "MouseForward",
-        Input::Wheel(Spin::Up) => "WheelUp",
-        Input::Wheel(Spin::Down) => "WheelDown",
-    }
-}
+pub(super) const ACTIONS: [&str; 30] = [
+    "forward",
+    "back",
+    "left",
+    "right",
+    "walk",
+    "crouch",
+    "jump",
+    "fire",
+    "scope",
+    "reload",
+    "inspect",
+    "drop",
+    "next_item",
+    "previous_item",
+    "ready",
+    "primary",
+    "sidearm",
+    "melee",
+    "device",
+    "interact",
+    "ability_c",
+    "ability_q",
+    "ability_e",
+    "ability_x",
+    "buy_menu",
+    "scoreboard",
+    "capture",
+    "release",
+    "take",
+    "give_back",
+];
 
-pub(super) fn bindings(keys: &KeyMap) -> [(&'static str, &Binding); 28] {
+pub(super) fn bindings(keys: &KeyMap) -> [&Binding; 28] {
     [
-        ("forward", &keys.forward),
-        ("back", &keys.back),
-        ("left", &keys.left),
-        ("right", &keys.right),
-        ("walk", &keys.walk),
-        ("crouch", &keys.crouch),
-        ("jump", &keys.jump),
-        ("fire", &keys.fire),
-        ("scope", &keys.scope),
-        ("reload", &keys.reload),
-        ("inspect", &keys.inspect),
-        ("drop", &keys.drop),
-        ("next_item", &keys.next_item),
-        ("previous_item", &keys.previous_item),
-        ("ready", &keys.ready),
-        ("primary", &keys.primary),
-        ("sidearm", &keys.sidearm),
-        ("melee", &keys.melee),
-        ("device", &keys.device),
-        ("interact", &keys.interact),
-        ("ability_c", &keys.ability_c),
-        ("ability_q", &keys.ability_q),
-        ("ability_e", &keys.ability_e),
-        ("ability_x", &keys.ability_x),
-        ("buy_menu", &keys.buy_menu),
-        ("scoreboard", &keys.scoreboard),
-        ("capture", &keys.capture),
-        ("release", &keys.release),
+        &keys.forward,
+        &keys.back,
+        &keys.left,
+        &keys.right,
+        &keys.walk,
+        &keys.crouch,
+        &keys.jump,
+        &keys.fire,
+        &keys.scope,
+        &keys.reload,
+        &keys.inspect,
+        &keys.drop,
+        &keys.next_item,
+        &keys.previous_item,
+        &keys.ready,
+        &keys.primary,
+        &keys.sidearm,
+        &keys.melee,
+        &keys.device,
+        &keys.interact,
+        &keys.ability_c,
+        &keys.ability_q,
+        &keys.ability_e,
+        &keys.ability_x,
+        &keys.buy_menu,
+        &keys.scoreboard,
+        &keys.capture,
+        &keys.release,
     ]
 }
 
+pub(super) fn action(name: &str) -> Option<usize> {
+    ACTIONS.iter().position(|known| *known == name)
+}
+
 pub(super) fn binding_of<'a>(keys: &'a KeyMap, name: &str) -> Option<&'a Binding> {
-    bindings(keys)
-        .into_iter()
-        .find(|(known, _)| *known == name)
-        .map(|(_, binding)| binding)
+    bindings(keys).get(action(name)?).copied()
 }
 
 pub(super) fn spoken_binding(binding: &[Input], names: &KeyNames, out: &mut String) {
@@ -700,7 +735,7 @@ pub(super) fn spoken_binding(binding: &[Input], names: &KeyNames, out: &mut Stri
     let Some(input) = binding.first() else {
         return;
     };
-    let code = input_code(input);
+    let code = input.code();
     match names.get(code) {
         Some(name) => out.push_str(name),
         None => out.push_str(
@@ -712,20 +747,16 @@ pub(super) fn spoken_binding(binding: &[Input], names: &KeyNames, out: &mut Stri
 }
 
 pub(super) fn key_facts<'a>(
-    out: &mut Vec<(String, String)>,
-    all: impl Iterator<Item = (&'static str, &'a Vec<Input>)>,
+    out: &mut Vec<String>,
+    all: impl Iterator<Item = &'a Vec<Input>>,
     names: &KeyNames,
 ) {
     let mut count = 0;
-    for (index, (name, binding)) in all.enumerate() {
+    for (index, binding) in all.enumerate() {
         if out.len() == index {
-            out.push((name.to_owned(), String::new()));
+            out.push(String::new());
         }
-        let (known, spoken) = &mut out[index];
-        if known != name {
-            name.clone_into(known);
-        }
-        spoken_binding(binding, names, spoken);
+        spoken_binding(binding, names, &mut out[index]);
         count = index + 1;
     }
     out.truncate(count);

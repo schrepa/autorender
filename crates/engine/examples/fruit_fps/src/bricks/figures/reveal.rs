@@ -4,7 +4,8 @@ use engine::prelude::*;
 use engine_core::{Drawn, Mobility, Spawner, Stats, Transform};
 
 use super::{FiguresBrick, FiguresStats};
-use crate::play::figures::{FIGURE, Figure, REVEALED};
+use crate::play::figures::{FIGURE, REVEALED};
+use crate::play::skinned::Figure;
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RevealOf(Entity);

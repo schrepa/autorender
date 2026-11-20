@@ -3,7 +3,8 @@ use std::sync::Arc;
 use engine::math;
 use engine::prelude::*;
 use engine::{Error, ErrorCode};
-use engine_core::SceneCx;
+use engine_bindings::Input;
+use engine_core::{Asset, Assets};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,8 @@ use serde_json::Value;
 
 use crate::names::PITCH_LIMIT_DEGREES;
 use crate::play::actors::{Equip, Gait, Human, Wish};
-use crate::play::numbers::{GameNumbers, Input, KeyMap, Numbers};
+use crate::play::files;
+use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::round::Round;
 use crate::play::screen::{ScreenBuys, ScreenState};
 use crate::play::view::Controls;
@@ -20,9 +22,7 @@ use crate::rules::AbilitySlot;
 #[derive(Component, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct NumbersFile {
-    pub file: String,
-    #[serde(skip)]
-    parsed: Option<Arc<GameNumbers>>,
+    pub file: Asset<Arc<GameNumbers>>,
 }
 
 fn part<T: serde::de::DeserializeOwned>(whole: &Value, key: &str) -> Result<T, Error> {
@@ -32,8 +32,7 @@ fn part<T: serde::de::DeserializeOwned>(whole: &Value, key: &str) -> Result<T, E
     engine::bricks::parse_value_at(value, &format!("$.{key}"))
 }
 
-fn parsed(text: &str) -> Result<GameNumbers, Error> {
-    let whole: Value = engine::bricks::parse_json(text)?;
+fn parsed(whole: Value) -> Result<GameNumbers, Error> {
     Ok(GameNumbers {
         player: part(&whole, "player")?,
         keys: part(&whole, "keys")?,
@@ -41,26 +40,16 @@ fn parsed(text: &str) -> Result<GameNumbers, Error> {
         weapons: part(&whole, "weapons")?,
         hit_shapes: part(&whole, "hit_shapes")?,
         rules: engine::bricks::parse_value_at(&whole, "$")?,
-        text: Arc::from(text),
+        nav: part(&whole, "nav")?,
+        paths: whole.get("paths").map(|_| part(&whole, "paths")).transpose()?,
+        whole,
     })
 }
 
-impl NumbersFile {
-    pub(super) fn files(&self) -> Vec<String> {
-        vec![self.file.clone()]
-    }
-
-    pub(super) fn prepared(mut self, cx: &SceneCx<'_>, path: &str) -> Result<Self, Error> {
-        let at = format!("{path}.file");
-        let Some(bytes) = cx.buffer(&self.file, &at)? else {
-            return Ok(self);
-        };
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::new(ErrorCode::InvalidRecord, at.clone()).got(&self.file))?;
-        let numbers = parsed(text).map_err(|error| error.within(&at))?;
-        self.parsed = Some(Arc::new(numbers));
-        Ok(self)
-    }
+pub(super) fn numbers(bytes: Arc<[u8]>, at: &str) -> Result<Arc<GameNumbers>, Error> {
+    parsed(files::json(bytes, at)?)
+        .map(Arc::new)
+        .map_err(|error| error.within(at))
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
@@ -79,10 +68,14 @@ fn cycled(spun: f32, turned: f32) -> (i32, f32) {
     }
 }
 
-pub(super) fn adopt_numbers(files: Query<Ref<NumbersFile>>, mut numbers: ResMut<Numbers>) {
+pub(super) fn adopt_numbers(
+    files: Query<Ref<NumbersFile>>,
+    assets: Res<Assets>,
+    mut numbers: ResMut<Numbers>,
+) {
     for file in &files {
         if file.is_changed() {
-            numbers.adopt(file.parsed.clone());
+            numbers.adopt(assets.get(file.file).ok().cloned());
         }
     }
 }
@@ -104,9 +97,11 @@ pub(super) fn capture(
     let Some(numbers) = numbers.get() else {
         return;
     };
-    if menu_open(screen.as_deref()) || KeyMap::pressed(&devices, &numbers.keys.release) {
+    if menu_open(screen.as_deref()) || engine_bindings::pressed(&devices, &numbers.keys.release) {
         cursor.set_if_neq(CursorMode::Free);
-    } else if *cursor != CursorMode::Captured && KeyMap::pressed(&devices, &numbers.keys.capture) {
+    } else if *cursor != CursorMode::Captured
+        && engine_bindings::pressed(&devices, &numbers.keys.capture)
+    {
         *cursor = CursorMode::Captured;
         swallow.set_if_neq(Swallow(true));
     }
@@ -152,15 +147,15 @@ pub(super) fn wish(
         .unwrap_or_default();
     let playing = !menu_open(screen.as_deref());
     let buying = round.as_deref().is_some_and(|round| round.buy_lock);
-    let held = |binding: &[Input]| KeyMap::held(&devices, binding);
-    let pressed = |binding: &[Input]| KeyMap::pressed(&devices, binding);
+    let held = |binding: &[Input]| engine_bindings::held(&devices, binding);
+    let pressed = |binding: &[Input]| engine_bindings::pressed(&devices, binding);
     let played = |binding: &[Input]| playing && held(binding);
     let acted = |binding: &[Input]| playing && pressed(binding);
     let axis = |plus: bool, minus: bool| f32::from(u8::from(plus)) - f32::from(u8::from(minus));
     let ahead = axis(played(&keys.forward), played(&keys.back));
     let aside = axis(played(&keys.right), played(&keys.left));
-    let turned =
-        KeyMap::turns(&devices, &keys.next_item) - KeyMap::turns(&devices, &keys.previous_item);
+    let turned = engine_bindings::turns(&devices, &keys.next_item)
+        - engine_bindings::turns(&devices, &keys.previous_item);
     let (cycle, carried) = cycled(spun.0, turned);
     spun.set_if_neq(Spun(carried));
     let equips = [

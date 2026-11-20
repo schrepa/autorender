@@ -1,5 +1,7 @@
-use super::numbers::{GunKind, GunNumbers, WeaponNumbers, ticks};
-use super::recoil::{Aim, Kick, Recoil, Shot, ShotRng, Stance, bloomed_deg, fire, least, recover};
+use engine_math::{Random, min, ticks};
+
+use super::numbers::{GunKind, GunNumbers, WeaponNumbers};
+use super::recoil::{Aim, Kick, Recoil, Shot, Stance, bloomed_deg, fire, recover};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -215,7 +217,7 @@ impl Gun {
         if raise == 0 {
             return target;
         }
-        let share = least(self.zoom_ticks as f32 / raise as f32, 1.0);
+        let share = min(self.zoom_ticks as f32 / raise as f32, 1.0);
         self.zoom_from + (target - self.zoom_from) * share
     }
 
@@ -243,7 +245,7 @@ impl Gun {
         input: GunInput,
         aim: Aim,
         stance: Stance,
-        rng: &mut ShotRng,
+        rng: &mut Random,
     ) -> GunTick {
         let gun = numbers.gun(self.kind);
         let cycled = self.cooldown_ticks <= 0.0;

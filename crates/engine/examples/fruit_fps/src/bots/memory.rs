@@ -1,6 +1,7 @@
+use engine_math::clamp;
 use glam::Vec3;
 
-use super::aim::{PI, angle_between, clamp, look_angles, radians, sin_cos};
+use super::aim::{PI, angle_between, look_angles, radians, sin_cos};
 use super::numbers::{BotNumbers, LevelNumbers};
 use super::rng::Rng;
 use super::sense::{CallKind, Sense, SoundKind};

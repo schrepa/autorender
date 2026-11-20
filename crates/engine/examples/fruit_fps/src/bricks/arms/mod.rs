@@ -125,7 +125,7 @@ struct Book {
     picked_up: u64,
     dropped: u64,
     last_pickup: Option<PickupEvent>,
-    unknown_surfaces: Vec<crate::solids::Kind>,
+    unknown_surfaces: Vec<engine_solids::Kind>,
     knife: Option<KnifeStats>,
 }
 
@@ -161,7 +161,7 @@ fn setup(numbers: Res<Numbers>, mut setup: ResMut<Setup>) {
         return;
     }
     setup.revision = Some(numbers.revision());
-    match serde_json::from_str::<ArmsNumbers>(&game.text) {
+    match ArmsNumbers::deserialize(&game.whole) {
         Ok(parsed) => {
             setup.numbers = Some(parsed);
             setup.refusal = None;

@@ -1,7 +1,8 @@
+use engine_math::min;
 use glam::Vec3;
 
 use super::numbers::{GunNumbers, HitShapeNumbers, MeleeNumbers};
-use super::recoil::{Aim, forward, greatest, least};
+use super::recoil::{Aim, forward};
 
 pub trait Blocker {
     fn first_hit(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<f32>;
@@ -192,8 +193,8 @@ pub fn gun_damage(gun: &GunNumbers, part: BodyPart, distance: f32) -> f32 {
 }
 
 pub fn wound(victim: Vitals, damage: f32, part: BodyPart, armor_absorb: f32) -> Wound {
-    let armor_lost = least(damage * armor_absorb, victim.armor);
-    let health_lost = least(damage - armor_lost, victim.health);
+    let armor_lost = min(damage * armor_absorb, victim.armor);
+    let health_lost = min(damage - armor_lost, victim.health);
     let after = Vitals {
         health: victim.health - health_lost,
         armor: victim.armor - armor_lost,
@@ -264,7 +265,7 @@ fn ray_sphere(origin: Vec3, direction: Vec3, sphere: Sphere, max: f32) -> Option
     if discriminant < 0.0 {
         return None;
     }
-    let distance = greatest(-along - discriminant.sqrt(), 0.0);
+    let distance = engine_math::max(-along - discriminant.sqrt(), 0.0);
     (distance <= max).then_some(distance)
 }
 
@@ -287,7 +288,7 @@ fn ray_capsule(origin: Vec3, direction: Vec3, capsule: Capsule, max: f32) -> Opt
     ]
     .into_iter()
     .flatten()
-    .reduce(least)
+    .reduce(min)
 }
 
 fn ray_cylinder(origin: Vec3, direction: Vec3, capsule: Capsule, max: f32) -> Option<f32> {

@@ -1,7 +1,8 @@
 import package::engine::drawn::{drawn_float_count, drawn_floats, drawn_tint};
 import package::engine::view::{camera, stable_normalize};
 import package::generated::figures::FigureLight;
-import package::figures::material::{field_texel, material_texels};
+import package::figures::material::{figure_field_map, figure_field_sampler, material_texels};
+import package::play::light::light_field;
 
 @group(2) @binding(0) var<uniform> figure_light: FigureLight;
 
@@ -26,19 +27,8 @@ fn figure_field(world: vec3<f32>, slot: u32) -> vec4<f32> {
     }
     let at_camera = drawn_float_count(slot) >= 8u && drawn_floats(slot, 1u).w > 0.5;
     let at = select(world, camera.position.xyz, at_camera);
-    let to_sun = normalize(figure_light.direction.xyz);
-    let along = to_sun.xz * ((at.y - shape.x) / max(to_sun.y, 0.05));
-    let uv = (at.xz - along - figure_light.field.xy) * figure_light.field.zw;
-    let stored = field_texel(uv);
-    return vec4<f32>(stored.rgb * stored.rgb * shape.y, stored.a);
-}
-
-fn octahedral_normal(packed: vec2<f32>) -> vec3<f32> {
-    var normal = vec3<f32>(packed, 1.0 - abs(packed.x) - abs(packed.y));
-    let fold = max(-normal.z, 0.0);
-    normal.x += select(fold, -fold, normal.x >= 0.0);
-    normal.y += select(fold, -fold, normal.y >= 0.0);
-    return normalize(normal);
+    return light_field(figure_field_map, figure_field_sampler, at,
+        normalize(figure_light.direction.xyz), figure_light.field, shape);
 }
 
 fn deflected_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: vec2<f32>,

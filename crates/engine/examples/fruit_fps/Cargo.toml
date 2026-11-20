@@ -21,6 +21,8 @@ kind = "game"
 page = "fruit_fps.html"
 game = "fruit_fps"
 native = "fruit_fps-native"
+cook = "fruit_fps-cook"
+ship = ["data", "assets/ui", "assets/sfx"]
 
 [features]
 default = []
@@ -32,11 +34,20 @@ engine_sources.workspace = true
 
 [dependencies]
 engine.workspace = true
-engine_assets.workspace = true
+engine_bindings.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
+engine_math.workspace = true
+engine_meshpack.workspace = true
+engine_nav.workspace = true
 engine_render.workspace = true
 engine_rig.workspace = true
+engine_solids.workspace = true
+engine_visible_sets.workspace = true
+engine_drawing.workspace = true
+brick_sound.workspace = true
+brick_present.workspace = true
+brick_interface.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 schemars.workspace = true
@@ -46,6 +57,7 @@ serde_json.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true
 cook.workspace = true
+cook_rays.workspace = true
 cook_model.workspace = true
 cook_texture.workspace = true
 gltf.workspace = true

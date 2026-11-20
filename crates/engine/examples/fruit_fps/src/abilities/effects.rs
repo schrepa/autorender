@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
+use engine_math::{max, min};
 use glam::{Mat3, Vec3};
 
 use super::numbers::{
@@ -7,8 +8,8 @@ use super::numbers::{
     SensorSpec, SmokeSpec, Throw, TrapShape, TrapSpec, WallSpec, ZoneSpec,
 };
 use super::shapes::{
-    closest_on_box, closest_on_segment, flat, frame, greater, lesser, ray_capsule,
-    segment_distance, segment_hits_box, segment_hits_sphere,
+    closest_on_box, closest_on_segment, flat, frame, ray_capsule, segment_distance,
+    segment_hits_box, segment_hits_sphere,
 };
 
 const OBJECT_SIGHT_SLACK_M: f32 = 0.1;
@@ -441,6 +442,7 @@ pub struct Effects {
     pub(super) now: u64,
     pub(super) livings: Vec<Living>,
     pub(super) marks: Marks,
+    sight: Vec<Living>,
 }
 
 enum Step {
@@ -481,6 +483,7 @@ impl Effects {
             now: 0,
             livings: Vec::new(),
             marks: Marks::default(),
+            sight: Vec::new(),
         }
     }
 
@@ -519,11 +522,13 @@ impl Effects {
     pub fn tick(&mut self, world: &mut impl World, actors: &[Actor], tick: u64) -> Vec<Event> {
         self.now = tick;
         let mut livings = std::mem::take(&mut self.livings);
-        let sight: Vec<Living> = livings
-            .iter()
-            .filter(|living| matches!(living.state, State::Smoke { .. } | State::Wall(_)))
-            .cloned()
-            .collect();
+        let mut sight = std::mem::take(&mut self.sight);
+        sight.clear();
+        sight.extend(
+            (livings.iter())
+                .filter(|living| matches!(living.state, State::Smoke { .. } | State::Wall(_)))
+                .cloned(),
+        );
         let mut run = Run {
             world,
             actors,
@@ -544,6 +549,7 @@ impl Effects {
             mut events, blows, ..
         } = run;
         self.livings = livings;
+        self.sight = sight;
         for blow in blows {
             events.extend(self.strike_objects(world, blow));
         }
@@ -802,7 +808,7 @@ impl<W: World> Run<'_, W> {
                 if self.world.ray(actor.eye, toward, distance).is_some() {
                     continue;
                 }
-                let facing = greater(actor.view.dot(toward), 0.0);
+                let facing = max(actor.view.dot(toward), 0.0);
                 (spec.away_factor + (1.0 - spec.away_factor) * facing)
                     * (1.0 - distance / spec.range_m)
             } else {
@@ -927,11 +933,17 @@ impl<W: World> Run<'_, W> {
     }
 
     fn step(&mut self, living: &mut Living) -> Step {
+        let mut state = std::mem::replace(&mut living.state, State::Done);
+        let step = self.stepped(living, &mut state);
+        living.state = state;
+        step
+    }
+
+    fn stepped(&mut self, living: &Living, state: &mut State) -> Step {
         let age = living.age(self.tick);
-        let snapshot = living.clone();
         let ability = living.ability;
-        match &mut living.state {
-            State::Pending => self.resolve(&snapshot),
+        match state {
+            State::Pending => self.resolve(living),
             State::Flight(flight) => self.fly(flight, age, ability),
             State::Smoke { spec, .. } => finish_at(age, spec.ticks),
             State::Zone { centre, spec } => {
@@ -939,12 +951,12 @@ impl<W: World> Run<'_, W> {
                 if age >= spec.ticks {
                     return Step::Finish;
                 }
-                self.zone(&snapshot, centre, spec);
+                self.zone(living, centre, spec);
                 Step::Stay
             }
-            State::Wall(wall) => self.wall_step(&snapshot, *wall, age),
-            State::Trap(trap) => self.trap_step(&snapshot, trap, age),
-            State::Sensor(sensor) => self.sensor_step(&snapshot, sensor, age),
+            State::Wall(wall) => self.wall_step(living, *wall, age),
+            State::Trap(trap) => self.trap_step(living, trap, age),
+            State::Sensor(sensor) => self.sensor_step(living, sensor, age),
             State::Strike {
                 centre,
                 warn_ticks,
@@ -954,22 +966,22 @@ impl<W: World> Run<'_, W> {
                     return Step::Stay;
                 }
                 let (centre, falloff) = (*centre, *falloff);
-                self.falloff(&snapshot, centre, falloff);
+                self.falloff(living, centre, falloff);
                 self.cue(CueKind::StrikeImpact, ability, centre, falloff.radius_m, 0);
                 Step::Finish
             }
-            State::Glare(glare) => self.glare_step(&snapshot, *glare, age),
+            State::Glare(glare) => self.glare_step(living, *glare, age),
             State::Heal {
                 targets,
                 heal_per_tick,
                 ticks,
-            } => self.heal_step(&snapshot, targets, *heal_per_tick, finish_at(age, *ticks)),
+            } => self.heal_step(living, targets, *heal_per_tick, finish_at(age, *ticks)),
             State::Dash {
                 direction,
                 step,
                 ticks,
-            } => self.dash_step(&snapshot, *direction, *step, finish_at(age, *ticks)),
-            State::Transform { ticks, .. } => self.transform_step(&snapshot, age >= *ticks),
+            } => self.dash_step(living, *direction, *step, finish_at(age, *ticks)),
+            State::Transform { ticks, .. } => self.transform_step(living, age >= *ticks),
             State::Done => Step::Stay,
         }
     }
@@ -1024,7 +1036,7 @@ impl<W: World> Run<'_, W> {
             && full > 0.0
             && flight.travelled + full >= max
         {
-            motion *= greater(max - flight.travelled, 0.0) / full;
+            motion *= engine_math::max(max - flight.travelled, 0.0) / full;
             capped = true;
         }
         let length = motion.length();
@@ -1091,7 +1103,7 @@ impl<W: World> Run<'_, W> {
             .filter(|actor| actor.id != flight.thrower)
             .filter_map(|actor| {
                 let a = actor.feet + Vec3::Y * actor.radius;
-                let top = actor.feet + Vec3::Y * greater(actor.height - actor.radius, actor.radius);
+                let top = actor.feet + Vec3::Y * max(actor.height - actor.radius, actor.radius);
                 ray_capsule(
                     flight.position,
                     along,
@@ -1181,7 +1193,7 @@ impl<W: World> Run<'_, W> {
                 id,
             });
         }
-        let size = greater(wall.half_extents.x, wall.half_extents.z);
+        let size = max(wall.half_extents.x, wall.half_extents.z);
         self.cue(CueKind::WallDown, living.ability, wall.centre, size, 0);
         Step::Finish
     }
@@ -1422,7 +1434,7 @@ impl<W: World> Run<'_, W> {
             .world
             .sphere_sweep(actor.centre(), actor.radius, motion)
         {
-            Some(hit) => (direction * lesser(hit.distance, step), true),
+            Some(hit) => (direction * min(hit.distance, step), true),
             None => (motion, false),
         };
         self.events.push(Event::Moved {
@@ -1744,7 +1756,7 @@ impl<W: World> Run<'_, W> {
             CueKind::WallUp,
             living.ability,
             centre,
-            greater(half_extents.x, half_extents.z),
+            max(half_extents.x, half_extents.z),
             spec.ticks,
         );
         State::Wall(WallState {
@@ -1759,9 +1771,9 @@ impl<W: World> Run<'_, W> {
 
     fn expire(&mut self) {
         let tick = self.tick;
-        let present: BTreeSet<ActorId> = self.actors.iter().map(|actor| actor.id).collect();
-        let alive = |actor: ActorId| present.contains(&actor);
-        let mut ended = Vec::new();
+        let actors = self.actors;
+        let alive = |actor: ActorId| actors.iter().any(|present| present.id == actor);
+        let ended = &mut self.events;
         self.marks.buffs.retain(|_, buff| {
             let keep = buff.until > tick && alive(buff.actor);
             if !keep {
@@ -1786,7 +1798,6 @@ impl<W: World> Run<'_, W> {
             }
             keep
         });
-        self.events.append(&mut ended);
     }
 }
 

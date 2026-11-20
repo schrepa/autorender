@@ -2,7 +2,7 @@ import type { Loading, Stopped } from "../engine/host";
 
 type Layer = "loading" | "gpu" | "failure" | "playing";
 
-function part<T extends HTMLElement = HTMLElement>(id: string): T {
+export function part<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`fruit_fps.html has no #${id}`);
   return found as T;
@@ -36,19 +36,17 @@ function paint(title: string, done: number, total: number, text: string) {
   detail.textContent = text;
 }
 
-export function progress({ files, bytes, readiness, pipelines }: Loading) {
+export function progress({ readiness, pipelines }: Loading) {
   if (layer !== "loading") return;
-  const fetched = `${files.done} of ${files.total} files · ${(bytes / 1048576).toFixed(1)} MB`;
-  if (readiness && readiness.loading.total > 0) {
+  const first = readiness.groups[0];
+  if (first?.stage === "arriving") {
+    paint("Downloading", first.files_in, first.files, `${first.files_in} of ${first.files} files · ${(first.bytes_in / 1048576).toFixed(1)} MB`);
+  } else if (readiness.loading.total > 0) {
     paint("Loading the world", readiness.loading.done, readiness.loading.total, `${readiness.loading.done} of ${readiness.loading.total} loads`);
-  } else if (readiness && readiness.compiling > 0) {
+  } else if (readiness.compiling > 0) {
     paint("Compiling shaders", pipelines, pipelines + readiness.compiling, `${readiness.compiling} pipelines compiling · ${pipelines} ready`);
-  } else if (readiness) {
+  } else {
     paint("Preparing the first frame", 0, 0, readiness.unsettled.length > 0 ? `${readiness.unsettled.length} parts settling` : "");
-  } else if (files.done < files.total) {
-    paint("Downloading", files.done, files.total, fetched);
-  } else if (files.total > 0) {
-    paint("Starting the engine", 0, 0, fetched);
   }
 }
 

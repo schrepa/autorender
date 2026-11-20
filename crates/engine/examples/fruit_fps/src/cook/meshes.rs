@@ -1,13 +1,18 @@
 use std::collections::BTreeMap;
 
 use cook::Refusal;
-use cook_model::{Built, Part, Reading, Source, encode_mesh, node_label, placed, primitive_item, read_part};
+use cook_model::{
+    Built, Part, Source, encode_mesh, encode_shape, node_label, placed, primitive_item, read_part,
+    read_shape,
+};
 use serde_json::{Value, json};
 
 use crate::chunks::{self, ChunkPlan};
 
 pub struct Merged {
-    pub built: Built,
+    pub bytes: Vec<u8>,
+    pub vertices: usize,
+    pub triangles: usize,
     pub meshes: Vec<Value>,
 }
 
@@ -80,10 +85,8 @@ fn chunked(
             colors: piece.colors,
             skin: None,
             influences: 0,
-            normals: group[0].normals,
-            uv: group[0].uv,
         };
-        let mut mesh = encode_mesh(source, &item, std::slice::from_ref(&part), true)?;
+        let mut mesh = encode_mesh(source, &item, std::slice::from_ref(&part))?;
         mesh.stem = format!("{stem}_{}_{}", piece_cell.0, piece_cell.1);
         if let Some((class, largest)) = class {
             mesh.stem = format!("{}_s{class}", mesh.stem);
@@ -116,7 +119,7 @@ fn drawn_parts(
         let mut object = 0;
         for held in mesh.primitives() {
             let item = primitive_item(&node, &held);
-            let part = read_part(source, &item, &held, place, None, Reading::Drawn)?;
+            let part = read_part(source, &item, &held, place, None)?;
             if part.uv1.is_some() == part.colors.is_some() {
                 return Err(source.refuse(
                     "MapMeshLight",
@@ -143,7 +146,7 @@ pub fn drawn(
     let (mut parts, widest) = drawn_parts(source, (scale, tolerance), merged)?;
     let mut groups: Vec<(usize, bool)> = parts
         .iter()
-        .filter_map(|part| Some((part.material?, part.colors.is_some())))
+        .map(|part| (part.material, part.colors.is_some()))
         .collect();
     groups.sort_unstable();
     groups.dedup();
@@ -163,7 +166,7 @@ pub fn drawn(
     for &(material, colored) in &groups {
         let group: Vec<Part> = parts
             .extract_if(.., |part| {
-                part.material == Some(material) && part.colors.is_some() == colored
+                part.material == material && part.colors.is_some() == colored
             })
             .collect();
         let stem = if groups.len() == 1 {
@@ -191,7 +194,7 @@ pub fn drawn(
             continue;
         }
         let item = format!("materials[{material}] group");
-        let mut mesh = encode_mesh(source, &item, &group, true)?;
+        let mut mesh = encode_mesh(source, &item, &group)?;
         mesh.stem = stem;
         built.push(mesh);
     }
@@ -230,7 +233,7 @@ pub fn merged(
     (prefix, output): (&str, &str),
     (scale, tolerance): (f32, f32),
 ) -> Result<Merged, Refusal> {
-    let mut parts = Vec::new();
+    let mut shapes = Vec::new();
     let mut meshes = Vec::new();
     let (mut indices, mut vertices) = (0, 0);
     for node in source.gltf.nodes() {
@@ -240,43 +243,35 @@ pub fn merged(
         };
         let place = placed(source, &node, scale, tolerance)?;
         let (first_index, first_vertex) = (indices, vertices);
-        let mut sources = (Vec::new(), Vec::new());
         for held in mesh.primitives() {
             let item = primitive_item(&node, &held);
-            let part = read_part(source, &item, &held, place, None, Reading::Shape)?;
-            indices += part.indices.len();
-            vertices += part.vertices.len();
-            sources.0.push(part.normals);
-            sources.1.push(part.uv);
-            parts.push(part);
+            let shape = read_shape(source, &item, &held, place)?;
+            indices += shape.indices.len();
+            vertices += shape.positions.len();
+            shapes.push(shape);
         }
-        let said = |held: &[&'static str]| {
-            if held.iter().all(|from| *from == held[0]) {
-                held[0]
-            } else {
-                "mixed"
-            }
-        };
         meshes.push(json!({
             "node": node_name,
             "mesh": mesh.name(),
             "indices": [first_index, indices],
             "triangles": [first_index / 3, indices / 3],
             "vertices": [first_vertex, vertices],
-            "normals": said(&sources.0),
-            "uv": said(&sources.1),
             "extras": source.extras("nodes", node.index()),
             "mesh_extras": source.extras("meshes", mesh.index()),
         }));
     }
-    if parts.is_empty() {
+    if shapes.is_empty() {
         return Err(source.refuse(
             "MergeEmpty",
             format!("merge prefix `{prefix}`"),
             "no mesh node name starts with it",
         ));
     }
-    let mut built = encode_mesh(source, &format!("merge `{output}`"), &parts, false)?;
-    built.stem = output.to_owned();
-    Ok(Merged { built, meshes })
+    let bytes = encode_shape(source, &format!("merge `{output}`"), &shapes)?;
+    Ok(Merged {
+        bytes,
+        vertices,
+        triangles: indices / 3,
+        meshes,
+    })
 }

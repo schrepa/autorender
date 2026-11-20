@@ -12,7 +12,7 @@
           "type": "integer"
         },
         "team": {
-          "$ref": "#/$defs/TeamName"
+          "$ref": "#/$defs/Team"
         },
         "yaw_radians": {
           "default": 0.0,
@@ -24,38 +24,6 @@
         "slot",
         "team",
         "character"
-      ],
-      "type": "object"
-    },
-    "Aim": {
-      "additionalProperties": false,
-      "properties": {
-        "chain": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "hips": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "pitch": {
-          "format": "float",
-          "type": "number"
-        },
-        "yaw": {
-          "default": 0.0,
-          "format": "float",
-          "type": "number"
-        }
-      },
-      "required": [
-        "pitch",
-        "chain"
       ],
       "type": "object"
     },
@@ -143,85 +111,6 @@
           "default": null
         }
       },
-      "type": "object"
-    },
-    "BaseLayer": {
-      "additionalProperties": false,
-      "properties": {
-        "blend": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/Blended"
-          },
-          "type": "array"
-        },
-        "clip": {
-          "type": "string"
-        },
-        "cue": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "fade_seconds": {
-          "format": "float",
-          "type": "number"
-        },
-        "fit_seconds": {
-          "default": null,
-          "format": "float",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "looping": {
-          "type": "boolean"
-        },
-        "speed": {
-          "format": "float",
-          "type": "number"
-        },
-        "stride": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Stride"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "synced": {
-          "default": false,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "clip",
-        "speed",
-        "looping",
-        "fade_seconds",
-        "cue"
-      ],
-      "type": "object"
-    },
-    "Blended": {
-      "additionalProperties": false,
-      "properties": {
-        "clip": {
-          "type": "string"
-        },
-        "weight": {
-          "format": "float",
-          "type": "number"
-        }
-      },
-      "required": [
-        "clip",
-        "weight"
-      ],
       "type": "object"
     },
     "BlockForm": {
@@ -344,22 +233,6 @@
       ],
       "type": "object"
     },
-    "ChestFrame": {
-      "additionalProperties": false,
-      "properties": {
-        "joint": {
-          "type": "string"
-        },
-        "reference": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "joint",
-        "reference"
-      ],
-      "type": "object"
-    },
     "Clear": {
       "enum": [
         "all",
@@ -410,15 +283,19 @@
       "additionalProperties": false,
       "properties": {
         "collision": {
+          "minLength": 1,
           "type": "string"
         },
         "markers": {
+          "minLength": 1,
           "type": "string"
         },
         "ranges": {
+          "minLength": 1,
           "type": "string"
         },
         "records": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -434,6 +311,7 @@
       "additionalProperties": false,
       "properties": {
         "mesh": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -462,6 +340,52 @@
       ],
       "type": "object"
     },
+    "DamageEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "band_px": {
+          "format": "float",
+          "type": "number"
+        },
+        "color": {
+          "type": "string"
+        },
+        "fade_seconds": {
+          "format": "float",
+          "type": "number"
+        },
+        "length_deg": {
+          "format": "float",
+          "type": "number"
+        },
+        "radius_share": {
+          "format": "float",
+          "type": "number"
+        },
+        "rim_px": {
+          "format": "float",
+          "type": "number"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "tip_scale": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "tip",
+        "tip_scale",
+        "radius_share",
+        "length_deg",
+        "band_px",
+        "rim_px",
+        "color",
+        "fade_seconds"
+      ],
+      "type": "object"
+    },
     "Device": {
       "additionalProperties": false,
       "type": "object"
@@ -480,18 +404,14 @@
           "default": 1
         },
         "material": {
-          "maxLength": 64,
           "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
           "type": [
             "string",
             "null"
           ]
         },
         "mesh": {
-          "maxLength": 64,
           "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
           "type": [
             "string",
             "null"
@@ -559,7 +479,7 @@
           "$ref": "#/$defs/By"
         },
         "winner": {
-          "$ref": "#/$defs/Winner"
+          "$ref": "#/$defs/Side"
         }
       },
       "required": [
@@ -587,120 +507,24 @@
       ],
       "type": "object"
     },
-    "FeedSettings": {
-      "properties": {
-        "mesh_residency": {
-          "default": 4096,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
     "Figure": {
       "additionalProperties": false,
       "properties": {
         "clips": {
           "additionalProperties": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "object"
         },
-        "forms": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Forms"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "skeleton": {
+          "minLength": 1,
           "type": "string"
         }
       },
       "required": [
         "skeleton",
         "clips"
-      ],
-      "type": "object"
-    },
-    "FigureJoints": {
-      "additionalProperties": false,
-      "properties": {
-        "names": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "names"
-      ],
-      "type": "object"
-    },
-    "FigurePlay": {
-      "additionalProperties": false,
-      "properties": {
-        "aim": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Aim"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "base": {
-          "$ref": "#/$defs/BaseLayer"
-        },
-        "crouch": {
-          "default": null,
-          "format": "float",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "hold": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Hold"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "pin_feet": {
-          "default": null,
-          "format": "float",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "upper": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/UpperLayer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "required": [
-        "base"
       ],
       "type": "object"
     },
@@ -788,10 +612,15 @@
       "additionalProperties": false,
       "properties": {
         "file": {
+          "minLength": 1,
           "type": "string"
         },
         "texture": {
+          "minLength": 1,
           "type": "string"
+        },
+        "thin": {
+          "$ref": "#/$defs/Thin"
         },
         "thin_faces": {
           "items": {
@@ -803,7 +632,8 @@
       "required": [
         "file",
         "texture",
-        "thin_faces"
+        "thin_faces",
+        "thin"
       ],
       "type": "object"
     },
@@ -811,9 +641,11 @@
       "additionalProperties": false,
       "properties": {
         "far": {
+          "minLength": 1,
           "type": "string"
         },
         "mid": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -865,7 +697,7 @@
           "type": "integer"
         },
         "weapon": {
-          "$ref": "#/$defs/Given"
+          "$ref": "#/$defs/GunKind"
         }
       },
       "required": [
@@ -874,7 +706,7 @@
       ],
       "type": "object"
     },
-    "Given": {
+    "GunKind": {
       "enum": [
         "sidearm",
         "smg",
@@ -883,44 +715,6 @@
       ],
       "type": "string"
     },
-    "HandTarget": {
-      "additionalProperties": false,
-      "properties": {
-        "pole": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "position": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "rotation": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        }
-      },
-      "required": [
-        "position",
-        "rotation",
-        "pole"
-      ],
-      "type": "object"
-    },
     "HandsFiles": {
       "additionalProperties": false,
       "properties": {
@@ -928,9 +722,11 @@
           "$ref": "#/$defs/Figure"
         },
         "material": {
+          "minLength": 1,
           "type": "string"
         },
         "mesh": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -940,86 +736,6 @@
         "material"
       ],
       "type": "object"
-    },
-    "Held": {
-      "additionalProperties": false,
-      "properties": {
-        "figure": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "joint": {
-          "type": "string"
-        },
-        "offset": {
-          "$ref": "#/$defs/Offset"
-        }
-      },
-      "required": [
-        "joint",
-        "offset"
-      ],
-      "type": "object"
-    },
-    "Hold": {
-      "additionalProperties": false,
-      "properties": {
-        "chest": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ChestFrame"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "left": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HandTarget"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "right": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HandTarget"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "space": {
-          "$ref": "#/$defs/HoldSpace"
-        },
-        "weight": {
-          "format": "float",
-          "type": "number"
-        }
-      },
-      "required": [
-        "space",
-        "weight"
-      ],
-      "type": "object"
-    },
-    "HoldSpace": {
-      "enum": [
-        "world",
-        "figure"
-      ],
-      "type": "string"
     },
     "Human": {
       "additionalProperties": false,
@@ -1087,6 +803,78 @@
       },
       "type": "object"
     },
+    "Interface": {
+      "additionalProperties": false,
+      "properties": {
+        "atlases": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fonts": {
+          "items": {
+            "$ref": "#/$defs/FontSource"
+          },
+          "type": "array"
+        },
+        "icons": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "icons_texture": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "layout": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "maps": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pictures": {
+          "additionalProperties": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "sharpen_levels": {
+          "format": "float",
+          "type": "number"
+        },
+        "sized": {
+          "additionalProperties": {
+            "items": {
+              "format": "float",
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "layout",
+        "icons",
+        "maps",
+        "icons_texture",
+        "fonts",
+        "pictures",
+        "sized",
+        "atlases",
+        "sharpen_levels"
+      ],
+      "type": "object"
+    },
     "KeyName": {
       "additionalProperties": false,
       "properties": {
@@ -1134,6 +922,7 @@
       "additionalProperties": false,
       "properties": {
         "file": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -1196,10 +985,6 @@
         "map": {
           "type": "string"
         },
-        "min_seconds": {
-          "format": "double",
-          "type": "number"
-        },
         "mode": {
           "type": "string"
         },
@@ -1214,8 +999,7 @@
         "map",
         "mode",
         "site_a_note",
-        "site_b_note",
-        "min_seconds"
+        "site_b_note"
       ],
       "type": "object"
     },
@@ -1331,13 +1115,25 @@
         "armor": {
           "$ref": "#/$defs/ArmorMark"
         },
+        "atlas": {
+          "type": "string"
+        },
+        "crosshair_outline": {
+          "type": "string"
+        },
+        "damage": {
+          "$ref": "#/$defs/DamageEdge"
+        },
         "outline_color": {
           "type": "string"
         }
       },
       "required": [
         "armor",
-        "outline_color"
+        "outline_color",
+        "crosshair_outline",
+        "atlas",
+        "damage"
       ],
       "type": "object"
     },
@@ -1503,87 +1299,6 @@
       ],
       "type": "object"
     },
-    "MeshSource": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "cube",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "plane",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "indices": {
-              "items": {
-                "format": "uint32",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "minItems": 3,
-              "type": "array"
-            },
-            "kind": {
-              "const": "inline",
-              "type": "string"
-            },
-            "vertices": {
-              "items": {
-                "$ref": "#/$defs/SceneVertex"
-              },
-              "minItems": 1,
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "vertices",
-            "indices"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "buffer",
-              "type": "string"
-            },
-            "uri": {
-              "maxLength": 256,
-              "minLength": 1,
-              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "uri"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "Mobility": {
       "enum": [
         "static",
@@ -1650,44 +1365,12 @@
       "additionalProperties": false,
       "properties": {
         "file": {
+          "minLength": 1,
           "type": "string"
         }
       },
       "required": [
         "file"
-      ],
-      "type": "object"
-    },
-    "Offset": {
-      "additionalProperties": false,
-      "properties": {
-        "rotation": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        },
-        "scale": {
-          "format": "float",
-          "type": "number"
-        },
-        "translation": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        }
-      },
-      "required": [
-        "translation",
-        "rotation",
-        "scale"
       ],
       "type": "object"
     },
@@ -1766,6 +1449,7 @@
           ]
         },
         "layout": {
+          "minLength": 1,
           "type": [
             "string",
             "null"
@@ -1778,12 +1462,15 @@
       "additionalProperties": false,
       "properties": {
         "markers": {
+          "minLength": 1,
           "type": "string"
         },
         "material": {
+          "minLength": 1,
           "type": "string"
         },
         "mesh": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -1817,6 +1504,18 @@
           "type": "boolean"
         }
       },
+      "type": "object"
+    },
+    "Present": {
+      "additionalProperties": false,
+      "properties": {
+        "antialias": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "antialias"
+      ],
       "type": "object"
     },
     "Projection": {
@@ -1899,9 +1598,6 @@
     "PuppetFile": {
       "additionalProperties": false,
       "properties": {
-        "file": {
-          "type": "string"
-        },
         "hands": {
           "anyOf": [
             {
@@ -1932,8 +1628,20 @@
         }
       },
       "required": [
-        "file",
         "weapons"
+      ],
+      "type": "object"
+    },
+    "PuppetTableFile": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
       ],
       "type": "object"
     },
@@ -2106,30 +1814,10 @@
             }
           ]
         },
-        "feeds": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FeedSettings"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "flow": {
           "anyOf": [
             {
               "$ref": "#/$defs/FlowSetup"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "frame_limits": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneFrameLimits"
             },
             {
               "type": "null"
@@ -2225,25 +1913,6 @@
         "linear"
       ],
       "type": "string"
-    },
-    "SceneFrameLimits": {
-      "additionalProperties": false,
-      "properties": {
-        "max_fixed_steps": {
-          "default": 5,
-          "format": "uint32",
-          "maximum": 1000,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "max_frame_seconds": {
-          "default": 0.25,
-          "exclusiveMinimum": 0.0,
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "type": "object"
     },
     "SceneMap": {
       "anyOf": [
@@ -2407,13 +2076,16 @@
           "pattern": "^[A-Za-z0-9_.-]+$",
           "type": "string"
         },
-        "source": {
-          "$ref": "#/$defs/MeshSource"
+        "uri": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+          "type": "string"
         }
       },
       "required": [
         "id",
-        "source"
+        "uri"
       ],
       "type": "object"
     },
@@ -2488,30 +2160,10 @@
             }
           ]
         },
-        "figure_joints": {
+        "figure_forms": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FigureJoints"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "figure_play": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FigurePlay"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "held": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Held"
+              "$ref": "#/$defs/Forms"
             },
             {
               "type": "null"
@@ -2533,6 +2185,16 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$",
           "type": "string"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Interface"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "level_piece": {
           "anyOf": [
@@ -2647,10 +2309,30 @@
             "null"
           ]
         },
+        "present": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Present"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "puppet": {
           "anyOf": [
             {
               "$ref": "#/$defs/PuppetFile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "puppet_table": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PuppetTableFile"
             },
             {
               "type": "null"
@@ -2802,6 +2484,12 @@
             "string",
             "null"
           ]
+        },
+        "variants": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         },
         "width": {
           "format": "uint32",
@@ -2975,67 +2663,6 @@
       },
       "type": "object"
     },
-    "SceneVertex": {
-      "additionalProperties": false,
-      "properties": {
-        "color": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "normal": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "position": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "uv": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": "array"
-        },
-        "uv1": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": [
-            "array",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "position",
-        "normal"
-      ],
-      "type": "object"
-    },
     "SceneWrap": {
       "enum": [
         "repeat",
@@ -3149,8 +2776,15 @@
           "type": "boolean"
         },
         "show": {
-          "$ref": "#/$defs/Showing",
-          "default": "auto"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Shown"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "type": "object"
@@ -3158,26 +2792,8 @@
     "ScreenSource": {
       "additionalProperties": false,
       "properties": {
-        "atlases": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "feed": {
           "$ref": "#/$defs/FeedNumbers"
-        },
-        "fonts": {
-          "items": {
-            "$ref": "#/$defs/FontSource"
-          },
-          "type": "array"
-        },
-        "icons": {
-          "type": "string"
-        },
-        "icons_texture": {
-          "type": "string"
         },
         "key_names": {
           "additionalProperties": {
@@ -3188,9 +2804,6 @@
         "keys": {
           "$ref": "#/$defs/ScreenKeys"
         },
-        "layout": {
-          "type": "string"
-        },
         "low": {
           "$ref": "#/$defs/Lows"
         },
@@ -3200,51 +2813,22 @@
         "menu": {
           "$ref": "#/$defs/MenuSource"
         },
-        "minimap": {
-          "type": "string"
-        },
-        "pictures": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "portraits": {
-          "type": "string"
-        },
-        "sized": {
-          "additionalProperties": {
-            "items": {
-              "format": "float",
-              "type": "number"
-            },
-            "maxItems": 2,
-            "minItems": 2,
-            "type": "array"
-          },
-          "type": "object"
+        "texts": {
+          "$ref": "#/$defs/Texts"
         },
         "words": {
           "$ref": "#/$defs/Words"
         }
       },
       "required": [
-        "layout",
-        "icons",
-        "minimap",
-        "portraits",
-        "icons_texture",
-        "fonts",
-        "pictures",
-        "sized",
-        "atlases",
         "menu",
         "keys",
         "key_names",
         "low",
         "feed",
         "marks",
-        "words"
+        "words",
+        "texts"
       ],
       "type": "object"
     },
@@ -3274,9 +2858,8 @@
       ],
       "type": "string"
     },
-    "Showing": {
+    "Shown": {
       "enum": [
-        "auto",
         "hud",
         "buy",
         "scoreboard",
@@ -3287,6 +2870,13 @@
         "loading",
         "pause",
         "settings"
+      ],
+      "type": "string"
+    },
+    "Side": {
+      "enum": [
+        "attack",
+        "defend"
       ],
       "type": "string"
     },
@@ -3372,6 +2962,7 @@
       "additionalProperties": false,
       "properties": {
         "table": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -3380,30 +2971,7 @@
       ],
       "type": "object"
     },
-    "Stride": {
-      "additionalProperties": false,
-      "properties": {
-        "axis": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": "array"
-        },
-        "scale": {
-          "format": "float",
-          "type": "number"
-        }
-      },
-      "required": [
-        "scale",
-        "axis"
-      ],
-      "type": "object"
-    },
-    "TeamName": {
+    "Team": {
       "enum": [
         "first",
         "second"
@@ -3419,82 +2987,48 @@
       ],
       "type": "string"
     },
-    "UpperLayer": {
+    "Texts": {
       "additionalProperties": false,
       "properties": {
-        "additive": {
-          "default": false,
-          "type": "boolean"
-        },
-        "clip": {
-          "type": "string"
-        },
-        "cue": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "fade_seconds": {
-          "default": 0.0,
-          "format": "float",
-          "type": "number"
-        },
-        "feather": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "fit_seconds": {
-          "default": null,
-          "format": "float",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "from": {
-          "type": "string"
-        },
-        "looping": {
-          "type": "boolean"
-        },
-        "played_from": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "speed": {
-          "format": "float",
-          "type": "number"
-        },
-        "weight": {
-          "format": "float",
-          "type": "number"
-        },
-        "window": {
-          "default": null,
-          "items": {
-            "format": "float",
-            "type": "number"
+        "abilities": {
+          "additionalProperties": {
+            "type": "string"
           },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": [
-            "array",
-            "null"
-          ]
+          "type": "object"
+        },
+        "tips": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
-        "clip",
-        "weight",
-        "looping",
-        "from",
-        "feather",
-        "speed",
-        "cue"
+        "abilities",
+        "tips"
+      ],
+      "type": "object"
+    },
+    "Thin": {
+      "additionalProperties": false,
+      "properties": {
+        "below_px": {
+          "format": "float",
+          "type": "number"
+        },
+        "boost": {
+          "format": "float",
+          "type": "number"
+        },
+        "span_px": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "below_px",
+        "span_px",
+        "boost"
       ],
       "type": "object"
     },
@@ -3536,9 +3070,7 @@
           "type": "integer"
         },
         "texture": {
-          "maxLength": 64,
           "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
           "type": [
             "string",
             "null"
@@ -3597,18 +3129,23 @@
           "$ref": "#/$defs/Figure"
         },
         "held_material": {
+          "minLength": 1,
           "type": "string"
         },
         "held_mesh": {
+          "minLength": 1,
           "type": "string"
         },
         "markers": {
+          "minLength": 1,
           "type": "string"
         },
         "material": {
+          "minLength": 1,
           "type": "string"
         },
         "mesh": {
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -3621,13 +3158,6 @@
         "held_material"
       ],
       "type": "object"
-    },
-    "Winner": {
-      "enum": [
-        "attack",
-        "defend"
-      ],
-      "type": "string"
     },
     "Words": {
       "additionalProperties": false,
@@ -3796,6 +3326,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "cooked": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "entities": {
       "items": {
         "$ref": "#/$defs/SceneObject"

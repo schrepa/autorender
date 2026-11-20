@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
+use engine_solids::Kind;
 use serde::Deserialize;
-
-use crate::solids::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -366,22 +365,6 @@ pub(super) struct EnemyLook {
     pub reveal: [f32; 3],
 }
 
-impl EffectsNumbers {
-    pub fn most_sprites(&self) -> u32 {
-        [
-            self.impacts.default.sprites,
-            self.juice.spray.sprites,
-            self.blast.spray.sprites,
-            self.orbs.burst.sprites,
-            self.shatter.pieces.sprites,
-            self.shatter.sparks.sprites,
-        ]
-        .into_iter()
-        .chain(self.impacts.kinds.values().map(|spray| spray.sprites))
-        .fold(1, u32::max)
-    }
-}
-
 #[derive(Deserialize)]
 struct MatchPart {
     device_fuse_seconds: f32,
@@ -400,8 +383,8 @@ pub(super) struct Parsed {
     pub fuse_seconds: f32,
 }
 
-pub(super) fn parse(text: &str) -> Result<Parsed, String> {
-    let part: FilePart = serde_json::from_str(text).map_err(|error| error.to_string())?;
+pub(super) fn parse(whole: &serde_json::Value) -> Result<Parsed, String> {
+    let part = FilePart::deserialize(whole).map_err(|error| error.to_string())?;
     Ok(Parsed {
         look: part.effects,
         fuse_seconds: part.rules.device_fuse_seconds,

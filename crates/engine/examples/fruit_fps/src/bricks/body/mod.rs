@@ -3,12 +3,15 @@ engine::brick!(body);
 mod arena;
 mod barrier;
 mod input;
+mod openings;
 mod steps;
 mod watch;
 
 use engine::math;
 use engine::prelude::*;
-use engine_core::{Asked, Stats};
+use engine_core::{Asked, AssetKind, AssetKinds, Assets, Stats};
+use engine_solids::peers::apart;
+use engine_solids::{Capsule, Solids, Work};
 use glam::{Quat, Vec3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,15 +20,17 @@ use crate::play::actors::{
     Actor, Alive, Body, Eye, Gait, Health, Human, Motion, SpeedFactor, Wish,
 };
 use crate::play::events::body::BodyEvents;
+use crate::play::files::{self, Triangles};
+use crate::play::layout::Layout;
 use crate::play::numbers::{Numbers, PlayerNumbers};
 use crate::play::powers::{Powers, Push};
 use crate::play::round::Round;
 use crate::play::view::{Controls, ViewOffsets, Watched};
-use crate::play::world::{Arena, Barrier, Zone};
+use crate::play::walk::{self, Moved};
+use crate::play::world::{Arena, Barrier, Markers, Zone};
 use crate::rules::Side;
-use crate::solids::{self, Moved};
 
-use arena::ArenaFile;
+use arena::{ArenaFile, ArenaMarkers, CollisionRanges};
 use input::{NumbersFile, Spun, Swallow};
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
@@ -114,9 +119,7 @@ impl Brick for BodyBrick {
         bricks
             .join::<SceneComponents>(
                 ComponentKind::of::<NumbersFile>("numbers")
-                    .schema(engine_core::schema_of::<NumbersFile>)
-                    .files(NumbersFile::files)
-                    .prepare(NumbersFile::prepared),
+                    .schema(engine_core::schema_of::<NumbersFile>),
             )
             .join::<SceneComponents>(
                 ComponentKind::of::<Actor>("actor").schema(engine_core::schema_of::<Actor>),
@@ -127,10 +130,13 @@ impl Brick for BodyBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<ArenaFile>("arena")
                     .schema(engine_core::schema_of::<ArenaFile>)
-                    .check(ArenaFile::checked)
-                    .files(ArenaFile::files)
-                    .prepare(ArenaFile::prepared),
+                    .check(ArenaFile::checked),
             )
+            .join::<AssetKinds>(AssetKind::of("numbers", input::numbers))
+            .join::<AssetKinds>(AssetKind::of::<Triangles>("triangles", files::triangles))
+            .join::<AssetKinds>(AssetKind::of::<Layout>("map_layout", files::json))
+            .join::<AssetKinds>(AssetKind::of::<CollisionRanges>("collision_ranges", files::json))
+            .join::<AssetKinds>(AssetKind::of::<ArenaMarkers>("arena_markers", files::json))
             .moves::<Actor>(Pace::Tick)
             .moves::<Sight>(Pace::Tick)
             .resource::<Numbers>()
@@ -159,25 +165,28 @@ impl Brick for BodyBrick {
 }
 
 fn adopt(
-    files: Query<Ref<ArenaFile>>,
-    numbers: Res<Numbers>,
+    (files, assets, numbers): (Query<Ref<ArenaFile>>, Res<Assets>, Res<Numbers>),
     mut arena: ResMut<Arena>,
+    mut built: Local<Option<(Solids, Markers)>>,
     mut applied: Local<Option<Vec<String>>>,
 ) {
+    for file in &files {
+        if file.is_changed() {
+            *built = file.built(&assets);
+            *applied = None;
+        }
+    }
     let Some(numbers) = numbers.get() else {
         return;
     };
     let known = &numbers.player.surface_kinds;
-    let fresh = applied.as_ref() != Some(known);
-    for file in &files {
-        if (file.is_changed() || fresh)
-            && let Some(built) = &file.built
-        {
-            let (mut solids, mut markers) = (**built).clone();
-            arena::stone_unknown(&mut solids, &mut markers, known);
-            arena.adopt(solids, markers);
-            *applied = Some(known.clone());
-        }
+    if applied.as_ref() != Some(known)
+        && let Some((solids, markers)) = built.as_ref()
+    {
+        let (mut solids, mut markers) = (solids.clone(), markers.clone());
+        arena::stone_unknown(&mut solids, &mut markers, known);
+        arena.adopt(solids, markers);
+        *applied = Some(known.clone());
     }
 }
 
@@ -327,16 +336,16 @@ fn held_in_buy_zone(arena: &Arena, round: Option<&Round>, slot: u32, from: Vec3,
     }
 }
 
-fn pushed(arena: &Arena, player: &PlayerNumbers, body: &solids::Body, shove: Vec3) -> Vec3 {
-    let capsule = solids::capsule_of(body, &player.moving);
-    match arena.solids().capsule_sweep(capsule, shove) {
+fn pushed(arena: &Arena, player: &PlayerNumbers, body: &walk::Body, shove: Vec3) -> Vec3 {
+    let capsule = walk::capsule_of(body, &player.moving);
+    match arena.solids().capsule_sweep(capsule, shove, &mut Work::default()) {
         Some(hit) => body.position + shove.normalize_or_zero() * hit.distance,
         None => body.position + shove,
     }
 }
 
-fn solid(body: &Body) -> solids::Body {
-    solids::Body {
+fn solid(body: &Body) -> walk::Body {
+    walk::Body {
         position: body.feet,
         velocity: body.velocity,
         grounded: body.grounded,
@@ -344,28 +353,27 @@ fn solid(body: &Body) -> solids::Body {
     }
 }
 
-type Peer = (u32, solids::Capsule, Entity);
-
-fn others(peers: &[Peer], own: usize) -> Vec<(u32, solids::Capsule)> {
-    (peers.iter().enumerate())
-        .filter(|&(at, _)| at != own)
-        .map(|(_, &(slot, capsule, _))| (slot, capsule))
-        .collect()
+#[derive(Default)]
+struct Peers {
+    order: Vec<(u32, Entity, Capsule)>,
+    slotted: Vec<(u32, Capsule)>,
+    capsules: Vec<Capsule>,
+    clear: Vec<Capsule>,
 }
 
 fn step_once(
-    (arena, peers): (&Arena, &[(u32, solids::Capsule)]),
+    (arena, capsules, clear): (&Arena, &[Capsule], &mut Vec<Capsule>),
     player: &PlayerNumbers,
     (wish, body, factor): (&Wish, &Body, f32),
     (slowed, dt): (f32, f32),
 ) -> Moved {
-    let capsules: Vec<solids::Capsule> = peers.iter().map(|&(_, capsule)| capsule).collect();
-    solids::step(
-        (arena.solids(), &capsules),
+    walk::step(
+        (arena.solids(), capsules, clear),
         solid(body),
-        solids::Wish {
+        walk::Wish {
             direction: wish.direction,
             speed: wished_speed(player, wish, body.crouched, factor),
+            drive: player.run_speed_mps,
             jump: wish.jump,
             crouch: wish.crouch,
             rooted: factor <= 0.0,
@@ -391,6 +399,7 @@ fn advance(
     mut moves: Moves<BodyBrick>,
     mut teleports: ResMut<Asked<Teleport>>,
     (mut events, mut counted): (ResMut<BodyEvents>, ResMut<EventStats>),
+    mut peers: Local<Peers>,
 ) {
     events.tick = world.time.tick;
     events.footsteps.clear();
@@ -405,27 +414,35 @@ fn advance(
     }
     let player = &numbers.player;
     let dt = world.time.delta_seconds;
-    let mut peers: Vec<Peer> = (actors.iter())
-        .map(|(entity, actor, _, _, body, ..)| {
-            let capsule = solids::capsule_of(&solid(body), &player.moving);
-            (actor.slot, capsule, entity)
-        })
-        .collect();
-    peers.sort_unstable_by_key(|&(slot, _, entity)| (slot, entity));
-    for own in 0..peers.len() {
+    let Peers {
+        order,
+        slotted,
+        capsules,
+        clear,
+    } = &mut *peers;
+    order.clear();
+    order.extend(actors.iter().map(|(entity, actor, _, _, body, ..)| {
+        let capsule = walk::capsule_of(&solid(body), &player.moving);
+        (actor.slot, entity, capsule)
+    }));
+    order.sort_unstable_by_key(|&(slot, entity, _)| (slot, entity));
+    slotted.clear();
+    slotted.extend(order.iter().map(|&(slot, _, capsule)| (slot, capsule)));
+    capsules.clear();
+    capsules.extend(order.iter().map(|&(_, _, capsule)| capsule));
+    for own in 0..order.len() {
         let Ok((entity, actor, wish, eye, mut body, mut tally, factor, push)) =
-            actors.get_mut(peers[own].2)
+            actors.get_mut(order[own].1)
         else {
             continue;
         };
-        let around = others(&peers, own);
         let jumped = body.feet != tally.placed;
         let factor = factor.map_or(1.0, |held| held.0);
         let slowed = (world.powers.as_deref()).map_or(1.0, |powers| {
             math::min(powers.modifiers(actor.slot).speed, 1.0)
         });
         let mut moved = step_once(
-            (arena, &around),
+            (arena, capsules, clear),
             player,
             (wish, &body, factor),
             (slowed, dt),
@@ -436,8 +453,8 @@ fn advance(
             let shove = std::mem::take(&mut push.0);
             moved.body.position = pushed(arena, player, &moved.body, shove);
         }
-        let capsule = solids::capsule_of(&moved.body, &player.moving);
-        let apart = solids::apart((actor.slot, capsule), &around, player.push_apart_mps * dt);
+        let capsule = walk::capsule_of(&moved.body, &player.moving);
+        let apart = apart((actor.slot, capsule), slotted, player.push_apart_mps * dt);
         if apart != Vec3::ZERO {
             moved.body.position = pushed(arena, player, &moved.body, apart);
         }
@@ -470,7 +487,9 @@ fn advance(
             &mut events,
         );
         *body = next;
-        peers[own].1 = solids::capsule_of(&solid(&next), &player.moving);
+        let placed = walk::capsule_of(&solid(&next), &player.moving);
+        slotted[own].1 = placed;
+        capsules[own] = placed;
         let rotation = Quat::from_rotation_y(wish.yaw_radians + std::f32::consts::PI);
         if jumped {
             let scale = moves.local(entity).map_or(Vec3::ONE, |placed| placed.scale);
@@ -493,7 +512,9 @@ fn advance(
             sight.translation = lifted;
         }
     }
-    count(&events, &mut counted);
+    if !events.footsteps.is_empty() || !events.jumps.is_empty() || !events.landings.is_empty() {
+        count(&events, &mut counted);
+    }
 }
 
 fn count(events: &BodyEvents, counted: &mut EventStats) {
@@ -511,9 +532,7 @@ fn count(events: &BodyEvents, counted: &mut EventStats) {
     if let Some(landing) = events.landings.last() {
         counted.last_fall_speed = landing.fall_speed;
     }
-    if !events.footsteps.is_empty() || !events.jumps.is_empty() || !events.landings.is_empty() {
-        counted.last_tick = events.tick;
-    }
+    counted.last_tick = events.tick;
 }
 
 fn named<T: Serialize>(value: &T) -> String {
@@ -555,7 +574,7 @@ fn report(
                 crouch: body.crouch,
                 motion: named(&body.motion),
                 floor: (body.ground)
-                    .and_then(|ground| arena.kind_name(ground.kind))
+                    .and_then(|kind| arena.kind_name(kind))
                     .map(str::to_owned),
                 yaw: wish.yaw_radians,
                 pitch: wish.pitch_radians,

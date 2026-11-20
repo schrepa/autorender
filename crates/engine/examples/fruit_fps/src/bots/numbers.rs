@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
@@ -201,11 +202,11 @@ pub struct BotNumbers {
 }
 
 impl BotNumbers {
-    pub fn from_numbers_json(
-        text: &str,
+    pub fn from_numbers(
+        whole: &Value,
         ticks_per_second: u32,
     ) -> Result<BotNumbers, serde_json::Error> {
-        let file: NumbersFile = serde_json::from_str(text)?;
+        let file = NumbersFile::deserialize(whole)?;
         Ok(BotNumbers {
             levels: file.bots.levels,
             play: file.bots.play,
@@ -225,7 +226,7 @@ impl BotNumbers {
     }
 
     pub fn ticks(&self, seconds: f32) -> u64 {
-        (super::aim::max(seconds, 0.0) * self.ticks_per_second as f32).round() as u64
+        (engine_math::max(seconds, 0.0) * self.ticks_per_second as f32).round() as u64
     }
 
     pub fn seconds(&self, ticks: u64) -> f32 {

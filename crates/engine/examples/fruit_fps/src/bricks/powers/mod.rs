@@ -7,6 +7,8 @@ mod orbs;
 mod publish;
 
 use engine::prelude::*;
+use engine_core::Asset;
+use engine_solids::Kind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,9 +16,9 @@ use std::collections::BTreeMap;
 
 use crate::abilities::{AbilityBook, AbilityId, OrbNumbers};
 use crate::play::events::powers::PowerEvents;
+use crate::play::layout::Layout;
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
-use crate::solids::Kind;
 use crate::weapons::{Absorb, DamageLedger, WeaponNumbers};
 
 const RECENT_CUES: usize = 12;
@@ -231,6 +233,7 @@ struct Book {
     guns: Option<WeaponNumbers>,
     orbs: Option<OrbNumbers>,
     orb_problem: Option<String>,
+    orb_tried: Option<(Option<u64>, u64, Asset<Layout>)>,
     recent_orbs: Vec<OrbEventStat>,
     cast_at_done: Option<u32>,
     hurt: BTreeMap<u32, u64>,
@@ -268,13 +271,13 @@ fn setup(
         return;
     }
     book.revision = Some(numbers.revision());
-    let parsed = AbilityBook::parse(&game.text, tps)
+    let parsed = AbilityBook::parse(&game.whole, tps)
         .map_err(|error| {
             let slot = error.slot.map_or("", |slot| slot.key());
             format!("abilities {} {}: {}", error.character, slot, error.message)
         })
         .and_then(|abilities| {
-            serde_json::from_str::<PartNumbers>(&game.text)
+            PartNumbers::deserialize(&game.whole)
                 .map(|parts| (abilities, parts))
                 .map_err(|error| error.to_string())
         });
@@ -309,7 +312,7 @@ fn setup(
             book.ticks_per_second = tps;
             book.guns = Some(game.weapons.clone());
             powers.orbs = Default::default();
-            match OrbNumbers::parse(&game.text, tps) {
+            match OrbNumbers::parse(&game.whole, tps) {
                 Ok(orbs) => {
                     book.orbs = Some(orbs);
                     book.orb_problem = None;

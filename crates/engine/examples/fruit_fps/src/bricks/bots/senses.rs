@@ -3,7 +3,7 @@ use glam::Vec3;
 use super::{Loaded, Reach};
 use crate::bots::{
     AbilitySense, Block, DeviceSense, GamePhase, GunClass, GunSense, Heard, MatchSense, Places,
-    Seen, Side as BotSide, SoundKind, WeaponChoice,
+    Seen, SoundKind, WeaponChoice,
 };
 use crate::play::actors::Motion;
 use crate::play::arms::Arms;
@@ -429,10 +429,7 @@ pub(super) fn match_sense(
     };
     MatchSense {
         phase,
-        side: match side {
-            Side::Attack => BotSide::Attack,
-            Side::Defend => BotSide::Defend,
-        },
+        side,
         ticks_left: view.ticks_left,
         round: view.round,
         device: device_for(round, view, places, side),

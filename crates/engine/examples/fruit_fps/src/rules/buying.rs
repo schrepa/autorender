@@ -332,8 +332,7 @@ impl Match {
 
     fn bought_index(slot: AbilitySlot) -> Result<usize, BuyRefusal> {
         match slot {
-            AbilitySlot::C => Ok(0),
-            AbilitySlot::Q => Ok(1),
+            AbilitySlot::C | AbilitySlot::Q => Ok(slot.index()),
             AbilitySlot::E | AbilitySlot::X => Err(BuyRefusal::NotForSale),
         }
     }

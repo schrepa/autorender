@@ -26,7 +26,3 @@ fn material_texels(uv: vec2<f32>) -> MaterialTexels {
     texels.trim = orm.a;
     return texels;
 }
-
-fn field_texel(uv: vec2<f32>) -> vec4<f32> {
-    return textureSampleLevel(figure_field_map, figure_field_sampler, uv, 0.0);
-}

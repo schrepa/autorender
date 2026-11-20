@@ -1,11 +1,13 @@
+use engine_math::max;
 use glam::Vec3;
 
 use super::aim::{
-    angle_between, direction, flat, flat_distance, look_angles, max, radians, sin_cos, wrap,
+    angle_between, direction, flat, flat_distance, look_angles, radians, sin_cos, wrap,
 };
 use super::debug::{Activity, Why};
 use super::memory::Source;
-use super::sense::{AbilityUse, Block, Call, CallKind, DeviceSense, Gait, Intent, Side, SoundKind};
+use super::sense::{AbilityUse, Block, Call, CallKind, DeviceSense, Gait, Intent, SoundKind};
+use crate::rules::Side;
 use super::team::{Duty, Line, LineKind, Step};
 use super::throws::{Progress, Search, Shot};
 use super::{Brain, Ctx};
@@ -56,6 +58,7 @@ pub struct Utilities {
     next_check: u64,
     quiet_until: [u64; 4],
     avert: Option<(Vec3, u64)>,
+    pub(super) answers: [Option<(Vec3, Vec3, Option<Shot>)>; 4],
     pub counts: ThrowCounts,
     pub last: Option<(Line, ThrowState)>,
 }
@@ -72,6 +75,7 @@ impl Utilities {
             next_check: 0,
             quiet_until: [0; 4],
             avert: None,
+            answers: [None; 4],
             counts: ThrowCounts::default(),
             last: None,
         }
@@ -435,6 +439,17 @@ fn refuse(brain: &mut Brain, pending: Pending) {
     }
 }
 
+fn settle(brain: &mut Brain, mut pending: Pending, answer: Option<Shot>) -> Option<Shot> {
+    let Some(shot) = answer else {
+        refuse(brain, pending);
+        return None;
+    };
+    brain.utilities.counts.solved += 1;
+    pending.shot = Some(shot);
+    brain.utilities.pending = Some(pending);
+    Some(shot)
+}
+
 fn solve(brain: &mut Brain, ctx: &Ctx<'_, '_>, mut pending: Pending) -> Option<Shot> {
     let play = &ctx.numbers.play;
     let moved = pending
@@ -447,29 +462,31 @@ fn solve(brain: &mut Brain, ctx: &Ctx<'_, '_>, mut pending: Pending) -> Option<S
     if let Some(shot) = pending.shot {
         return Some(shot);
     }
+    if pending.search.is_none()
+        && let Some((target, origin, answer)) = brain.utilities.answers[pending.slot]
+        && target == pending.target
+        && (origin - ctx.eye).length() <= play.throw_moved_m
+    {
+        return settle(brain, pending, answer);
+    }
     let search = pending
         .search
         .get_or_insert_with(|| Search::new(pending.slot, pending.target, ctx.eye));
     let progress = search.step(ctx.world, play);
+    let origin = search.origin();
     if let Some(line) = pending.line {
         brain.utilities.last = Some((line, ThrowState::Solving));
     }
-    match progress {
+    let answer = match progress {
         Progress::Working => {
             brain.utilities.pending = Some(pending);
-            None
+            return None;
         }
-        Progress::Refused => {
-            refuse(brain, pending);
-            None
-        }
-        Progress::Solved(shot) => {
-            brain.utilities.counts.solved += 1;
-            pending.shot = Some(shot);
-            brain.utilities.pending = Some(pending);
-            Some(shot)
-        }
-    }
+        Progress::Refused => None,
+        Progress::Solved(shot) => Some(shot),
+    };
+    brain.utilities.answers[pending.slot] = Some((pending.target, origin, answer));
+    settle(brain, pending, answer)
 }
 
 fn throw(brain: &mut Brain, ctx: &Ctx<'_, '_>, pending: Pending, intent: &mut Intent) {

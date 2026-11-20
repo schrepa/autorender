@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use engine::prelude::Resource;
 use glam::{Mat3, Vec3};
 
@@ -118,6 +120,24 @@ pub struct PropShown {
     pub team: Team,
     pub place: PropPlace,
     pub enemy_share: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mark {
+    pub tint: [f32; 4],
+    pub emission: [f32; 3],
+}
+
+impl Mark {
+    pub const PLAIN: Mark = Mark {
+        tint: [1.0; 4],
+        emission: [0.0; 3],
+    };
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct FigureMarks {
+    pub by_actor: BTreeMap<(u32, Team), Mark>,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]

@@ -348,6 +348,17 @@ struct Sorted {
     marks: Vec<Item>,
 }
 
+#[derive(Default)]
+pub(super) struct Lists {
+    sorted: Sorted,
+    shown: Vec<Shown>,
+    meshed: Vec<u32>,
+    faded: Vec<(u32, f32)>,
+    orbs: Vec<OrbSeen>,
+    raised: Vec<Raised>,
+    bodies: Vec<Vec3>,
+}
+
 fn smoke_item(look: &EffectsNumbers, centre: Vec3, radius: f32, strength: f32, seed: f32) -> Item {
     let smoke = &look.smoke;
     let outer = radius + smoke.rim_m;
@@ -521,7 +532,6 @@ fn trim_ring(look: &EffectsNumbers, thing: &Shown) -> Item {
 }
 
 type Things<'a> = (
-    &'a [Shown],
     &'a EffectsFeed,
     &'a Spawns,
     (Option<Team>, Show, &'a ShowcaseModels),
@@ -529,26 +539,27 @@ type Things<'a> = (
 
 fn shown_things(
     look: &EffectsNumbers,
-    (shown, feed, spawns, (team, show, models)): Things<'_>,
+    (feed, spawns, (team, show, models)): Things<'_>,
     (eye, tick_seconds, now): (Option<Vec3>, f32, f64),
-    (sorted, stats): (&mut Sorted, &mut Stats<'_, EffectsStats>),
+    (lists, stats): (&mut Lists, &mut Stats<'_, EffectsStats>),
 ) {
-    let mut meshed: Vec<u32> = feed.props.iter().map(|prop| prop.effect).collect();
+    let Lists {
+        sorted,
+        shown,
+        meshed,
+        faded,
+        ..
+    } = lists;
+    meshed.clear();
+    meshed.extend(feed.props.iter().map(|prop| prop.effect));
     if models.traps {
         meshed.push(u32::MAX);
     }
     stats.edit(|stats| stats.showcase_model.clone_from(&models.shown));
-    let faded = faded_wires(look, feed, (team, show));
-    let sided: Vec<Shown> = shown
-        .iter()
-        .map(|thing| Shown {
-            team: relative(thing.team, team),
-            ..*thing
-        })
-        .collect();
+    faded_wires(look, feed, (team, show), faded);
     sort_shown(
         look,
-        (&sided, &meshed, &faded),
+        (shown, meshed, faded),
         (eye, tick_seconds),
         sorted,
         stats,
@@ -882,10 +893,8 @@ fn device_items(
     seen: &DeviceSeen,
     (fuse_seconds, tick_seconds, alpha): (f32, f32, f32),
     now: f64,
-) -> (Vec<Item>, Option<(Item, f32)>) {
-    let Some((at, left)) = seen.spot else {
-        return (Vec::new(), None);
-    };
+) -> Option<(Item, Item, f32)> {
+    let (at, left) = seen.spot?;
     let device = &look.device;
     let left_seconds = match left {
         Some(ticks) => Some((ticks as f32 - alpha) * tick_seconds),
@@ -908,10 +917,11 @@ fn device_items(
         pulse_hz: 0.0,
     };
     let halo = device.light.map(|value| value * glow * 0.5);
-    (
-        vec![solid_item(&light)],
-        Some((halo_item(lamp, halo, device.halo_m), glow)),
-    )
+    Some((
+        solid_item(&light),
+        halo_item(lamp, halo, device.halo_m),
+        glow,
+    ))
 }
 
 fn device_part(
@@ -920,18 +930,16 @@ fn device_part(
     (round, show, human): (Option<&Round>, Show, Option<(&Body, &Wish)>),
     (timing, now): ((f32, f32, f32), f64),
     (items, stats): (&mut Vec<Item>, &mut Stats<'_, EffectsStats>),
-) -> Vec<Item> {
+) -> Option<Item> {
     let seen_device = DeviceSeen {
         spot: device_spot(round, show, human, look),
         lamp: seen.lamp.as_deref().and_then(|lamp| lamp.position),
         showcase: matches!(show, Show::Device | Show::All),
     };
-    let (solids, halo) = device_items(look, &seen_device, timing, now);
-    if let Some((item, glow)) = halo {
-        items.push(item);
-        stats.edit(|stats| stats.lamp = glow);
-    }
-    solids
+    let (solid, halo, glow) = device_items(look, &seen_device, timing, now)?;
+    items.push(halo);
+    stats.edit(|stats| stats.lamp = glow);
+    Some(solid)
 }
 
 struct Raised {
@@ -1020,65 +1028,55 @@ fn raised_faces(
     barrier: &Barrier,
     (viewer, bodies): (Option<Side>, &[Vec3]),
     since_drop: Option<f32>,
-) -> Vec<Raised> {
+    raised: &mut Vec<Raised>,
+) {
     let drop = if barrier.up {
         Some(0.0)
     } else {
         since_drop.map(|seconds| seconds / look.drop_seconds)
     };
     let Some(drop) = drop else {
-        return Vec::new();
+        return;
     };
-    barrier
-        .faces
-        .iter()
-        .map(|face| Raised {
-            face: *face,
-            friendly: viewer.is_none_or(|side| side == face.side),
-            drop,
-            near: nearest(face, bodies, look.near_m),
-        })
-        .collect()
+    raised.extend(barrier.faces.iter().map(|face| Raised {
+        face: *face,
+        friendly: viewer.is_none_or(|side| side == face.side),
+        drop,
+        near: nearest(face, bodies, look.near_m),
+    }));
 }
 
 fn barrier_part(
     look: &EffectsNumbers,
     (seen, round): (&Seen<'_, '_>, Option<&Round>),
     (fixed, alpha): (&FixedTime, f32),
-    showcase: Vec<Raised>,
+    (raised, bodies, items): (&mut Vec<Raised>, &mut Vec<Vec3>, &mut Vec<Item>),
     stats: &mut Stats<'_, EffectsStats>,
-) -> Vec<Item> {
+) -> std::ops::Range<u32> {
     let viewer = seen
         .slot()
         .zip(round)
         .and_then(|(slot, round)| round.side_of_slot(slot as usize));
-    let bodies: Vec<Vec3> = seen
-        .actors
-        .iter()
-        .map(|(_, body)| body.feet + Vec3::Y)
-        .collect();
-    let mut raised = showcase;
     if let Some(barrier) = seen.barrier.as_deref() {
+        bodies.clear();
+        bodies.extend(seen.actors.iter().map(|(_, body)| body.feet + Vec3::Y));
         let since = barrier
             .dropped_tick
             .map(|tick| (fixed.tick.saturating_sub(tick) as f32 + alpha) * fixed.delta_seconds);
-        raised.extend(raised_faces(
-            &look.barrier,
-            barrier,
-            (viewer, &bodies),
-            since,
-        ));
+        raised_faces(&look.barrier, barrier, (viewer, &bodies[..]), since, raised);
     }
     raised.retain(|face| face.drop < 1.0);
     stats.edit(|stats| {
         stats.barrier_faces = raised.len() as u32;
         stats.barrier_drop = raised.iter().map(|face| face.drop).fold(0.0, math::max);
     });
-    raised
-        .iter()
-        .enumerate()
-        .map(|(index, face)| barrier_item(&look.barrier, face, index as f32))
-        .collect()
+    put(
+        items,
+        raised
+            .iter()
+            .enumerate()
+            .map(|(index, face)| barrier_item(&look.barrier, face, index as f32)),
+    )
 }
 
 struct OrbSeen {
@@ -1192,14 +1190,14 @@ fn showcase_orbs(look: &EffectsNumbers, human: Option<(&Body, &Wish)>, now: f64)
 fn powers_orbs(
     seen: &Seen<'_, '_>,
     (fixed, alpha): (&FixedTime, f32),
-    vanished: &[(usize, f64)],
-    now: f64,
-) -> Vec<OrbSeen> {
+    (vanished, now): (&[(usize, f64)], f64),
+    list: &mut Vec<OrbSeen>,
+) {
+    list.clear();
     let Some(powers) = seen.powers.as_deref() else {
-        return Vec::new();
+        return;
     };
     let since = |tick: u64| (fixed.tick.saturating_sub(tick) as f32 + alpha) * fixed.delta_seconds;
-    let mut list = Vec::new();
     for (index, orb) in powers.orbs().iter().enumerate() {
         let best = orb
             .channels
@@ -1228,24 +1226,24 @@ fn powers_orbs(
             seed: index as u32 * 7919 + 13,
         });
     }
-    list
 }
 
 fn faded_wires(
     look: &EffectsNumbers,
     feed: &EffectsFeed,
     (viewer, show): (Option<Team>, Show),
-) -> Vec<(u32, f32)> {
-    let mut faded: Vec<(u32, f32)> = feed
-        .props
-        .iter()
-        .filter(|prop| viewer.is_some_and(|team| team != prop.team))
-        .map(|prop| (prop.effect, prop.enemy_share))
-        .collect();
+    faded: &mut Vec<(u32, f32)>,
+) {
+    faded.clear();
+    faded.extend(
+        feed.props
+            .iter()
+            .filter(|prop| viewer.is_some_and(|team| team != prop.team))
+            .map(|prop| (prop.effect, prop.enemy_share)),
+    );
     if show == Show::Wire {
         faded.push((u32::MAX - 1, look.showcase.wire_share));
     }
-    faded
 }
 
 fn power_glows(
@@ -1253,16 +1251,16 @@ fn power_glows(
     (seen, feed, spawns): (&Seen<'_, '_>, &EffectsFeed, &Spawns),
     (fixed, alpha, now): (&FixedTime, f32, f64),
     (show, human): (Show, Option<(&Body, &Wish)>),
-    (glows, marks): (&mut Vec<Item>, &mut Vec<Item>),
+    (glows, marks, orbs): (&mut Vec<Item>, &mut Vec<Item>, &mut Vec<OrbSeen>),
     stats: &mut Stats<'_, EffectsStats>,
 ) {
     let previews = preview_items(look, seen.powers.as_deref(), seen.slot(), glows, marks);
     prop_items(look, (feed, seen.team()), (glows, marks), stats);
-    let mut orbs = powers_orbs(seen, (fixed, alpha), &spawns.vanished, now);
+    powers_orbs(seen, (fixed, alpha), (&spawns.vanished[..], now), orbs);
     if show == Show::Orbs {
         orbs.extend(showcase_orbs(look, human, now));
     }
-    orb_items(look, &orbs, now, glows, stats);
+    orb_items(look, orbs, now, glows, stats);
     stats.edit(|stats| {
         (stats.previews, stats.puffs, stats.shatters) = (previews, spawns.puffs, spawns.shatters);
     });
@@ -1450,12 +1448,24 @@ fn lit_frame(
     frame.sun_color = rgb(lighting.sun, 0.0);
     frame.sky_color = rgb(lighting.sky, 0.0);
     let field = lighting.field?;
-    let [min_x, min_z, max_x, max_z] = field.rect;
-    frame.field = [min_x, min_z, 1.0 / (max_x - min_x), 1.0 / (max_z - min_z)];
-    frame.field_shape = [field.height_m, field.scale, 1.0, 0.0];
+    let (rect, [height, scale]) = field.uniform();
+    frame.field = rect;
+    frame.field_shape = [height, scale, 1.0, 0.0];
     let mut map = field.map;
-    map.sampler = lighting.filtering.light_field.applied(map.sampler);
+    map.sampler = Some(lighting.filtering.light_field.applied(map.sampler));
     Some(map)
+}
+
+fn unread_frame(
+    drawing: &mut EffectsDrawing,
+    stats: &mut Stats<EffectsStats>,
+    refusal: Option<&str>,
+) {
+    *drawing = EffectsDrawing::default();
+    stats.show(|| EffectsStats {
+        refusal: Some(refusal.unwrap_or("numbers.json not read yet").to_owned()),
+        ..EffectsStats::default()
+    });
 }
 
 fn covered_frame(drawing: &mut EffectsDrawing, stats: &mut Stats<EffectsStats>) {
@@ -1474,10 +1484,24 @@ fn lobby_frame(drawing: &mut EffectsDrawing, stats: &mut Stats<EffectsStats>) {
     });
 }
 
-fn put(items: &mut Vec<Item>, list: Vec<Item>) -> std::ops::Range<u32> {
+fn put(items: &mut Vec<Item>, list: impl IntoIterator<Item = Item>) -> std::ops::Range<u32> {
     let start = items.len() as u32;
     items.extend(list);
     start..items.len() as u32
+}
+
+fn glow_runs(glows: &[Item], runs: &mut Vec<(std::ops::Range<u32>, u32)>) {
+    runs.clear();
+    for (at, item) in (0_u32..).zip(glows) {
+        let vertices = QUAD_VERTICES * (item.rows[3][2] as u32).max(1);
+        match runs.last_mut() {
+            Some((range, most)) if (*most > QUAD_VERTICES) == (vertices > QUAD_VERTICES) => {
+                range.end = at + 1;
+                *most = (*most).max(vertices);
+            }
+            _ => runs.push((at..at + 1, vertices)),
+        }
+    }
 }
 
 #[derive(SystemParam)]
@@ -1567,18 +1591,11 @@ pub(super) fn assemble(
     humans: Query<(Entity, &Body, &Wish), With<Human>>,
     seen: Seen,
     mut drawing: ResMut<EffectsDrawing>,
+    mut lists: Local<Lists>,
     mut stats: Stats<EffectsStats>,
 ) {
     let Some(parsed) = setup.parsed.as_ref() else {
-        *drawing = EffectsDrawing::default();
-        stats.show(|| EffectsStats {
-            refusal: setup
-                .refusal
-                .clone()
-                .or(Some("numbers.json not read yet".into())),
-            ..EffectsStats::default()
-        });
-        return;
+        return unread_frame(&mut drawing, &mut stats, setup.refusal.as_deref());
     };
     if seen.covered() {
         return covered_frame(&mut drawing, &mut stats);
@@ -1592,8 +1609,9 @@ pub(super) fn assemble(
     let eye = seen.eye(human.map(|(entity, ..)| entity));
     let human = human.map(|(_, body, wish)| (body, wish));
     stats.show(EffectsStats::default);
-    let mut items = Vec::new();
-    let mut sorted = Sorted::default();
+    let lists = &mut *lists;
+    let mut items = std::mem::take(&mut drawing.items);
+    items.clear();
     glow_items(look, &spawns, now, &mut items, &mut stats);
     let sources = (&seen, &*feed, &*spawns);
     let timing = (&*fixed, time.alpha, now);
@@ -1602,29 +1620,40 @@ pub(super) fn assemble(
         sources,
         timing,
         (show, human),
-        (&mut items, &mut sorted.marks),
+        (&mut items, &mut lists.sorted.marks, &mut lists.orbs),
         &mut stats,
     );
     let timing = (parsed.fuse_seconds, fixed.delta_seconds, time.alpha);
     let place = (round.as_deref(), show, human);
-    let device_solids = device_part(look, &seen, place, (timing, now), (&mut items, &mut stats));
-    let glow = 0..items.len() as u32;
-    let mut shown = feed.shown.clone();
-    if show != Show::Off {
-        shown.extend(showcase_shown(look, show, human, now));
-    }
+    let device_solid = device_part(look, &seen, place, (timing, now), (&mut items, &mut stats));
+    let mut glows = std::mem::take(&mut drawing.glows);
+    glow_runs(&items, &mut glows);
+    let team = seen.team();
+    let showcase = if show == Show::Off {
+        Vec::new()
+    } else {
+        showcase_shown(look, show, human, now)
+    };
+    lists.shown.clear();
+    lists
+        .shown
+        .extend(feed.shown.iter().chain(&showcase).map(|thing| Shown {
+            team: relative(thing.team, team),
+            ..*thing
+        }));
     if let Some(ground) = ground.as_deref() {
-        blob_marks(ground, &mut sorted, &mut stats);
+        blob_marks(ground, &mut lists.sorted, &mut stats);
     }
-    let viewer = (seen.team(), show, &*models);
+    let viewer = (team, show, &*models);
     let timing = (eye, fixed.delta_seconds, now);
-    let things = (&shown[..], &*feed, &*spawns, viewer);
-    shown_things(look, things, timing, (&mut sorted, &mut stats));
-    let solid = put(&mut items, sorted.solids);
-    let slab = put(&mut items, sorted.slabs);
-    let sheet = put(&mut items, sorted.sheets);
-    let device = put(&mut items, device_solids);
-    let smoke = put(&mut items, sorted.smokes);
+    let things = (&*feed, &*spawns, viewer);
+    shown_things(look, things, timing, (&mut *lists, &mut stats));
+    let sorted = &mut lists.sorted;
+    let solid = put(&mut items, sorted.solids.drain(..));
+    let slab = put(&mut items, sorted.slabs.drain(..));
+    let sheet = put(&mut items, sorted.sheets.drain(..));
+    let device = put(&mut items, device_solid);
+    let smoke = put(&mut items, sorted.smokes.drain(..));
     let (mut frame, mut screen) = screen_frame(look, &feed, show, &spawns, now);
     let field = lit_frame(&mut frame, seen.lighting.as_deref());
     let limit = if show == Show::NearSight {
@@ -1642,28 +1671,26 @@ pub(super) fn assemble(
         frame.damage[3] = 0.0;
         screen = ScreenStats::default();
     }
-    let marks = put(&mut items, sorted.marks);
-    let shown_barrier = if show == Show::Barrier || show == Show::All {
-        showcase_barrier(look, human, now)
-    } else {
-        Vec::new()
-    };
+    let marks = put(&mut items, sorted.marks.drain(..));
+    lists.raised.clear();
+    if show == Show::Barrier || show == Show::All {
+        lists.raised.extend(showcase_barrier(look, human, now));
+    }
     let sources = (&seen, round.as_deref());
-    let faces = barrier_part(
+    let barrier = barrier_part(
         look,
         sources,
         (&fixed, time.alpha),
-        shown_barrier,
+        (&mut lists.raised, &mut lists.bodies, &mut items),
         &mut stats,
     );
-    let barrier = put(&mut items, faces);
     let screened = frame.flash[3] > 0.0 || frame.damage[3] > 0.0;
+    let pools = &look.pools;
     stats.edit(|next| {
-        let ranges = [
-            &glow, &solid, &slab, &sheet, &device, &smoke, &marks, &barrier,
-        ];
-        next.draws =
-            ranges.iter().filter(|range| !range.is_empty()).count() as u32 + u32::from(screened);
+        let ranges = [&solid, &slab, &sheet, &device, &smoke, &marks, &barrier];
+        next.draws = ranges.iter().filter(|range| !range.is_empty()).count() as u32
+            + glows.len() as u32
+            + u32::from(screened);
         next.instances = items.len() as u32;
         next.bytes = (items.len() * size_of::<Item>() + size_of::<EffectsFrame>()) as u64;
         next.device = !device.is_empty();
@@ -1671,7 +1698,8 @@ pub(super) fn assemble(
     });
     *drawing = EffectsDrawing {
         items,
-        glow,
+        pooled: pools.tracers + pools.flashes + pools.sprays + pools.decals + pools.rings,
+        glows,
         solid,
         slab,
         sheet,
@@ -1679,7 +1707,6 @@ pub(super) fn assemble(
         smoke,
         marks,
         barrier,
-        glow_vertices: QUAD_VERTICES * look.most_sprites(),
         frame,
         screen: screened,
         field,

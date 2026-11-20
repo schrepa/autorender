@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use engine::prelude::Resource;
-use engine::{Devices, MouseButton};
+use engine_bindings::Binding;
 use serde::Deserialize;
+use serde_json::Value;
 
+use crate::play::walk::WalkNumbers;
 use crate::rules::RulesNumbers;
-use crate::solids::Player;
 use crate::weapons::{HitShapeNumbers, WeaponNumbers};
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct PlayerNumbers {
     #[serde(flatten)]
-    pub moving: Player,
+    pub moving: WalkNumbers,
     pub health: f32,
     pub eye_height_m: f32,
     pub crouch_eye_height_m: f32,
@@ -30,6 +31,35 @@ pub struct PlayerNumbers {
     pub surface_kinds: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NavNumbers {
+    pub weld_m: f32,
+    pub locate_height_m: f32,
+    pub locate_distance_m: f32,
+    pub cover_gap_m: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HazardFactors {
+    pub damage: f32,
+    pub strike: f32,
+    pub slow: f32,
+    pub near_sight: f32,
+    pub reveal: f32,
+    pub smoke: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PathsNumbers {
+    pub heat_seconds: f32,
+    pub heat_radius_m: f32,
+    pub heat_factor: f32,
+    pub hazard_factors: HazardFactors,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpectateNumbers {
@@ -37,52 +67,6 @@ pub struct SpectateNumbers {
     pub pull_back_m: f32,
     pub rise_m: f32,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Spin {
-    Up,
-    Down,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Input {
-    Key(String),
-    Mouse(MouseButton),
-    Wheel(Spin),
-}
-
-const WHEEL: [(&str, Spin); 2] = [("WheelUp", Spin::Up), ("WheelDown", Spin::Down)];
-
-const MOUSE: [(&str, MouseButton); 5] = [
-    ("MouseLeft", MouseButton::Left),
-    ("MouseMiddle", MouseButton::Middle),
-    ("MouseRight", MouseButton::Right),
-    ("MouseBack", MouseButton::Back),
-    ("MouseForward", MouseButton::Forward),
-];
-
-impl<'de> Deserialize<'de> for Input {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        if let Some(&(_, spin)) = WHEEL.iter().find(|(known, _)| *known == name) {
-            return Ok(Input::Wheel(spin));
-        }
-        Ok(MOUSE
-            .iter()
-            .find(|(known, _)| *known == name)
-            .map_or(Input::Key(name), |&(_, button)| Input::Mouse(button)))
-    }
-}
-
-fn spun(devices: &Devices, spin: Spin) -> f32 {
-    let up = devices.mouse.wheel_notches.y;
-    match spin {
-        Spin::Up => engine::math::max(up, 0.0),
-        Spin::Down => engine::math::max(-up, 0.0),
-    }
-}
-
-pub type Binding = Vec<Input>;
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,36 +101,6 @@ pub struct KeyMap {
     pub release: Binding,
 }
 
-impl KeyMap {
-    pub fn held(devices: &Devices, binding: &[Input]) -> bool {
-        binding.iter().any(|input| match input {
-            Input::Key(code) => devices.keyboard.held.contains(code),
-            Input::Mouse(button) => devices.mouse.buttons.held.contains(button),
-            Input::Wheel(_) => false,
-        })
-    }
-
-    pub fn pressed(devices: &Devices, binding: &[Input]) -> bool {
-        binding.iter().any(|input| match input {
-            Input::Key(code) => devices.keyboard.pressed.contains(code),
-            Input::Mouse(button) => devices.mouse.buttons.pressed.contains(button),
-            Input::Wheel(spin) => spun(devices, *spin) > 0.0,
-        })
-    }
-
-    pub fn turns(devices: &Devices, binding: &[Input]) -> f32 {
-        (binding.iter())
-            .map(|input| match input {
-                Input::Wheel(spin) => spun(devices, *spin),
-                Input::Key(_) | Input::Mouse(_) => f32::from(u8::from(Self::pressed(
-                    devices,
-                    std::slice::from_ref(input),
-                ))),
-            })
-            .sum()
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct GameNumbers {
     pub player: PlayerNumbers,
@@ -155,7 +109,9 @@ pub struct GameNumbers {
     pub weapons: WeaponNumbers,
     pub hit_shapes: HitShapeNumbers,
     pub rules: RulesNumbers,
-    pub text: Arc<str>,
+    pub nav: NavNumbers,
+    pub paths: Option<PathsNumbers>,
+    pub whole: Value,
 }
 
 #[derive(Resource, Clone, Debug, Default)]

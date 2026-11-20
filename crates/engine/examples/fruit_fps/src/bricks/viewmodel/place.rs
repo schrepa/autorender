@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use engine::prelude::*;
 use engine_core::math::{clamp, max, min, sin_cos};
-use engine_core::{Mobility, Parent, SceneContext, Stats};
+use engine_core::{Assets, Mobility, Parent, SceneContext, Stats};
+use engine_math::wrap_angle;
 
 use super::hands::Hands;
 use super::{FirstPersonWeapon, ViewModelBrick, ViewModelStats};
@@ -9,14 +12,16 @@ use crate::play::actors::{Actor, Alive, Body, Motion, Wish};
 use crate::play::arms::Arms;
 use crate::play::camera::TestCamera;
 use crate::play::events::arms::{ArmsEvents, Inspect, Weapon};
-use crate::play::figures::{BaseLayer, FIELD_AT_CAMERA, FIGURE, Figure, FigurePlay};
+use crate::play::figures::{FIELD_AT_CAMERA, FIGURE};
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::puppet::{
-    ActorMuzzle, DEVICE, Muzzles, PuppetFile, PuppetTable, Task, Tasks, ViewModel, ViewPlace,
-    ViewTable, WeaponLook, swing_clip, weapon_key,
+    ActorMuzzle, DEVICE, Muzzles, Puppet, PuppetBook, PuppetTable, Task, Tasks, ViewModel,
+    ViewPlace, ViewTable, WeaponLook, swing_clip, weapon_key,
 };
+use crate::play::skinned::{BaseLayer, Figure, FigureClock, FigurePlay};
+use crate::play::turns::{about_x, about_y, approach, eased};
 use crate::play::view::{ViewOffsets, Watched};
 use crate::weapons::{Loadout, Stance};
 
@@ -49,33 +54,6 @@ impl Held {
     pub(super) fn offset(&self) -> Vec3 {
         self.sway + self.bob + Vec3::new(0.0, 0.0, self.kick_back)
     }
-}
-
-fn eased(share: f32) -> f32 {
-    let share = clamp(share, 0.0, 1.0);
-    share * share * (3.0 - 2.0 * share)
-}
-
-fn toward(value: f32, goal: f32, step: f32) -> f32 {
-    if value < goal {
-        min(value + step, goal)
-    } else {
-        max(value - step, goal)
-    }
-}
-
-fn wrapped(angle: f32) -> f32 {
-    (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
-}
-
-fn about_x(angle: f32) -> Quat {
-    let (sin, cos) = sin_cos(angle * 0.5);
-    Quat::from_xyzw(sin, 0.0, 0.0, cos)
-}
-
-fn about_y(angle: f32) -> Quat {
-    let (sin, cos) = sin_cos(angle * 0.5);
-    Quat::from_xyzw(0.0, sin, 0.0, cos)
 }
 
 pub(super) fn moving(visible: bool) -> Node {
@@ -116,7 +94,7 @@ type Reads<'w, 's> = (
     Res<'w, FixedTime>,
     Res<'w, Numbers>,
     Option<Res<'w, SceneContext>>,
-    Query<'w, 's, &'static PuppetFile>,
+    Res<'w, Puppet>,
     (
         Res<'w, ArmsEvents>,
         Option<Res<'w, Flow>>,
@@ -209,7 +187,7 @@ fn swayed(held: &mut Held, table: &PuppetTable, (yaw, pitch): (f32, f32), delta:
             let reach = sway.max_m;
             Vec3::new(
                 clamp(
-                    wrapped(yaw - was_yaw) / delta * sway.metres_per_radian,
+                    wrap_angle(yaw - was_yaw) / delta * sway.metres_per_radian,
                     -reach,
                     reach,
                 ),
@@ -246,9 +224,8 @@ fn bobbing(held: &mut Held, table: &PuppetTable, body: &Body, delta: f32) -> Vec
     held.bob
 }
 
-fn bare((tick, slot): (u64, u32), weapon: Option<&'static str>, scale: f32) -> ViewModel {
+fn bare(slot: u32, weapon: Option<&'static str>, scale: f32) -> ViewModel {
     ViewModel {
-        tick,
         slot: Some(slot),
         weapon,
         clip: String::new(),
@@ -369,7 +346,11 @@ fn chosen(
     (weapon, timing)
 }
 
-fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay) {
+fn played(
+    held: &Held,
+    (view, figure): (&ViewTable, &Figure),
+    timing: &Timing,
+) -> (String, Option<FigurePlay>) {
     let equipping = view
         .equip
         .as_ref()
@@ -395,32 +376,31 @@ fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay
         let speed = f32::from(u8::from(held.fired));
         (view.fire.clone(), speed, false, None)
     };
-    let base = BaseLayer {
-        clip: clip.clone(),
-        speed,
-        looping,
-        fade_seconds: held.fade,
-        cue: held.cue,
-        fit_seconds,
-        blend: Vec::new(),
-        stride: None,
-        synced: false,
-    };
-    let wanted = FigurePlay {
-        base,
+    let wanted = figure.clip(&clip).map(|number| FigurePlay {
+        base: BaseLayer {
+            clip: number,
+            speed,
+            looping,
+            fade_seconds: held.fade,
+            cue: held.cue,
+            fit_seconds,
+            blend: Vec::new(),
+            stride: None,
+            synced: false,
+        },
         upper: None,
         aim: None,
         hold: None,
         crouch: None,
         pin_feet: None,
-    };
+    });
     (clip, wanted)
 }
 
 struct Part {
     drawn: Drawn,
     figure: Figure,
-    wanted: FigurePlay,
+    wanted: Option<FigurePlay>,
     placed: Transform,
     hidden: Option<&'static str>,
     camera: Entity,
@@ -447,14 +427,10 @@ fn kept(
         .and_then(|entity| parts.get_mut(entity).ok().map(|part| (entity, part)));
     match existing {
         None => {
-            let entity = spawner.spawn((
-                placed,
-                moving(visible),
-                drawn,
-                figure,
-                wanted,
-                FirstPersonWeapon,
-            ));
+            let entity = spawner.spawn((placed, moving(visible), drawn, figure, FirstPersonWeapon));
+            if let Some(wanted) = wanted {
+                spawner.insert(entity, wanted);
+            }
             spawner.set_parent(entity, Some(camera));
             held.entity = Some(entity);
         }
@@ -462,7 +438,8 @@ fn kept(
             if was_drawn.geometry != drawn.geometry || was_drawn.material != drawn.material {
                 spawner.insert(entity, drawn);
             }
-            if *was_figure != figure {
+            let refigured = *was_figure != figure;
+            if refigured {
                 spawner.insert(entity, figure);
             }
             if node.visible != visible {
@@ -471,11 +448,12 @@ fn kept(
             if parent.map(Parent::parent) != Some(camera) {
                 spawner.set_parent(entity, Some(camera));
             }
-            match play {
-                Some(mut play) => {
+            match (play, wanted) {
+                (Some(mut play), Some(wanted)) if !refigured => {
                     play.set_if_neq(wanted);
                 }
-                None => spawner.insert(entity, wanted),
+                (_, Some(wanted)) => spawner.insert(entity, wanted),
+                (_, None) => {}
             }
             if let Some(mut transform) = moves.get_mut(entity) {
                 transform.set_if_neq(placed);
@@ -544,13 +522,13 @@ fn stances(
     held.scope = if place.is_some_and(|place| place.hide_from_share.is_some()) {
         share
     } else {
-        toward(
+        approach(
             held.scope,
             f32::from(u8::from(scoped)),
             delta / max(table.view.scope_seconds, delta),
         )
     };
-    held.lower = toward(
+    held.lower = approach(
         held.lower,
         f32::from(u8::from(running)),
         delta / max(table.view.lower_seconds, delta),
@@ -571,7 +549,7 @@ fn published(
     (held, frame): (&Held, &Frame),
     (body, yaw, pitch): (&Body, f32, f32),
     shown: Shown<'_>,
-    (tick, view, stats): (u64, &mut ViewModel, &mut Stats<ViewModelStats>),
+    (view, stats): (&mut ViewModel, &mut Stats<ViewModelStats>),
 ) {
     let Shown {
         slot,
@@ -596,7 +574,6 @@ fn published(
         |carried| (Some(carried.position), carried.direction),
     );
     let fresh = ViewModel {
-        tick,
         slot: Some(slot),
         weapon: Some(weapon),
         clip: clip.clone(),
@@ -679,7 +656,7 @@ pub(super) fn shown_now(flow: Option<&Flow>, test: Option<&TestCamera>) -> bool 
 }
 
 pub(super) fn veil(
-    ((flow, test), scene): (Veiled, Option<Res<SceneContext>>),
+    ((flow, test), assets): (Veiled, Res<Assets>),
     held: Res<Held>,
     parts: Query<(&Node, &Drawn), With<FirstPersonWeapon>>,
     (mut stats, mut spawner): (Stats<ViewModelStats>, Spawner<ViewModelBrick>),
@@ -689,15 +666,8 @@ pub(super) fn veil(
     stats.edit(|stats| {
         stats.bound = part
             .and_then(|(_, drawn)| drawn.geometry)
-            .zip(scene.as_deref())
-            .and_then(|(geometry, scene)| {
-                scene
-                    .assets
-                    .meshes
-                    .iter()
-                    .find(|(_, handle)| **handle == geometry)
-                    .map(|(name, _)| name.clone())
-            });
+            .and_then(|geometry| assets.name(geometry))
+            .map(str::to_owned);
         stats.hidden = match (shown, test.as_deref().is_some_and(|test| test.outside)) {
             (true, _) => held.hidden,
             (false, true) => Some("free camera"),
@@ -715,6 +685,31 @@ pub(super) fn veil(
     }
 }
 
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Warming;
+
+pub(super) fn warm(
+    puppet: Res<Puppet>,
+    warming: Query<(Entity, Has<FigureClock>), With<Warming>>,
+    (mut warmed, mut spawner): (Local<Option<Arc<PuppetBook>>>, Spawner<ViewModelBrick>),
+) {
+    for (entity, bound) in &warming {
+        if bound {
+            spawner.despawn(entity);
+        }
+    }
+    let Some(book) = puppet.book.as_ref() else {
+        return;
+    };
+    if warmed.as_ref().is_some_and(|held| Arc::ptr_eq(held, book)) {
+        return;
+    }
+    *warmed = Some(Arc::clone(book));
+    for look in book.weapons.values() {
+        spawner.spawn((look.files.figure.clone(), Warming));
+    }
+}
+
 pub(super) fn camera_lit(mut drawn: Drawn) -> Drawn {
     drawn.values.floats = FIELD_AT_CAMERA.to_vec();
     drawn
@@ -725,12 +720,12 @@ pub(super) fn camera_of(scene: &SceneContext) -> Option<Entity> {
 }
 
 pub(super) fn place(
-    (fixed, numbers, scene, files, (arms_events, flow, powers, tasks)): Reads,
+    (fixed, numbers, scene, puppet, (arms_events, flow, powers, tasks)): Reads,
     (humans, (watched, test, muzzles, hands)): (Humans, Viewer),
     mut parts: Parts,
     (mut held, mut view, mut stats, mut moves, mut spawner): Writes,
 ) {
-    let Some(book) = files.iter().find_map(PuppetFile::book).cloned() else {
+    let Some(book) = puppet.book.clone() else {
         refused(
             &mut stats,
             (&held, &parts),
@@ -787,25 +782,13 @@ pub(super) fn place(
         ((yaw, pitch), delta),
     );
     reloads(&mut held, reloading(loadout, &numbers));
-    let (clip, wanted) = played(&held, &table.view, &timing);
     let scale = table.view.scale;
     let (Some((weapon, look)), Some(place)) = (look, place) else {
         refused(&mut stats, (&held, &parts), &mut spawner, None);
-        view.set_if_neq(bare((fixed.tick, actor.slot), weapon, scale));
+        view.set_if_neq(bare(actor.slot, weapon, scale));
         return;
     };
-    let assets = scene.as_deref().map(|scene| &*scene.assets);
-    let mesh = assets.and_then(|assets| assets.meshes.get(&look.files.mesh).copied());
-    let material = assets.and_then(|assets| assets.materials.get(&look.files.material).copied());
-    let (Some(mesh), Some(material)) = (mesh, material) else {
-        refused(
-            &mut stats,
-            (&held, &parts),
-            &mut spawner,
-            Some("weapon mesh or material missing from the scene"),
-        );
-        return;
-    };
+    let (clip, wanted) = played(&held, (&table.view, &look.files.figure), &timing);
     let sight =
         sighted(place, &held, raise) + held.sway + bobbed + Vec3::new(0.0, 0.0, held.kick_back);
     let turn = (about_x(held.kick_angle) * about_y(std::f32::consts::PI)).normalize();
@@ -818,7 +801,7 @@ pub(super) fn place(
         scale: Vec3::splat(scale),
     };
     let part = Part {
-        drawn: camera_lit(Drawn::new(FIGURE, mesh, material)),
+        drawn: camera_lit(Drawn::new(FIGURE, look.files.mesh, look.files.material)),
         figure: look.files.figure.clone(),
         wanted,
         placed,
@@ -839,6 +822,6 @@ pub(super) fn place(
         (&held, &frame),
         (body, yaw, pitch),
         shown,
-        (fixed.tick, &mut view, &mut stats),
+        (&mut view, &mut stats),
     );
 }

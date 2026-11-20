@@ -1,7 +1,7 @@
 use crate::play::actors::{Body, Gait, Wish};
 use crate::play::events::body::{BodyEvents, Footstep, Jump, Landing, Stride};
 use crate::play::numbers::PlayerNumbers;
-use crate::solids::Moved;
+use crate::play::walk::Moved;
 
 pub(super) struct Step<'a> {
     pub slot: u32,
@@ -47,7 +47,7 @@ pub(super) fn record(
         events.jumps.push(Jump {
             slot,
             position: before.feet,
-            kind: before.ground.map(|ground| ground.kind),
+            kind: before.ground,
         });
     }
     if let Some(landed) = moved.landed {
@@ -60,7 +60,7 @@ pub(super) fn record(
         });
     }
     let across = (next.feet - before.feet).with_y(0.0).length();
-    let Some(ground) = next.ground.filter(|_| next.grounded && across > 0.0) else {
+    let Some(kind) = next.ground.filter(|_| next.grounded && across > 0.0) else {
         *travel = 0.0;
         return;
     };
@@ -72,7 +72,7 @@ pub(super) fn record(
         events.footsteps.push(Footstep {
             slot,
             position: next.feet,
-            kind: ground.kind,
+            kind,
             stride,
             loud: stride == Stride::Run || !player.walk_is_silent,
         });

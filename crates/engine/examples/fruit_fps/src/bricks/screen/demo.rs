@@ -1,13 +1,14 @@
-use crate::play::screen::{
+use brick_interface::thousands;
+
+use crate::rules::{AbilitySlot, ArmorTier, BuyRequest, Item, Phase, WeaponId};
+
+use super::{Words, menu};
+use super::hud::{
     AbilityFacts, ActionFacts, BoardRow, BuyFacts, Card, CastFacts, DamageMark, FeedLine, HudFacts,
     KillFacts, MapItem, Mate, MenuFacts, MinimapFacts, OrbFacts, PickupFacts, PlaceFacts,
     PlateFacts, PlayerFacts, PointFacts, ResultFacts, RoundFacts, SpectateFacts, StatusFacts,
     TeamFacts, Tone, UltFacts, WeaponFacts, WeaponStats,
 };
-use crate::rules::{AbilitySlot, ArmorTier, BuyRequest, Item, Phase, WeaponId};
-
-use super::Words;
-use super::live::credits_into;
 
 const GEAR: [&str; 5] = [
     "weapon_rind",
@@ -346,13 +347,13 @@ fn result(words: &Words) -> ResultFacts {
 }
 
 fn minimap() -> MinimapFacts {
-    let item = |pos: [f32; 2], yaw_degrees: f32, color: Option<Tone>| MapItem {
+    let item = |pos: [f32; 2], yaw_degrees: f32, color: Option<&'static str>| MapItem {
         pos,
         yaw_degrees,
         color,
         ..MapItem::default()
     };
-    let attack = Some(Tone::Attack);
+    let attack = Some(Tone::Attack.key());
     MinimapFacts {
         me: vec![item([-26.5, 9.0], 25.0, None)],
         players: vec![
@@ -365,12 +366,12 @@ fn minimap() -> MinimapFacts {
         orbs: vec![item([-14.0, 2.0], 0.0, None), item([14.0, 2.0], 0.0, None)],
         enemies: vec![MapItem {
             icon: "char_orange_defend".to_owned(),
-            ..item([-23.0, 27.0], 0.0, Some(Tone::Defend))
+            ..item([-23.0, 27.0], 0.0, Some(Tone::Defend.key()))
         }],
         lost: vec![MapItem {
             fade: 0.5,
             radius_m: 1.6,
-            ..item([-8.0, 20.0], 0.0, Some(Tone::Defend))
+            ..item([-8.0, 20.0], 0.0, Some(Tone::Defend.key()))
         }],
         smokes: vec![MapItem {
             radius_m: 4.5,
@@ -399,7 +400,7 @@ fn board(words: &Words) -> [Vec<BoardRow>; 2] {
                 credits: {
                     let mut out = String::new();
                     if mine {
-                        credits_into(&mut out, 900 + at as u32 * 700);
+                        thousands(i64::from(900 + at as u32 * 700), &mut out);
                     } else {
                         out.push_str(&words.hidden);
                     }
@@ -442,11 +443,16 @@ fn board(words: &Words) -> [Vec<BoardRow>; 2] {
 pub(super) fn demo(words: &Words) -> HudFacts {
     let attack = Tone::Attack;
     let defend = Tone::Defend;
+    let mut keys = vec![String::new(); menu::ACTIONS.len()];
+    for (name, spoken) in KEYS {
+        if let Some(at) = menu::action(name) {
+            spoken.clone_into(&mut keys[at]);
+        }
+    }
     HudFacts {
-        keys: KEYS
-            .iter()
-            .map(|(name, spoken)| ((*name).to_owned(), (*spoken).to_owned()))
-            .collect(),
+        version: 0,
+        screen: None,
+        keys,
         round: RoundFacts {
             time: 72.0,
             number: 9,

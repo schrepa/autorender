@@ -1,6 +1,7 @@
 use engine::Node;
 use engine::prelude::*;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::play::actors::{Actor, Human};
 use crate::play::flow::SeatChoice;
@@ -10,6 +11,13 @@ use crate::rules::{Control, Team};
 struct RosterFile {
     #[serde(rename = "match")]
     game: RosterMatch,
+    flow: FlowNumbers,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlowNumbers {
+    loading_min_seconds: f64,
 }
 
 #[derive(Deserialize)]
@@ -25,10 +33,10 @@ struct RosterSeat {
     level: String,
 }
 
-pub(super) fn default_roster(text: &str) -> Result<Vec<SeatChoice>, String> {
-    let file: RosterFile = serde_json::from_str(text)
-        .map_err(|error| format!("numbers.json match.roster: {error}"))?;
-    Ok(file
+pub(super) fn default_roster(whole: &Value) -> Result<(Vec<SeatChoice>, f64), String> {
+    let file = RosterFile::deserialize(whole)
+        .map_err(|error| format!("numbers.json match.roster and flow: {error}"))?;
+    let seats = file
         .game
         .roster
         .into_iter()
@@ -38,7 +46,8 @@ pub(super) fn default_roster(text: &str) -> Result<Vec<SeatChoice>, String> {
             control: seat.control,
             level: seat.level,
         })
-        .collect())
+        .collect();
+    Ok((seats, file.flow.loading_min_seconds))
 }
 
 pub(super) fn chosen(default: &[SeatChoice], character: &str, level: &str) -> Vec<SeatChoice> {

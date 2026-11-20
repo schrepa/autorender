@@ -1,5 +1,6 @@
 use engine::prelude::{Component, Resource};
-use engine_core::{Error, ErrorCode, Expected, Filter, Sampler, TextureRef};
+use engine_core::{Error, ErrorCode, Expected, Filter, Sampler, TextureRef, Wrap};
+use engine_drawing::DetailLimit;
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -119,12 +120,45 @@ pub struct LightField {
     pub scale: f32,
 }
 
+impl LightField {
+    pub fn uniform(&self) -> ([f32; 4], [f32; 2]) {
+        let [min_x, min_z, max_x, max_z] = self.rect;
+        let across = |low: f32, high: f32| if high > low { 1.0 / (high - low) } else { 0.0 };
+        (
+            [min_x, min_z, across(min_x, max_x), across(min_z, max_z)],
+            [self.height_m, self.scale],
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MipFilter {
     Linear,
     Nearest,
 }
+
+pub const REPEAT: Sampler = Sampler {
+    wrap_u: Wrap::Repeat,
+    wrap_v: Wrap::Repeat,
+    wrap_w: Wrap::ClampToEdge,
+    mag_filter: Filter::Linear,
+    min_filter: Filter::Linear,
+    mipmap_filter: Some(Filter::Linear),
+    compare: None,
+    anisotropy: 16,
+};
+
+pub const CLAMP: Sampler = Sampler {
+    wrap_u: Wrap::ClampToEdge,
+    wrap_v: Wrap::ClampToEdge,
+    ..REPEAT
+};
+
+pub const LINEAR_CLAMP: Sampler = Sampler {
+    anisotropy: 1,
+    ..CLAMP
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -133,12 +167,16 @@ pub struct MapFilter {
     pub mip: MipFilter,
 }
 
-impl MapFilter {
-    pub const ENGINE: Self = Self {
-        anisotropy: Sampler::ANISOTROPY,
-        mip: MipFilter::Linear,
-    };
+impl Default for MapFilter {
+    fn default() -> Self {
+        Self {
+            anisotropy: REPEAT.anisotropy,
+            mip: MipFilter::Linear,
+        }
+    }
+}
 
+impl MapFilter {
     pub fn checked(&self, path: &str) -> Result<(), String> {
         if !(1..=16).contains(&self.anisotropy) {
             return Err(format!(
@@ -155,7 +193,8 @@ impl MapFilter {
         Ok(())
     }
 
-    pub fn applied(self, sampler: Sampler) -> Sampler {
+    pub fn applied(self, stated: Option<Sampler>) -> Sampler {
+        let sampler = stated.unwrap_or(REPEAT);
         let mip = match self.mip {
             MipFilter::Linear => Filter::Linear,
             MipFilter::Nearest => Filter::Nearest,
@@ -171,7 +210,7 @@ impl MapFilter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Filtering {
     pub base_color: MapFilter,
@@ -182,20 +221,6 @@ pub struct Filtering {
     pub macro_map: MapFilter,
     pub sky_picture: MapFilter,
     pub light_field: MapFilter,
-}
-
-impl Default for Filtering {
-    fn default() -> Self {
-        Self {
-            base_color: MapFilter::ENGINE,
-            normal: MapFilter::ENGINE,
-            orm: MapFilter::ENGINE,
-            lightmap: MapFilter::ENGINE,
-            macro_map: MapFilter::ENGINE,
-            sky_picture: MapFilter::ENGINE,
-            light_field: MapFilter::ENGINE,
-        }
-    }
 }
 
 impl Filtering {
@@ -214,48 +239,6 @@ impl Filtering {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DetailLimit {
-    pub least_px: f32,
-    pub overlap: f32,
-    pub never_m: f32,
-}
-
-impl DetailLimit {
-    pub fn checked(&self) -> Result<(), String> {
-        if !(self.least_px.is_finite() && self.least_px >= 0.0) {
-            return Err(format!(
-                "$.lighting.detail.least_px: {} is not 0 or more",
-                self.least_px
-            ));
-        }
-        if !(0.0..1.0).contains(&self.overlap) {
-            return Err(format!(
-                "$.lighting.detail.overlap: {} is not within 0..1",
-                self.overlap
-            ));
-        }
-        if !(self.never_m.is_finite() && self.never_m > 0.0) {
-            return Err(format!(
-                "$.lighting.detail.never_m: {} is not above 0",
-                self.never_m
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl Default for DetailLimit {
-    fn default() -> Self {
-        Self {
-            least_px: 0.0,
-            overlap: 0.0,
-            never_m: 1.0,
-        }
-    }
-}
-
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Lighting {
     pub lit: bool,
@@ -268,7 +251,6 @@ pub struct Lighting {
     pub fog: Option<Fog>,
     pub grade: Grade,
     pub ambient: Ambient,
-    pub antialias: bool,
     pub field: Option<LightField>,
     pub filtering: Filtering,
     pub detail: DetailLimit,

@@ -63,7 +63,7 @@ impl Brick for ViewModelBrick {
             .moves::<FirstPersonHands>(Pace::Tick)
             .systems(
                 Schedule::FixedSimulation,
-                (hands::decide, place::place, hands::draw),
+                (hands::decide, place::place, hands::draw, place::warm),
             )
             .systems(Schedule::Presentation, place::veil)
             .dev(|dev| {

@@ -11,7 +11,7 @@ pub use effects::{
 };
 pub use numbers::{
     AbilityBook, AbilityError, AbilityId, AbilitySpec, Action, Chain, CharacterAbilities, Delivery,
-    DropSpec, Falloff, FlashSpec, Lay, Modifiers, Onto, Place, SensorSpec, Slot, SmokeSpec, Throw,
+    DropSpec, Falloff, FlashSpec, Lay, Modifiers, Onto, Place, SensorSpec, SmokeSpec, Throw,
     ThrowSurface, TrapShape, TrapSpec, WallSpec, ZoneSpec,
 };
 pub use orbs::{Channel, Orb, OrbEvent, OrbNumbers, OrbRules, OrbState, Orbs, Stop, Taker};

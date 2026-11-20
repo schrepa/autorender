@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum GunKind {
     Sidearm,
@@ -275,8 +275,4 @@ pub struct ArmsNumbers {
 pub struct PlayerShape {
     pub eye_height_m: f32,
     pub run_speed_mps: f32,
-}
-
-pub fn ticks(seconds: f32, ticks_per_second: u32) -> u32 {
-    (seconds * ticks_per_second as f32).round() as u32
 }

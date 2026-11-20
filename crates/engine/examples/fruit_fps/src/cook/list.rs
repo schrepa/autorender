@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use cook::{Kind, Plan, Refusal};
-use cook_model::{CLIP, FORM, MODEL};
+use cook_model::{CLIP, FORM, MATERIAL_MAPS, MODEL};
 use cook_texture::PICTURE;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -102,9 +102,17 @@ fn declare(plan: &mut Plan, list: &List, entry: &Entry) -> Result<(), String> {
     let keys = ("keys_per_second", &list.keys_per_second);
     let kind: &'static Kind = match entry.kind.as_str() {
         "picture" => &PICTURE,
+        "material_maps" => &MATERIAL_MAPS,
         "model" => {
             if params.get("kind").and_then(Value::as_str) == Some("character") {
                 shared(&mut params, &[keys]);
+            }
+            if let Some(owner) = params.get("maps_of")
+                && !list.entries.iter().any(|held| {
+                    held.kind == "material_maps" && owner.as_str() == Some(held.name.as_str())
+                })
+            {
+                return Err(format!("`maps_of` {owner} names no `material_maps` entry"));
             }
             shared(&mut params, &[tolerance]);
             &MODEL

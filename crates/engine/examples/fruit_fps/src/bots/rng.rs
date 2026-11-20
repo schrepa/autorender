@@ -1,31 +1,27 @@
+use engine_math::Random;
+
 fn positive(w: f32) -> f32 {
     if w > 0.0 { w } else { 0.0 }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rng {
-    state: u64,
+    random: Random,
 }
 
 impl Rng {
     pub fn new(seed: u64) -> Rng {
-        let mut rng = Rng {
-            state: seed ^ 0x9E37_79B9_7F4A_7C15,
-        };
-        rng.next_u64();
-        rng
+        let mut random = Random::new(seed ^ 0x9E37_79B9_7F4A_7C15);
+        random.next_u64();
+        Rng { random }
     }
 
     pub fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
+        self.random.next_u64()
     }
 
     pub fn unit(&mut self) -> f32 {
-        (self.next_u64() >> 40) as f32 * (1.0 / 16_777_216.0)
+        self.random.unit()
     }
 
     pub fn range(&mut self, span: [f32; 2]) -> f32 {

@@ -1,3 +1,4 @@
+use engine_math::{max, min};
 use glam::{Mat3, Vec3};
 
 pub(super) fn cos_degrees(degrees: f32) -> f32 {
@@ -19,16 +20,8 @@ pub(super) fn cos_degrees(degrees: f32) -> f32 {
     sum as f32
 }
 
-pub(super) fn lesser(a: f32, b: f32) -> f32 {
-    if b < a { b } else { a }
-}
-
-pub(super) fn greater(a: f32, b: f32) -> f32 {
-    if b > a { b } else { a }
-}
-
 pub(super) fn unit(x: f32) -> f32 {
-    greater(0.0, lesser(x, 1.0))
+    max(0.0, min(x, 1.0))
 }
 
 pub(super) fn flat(v: Vec3) -> Option<Vec3> {
@@ -159,7 +152,7 @@ pub(super) fn ray_box(
 
 pub(super) fn closest_on_box(point: Vec3, centre: Vec3, half_extents: Vec3, axes: Mat3) -> Vec3 {
     let local = axes.transpose() * (point - centre);
-    let held = |value: f32, half: f32| greater(-half, lesser(value, half));
+    let held = |value: f32, half: f32| max(-half, min(value, half));
     centre
         + axes
             * Vec3::new(

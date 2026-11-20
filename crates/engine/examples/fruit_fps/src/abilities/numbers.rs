@@ -5,41 +5,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::shapes::cos_degrees;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Slot {
-    C,
-    Q,
-    E,
-    X,
-}
-
-impl Slot {
-    pub const ALL: [Slot; 4] = [Slot::C, Slot::Q, Slot::E, Slot::X];
-
-    pub fn index(self) -> usize {
-        match self {
-            Slot::C => 0,
-            Slot::Q => 1,
-            Slot::E => 2,
-            Slot::X => 3,
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Slot::C => "c",
-            Slot::Q => "q",
-            Slot::E => "e",
-            Slot::X => "x",
-        }
-    }
-}
+use crate::rules::AbilitySlot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbilityId {
     pub character: usize,
-    pub slot: Slot,
+    pub slot: AbilitySlot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -288,13 +259,13 @@ pub struct AbilityBook {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AbilityError {
     pub character: String,
-    pub slot: Option<Slot>,
+    pub slot: Option<AbilitySlot>,
     pub message: String,
 }
 
 impl AbilityBook {
-    pub fn parse(numbers_json: &str, ticks_per_second: u32) -> Result<AbilityBook, AbilityError> {
-        let root: Root = serde_json::from_str(numbers_json).map_err(|error| AbilityError {
+    pub fn parse(whole: &Value, ticks_per_second: u32) -> Result<AbilityBook, AbilityError> {
+        let root = Root::deserialize(whole).map_err(|error| AbilityError {
             character: String::new(),
             slot: None,
             message: error.to_string(),
@@ -303,7 +274,7 @@ impl AbilityBook {
         let mut characters = Vec::with_capacity(root.characters.len());
         for (character, (key, raw)) in root.characters.into_iter().enumerate() {
             let recover = root.ability_handling.recover_seconds;
-            let read = |slot: Slot, value: &Value| {
+            let read = |slot: AbilitySlot, value: &Value| {
                 spec(AbilityId { character, slot }, value, (rate, recover)).map_err(|message| {
                     AbilityError {
                         character: key.clone(),
@@ -313,10 +284,10 @@ impl AbilityBook {
                 })
             };
             let mut abilities = [
-                read(Slot::C, &raw.c)?,
-                read(Slot::Q, &raw.q)?,
-                read(Slot::E, &raw.e)?,
-                read(Slot::X, &raw.x)?,
+                read(AbilitySlot::C, &raw.c)?,
+                read(AbilitySlot::Q, &raw.q)?,
+                read(AbilitySlot::E, &raw.e)?,
+                read(AbilitySlot::X, &raw.x)?,
             ];
             for ability in &mut abilities {
                 if let Delivery::Throw(throw) = &mut ability.delivery {
@@ -395,7 +366,7 @@ struct Rate(u32);
 
 impl Rate {
     fn ticks(self, seconds: f32) -> u32 {
-        (seconds * self.0 as f32).round() as u32
+        engine_math::ticks(seconds, self.0)
     }
 
     fn per_tick(self, per_second: f32) -> f32 {

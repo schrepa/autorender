@@ -3,23 +3,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cull, DrawnTable, Error, ErrorCode, Expected,
-    GeometryHandle, Material, MaterialHandle, Sampler, TextureHandle, TextureRef, Var, ViewFacts,
-    gpu_struct,
+    AlphaMode, Asset, Assets, ColorSpace, Cull, DrawnTable, Error, ErrorCode, Expected, Material,
+    MeshFile, TextureRef, Var, VertexStream, ViewFacts, gpu_struct,
 };
-use engine_render::{BatchGroup, GroupEntry, PerBatch, Scene, Texture, Variant, wgpu};
+use engine_drawing::{DetailLimit, MaterialBinds, SizeSkip, StandIn, pixel_scale};
+use engine_meshpack::{BASE, COLOR, LIGHTMAP};
+use engine_render::{BatchGroup, BatchOf, DrawOrder, GroupEntry, PerBatch, Scene, Variant, wgpu};
 
-use super::chunks::{self, Pieces, Seen, Sized};
-use super::sets::VisibleSets;
+use super::chunks::{self, Pieces, Seen};
+use super::sets::SetIndex;
 use super::shaders::level::{light, map, material, picture, sky};
 use super::{
-    COLOR_STREAM, EMISSIVE_STRENGTH, LEVEL_DETAIL, LIGHTMAP_CURVE, LIGHTMAP_SCALE, MACRO_COLOR,
-    MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE, SKY_BELOW, SKY_FADE,
-    SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
+    EMISSIVE_STRENGTH, LEVEL, LEVEL_DETAIL, LIGHTMAP_CURVE, LIGHTMAP_MAP, LIGHTMAP_SCALE,
+    MACRO_COLOR, MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE,
+    SKY_BELOW, SKY_FADE, SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
 };
-use crate::bricks::figures::{LEVEL, LIGHTMAP_MAP};
 use crate::names::COLOR_PASS;
-use crate::play::light::{DetailLimit, Filtering, Lighting};
+use crate::play::light::{CLAMP, Filtering, Lighting};
 
 gpu_struct! {
     pub struct LevelLight {
@@ -52,24 +52,9 @@ const BOX_VERTICES: u32 = 36;
 
 const RANGE_ALIGN: u64 = 256;
 
-const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
-    width: 1,
-    height: 1,
-    depth_or_array_layers: 1,
-};
+const LEVEL_STREAMS: [VertexStream; 2] = [BASE, LIGHTMAP];
 
-const LEVEL_STREAMS: [engine_core::GeometryStream; 2] = [
-    engine_core::GeometryStream::Vertex,
-    engine_core::GeometryStream::Extra,
-];
-
-const DETAIL_STREAMS: [engine_core::GeometryStream; 2] = [
-    engine_core::GeometryStream::Vertex,
-    engine_core::GeometryStream::Named {
-        shape: COLOR_STREAM,
-        location: 6,
-    },
-];
+const DETAIL_STREAMS: [VertexStream; 2] = [BASE, COLOR];
 
 const MAPS: [(&str, Var, Var); 3] = [
     (
@@ -89,18 +74,11 @@ const MAPS: [(&str, Var, Var); 3] = [
     ),
 ];
 
-const PLAIN_TEXELS: [[u8; 4]; 3] = [
-    [255, 255, 255, 255],
-    [128, 128, 255, 255],
-    [255, 128, 0, 255],
+const PLAIN: [(&str, [u8; 4]); 3] = [
+    ("level_plain_base", [255, 255, 255, 255]),
+    ("level_plain_normal", [128, 128, 255, 255]),
+    ("level_plain_orm", [255, 128, 0, 255]),
 ];
-
-struct Held {
-    revision: u64,
-    detail: bool,
-    textures: Vec<(TextureHandle, u64)>,
-    bound: Option<Bound>,
-}
 
 struct Bound {
     slot: u32,
@@ -124,13 +102,6 @@ struct Shaped {
     haze: f32,
 }
 
-struct Pictured {
-    material: MaterialHandle,
-    revision: u64,
-    textures: Vec<(TextureHandle, u64)>,
-    shown: Option<Shaped>,
-}
-
 pub(super) struct LevelGpu {
     level: Pipeline<Self, Scene>,
     detail: Pipeline<Self, Scene>,
@@ -140,22 +111,24 @@ pub(super) struct LevelGpu {
     sky_group: BatchGroup<Self>,
     light: Buffer<Self>,
     surfaces: Buffer<Self>,
-    unbaked: Texture<Self>,
-    plain: [Texture<Self>; 3],
+    unbaked: StandIn<Self>,
+    plain: [StandIn<Self>; 3],
     sent: Option<LevelLight>,
-    held: BTreeMap<MaterialHandle, Held>,
+    binds: MaterialBinds<bool, Bound>,
     free: Vec<u32>,
     slots: u32,
-    pictured: Option<Pictured>,
+    pictured: MaterialBinds<(), Shaped>,
     ready: bool,
     pieces: Pieces,
-    facts: Option<ViewFacts>,
-    small: BTreeSet<GeometryHandle>,
     filtering: Filtering,
     detail_limit: DetailLimit,
-    held_small: BTreeSet<GeometryHandle>,
-    sets: VisibleSets,
+    held_small: BTreeSet<Asset<MeshFile>>,
+    sets: SetIndex,
     sets_on: bool,
+    batched: Vec<(bool, Option<Asset<Material>>)>,
+    used: BTreeMap<Asset<Material>, bool>,
+    sky_bound: Option<Asset<Material>>,
+    again: bool,
 }
 
 fn face(cull: Cull) -> Option<wgpu::Face> {
@@ -168,7 +141,7 @@ fn face(cull: Cull) -> Option<wgpu::Face> {
 
 fn described<'a>(
     (vertex, fragment): (engine_core::Entry, engine_core::Entry),
-    vertices: &'a [engine_core::GeometryStream],
+    vertices: &'a [VertexStream],
     write: bool,
     per_batch: PerBatch,
     constants: &'a [(&'static str, f64)],
@@ -477,41 +450,44 @@ fn picture_shape(material: &Material, path: &str) -> Result<([f32; 4], f32), Err
     Ok(([below, above, fade, turns], haze))
 }
 
-fn revisions(library: &AssetLibrary, maps: &[TextureRef]) -> Vec<(TextureHandle, u64)> {
-    maps.iter()
-        .map(|map| {
-            let known = library.revision_of(map.texture).unwrap_or_default();
-            (map.texture, known)
-        })
-        .collect()
+pub(super) fn srgb_in_linear(
+    assets: &Assets,
+    map: TextureRef,
+    path: &str,
+    name: &str,
+) -> Option<Error> {
+    let space = assets.get(map.texture).ok()?.color_space();
+    (space == ColorSpace::Srgb).then(|| {
+        Error::new(ErrorCode::InvalidTexture, format!("{path}.maps.{name}"))
+            .expected(Expected::Matching)
+            .got("the file states Srgb, the slot reads linear")
+    })
 }
 
-fn stale(library: &AssetLibrary, textures: &[(TextureHandle, u64)]) -> bool {
-    textures
-        .iter()
-        .any(|(texture, revision)| library.revision_of(*texture) != Some(*revision))
+fn linear_refused(assets: &Assets, mapped: &Mapped, path: &str) -> Vec<Error> {
+    let surface = SURFACE_MAPS.iter().zip(&mapped.maps).skip(1);
+    let extra = [(LIGHTMAP_MAP, mapped.baked), (MACRO_MAP, mapped.broken)];
+    surface
+        .map(|(name, map)| (*name, *map))
+        .chain(extra.into_iter().filter_map(|(name, map)| map.map(|map| (name, map))))
+        .filter_map(|(name, map)| srgb_in_linear(assets, map, path, name))
+        .collect()
 }
 
 impl GpuPart for LevelGpu {
     type Reads = (
         Res<'static, Lighting>,
         Res<'static, DrawnTable>,
-        Option<Res<'static, AssetResidency>>,
-        Option<Res<'static, AssetLibrary>>,
-        (Res<'static, Pieces>, Res<'static, VisibleSets>),
+        Res<'static, Assets>,
+        (Res<'static, Pieces>, Res<'static, SetIndex>),
     );
     const NAME: &'static str = "level";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let light = cx.buffer("level_light", Lifetime::Kept);
         let surfaces = cx.buffer("level_surfaces", Lifetime::Kept);
-        let unbaked = cx.texture(
-            "level_unbaked",
-            wgpu::TextureFormat::Rgba8Unorm,
-            Lifetime::Kept,
-        );
-        let plain = ["level_plain_base", "level_plain_normal", "level_plain_orm"]
-            .map(|name| cx.texture(name, wgpu::TextureFormat::Rgba8Unorm, Lifetime::Kept));
+        let unbaked = StandIn::install(cx, "level_unbaked", [0; 4]);
+        let plain = PLAIN.map(|(name, texel)| StandIn::install(cx, name, texel));
         let group = cx.batch_group(material::MODULE, 1, &[(material::LEVEL_SURFACE, surfaces)])?;
         let sky_group = cx.batch_group(picture::MODULE, 1, &[])?;
         let scene = Scene::named(COLOR_PASS);
@@ -570,85 +546,63 @@ impl GpuPart for LevelGpu {
             unbaked,
             plain,
             sent: None,
-            held: BTreeMap::new(),
+            binds: MaterialBinds::default(),
             free: Vec::new(),
             slots: 0,
-            pictured: None,
+            pictured: MaterialBinds::default(),
             ready: false,
             pieces: Pieces::default(),
-            facts: None,
-            small: BTreeSet::new(),
             filtering: Filtering::default(),
             detail_limit: DetailLimit::default(),
             held_small: BTreeSet::new(),
-            sets: VisibleSets::default(),
+            sets: SetIndex::default(),
             sets_on: false,
+            batched: Vec::new(),
+            used: BTreeMap::new(),
+            sky_bound: None,
+            again: false,
         })
     }
 
     fn prepare(
         &mut self,
-        (lighting, table, residency, library, (pieces, sets)): SystemParamItem<'_, '_, Self::Reads>,
+        (lighting, table, assets, (pieces, sets)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let layout = wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4),
-            rows_per_image: Some(1),
-        };
         self.detail_limit = lighting.detail;
         self.sets_on = lighting.visible_sets;
-        if self.sets != *sets {
+        if sets.is_changed() {
             self.sets = sets.clone();
         }
         if pieces.is_changed() {
             self.pieces = pieces.clone();
         }
-        let mut fresh = cx.allocate(self.unbaked, TEXEL) == Allocation::Fresh;
-        for texture in self.plain {
-            fresh |= cx.allocate(texture, TEXEL) == Allocation::Fresh;
+        let mut fresh = self.unbaked.written(cx);
+        for plain in &self.plain {
+            fresh |= plain.written(cx);
         }
         if fresh {
-            cx.write_texture(
-                self.unbaked,
-                wgpu::Origin3d::ZERO,
-                &[0_u8; 4],
-                layout,
-                TEXEL,
-            );
-            for (texture, texel) in self.plain.into_iter().zip(PLAIN_TEXELS) {
-                cx.write_texture(texture, wgpu::Origin3d::ZERO, &texel, layout, TEXEL);
-            }
-            self.held.clear();
+            self.binds.clear();
             self.free.clear();
             self.slots = 0;
-            self.pictured = None;
+            self.pictured.clear();
             self.ready = true;
+            self.again = true;
         }
         let mut changed = Vec::new();
         if self.filtering != lighting.filtering {
             self.filtering = lighting.filtering;
-            self.pictured = None;
-            changed.extend(
-                self.held
-                    .iter()
-                    .filter(|(_, held)| held.bound.is_some())
-                    .map(|(handle, _)| *handle),
-            );
+            self.pictured.clear();
+            self.again = true;
+            changed.extend(self.binds.each_bound().map(|(handle, _)| handle));
         }
-        if self.ready
-            && let (Some(residency), Some(library)) = (residency, library)
-        {
-            self.sync(&table, &residency, &library, cx, &mut changed);
+        if self.ready {
+            let again = std::mem::take(&mut self.again);
+            self.sync(&table, &assets, cx, (&mut changed, again));
             let before = self.shown().map(|shown| shown.map);
-            self.sync_sky(&table, &residency, &library, cx);
+            self.sync_sky(&table, &assets, cx, again);
             if self.shown().map(|shown| shown.map) != before {
-                changed.extend(
-                    self.held
-                        .iter()
-                        .filter(|(_, held)| held.bound.is_some())
-                        .map(|(handle, _)| *handle),
-                );
+                changed.extend(self.binds.each_bound().map(|(handle, _)| handle));
                 changed.sort_unstable();
                 changed.dedup();
             }
@@ -656,12 +610,7 @@ impl GpuPart for LevelGpu {
         let stride = (size_of::<LevelSurface>() as u64).next_multiple_of(RANGE_ALIGN);
         let bytes = u64::from(self.slots.max(1).next_power_of_two()) * stride;
         if cx.allocate_buffer(self.surfaces, bytes) == Allocation::Fresh {
-            changed = self
-                .held
-                .iter()
-                .filter(|(_, held)| held.bound.is_some())
-                .map(|(handle, _)| *handle)
-                .collect();
+            changed = self.binds.each_bound().map(|(handle, _)| handle).collect();
         }
         for handle in changed {
             self.send(handle, stride, cx);
@@ -674,64 +623,46 @@ impl GpuPart for LevelGpu {
         }
     }
 
-    fn view(&mut self, facts: &ViewFacts, _cx: &mut Prepare<'_, Self>) {
+    fn view(&mut self, facts: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         let set = self.sets_on.then(|| self.sets.at(facts.eye)).flatten();
-        let scale = chunks::pixel_scale(facts);
-        let mut sized = Sized {
+        let scale = pixel_scale(facts);
+        let pieces = &self.pieces;
+        let mut sized = SizeSkip {
             limit: self.detail_limit,
             held: Some(&mut self.held_small),
         };
-        self.small.clear();
-        for (mesh, piece, size) in self.pieces.sized() {
-            if let Seen::Near(near) = chunks::seen(Some(piece), Some(mesh), facts, set)
-                && !sized.shown((mesh, size), near, scale)
-            {
-                self.small.insert(mesh);
-            }
-        }
-        self.facts = Some(*facts);
+        let mut verdict = |batch: BatchOf<'_>, _| {
+            let piece = pieces.single(batch.geometry, batch.instances);
+            let Seen::Near(near) = chunks::seen(piece, batch.geometry, facts, set) else {
+                return None;
+            };
+            let small = (batch.geometry)
+                .zip(piece.and_then(|piece| piece.largest_m))
+                .is_some_and(|sized_piece| !sized.shown(sized_piece, near, scale));
+            (!small).then_some(near.to_bits())
+        };
+        cx.judge(LEVEL, &mut verdict);
+        cx.judge(LEVEL_DETAIL, &mut verdict);
     }
 }
 
 impl LevelGpu {
     pub(super) fn draw_level(&self, draw: &mut Draw<'_, Self, Scene>) {
-        self.submit(draw, &self.level);
+        draw.batches(&self.level, 0..0, DrawOrder::Sorted);
     }
 
     pub(super) fn draw_detail(&self, draw: &mut Draw<'_, Self, Scene>) {
-        self.submit(draw, &self.detail);
-    }
-
-    fn submit(&self, draw: &mut Draw<'_, Self, Scene>, pipeline: &Pipeline<Self, Scene>) {
-        let Some(facts) = self.facts.as_ref() else {
-            return;
-        };
-        let set = self.sets_on.then(|| self.sets.at(facts.eye)).flatten();
-        draw.batches(pipeline, 0..0, |batch| {
-            let piece = self.pieces.single(batch.geometry, batch.instances);
-            let Seen::Near(near) = chunks::seen(piece, batch.geometry, facts, set) else {
-                return None;
-            };
-            let small = piece.is_some_and(|piece| piece.largest_m.is_some())
-                && batch
-                    .geometry
-                    .is_some_and(|mesh| self.small.contains(&mesh));
-            (!small).then_some(near.to_bits())
-        });
+        draw.batches(&self.detail, 0..0, DrawOrder::Sorted);
     }
 
     pub(super) fn draw_field(&self, _draw: &mut Draw<'_, Self, Scene>) {}
 
     fn shown(&self) -> Option<Shaped> {
-        self.pictured.as_ref().and_then(|pictured| pictured.shown)
+        self.pictured.each_bound().next().map(|(_, shown)| *shown)
     }
 
     pub(super) fn draw_sky(&self, draw: &mut Draw<'_, Self, Scene>) {
-        let shown = self
-            .pictured
-            .as_ref()
-            .filter(|pictured| pictured.shown.is_some())
-            .map(|pictured| pictured.material);
+        let shown = self.pictured.each_bound().next().map(|(material, _)| material);
         let pipeline = if shown.is_some() {
             &self.picture
         } else {
@@ -750,85 +681,59 @@ impl LevelGpu {
     fn sync(
         &mut self,
         table: &DrawnTable,
-        residency: &AssetResidency,
-        library: &AssetLibrary,
+        assets: &Assets,
         cx: &mut Prepare<'_, Self>,
-        changed: &mut Vec<MaterialHandle>,
+        (changed, again): (&mut Vec<Asset<Material>>, bool),
     ) {
-        let detail: BTreeSet<MaterialHandle> = table
-            .batches(LEVEL_DETAIL)
-            .filter_map(|batch| batch.material)
-            .collect();
-        let used: BTreeSet<MaterialHandle> = table
-            .batches(LEVEL)
-            .filter_map(|batch| batch.material)
-            .chain(detail.iter().copied())
-            .collect();
-        let gone: Vec<MaterialHandle> = self
-            .held
-            .iter()
-            .filter(|(handle, held)| {
-                !used.contains(handle)
-                    || !residency.material_resident(**handle)
-                    || held.detail != detail.contains(handle)
-                    || stale(library, &held.textures)
-            })
-            .map(|(handle, _)| *handle)
-            .collect();
-        for handle in gone {
-            if let Some(Bound { slot, .. }) = self.held.remove(&handle).and_then(|held| held.bound)
-            {
+        let batched = || {
+            table
+                .batches(LEVEL)
+                .chain(table.batches(LEVEL_DETAIL))
+                .map(|batch| (batch.kind == LEVEL_DETAIL, batch.material))
+        };
+        let moved = !batched().eq(self.batched.iter().copied());
+        if moved {
+            self.batched = batched().collect();
+            let detail: BTreeSet<Asset<Material>> = self
+                .batched
+                .iter()
+                .filter_map(|&(detail, material)| material.filter(|_| detail))
+                .collect();
+            self.used = self
+                .batched
+                .iter()
+                .filter_map(|&(_, material)| material)
+                .map(|handle| (handle, detail.contains(&handle)))
+                .collect();
+        }
+        if !(self.binds.changed(assets) | moved | again) {
+            return;
+        }
+        for (handle, bound) in self.binds.dropped(assets, &self.used) {
+            if let Some(Bound { slot, .. }) = bound {
                 self.free.push(slot);
             }
             cx.clear_batch(self.group, Some(handle));
         }
-        for (handle, revision) in residency.materials() {
-            if !used.contains(&handle)
-                || self
-                    .held
-                    .get(&handle)
-                    .is_some_and(|held| held.revision == revision)
-            {
-                continue;
-            }
-            if let Some(material) = library.material(handle) {
-                let detail = detail.contains(&handle);
-                self.bind(handle, (revision, detail), material, library, cx, changed);
-            }
+        for (handle, revision, detail, material) in self.binds.fresh(assets, &self.used) {
+            self.bind(handle, (revision, detail), material, assets, cx, changed);
         }
     }
 
     fn bind(
         &mut self,
-        handle: MaterialHandle,
+        handle: Asset<Material>,
         (revision, detail): (u64, bool),
         material: &Material,
-        library: &AssetLibrary,
+        assets: &Assets,
         cx: &mut Prepare<'_, Self>,
-        changed: &mut Vec<MaterialHandle>,
+        changed: &mut Vec<Asset<Material>>,
     ) {
         let path = format!("$.materials.{}", handle.slot());
         let mapped = match mapped(material, &path, detail) {
             Ok(mapped) => mapped,
             Err(problems) => {
-                for problem in problems {
-                    cx.report(problem);
-                }
-                if let Some(Bound { slot, .. }) =
-                    self.held.remove(&handle).and_then(|held| held.bound)
-                {
-                    self.free.push(slot);
-                }
-                self.held.insert(
-                    handle,
-                    Held {
-                        revision,
-                        detail,
-                        textures: Vec::new(),
-                        bound: None,
-                    },
-                );
-                cx.clear_batch(self.group, Some(handle));
+                self.refuse((handle, revision, detail), (problems, &[]), assets, cx);
                 return;
             }
         };
@@ -840,40 +745,54 @@ impl LevelGpu {
             .chain(mapped.broken)
             .collect();
         if textures.iter().any(|map| !cx.texture_resident(map.texture)) {
+            self.again = true;
             return;
         }
-        let slot = match self.held.get(&handle).and_then(|held| held.bound.as_ref()) {
+        let refused = linear_refused(assets, &mapped, &path);
+        if !refused.is_empty() {
+            self.refuse((handle, revision, detail), (refused, &textures), assets, cx);
+            return;
+        }
+        let slot = match self.binds.bound(handle) {
             Some(bound) => bound.slot,
             None => self.free.pop().unwrap_or_else(|| {
                 self.slots += 1;
                 self.slots - 1
             }),
         };
-        self.held.insert(
-            handle,
-            Held {
-                revision,
-                detail,
-                textures: revisions(library, &textures),
-                bound: Some(Bound { slot, mapped }),
-            },
-        );
+        let held = (handle, revision, detail);
+        self.binds
+            .keep(assets, held, &textures, Some(Bound { slot, mapped }));
         changed.push(handle);
     }
 
-    fn send(&self, handle: MaterialHandle, stride: u64, cx: &mut Prepare<'_, Self>) {
-        let Some(Bound { slot, mapped }) =
-            self.held.get(&handle).and_then(|held| held.bound.as_ref())
-        else {
+    fn refuse(
+        &mut self,
+        held: (Asset<Material>, u64, bool),
+        (problems, textures): (Vec<Error>, &[TextureRef]),
+        assets: &Assets,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        for problem in problems {
+            cx.report(problem);
+        }
+        if let Some(Bound { slot, .. }) = self.binds.keep(assets, held, textures, None) {
+            self.free.push(slot);
+        }
+        cx.clear_batch(self.group, Some(held.0));
+    }
+
+    fn send(&self, handle: Asset<Material>, stride: u64, cx: &mut Prepare<'_, Self>) {
+        let Some(Bound { slot, mapped }) = self.binds.bound(handle) else {
             return;
         };
         let offset = u64::from(*slot) * stride;
         cx.write(self.surfaces, offset, &[mapped.surface]);
         let mut entries = Vec::with_capacity(2 * (MAPS.len() + 3) + 1);
         if mapped.plain {
-            for ((_, texture, sampler), plain) in MAPS.iter().zip(self.plain) {
-                entries.push((*texture, GroupEntry::Texture(plain)));
-                entries.push((*sampler, GroupEntry::AssetSampler(Sampler::CLAMP)));
+            for ((_, texture, sampler), plain) in MAPS.iter().zip(&self.plain) {
+                entries.push((*texture, GroupEntry::Texture(plain.texture())));
+                entries.push((*sampler, GroupEntry::AssetSampler(CLAMP)));
             }
         }
         let filtering = &self.filtering;
@@ -908,7 +827,7 @@ impl LevelGpu {
         for (map, texture, sampler, chosen) in extra {
             let (bound, filter) = match map {
                 Some(map) => (GroupEntry::Asset(map.texture), chosen.applied(map.sampler)),
-                None => (GroupEntry::Texture(self.unbaked), Sampler::CLAMP),
+                None => (GroupEntry::Texture(self.unbaked.texture()), CLAMP),
             };
             entries.push((texture, bound));
             entries.push((sampler, GroupEntry::AssetSampler(filter)));
@@ -943,37 +862,28 @@ impl LevelGpu {
     fn sync_sky(
         &mut self,
         table: &DrawnTable,
-        residency: &AssetResidency,
-        library: &AssetLibrary,
+        assets: &Assets,
         cx: &mut Prepare<'_, Self>,
+        again: bool,
     ) {
-        let wanted = table.batches(SKY).find_map(|batch| batch.material);
-        let current = self.pictured.as_ref().filter(|pictured| {
-            Some(pictured.material) == wanted
-                && residency.material_resident(pictured.material)
-                && !stale(library, &pictured.textures)
-                && residency.materials().any(|(handle, revision)| {
-                    handle == pictured.material && revision == pictured.revision
-                })
-        });
-        if current.is_some() {
+        let sky = table.batches(SKY).find_map(|batch| batch.material);
+        let moved = std::mem::replace(&mut self.sky_bound, sky) != sky;
+        if !(self.pictured.changed(assets) | moved | again) {
             return;
         }
-        if let Some(old) = self.pictured.take() {
-            cx.clear_batch(self.sky_group, Some(old.material));
+        let wanted: BTreeMap<Asset<Material>, ()> =
+            sky.map(|handle| (handle, ())).into_iter().collect();
+        for (old, _) in self.pictured.dropped(assets, &wanted) {
+            cx.clear_batch(self.sky_group, Some(old));
         }
-        let Some(handle) = wanted else {
-            return;
-        };
-        let Some(revision) = residency
-            .materials()
-            .find_map(|(known, revision)| (known == handle).then_some(revision))
+        let Some((handle, revision, (), material)) =
+            self.pictured.fresh(assets, &wanted).into_iter().next()
         else {
             return;
         };
-        let Some(material) = library.material(handle) else {
-            return;
-        };
+        if self.pictured.forget(handle) {
+            cx.clear_batch(self.sky_group, Some(handle));
+        }
         let path = format!("$.materials.{}", handle.slot());
         let made = material
             .map(PICTURE_MAP)
@@ -983,16 +893,12 @@ impl LevelGpu {
             Ok(made) => made,
             Err(problem) => {
                 cx.report(problem);
-                self.pictured = Some(Pictured {
-                    material: handle,
-                    revision,
-                    textures: Vec::new(),
-                    shown: None,
-                });
+                self.pictured.keep(assets, (handle, revision, ()), &[], None);
                 return;
             }
         };
         if !cx.texture_resident(map.texture) {
+            self.again = true;
             return;
         }
         let entries = [
@@ -1009,11 +915,7 @@ impl LevelGpu {
                 None
             }
         };
-        self.pictured = Some(Pictured {
-            material: handle,
-            revision,
-            textures: revisions(library, &[map]),
-            shown,
-        });
+        self.pictured
+            .keep(assets, (handle, revision, ()), &[map], shown);
     }
 }

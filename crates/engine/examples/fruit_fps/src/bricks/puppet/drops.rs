@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 
 use engine::prelude::*;
 use engine_core::math::clamp;
-use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext, Stats};
+use engine_core::{Assets, Error, ErrorCode, Material, MeshFile, Mobility, Refusals, Stats};
 use glam::{Quat, Vec3};
 
 use super::{DroppedWeapon, PuppetBrick, PuppetStats};
 use crate::play::arms::{Dropped, Drops};
 use crate::play::events::arms::Weapon;
 use crate::play::figures::GROUND;
-use crate::play::puppet::{PuppetBook, PuppetFile};
+use crate::play::puppet::{Puppet, PuppetBook, PuppetFile};
 
 const DROPPED_PART: &str = "puppet_dropped";
 
@@ -26,8 +26,8 @@ pub(super) struct Flights {
 
 type Reads<'w, 's> = (
     (Res<'w, FixedTime>, Option<Res<'w, Drops>>),
-    Option<Res<'w, SceneContext>>,
-    Query<'w, 's, (Entity, &'static PuppetFile)>,
+    Res<'w, Puppet>,
+    Query<'w, 's, Entity, With<PuppetFile>>,
     Query<'w, 's, (Entity, &'static DroppedWeapon)>,
 );
 
@@ -61,29 +61,20 @@ fn flown(book: &PuppetBook, item: &Dropped, flight: Flight) -> Transform {
     placed
 }
 
-pub(super) fn drawn_of(
-    scene: Option<&SceneContext>,
-    (mesh, material): (&str, &str),
-) -> Result<Drawn, Error> {
-    let assets = scene.map(|scene| &*scene.assets);
-    let found = assets.and_then(|assets| {
-        let mesh = assets.meshes.get(mesh).copied()?;
-        let material = assets.materials.get(material).copied()?;
-        Some((mesh, material))
-    });
-    let Some((mesh, material)) = found else {
-        return Err(
-            Error::new(ErrorCode::UnknownReference, "$.puppet").got(format!("{mesh} / {material}"))
-        );
+pub(super) fn drawn_of(assets: &Assets, name: &str) -> Result<Drawn, Error> {
+    let mesh = assets.named::<MeshFile>(name);
+    let material = assets.named::<Material>(name);
+    let (Some(mesh), Some(material)) = (mesh, material) else {
+        return Err(Error::new(ErrorCode::UnknownReference, "$.puppet").got(name));
     };
     Ok(Drawn::new(GROUND, mesh, material))
 }
 
-fn gun_drawn(book: &PuppetBook, scene: Option<&SceneContext>, key: &str) -> Result<Drawn, Error> {
+fn gun_drawn(book: &PuppetBook, key: &str) -> Result<Drawn, Error> {
     let look = book.weapons.get(key).ok_or_else(|| {
         Error::new(ErrorCode::UnknownReference, "$.puppet.weapons").got(key.to_owned())
     })?;
-    drawn_of(scene, (&look.files.held_mesh, &look.files.held_material))
+    Ok(Drawn::new(GROUND, look.files.held_mesh, look.files.held_material))
 }
 
 pub(super) fn ground_node() -> Node {
@@ -95,13 +86,10 @@ pub(super) fn ground_node() -> Node {
 }
 
 pub(super) fn lie(
-    ((fixed, drops), scene, files, lying_now): Reads,
+    ((fixed, drops), puppet, files, lying_now): Reads,
     ((mut stats, mut flights), mut refusals, mut spawner, mut moves): Writes,
 ) {
-    let Some((owner, book)) = files
-        .iter()
-        .find_map(|(entity, file)| file.book().map(|book| (entity, book)))
-    else {
+    let (Some(owner), Some(book)) = (files.iter().next(), puppet.book.as_deref()) else {
         return;
     };
     let items = drops.as_deref().map_or(&[][..], |drops| &drops.items[..]);
@@ -125,7 +113,7 @@ pub(super) fn lie(
             }
             continue;
         }
-        match gun_drawn(book, scene.as_deref(), Weapon::Gun(item.weapon).key()) {
+        match gun_drawn(book, Weapon::Gun(item.weapon).key()) {
             Ok(drawn) => {
                 let placed = match item.thrown_from {
                     Some(from) => {

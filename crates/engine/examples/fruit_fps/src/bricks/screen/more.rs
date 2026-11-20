@@ -7,23 +7,17 @@ use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::paths::Paths;
 use crate::play::powers::{Held, Powers};
 use crate::play::round::Round;
-use crate::play::screen::{HudFacts, SelectCard};
 use crate::play::view::{Watch, Watched};
 use crate::rules::{AbilitySlot, Player, View};
 use crate::weapons::GunKind;
 
-use super::ScreenSource;
+use super::{ScreenLoad, ScreenSource};
 use super::facts::Recent;
+use super::hud::{HudFacts, LoadingFacts, SelectCard, SelectFacts, Shown};
 use super::live::{character_key, character_name, cooldown_share, named, seconds, set, tone};
-use super::menu::{KeyNames, binding_of, spoken_binding};
+use super::menu::{self, KeyNames, binding_of, spoken_binding};
 
 const ABILITY_KEYS: [&str; 4] = ["ability_c", "ability_q", "ability_e", "ability_x"];
-const ABILITY_SLOTS: [AbilitySlot; 4] = [
-    AbilitySlot::C,
-    AbilitySlot::Q,
-    AbilitySlot::E,
-    AbilitySlot::X,
-];
 
 type Mine<'a> = (&'a Actor, Option<&'a Arms>, Option<&'a Body>);
 
@@ -36,11 +30,10 @@ type InRound<'w> = (
     (Option<Res<'w, Numbers>>, Option<Res<'w, Drops>>),
 );
 
-fn spoken_key(keys: &[(String, String)], name: &str, out: &mut String) {
-    let spoken = keys
-        .iter()
-        .find(|(known, _)| known == name)
-        .map_or("", |(_, spoken)| spoken.as_str());
+fn spoken_key(keys: &[String], name: &str, out: &mut String) {
+    let spoken = menu::action(name)
+        .and_then(|at| keys.get(at))
+        .map_or("", String::as_str);
     set(out, spoken);
 }
 
@@ -92,7 +85,7 @@ fn cast_part(facts: &mut HudFacts, held: Option<&Held>) {
         cast.icon.clear();
         return;
     };
-    let index = ABILITY_SLOTS
+    let index = AbilitySlot::ALL
         .iter()
         .position(|slot| *slot == held.ability)
         .unwrap_or(0);
@@ -186,7 +179,7 @@ pub(super) fn fill_more(
     let me = view.players.get(viewer as usize);
     for (index, (shown, slot)) in facts.abilities.iter_mut().zip(&powered.slots).enumerate() {
         if index < 3 {
-            shown.equipped = powered.held == Some(ABILITY_SLOTS[index]);
+            shown.equipped = powered.held == Some(AbilitySlot::ALL[index]);
             shown.charges = slot.charges;
             shown.max = slot.max;
             shown.empty = slot.charges == 0;
@@ -196,7 +189,7 @@ pub(super) fn fill_more(
                 cooldown_share(view.catalog, player, (index, slot.cooldown_ticks))
             });
         } else if let Some(slot) = own.slots.get(index) {
-            shown.equipped = own.held == Some(ABILITY_SLOTS[index]);
+            shown.equipped = own.held == Some(AbilitySlot::ALL[index]);
             shown.ready = slot.ready;
         }
     }
@@ -235,48 +228,78 @@ type MenuReads<'w, 's> = (
     Option<Res<'w, Flow>>,
     Option<Res<'w, Numbers>>,
     Query<'w, 's, &'static ScreenSource>,
+    Res<'w, ScreenLoad>,
 );
 
-pub(super) fn fill_menu((flow, numbers, sources): MenuReads, mut facts: ResMut<HudFacts>) {
-    let Some(source) = sources.iter().next() else {
-        return;
-    };
-    let Some(loaded) = source.loaded() else {
-        return;
-    };
-    facts.result.next_seconds = flow.as_deref().map_or(0.0, |flow| flow.next_match_left);
-    let menu = &mut facts.menu;
-    if let Some(game) = numbers.as_deref().and_then(Numbers::get) {
+fn select_part(
+    select: &mut SelectFacts,
+    (flow, game): (Option<&Flow>, Option<&GameNumbers>),
+    source: &ScreenSource,
+) {
+    if let Some(game) = game {
         let characters = &game.rules.characters;
-        menu.select
-            .cards
-            .resize_with(characters.len(), SelectCard::default);
-        for (card, (key, character)) in menu.select.cards.iter_mut().zip(characters) {
+        select.cards.resize_with(characters.len(), SelectCard::default);
+        for (card, (key, character)) in select.cards.iter_mut().zip(characters) {
             card_of(
                 card,
                 (key, character),
                 (game, &source.key_names),
-                &loaded.layout.ability_texts,
+                &source.texts.abilities,
             );
         }
     }
-    if let Some(flow) = flow.as_deref() {
-        for card in &mut menu.select.cards {
+    if let Some(flow) = flow {
+        for card in &mut select.cards {
             card.selected = card.key == flow.character;
         }
-        set(&mut menu.select.level, &flow.level);
-        menu.loading.progress = flow.progress;
-        menu.loading.percent = (flow.progress * 100.0).round() as u32;
+        select.level = source.menu.levels.iter().position(|level| *level == flow.level);
+    }
+}
+
+fn loading_part(loading: &mut LoadingFacts, flow: Option<&Flow>, source: &ScreenSource) {
+    if let Some(flow) = flow {
+        loading.progress = flow.progress;
+        loading.percent = (flow.progress * 100.0).round() as u32;
     }
     let words = &source.menu.loading;
-    let loading = &mut menu.loading;
     set(&mut loading.map, &words.map);
     set(&mut loading.mode, &words.mode);
     set(&mut loading.site_a_note, &words.site_a_note);
     set(&mut loading.site_b_note, &words.site_b_note);
-    let tips = &loaded.layout.tips;
+    let tips = &source.texts.tips;
     loading.tips.resize_with(tips.len(), String::new);
     for (shown, tip) in loading.tips.iter_mut().zip(tips) {
         set(shown, tip);
+    }
+}
+
+pub(super) fn fill_menu((flow, numbers, sources, load): MenuReads, mut facts: ResMut<HudFacts>) {
+    let Some(source) = sources.iter().next() else {
+        return;
+    };
+    if load.loaded().is_none() {
+        return;
+    }
+    let facts = &mut *facts;
+    let flow = flow.as_deref();
+    match facts.screen {
+        Some(Shown::MatchEnd) => {
+            facts.result.next_seconds = flow.map_or(0.0, |flow| flow.next_match_left);
+        }
+        Some(Shown::Select) => {
+            let game = numbers.as_deref().and_then(Numbers::get);
+            select_part(&mut facts.menu.select, (flow, game), source);
+        }
+        Some(Shown::Loading) => loading_part(&mut facts.menu.loading, flow, source),
+        Some(
+            Shown::Hud
+            | Shown::Buy
+            | Shown::Scoreboard
+            | Shown::RoundEnd
+            | Shown::Title
+            | Shown::Pause
+            | Shown::Settings,
+        )
+        | None => {}
     }
 }

@@ -90,7 +90,7 @@ impl Match {
             sides: [Side::Attack, Side::Defend],
             loss_streak: [0; 2],
             tick: 0,
-            random: seed,
+            random: engine_math::Random::new(seed),
             pending: Vec::new(),
             dropped_by: None,
             overtime_rounds: 0,
@@ -106,14 +106,6 @@ impl Match {
         game.begin_round(&mut events);
         game.pending = events;
         Ok(game)
-    }
-
-    fn next_random(&mut self) -> u64 {
-        self.random = self.random.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.random;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
     }
 
     fn reset_for_half(&mut self, reason: CreditReason, events: &mut Vec<Event>) {
@@ -207,7 +199,7 @@ impl Match {
         let attackers: Vec<PlayerId> = (0..self.players.len())
             .filter(|&p| self.side_of_player(p) == Some(Side::Attack))
             .collect();
-        let roll = self.next_random();
+        let roll = self.random.next_u64();
         let count = attackers.len() as u64;
         if count == 0 {
             return;
@@ -550,7 +542,7 @@ impl Match {
             return;
         };
         let character = p.character;
-        let Some(index) = used.slot.index() else {
+        let Some(index) = used.slot.charged() else {
             if p.ultimate.points < p.ultimate.cost {
                 events.push(refused);
                 return;
