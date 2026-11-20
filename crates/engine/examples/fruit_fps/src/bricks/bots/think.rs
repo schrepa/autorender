@@ -807,10 +807,21 @@ pub(super) fn think(
     mut minds: ResMut<BotMinds>,
 ) {
     let tick = facts.time.tick;
-    let level = facts
+    let override_level = facts
         .test
         .get()
         .map_or(LevelChoice::Seat, |test| test.level);
+    let level = match override_level {
+        LevelChoice::Seat => match facts.flow.as_deref().map(|flow| flow.level.as_str()) {
+            Some("easy") => LevelChoice::Easy,
+            Some("normal") => LevelChoice::Normal,
+            Some("hard") => LevelChoice::Hard,
+            _ => LevelChoice::Seat,
+        },
+        LevelChoice::Easy => LevelChoice::Easy,
+        LevelChoice::Normal => LevelChoice::Normal,
+        LevelChoice::Hard => LevelChoice::Hard,
+    };
     minds.tick = tick;
     minds.bots.clear();
     let round = facts.round.as_deref();

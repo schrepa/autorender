@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::KeyMap;
-use crate::play::screen::Options;
+use crate::play::screen::{Options, ScreenSounds, UiSound};
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
 
@@ -220,6 +220,12 @@ pub(super) fn spot(look: &ScreenSource, id: &str) -> Option<Slot> {
         let level = id.strip_prefix("bots_")?;
         menu.levels.iter().position(|known| known == level)
     };
+    if id == "invert_on" {
+        return Some(INVERT);
+    }
+    if id == "dot_on" {
+        return Some(DOT);
+    }
     ranged(0, named(&BUTTONS))
         .or_else(|| ranged(SLIDER, named(&SLIDER_IDS)))
         .or_else(|| ranged(ROSTER, numbered("roster_")))
@@ -234,6 +240,10 @@ fn spot_of(base: Slot, index: usize) -> Slot {
 #[derive(Resource, Default)]
 pub(super) struct MenuState {
     focus: usize,
+    hover: Option<usize>,
+    press: Option<usize>,
+    dragging_slider: Option<usize>,
+    last_hover: Option<u64>,
     on: Option<Shown>,
     under: Option<(Option<Shown>, usize)>,
     pub quit_asked: u32,
@@ -256,11 +266,27 @@ impl Nav<'_> {
         self.devices.mouse.buttons.pressed(MouseButton::Left)
     }
 
+    fn held(&self) -> bool {
+        self.devices.mouse.buttons.held(MouseButton::Left)
+    }
+
     fn over(&self, shown: Shown, spot: Slot) -> Option<Area> {
         let pointer = self.devices.mouse.position_pixels?;
         self.draw
             .element(shown as usize, spot)
             .filter(|area| area.contains(pointer))
+    }
+
+    fn over_slider(&self, shown: Shown, spot: Slot) -> Option<Area> {
+        let pointer = self.devices.mouse.position_pixels?;
+        self.draw.element(shown as usize, spot).filter(|area| {
+            let pad_x = area.h;
+            let pad_y = area.h * 1.4;
+            pointer.x >= area.x - pad_x
+                && pointer.x <= area.x + area.w + pad_x
+                && pointer.y >= area.y - pad_y
+                && pointer.y <= area.y + area.h + pad_y
+        })
     }
 
     fn hovered<const N: usize>(&self, shown: Shown, spots: [Slot; N]) -> Option<usize> {
@@ -281,20 +307,45 @@ impl Nav<'_> {
     }
 }
 
+fn hover_tag(shown: Shown, group: u64, index: usize) -> u64 {
+    ((shown as u64) << 32) | (group << 16) | (index as u64)
+}
+
+fn note_hover(state: &mut MenuState, key: Option<u64>, sounds: &mut ScreenSounds) {
+    if key.is_some() && key != state.last_hover {
+        sounds.play(UiSound::Hover);
+    }
+    state.last_hover = key;
+}
+
 fn buttons<const N: usize>(
     nav: &Nav<'_>,
     state: &mut MenuState,
     shown: Shown,
     (names, spots): ([&'static str; N], [Slot; N]),
+    sounds: &mut ScreenSounds,
 ) -> Option<&'static str> {
-    if let Some(hover) = nav.hovered(shown, spots) {
+    let hover = nav.hovered(shown, spots);
+    state.hover = hover;
+    state.press = hover.filter(|_| nav.held());
+    note_hover(state, hover.map(|at| hover_tag(shown, 1, at)), sounds);
+    if let Some(hover) = hover {
         state.focus = hover;
         if nav.clicked() {
+            sounds.play(UiSound::Click);
             return Some(names[hover]);
         }
     }
+    let before = state.focus;
     state.focus = nav.step(state.focus, N);
-    nav.pressed(&nav.keys.confirm).then(|| names[state.focus])
+    if state.focus != before {
+        sounds.play(UiSound::Hover);
+    }
+    if nav.pressed(&nav.keys.confirm) {
+        sounds.play(UiSound::Click);
+        return Some(names[state.focus]);
+    }
+    None
 }
 
 pub(super) fn start(flow: &mut Flow) {
@@ -302,13 +353,14 @@ pub(super) fn start(flow: &mut Flow) {
     flow.game += 1;
 }
 
-fn title(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
+fn title(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, sounds: &mut ScreenSounds) {
     let chosen = if nav.can_quit {
         buttons(
             nav,
             state,
             Shown::Title,
             (TITLE, [PLAY, SETTINGS, QUIT]),
+            sounds,
         )
     } else {
         buttons(
@@ -316,6 +368,7 @@ fn title(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
             state,
             Shown::Title,
             (TITLE_NO_QUIT, [PLAY, SETTINGS]),
+            sounds,
         )
     };
     match chosen {
@@ -326,8 +379,9 @@ fn title(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
     }
 }
 
-fn pause(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
+fn pause(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, sounds: &mut ScreenSounds) {
     if nav.pressed(&nav.keys.back) {
+        sounds.play(UiSound::Click);
         flow.stage = Stage::Playing;
         return;
     }
@@ -336,6 +390,7 @@ fn pause(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
         state,
         Shown::Pause,
         (PAUSE, [RESUME, SETTINGS, QUIT]),
+        sounds,
     );
     match chosen {
         Some("resume") => flow.stage = Stage::Playing,
@@ -345,12 +400,13 @@ fn pause(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
     }
 }
 
-fn match_end(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
+fn match_end(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, sounds: &mut ScreenSounds) {
     let chosen = buttons(
         nav,
         state,
         Shown::MatchEnd,
         (MATCH_END, [AGAIN, QUIT]),
+        sounds,
     );
     match chosen {
         Some("play") => flow.stage = Stage::Select,
@@ -359,43 +415,78 @@ fn match_end(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow) {
     }
 }
 
-fn select(nav: &Nav<'_>, facts: &HudFacts, flow: &mut Flow) {
+fn select(
+    nav: &Nav<'_>,
+    state: &mut MenuState,
+    facts: &mut HudFacts,
+    flow: &mut Flow,
+    sounds: &mut ScreenSounds,
+) {
     if nav.pressed(&nav.keys.back) {
+        sounds.play(UiSound::Click);
         flow.stage = Stage::Title;
         return;
     }
-    let cards = &facts.menu.select.cards;
-    let mut at = cards
+    let cards_len = facts.menu.select.cards.len();
+    let mut at = facts
+        .menu
+        .select
+        .cards
         .iter()
         .position(|card| card.key == flow.character)
         .unwrap_or(0);
-    if nav.pressed(&nav.keys.right) && !cards.is_empty() {
-        at = (at + 1) % cards.len();
-    } else if nav.pressed(&nav.keys.left) && !cards.is_empty() {
-        at = (at + cards.len() - 1) % cards.len();
+    let before = at;
+    if nav.pressed(&nav.keys.right) && cards_len > 0 {
+        at = (at + 1) % cards_len;
+    } else if nav.pressed(&nav.keys.left) && cards_len > 0 {
+        at = (at + cards_len - 1) % cards_len;
     }
-    for index in 0..cards.len() {
-        if nav.clicked() && nav.over(Shown::Select, spot_of(ROSTER, index)).is_some() {
-            at = index;
-        }
+    if at != before {
+        sounds.play(UiSound::Click);
     }
-    if let Some(card) = cards.get(at) {
+    let hover_card = (0..cards_len)
+        .find(|&index| nav.over(Shown::Select, spot_of(ROSTER, index)).is_some());
+    if let Some(index) = hover_card
+        && nav.clicked()
+    {
+        at = index;
+        sounds.play(UiSound::Click);
+    }
+    if let Some(card) = facts.menu.select.cards.get(at) {
         flow.character.clone_from(&card.key);
     }
     let levels = &nav.source.levels;
+    let hover_level = (0..levels.len())
+        .find(|&index| nav.over(Shown::Select, spot_of(BOTS, index)).is_some());
     for (index, level) in levels.iter().enumerate() {
         let keyed = nav
             .keys
             .levels
             .get(index)
             .is_some_and(|key| nav.pressed(std::slice::from_ref(key)));
-        if keyed || (nav.clicked() && nav.over(Shown::Select, spot_of(BOTS, index)).is_some()) {
+        if keyed || (nav.clicked() && hover_level == Some(index)) {
             flow.level.clone_from(level);
+            sounds.play(UiSound::Click);
         }
     }
-    if nav.pressed(&nav.keys.confirm)
-        || (nav.clicked() && nav.over(Shown::Select, PLAY).is_some())
-    {
+    let hover_play = nav.over(Shown::Select, PLAY).is_some();
+    let held = nav.held();
+    let key = hover_card
+        .map(|index| hover_tag(Shown::Select, 1, index))
+        .or_else(|| hover_level.map(|index| hover_tag(Shown::Select, 2, index)))
+        .or_else(|| hover_play.then(|| hover_tag(Shown::Select, 3, 0)));
+    note_hover(state, key, sounds);
+    state.hover = hover_play.then_some(0);
+    state.press = (hover_play && held).then_some(0);
+    let select_facts = &mut facts.menu.select;
+    select_facts.hover_card = hover_card;
+    select_facts.press_card = hover_card.filter(|_| held);
+    select_facts.hover_level = hover_level;
+    select_facts.press_level = hover_level.filter(|_| held);
+    select_facts.hover_play = hover_play;
+    select_facts.press_play = hover_play && held;
+    if nav.pressed(&nav.keys.confirm) || (nav.clicked() && hover_play) {
+        sounds.play(UiSound::Ready);
         start(flow);
     }
 }
@@ -503,16 +594,29 @@ fn level_step(flow: &mut Flow, levels: &[String], turn: i32) {
     flow.level.clone_from(&levels[next]);
 }
 
-fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut Values) {
+fn settings(
+    nav: &Nav<'_>,
+    state: &mut MenuState,
+    facts: &mut HudFacts,
+    flow: &mut Flow,
+    values: &mut Values,
+    sounds: &mut ScreenSounds,
+) {
     if nav.pressed(&nav.keys.back) {
+        sounds.play(UiSound::Click);
+        state.dragging_slider = None;
         flow.settings_open = false;
         return;
     }
     let rows = SETTINGS_ROWS.len();
+    let before = state.focus;
     if nav.pressed(&nav.keys.down) {
         state.focus = (state.focus + 1) % rows;
     } else if nav.pressed(&nav.keys.up) {
         state.focus = (state.focus + rows - 1) % rows;
+    }
+    if state.focus != before {
+        sounds.play(UiSound::Hover);
     }
     let sliders = &nav.source.sliders;
     let turn = i32::from(nav.pressed(&nav.keys.right)) - i32::from(nav.pressed(&nav.keys.left));
@@ -522,68 +626,162 @@ fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut 
         let numbers = numbers_of(sliders, slider);
         let next = values.slider(slider) + turn as f32 * numbers.step;
         values.set_slider(slider, engine::math::clamp(next, numbers.min, numbers.max));
+        sounds.play(UiSound::Click);
     }
     let count = nav.source.crosshairs.len() as u32;
     if turn != 0 && state.focus == CROSSHAIR_ROW && count > 0 {
         values.options.crosshair =
             (values.options.crosshair + count).wrapping_add_signed(turn) % count;
+        sounds.play(UiSound::Click);
     }
     if turn != 0 && state.focus == BOTS_ROW {
         level_step(flow, &nav.source.levels, turn);
+        sounds.play(UiSound::Click);
     }
     let confirmed = nav.pressed(&nav.keys.confirm);
     if state.focus == INVERT_ROW && (turn != 0 || confirmed) {
         values.controls.invert_pitch = !values.controls.invert_pitch;
+        sounds.play(UiSound::Click);
     }
     if state.focus == DOT_ROW && (turn != 0 || confirmed) {
         values.options.crosshair_dot = !values.options.crosshair_dot;
+        sounds.play(UiSound::Click);
     }
     if confirmed && state.focus == BACK_ROW {
+        sounds.play(UiSound::Click);
         flow.settings_open = false;
     }
-    if nav.clicked() {
-        settings_click(nav, state, flow, values);
-    }
+    settings_pointer(nav, state, facts, flow, values, sounds);
 }
 
-fn settings_click(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut Values) {
-    if nav.over(Shown::Settings, INVERT).is_some() {
+fn slider_drag(nav: &Nav<'_>, slider: usize, values: &mut Values) {
+    let (Some(area), Some(pointer)) = (
+        nav.draw.element(Shown::Settings as usize, spot_of(SLIDER, slider)),
+        nav.devices.mouse.position_pixels,
+    ) else {
+        return;
+    };
+    let frac = if area.w > 0.0 {
+        (pointer.x - area.x) / area.w
+    } else {
+        0.0
+    };
+    let numbers = numbers_of(&nav.source.sliders, slider);
+    values.set_slider(slider, value_of(frac, numbers));
+}
+
+fn settings_pointer(
+    nav: &Nav<'_>,
+    state: &mut MenuState,
+    facts: &mut HudFacts,
+    flow: &mut Flow,
+    values: &mut Values,
+    sounds: &mut ScreenSounds,
+) {
+    let hover_back = nav.over(Shown::Settings, BACK).is_some();
+    let hover_invert = nav.over(Shown::Settings, INVERT).is_some();
+    let hover_dot = nav.over(Shown::Settings, DOT).is_some();
+    let hover_slider = SLIDER_ROWS
+        .iter()
+        .enumerate()
+        .find(|&(slider, _)| nav.over_slider(Shown::Settings, spot_of(SLIDER, slider)).is_some())
+        .map(|(slider, &row)| (slider, row));
+    let hover_crosshair = (0..nav.source.crosshairs.len())
+        .find(|&index| nav.over(Shown::Settings, spot_of(CROSSHAIR, index)).is_some());
+    let hover_level = (0..nav.source.levels.len())
+        .find(|&index| nav.over(Shown::Settings, spot_of(BOTS, index)).is_some());
+    let held = nav.held();
+    if !held {
+        state.dragging_slider = None;
+    }
+    if nav.clicked() {
+        settings_click(
+            (hover_back, hover_invert, hover_dot),
+            (hover_slider, hover_crosshair, hover_level),
+            (nav, state, flow, values, sounds),
+        );
+    }
+    if let Some(slider) = state.dragging_slider {
+        slider_drag(nav, slider, values);
+        state.focus = SLIDER_ROWS[slider];
+    }
+    let hover_row = if hover_back {
+        Some(BACK_ROW)
+    } else if hover_invert {
+        Some(INVERT_ROW)
+    } else if hover_dot {
+        Some(DOT_ROW)
+    } else if hover_crosshair.is_some() {
+        Some(CROSSHAIR_ROW)
+    } else if hover_level.is_some() {
+        Some(BOTS_ROW)
+    } else {
+        hover_slider.map(|(_, row)| row)
+    };
+    let key = hover_back
+        .then(|| hover_tag(Shown::Settings, 1, 0))
+        .or_else(|| hover_invert.then(|| hover_tag(Shown::Settings, 2, 0)))
+        .or_else(|| hover_dot.then(|| hover_tag(Shown::Settings, 3, 0)))
+        .or_else(|| hover_level.map(|index| hover_tag(Shown::Settings, 4, index)))
+        .or_else(|| hover_crosshair.map(|index| hover_tag(Shown::Settings, 5, index)))
+        .or_else(|| hover_slider.map(|(slider, _)| hover_tag(Shown::Settings, 6, slider)));
+    note_hover(state, key, sounds);
+    state.hover = hover_row;
+    state.press = (hover_back && held).then_some(BACK_ROW);
+    let shown = &mut facts.menu.settings;
+    shown.hover_row = hover_row;
+    shown.hover_level = hover_level;
+    shown.press_level = hover_level.filter(|_| held);
+    shown.hover_crosshair = hover_crosshair;
+    shown.hover_back = hover_back;
+    shown.press_back = hover_back && held;
+    shown.hover_invert = hover_invert;
+    shown.hover_dot = hover_dot;
+}
+
+fn settings_click(
+    (back, invert, dot): (bool, bool, bool),
+    (slider, crosshair, level): (Option<(usize, usize)>, Option<usize>, Option<usize>),
+    (nav, state, flow, values, sounds): (
+        &Nav<'_>,
+        &mut MenuState,
+        &mut Flow,
+        &mut Values,
+        &mut ScreenSounds,
+    ),
+) {
+    if invert {
         values.controls.invert_pitch = !values.controls.invert_pitch;
         state.focus = INVERT_ROW;
+        sounds.play(UiSound::Click);
     }
-    if nav.over(Shown::Settings, DOT).is_some() {
+    if dot {
         values.options.crosshair_dot = !values.options.crosshair_dot;
         state.focus = DOT_ROW;
+        sounds.play(UiSound::Click);
     }
-    let sliders = &nav.source.sliders;
-    for (slider, &row) in SLIDER_ROWS.iter().enumerate() {
-        if let (Some(area), Some(pointer)) = (
-            nav.over(Shown::Settings, spot_of(SLIDER, slider)),
-            nav.devices.mouse.position_pixels,
-        ) {
-            let frac = if area.w > 0.0 {
-                (pointer.x - area.x) / area.w
-            } else {
-                0.0
-            };
-            values.set_slider(slider, value_of(frac, numbers_of(sliders, slider)));
-            state.focus = row;
-        }
+    if let Some((slider, row)) = slider {
+        state.dragging_slider = Some(slider);
+        slider_drag(nav, slider, values);
+        state.focus = row;
+        sounds.play(UiSound::Click);
     }
-    for index in 0..nav.source.crosshairs.len() as u32 {
-        if nav.over(Shown::Settings, spot_of(CROSSHAIR, index as usize)).is_some() {
-            values.options.crosshair = index;
-            state.focus = CROSSHAIR_ROW;
-        }
+    if let Some(index) = crosshair {
+        values.options.crosshair = index as u32;
+        state.focus = CROSSHAIR_ROW;
+        sounds.play(UiSound::Click);
     }
-    for (index, level) in nav.source.levels.iter().enumerate() {
-        if nav.over(Shown::Settings, spot_of(BOTS, index)).is_some() {
-            flow.level.clone_from(level);
-            state.focus = BOTS_ROW;
-        }
+    if let Some(index) = level
+        && let Some(chosen) = nav.source.levels.get(index)
+    {
+        flow.level.clone_from(chosen);
+        state.focus = BOTS_ROW;
+        sounds.play(UiSound::Click);
     }
-    if nav.over(Shown::Settings, BACK).is_some() {
+    if back {
+        state.dragging_slider = None;
         flow.settings_open = false;
+        sounds.play(UiSound::Click);
     }
 }
 
@@ -608,6 +806,7 @@ pub(super) fn navigate(
     nav: &Nav<'_>,
     (state, flow, facts): (&mut MenuState, &mut Flow, &mut HudFacts),
     values: &mut Values,
+    sounds: &mut ScreenSounds,
 ) {
     let shown = chosen_screen(flow);
     if shown != state.on {
@@ -618,13 +817,17 @@ pub(super) fn navigate(
         state.under = (shown == Some(Shown::Settings)).then_some((state.on, state.focus));
         state.on = shown;
         state.focus = back.unwrap_or(0);
+        state.hover = None;
+        state.press = None;
+        state.dragging_slider = None;
+        state.last_hover = None;
     }
     match shown {
-        Some(Shown::Settings) => settings(nav, state, flow, values),
-        Some(Shown::Title) => title(nav, state, flow),
-        Some(Shown::Select) => select(nav, facts, flow),
-        Some(Shown::Pause) => pause(nav, state, flow),
-        Some(Shown::MatchEnd) => match_end(nav, state, flow),
+        Some(Shown::Settings) => settings(nav, state, facts, flow, values, sounds),
+        Some(Shown::Title) => title(nav, state, flow, sounds),
+        Some(Shown::Select) => select(nav, state, facts, flow, sounds),
+        Some(Shown::Pause) => pause(nav, state, flow, sounds),
+        Some(Shown::MatchEnd) => match_end(nav, state, flow, sounds),
         Some(Shown::Loading | Shown::Hud | Shown::Buy | Shown::Scoreboard | Shown::RoundEnd)
         | None => {}
     }
@@ -636,6 +839,8 @@ pub(super) fn navigate(
         Some(Shown::Loading | Shown::Hud | Shown::Buy | Shown::Scoreboard | Shown::RoundEnd)
         | None => None,
     };
+    menu.hover = state.hover;
+    menu.press = state.press;
 }
 
 pub(super) fn slider_facts(sliders: &mut [Slider; 11], source: &SliderSet, values: &Values) {

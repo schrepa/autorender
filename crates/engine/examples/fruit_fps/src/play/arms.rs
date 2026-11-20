@@ -57,6 +57,9 @@ pub struct Arms {
     pub weapon_down: bool,
     pub zoom: f32,
     pub scoped: bool,
+    pub move_spread_deg: f32,
+    pub live_spread_deg: f32,
+    pub spread_init: bool,
 }
 
 impl Arms {
@@ -88,6 +91,9 @@ impl Arms {
             weapon_down: false,
             zoom: 1.0,
             scoped: false,
+            move_spread_deg: 0.0,
+            live_spread_deg: 0.0,
+            spread_init: false,
         }
     }
 

@@ -76,6 +76,8 @@ pub(super) struct Set {
     pub icon: Option<Template>,
     pub grey: Option<f32>,
     pub shadows: Option<Vec<Shadow>>,
+    pub offset: Option<[f32; 2]>,
+    pub scale: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -561,6 +563,14 @@ fn set_of(value: &Value, cx: &Context<'_>, at: String) -> Result<Set, String> {
             }
             "grey" => set.grey = Some(unit(given, &at)?),
             "shadows" => set.shadows = Some(shadow_list(given, cx, &at)?),
+            "offset" => set.offset = Some(read.pair("offset")?),
+            "scale" => {
+                let factor = read.number("scale")?;
+                if !(factor.is_finite() && factor > 0.0) {
+                    return Err(format!("{at}: expected a number above 0"));
+                }
+                set.scale = Some(factor);
+            }
             _ => return Err(format!("{at}: style_if cannot set `{key}`")),
         }
     }
@@ -862,6 +872,20 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
         shadows: match read.get("shadows") {
             None => None,
             Some(given) => Some(shadow_list(given, cx, &read.within("shadows"))?),
+        },
+        offset: match read.get("offset") {
+            None => None,
+            Some(_) => Some(read.pair("offset")?),
+        },
+        scale: match read.get("scale") {
+            None => None,
+            Some(_) => {
+                let factor = read.number("scale")?;
+                if !(factor.is_finite() && factor > 0.0) {
+                    return Err(format!("{}: expected a number above 0", read.within("scale")));
+                }
+                Some(factor)
+            }
         },
     };
     let kind = kind_of(&read, cx)?;

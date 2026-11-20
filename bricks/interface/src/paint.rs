@@ -202,6 +202,8 @@ struct Look<'a> {
     icon: Option<&'a Template>,
     grey: f32,
     shadows: &'a [Shadow],
+    offset: [f32; 2],
+    scale: f32,
 }
 
 fn equal(value: Val<'_>, wanted: &Want) -> bool {
@@ -329,6 +331,8 @@ impl<F: Facts> Painter<'_, F> {
             icon: element.look.icon.as_ref(),
             grey: element.look.grey.unwrap_or(0.0),
             shadows: element.look.shadows.as_deref().unwrap_or(&[]),
+            offset: element.look.offset.unwrap_or([0.0, 0.0]),
+            scale: element.look.scale.unwrap_or(1.0),
         };
         for (conds, set) in &element.styles {
             if self.holds(conds) {
@@ -556,11 +560,15 @@ impl<F: Facts> Painter<'_, F> {
     fn framed<'e>(&mut self, element: &'e Element) -> Option<(Look<'e>, Area, f32)> {
         let mut area = placed(self.draw, self.rows, element)?;
         let mut look = self.look(element);
-        let (zoom, flash) = self.pulse(element);
+        let (pulse_zoom, flash) = self.pulse(element);
         if let Some(flash) = flash {
             look.fill = look.fill.map(|_| flash);
             look.color = look.color.map(|_| flash);
         }
+        let base_scale = self.draw.scale();
+        area.x += look.offset[0] * base_scale;
+        area.y += look.offset[1] * base_scale;
+        let zoom = pulse_zoom * look.scale;
         self.zoom = zoom;
         if zoom != 1.0 {
             let center = area.center();
@@ -569,7 +577,7 @@ impl<F: Facts> Painter<'_, F> {
             area.x = center.x - area.w * 0.5;
             area.y = center.y - area.h * 0.5;
         }
-        let s = zoom * self.draw.scale();
+        let s = zoom * base_scale;
         Some((look, area, s))
     }
 
@@ -1136,6 +1144,12 @@ fn apply<'e>(look: &mut Look<'e>, set: &'e Set) {
     }
     if let Some(shadows) = &set.shadows {
         look.shadows = shadows;
+    }
+    if let Some(offset) = set.offset {
+        look.offset = offset;
+    }
+    if let Some(scale) = set.scale {
+        look.scale = scale;
     }
 }
 

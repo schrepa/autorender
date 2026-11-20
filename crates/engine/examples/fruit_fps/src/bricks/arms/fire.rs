@@ -19,8 +19,8 @@ use crate::rules::{Device, Team};
 use crate::weapons::{
     Aim, ArmsNumbers, Blocker, BodyPart, CharacterId, Fired, Footing, GunKind, HandMotion,
     HitJoints, HitShapes, Inspecting, LoadoutInput, LoadoutTick, Pace, Slot, Struck, Vitals,
-    forward, gun_damage, hit_shapes, joints_from_body, melee, melee_damage, stance_of, trace,
-    wound,
+    continuous_spread_deg, forward, gun_damage, hit_shapes, joints_from_body, melee, melee_damage,
+    stance_of, trace, wound,
 };
 
 struct Known(Option<f32>);
@@ -163,6 +163,7 @@ pub(super) fn act(
         let recoil = arms.loadout.recoil();
         offsets.recoil_pitch_radians = recoil.pitch_radians;
         offsets.recoil_yaw_radians = recoil.yaw_radians;
+        decay_punch(&mut offsets, body, tps);
         arms.zoom = arms.loadout.view_zoom(&numbers.weapons, tps);
         arms.scoped = arms.loadout.scoped();
         offsets.zoom = arms.zoom;
@@ -410,6 +411,55 @@ fn hand_of(numbers: &ArmsNumbers, tps: u32, role: Role, arms: &Arms) -> Hand {
     }
 }
 
+fn decay_punch(offsets: &mut ViewOffsets, body: &Body, tps: u32) {
+    let dt = 1.0 / tps.max(1) as f32;
+    let keep = engine::math::max(1.0 - 16.0 * dt, 0.0);
+    offsets.punch_pitch_radians *= keep;
+    offsets.punch_yaw_radians *= keep;
+    if let Some(landed) = body.landed {
+        let dip = engine::math::clamp(landed.speed * 0.0042, 0.006, 0.026);
+        offsets.punch_pitch_radians -= dip;
+    }
+}
+
+fn smooth_spread(
+    numbers: &ArmsNumbers,
+    tps: u32,
+    footing: Footing,
+    arms: &mut Arms,
+) -> Option<f32> {
+    let Some(gun) = arms.loadout.active_gun() else {
+        arms.move_spread_deg = 0.0;
+        arms.live_spread_deg = 0.0;
+        arms.spread_init = false;
+        return None;
+    };
+    let land_total = ticks(numbers.combat.land_seconds, tps).max(1);
+    let land_share = arms.landing_ticks as f32 / land_total as f32;
+    let target = continuous_spread_deg(
+        &numbers.combat,
+        numbers.player.run_speed_mps,
+        numbers.weapons.gun(gun.kind()),
+        gun.settled_scope_level(),
+        footing,
+        land_share,
+    );
+    if !arms.spread_init {
+        arms.move_spread_deg = target;
+        arms.spread_init = true;
+    } else {
+        let dt = 1.0 / tps.max(1) as f32;
+        let rate = if target > arms.move_spread_deg {
+            26.0
+        } else {
+            18.0
+        };
+        let step = engine::math::clamp(rate * dt, 0.0, 1.0);
+        arms.move_spread_deg += (target - arms.move_spread_deg) * step;
+    }
+    Some(arms.move_spread_deg)
+}
+
 fn advance(
     numbers: &ArmsNumbers,
     tps: u32,
@@ -431,6 +481,7 @@ fn advance(
         landing: arms.landing_ticks > 0,
     };
     arms.stance = stance_of(&numbers.combat, numbers.player.run_speed_mps, footing);
+    let base_spread_deg = smooth_spread(numbers, tps, footing, arms);
     let holding = blocked.holding;
     let input = LoadoutInput {
         fire_held: !holding && (wish.fire_held || wish.fire_pressed),
@@ -440,6 +491,7 @@ fn advance(
         lowered: holding,
         switch_to: blocked.equip.and_then(slot_of).filter(|_| !blocked.busy),
         pace,
+        base_spread_deg,
     };
     let aim = crate::weapons::Aim {
         eye: body.eye,
@@ -449,6 +501,9 @@ fn advance(
     let ticked = arms
         .loadout
         .tick(&numbers.weapons, tps, input, aim, arms.stance);
+    arms.live_spread_deg = arms.loadout.active_gun().map_or(0.0, |gun| {
+        (arms.move_spread_deg + gun.current_bloom_deg(&numbers.weapons)) * pace.spread
+    });
     arms.kick_pitch_radians = ticked.kick.pitch_radians;
     arms.kick_yaw_radians = ticked.kick.yaw_radians;
     ticked
@@ -871,10 +926,12 @@ impl Wounds {
             if fallen.contains(&wounding.victim) {
                 continue;
             }
-            let Some((entity, body, mut arms, mut health)) = actors
+            let Some((entity, body, mut arms, mut health, mut offsets)) = actors
                 .iter_mut()
                 .find(|(_, actor, .., alive)| actor.slot == wounding.victim && *alive)
-                .map(|(entity, _, _, body, arms, health, ..)| (entity, body, arms, health))
+                .map(|(entity, _, _, body, arms, health, offsets, ..)| {
+                    (entity, body, arms, health, offsets)
+                })
             else {
                 continue;
             };
@@ -885,6 +942,24 @@ impl Wounds {
             let hurt = wound(before, wounding.damage, wounding.part, self.armor_absorb);
             health.health = hurt.after.health;
             health.armour = hurt.after.armor;
+            if hurt.damage > 0.0 && !hurt.killed {
+                let weight = engine::math::clamp(hurt.damage / 50.0, 0.35, 1.0);
+                let sign = if (tick + u64::from(wounding.victim)).is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                offsets.punch_pitch_radians = engine::math::clamp(
+                    offsets.punch_pitch_radians + 0.011 * weight,
+                    -0.05,
+                    0.04,
+                );
+                offsets.punch_yaw_radians = engine::math::clamp(
+                    offsets.punch_yaw_radians + 0.005 * weight * sign,
+                    -0.03,
+                    0.03,
+                );
+            }
             if wounding.tag_slow > 0.0 {
                 arms.tag_slow = wounding.tag_slow;
                 arms.tag_ticks = self.tag_ticks;

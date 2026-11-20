@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::play::camera::TestCamera;
 use crate::play::flow::Flow;
-use crate::play::screen::{Options, ScreenBuys, ScreenState};
+use crate::play::screen::{Options, ScreenBuys, ScreenSounds, ScreenState};
 
 use hud::{HudFacts, Shown};
 
@@ -325,6 +325,7 @@ impl Brick for ScreenBrick {
             .resource::<ScreenState>()
             .resource::<Showing>()
             .resource::<ScreenBuys>()
+            .resource::<ScreenSounds>()
             .resource::<ScreenBook>()
             .resource::<facts::Recent>()
             .settings::<Options>()

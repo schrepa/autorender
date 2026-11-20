@@ -1,7 +1,7 @@
 use engine_math::{Random, min, ticks};
 
 use super::numbers::{GunKind, GunNumbers, WeaponNumbers};
-use super::recoil::{Aim, Kick, Recoil, Shot, Stance, bloomed_deg, fire, recover};
+use super::recoil::{Aim, Kick, Recoil, Shot, Stance, bloom_deg, bloomed_deg, fire, recover};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -62,6 +62,7 @@ pub struct GunInput {
     pub reload_pressed: bool,
     pub scope_pressed: bool,
     pub pace: Pace,
+    pub base_spread_deg: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -189,6 +190,14 @@ impl Gun {
         self.scope_level = level;
     }
 
+    pub fn settled_scope_level(&self) -> usize {
+        self.settled
+    }
+
+    pub fn current_bloom_deg(&self, numbers: &WeaponNumbers) -> f32 {
+        bloom_deg(numbers.gun(self.kind), self.recoil.shots)
+    }
+
     pub fn scope_raised(&self) -> bool {
         self.settled > 0
     }
@@ -278,8 +287,11 @@ impl Gun {
                 self.armed = false;
                 let rate = gun.shots_per_second * input.pace.fire_rate * self.rate_factor(gun);
                 self.cooldown_ticks += ticks_per_second as f32 / rate - 1.0;
-                let spread =
-                    bloomed_deg(gun, stance, self.settled, self.recoil.shots) * input.pace.spread;
+                let base_spread = match input.base_spread_deg {
+                    Some(deg) => deg + bloom_deg(gun, self.recoil.shots),
+                    None => bloomed_deg(gun, stance, self.settled, self.recoil.shots),
+                };
+                let spread = base_spread * input.pace.spread;
                 let recoil = match &gun.scope {
                     Some(scope) if self.settled > 0 => gun.recoil.scaled(scope.recoil_factor),
                     Some(_) | None => gun.recoil,

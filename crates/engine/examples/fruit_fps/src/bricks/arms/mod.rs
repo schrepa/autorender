@@ -364,7 +364,7 @@ fn report(
             magazine: view.magazine,
             reserve: view.reserve,
             reloading: view.reload_progress,
-            spread_deg: view.spread_deg,
+            spread_deg: arms.live_spread_deg,
             scope_level: view.scope_level as u32,
             ready: view.ready,
             held: arms.hand.held.key().to_owned(),

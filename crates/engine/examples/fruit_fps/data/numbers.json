@@ -124,11 +124,11 @@
     "walk_factor": 0.5,
     "crouch_factor": 0.4,
     "jump_height_m": 0.9,
-    "ground_accel_per_s": 5.5,
-    "ground_friction": 5.2,
-    "stop_speed_mps": 1.524,
-    "braking_friction": 6,
-    "braking_decel_mps2": 18.3,
+    "ground_accel_per_s": 8.0,
+    "ground_friction": 6.2,
+    "stop_speed_mps": 1.65,
+    "braking_friction": 8.0,
+    "braking_decel_mps2": 26.0,
     "air_accel_per_s": 12,
     "air_wish_cap_mps": 0.65,
     "jump_speed_cap_mps": 6.75,
@@ -139,7 +139,7 @@
     "slope_limit_deg": 50,
     "crouch_height_m": 1.25,
     "jump_apex_seconds": 0.3,
-    "crouch_seconds": 0.12,
+    "crouch_seconds": 0.09,
     "stride_run_m": 1.8,
     "stride_walk_m": 0.931,
     "stride_crouch_m": 0.726,
@@ -169,8 +169,8 @@
       "shots_per_second": 6.75,
       "magazine": 12,
       "reserve": 36,
-      "reload_seconds": 1.75,
-      "equip_seconds": 0.75,
+      "reload_seconds": 1.65,
+      "equip_seconds": 0.55,
       "inspect_seconds": 2.2,
       "run_speed_factor": 1.061,
       "damage": [
@@ -188,13 +188,13 @@
         }
       ],
       "spread_deg": {
-        "stand": 0.4,
-        "crouch": 0.3,
-        "walk": 1.5,
-        "run": 2.7,
-        "air": 7.4,
-        "crouch_move": 0.8,
-        "land": 7.0
+        "stand": 0.35,
+        "crouch": 0.25,
+        "walk": 1.1,
+        "run": 2.2,
+        "air": 6.8,
+        "crouch_move": 0.65,
+        "land": 5.5
       },
       "spread_bloom": {
         "per_shot_deg": 0.15,
@@ -218,8 +218,8 @@
       "shots_per_second": 13.33,
       "magazine": 30,
       "reserve": 90,
-      "reload_seconds": 2.25,
-      "equip_seconds": 0.75,
+      "reload_seconds": 2.1,
+      "equip_seconds": 0.62,
       "inspect_seconds": 2.4,
       "run_speed_factor": 1.061,
       "damage": [
@@ -243,13 +243,13 @@
         }
       ],
       "spread_deg": {
-        "stand": 0.4,
-        "crouch": 0.34,
-        "walk": 1.4,
-        "run": 2.9,
-        "air": 10.4,
-        "crouch_move": 0.49,
-        "land": 7.0
+        "stand": 0.36,
+        "crouch": 0.3,
+        "walk": 1.0,
+        "run": 2.4,
+        "air": 9.2,
+        "crouch_move": 0.45,
+        "land": 5.8
       },
       "spread_bloom": {
         "per_shot_deg": 0.1,
@@ -262,22 +262,22 @@
         "side_starts_after_shots": 4,
         "side_swing_shots": 3,
         "side_jitter_deg": 0.15,
-        "recover_seconds": 0.35
+        "recover_seconds": 0.32
       },
       "tag_slow": 0.725,
       "scope": {
         "zoom": [
           1.15
         ],
-        "aim_speed_factor": 0.76,
+        "aim_speed_factor": 0.78,
         "spread_deg": {
-          "stand": 0.25,
-          "crouch": 0.21,
-          "walk": 1.25,
-          "run": 2.75,
-          "air": 10.25,
-          "crouch_move": 0.36,
-          "land": 7.0
+          "stand": 0.22,
+          "crouch": 0.18,
+          "walk": 0.85,
+          "run": 2.1,
+          "air": 9.0,
+          "crouch_move": 0.34,
+          "land": 5.5
         },
         "fire_rate_factor": 0.9,
         "recoil_factor": 0.9,
@@ -292,8 +292,8 @@
       "shots_per_second": 9.75,
       "magazine": 25,
       "reserve": 50,
-      "reload_seconds": 2.5,
-      "equip_seconds": 1.0,
+      "reload_seconds": 2.35,
+      "equip_seconds": 0.8,
       "inspect_seconds": 2.6,
       "run_speed_factor": 1.0,
       "damage": [
@@ -305,13 +305,13 @@
         }
       ],
       "spread_deg": {
-        "stand": 0.25,
-        "crouch": 0.21,
-        "walk": 3.25,
-        "run": 6.25,
-        "air": 10.25,
-        "crouch_move": 1.01,
-        "land": 7.0
+        "stand": 0.22,
+        "crouch": 0.18,
+        "walk": 2.1,
+        "run": 5.2,
+        "air": 9.5,
+        "crouch_move": 0.85,
+        "land": 6.0
       },
       "spread_bloom": {
         "per_shot_deg": 0.15,
@@ -324,22 +324,22 @@
         "side_starts_after_shots": 6,
         "side_swing_shots": 4,
         "side_jitter_deg": 0.1,
-        "recover_seconds": 0.4
+        "recover_seconds": 0.36
       },
       "tag_slow": 0.725,
       "scope": {
         "zoom": [
           1.25
         ],
-        "aim_speed_factor": 0.76,
+        "aim_speed_factor": 0.78,
         "spread_deg": {
-          "stand": 0.157,
-          "crouch": 0.13,
-          "walk": 3.157,
-          "run": 6.157,
-          "air": 10.157,
-          "crouch_move": 0.93,
-          "land": 7.0
+          "stand": 0.14,
+          "crouch": 0.12,
+          "walk": 1.9,
+          "run": 4.8,
+          "air": 9.2,
+          "crouch_move": 0.75,
+          "land": 5.8
         },
         "fire_rate_factor": 0.9,
         "recoil_factor": 0.9,
@@ -397,11 +397,11 @@
         "spread_deg": {
           "stand": 0.0,
           "crouch": 0.0,
-          "walk": 3.0,
-          "run": 7.0,
-          "air": 10.0,
-          "crouch_move": 2.0,
-          "land": 10.0
+          "walk": 2.2,
+          "run": 5.5,
+          "air": 9.5,
+          "crouch_move": 1.6,
+          "land": 8.0
         },
         "fire_rate_factor": 1.0,
         "recoil_factor": 0.9,
@@ -416,8 +416,8 @@
       "damage_back": 100,
       "range_m": 1.6,
       "run_speed_factor": 1.25,
-      "swing_seconds": 0.6,
-      "equip_seconds": 0.6,
+      "swing_seconds": 0.55,
+      "equip_seconds": 0.45,
       "heavy_front": 75.0,
       "heavy_back": 150.0,
       "heavy_swing_seconds": 1.0,
@@ -1510,11 +1510,11 @@
     },
     "juice": {
       "spray": {
-        "sprites": 14,
-        "seconds": 0.5,
-        "speed_mps": 3.0,
-        "spread": 0.9,
-        "size_m": 0.035,
+        "sprites": 18,
+        "seconds": 0.55,
+        "speed_mps": 3.6,
+        "spread": 0.95,
+        "size_m": 0.038,
         "gravity_mps2": 9.8,
         "color": [
           1.0,
@@ -1978,14 +1978,14 @@
     "sun_wrap": 0.2,
     "sky": {
       "zenith": [
-        0.0011,
-        0.1142,
-        0.6255
+        0.0246,
+        0.2424,
+        0.6944
       ],
       "horizon": [
-        0.379,
-        0.67,
-        0.93
+        0.52,
+        0.76,
+        0.92
       ],
       "below": [
         0.046,

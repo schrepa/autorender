@@ -20,6 +20,7 @@ pub struct LoadoutInput {
     pub lowered: bool,
     pub switch_to: Option<Slot>,
     pub pace: Pace,
+    pub base_spread_deg: Option<f32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -300,6 +301,7 @@ impl Loadout {
             reload_pressed: input.reload_pressed,
             scope_pressed: input.scope_pressed,
             pace: input.pace,
+            base_spread_deg: input.base_spread_deg,
         };
         let active = self.active;
         let rng = &mut self.rng;

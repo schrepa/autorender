@@ -249,8 +249,10 @@ fn select_part(
         }
     }
     if let Some(flow) = flow {
-        for card in &mut select.cards {
+        for (index, card) in select.cards.iter_mut().enumerate() {
             card.selected = card.key == flow.character;
+            card.hover = select.hover_card == Some(index);
+            card.press = select.press_card == Some(index);
         }
         select.level = source.menu.levels.iter().position(|level| *level == flow.level);
     }

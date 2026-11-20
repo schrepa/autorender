@@ -234,6 +234,10 @@ fields!(SettingsFacts, me {
     "crosshair_color" => Val::Text(&me.crosshair_color),
     "invert" => Val::Bool(me.invert),
     "crosshair_dot" => Val::Bool(me.reticle.dot),
+    "hover_back" => Val::Bool(me.hover_back),
+    "press_back" => Val::Bool(me.press_back),
+    "hover_invert" => Val::Bool(me.hover_invert),
+    "hover_dot" => Val::Bool(me.hover_dot),
 });
 
 fields!(AbilityCard, me {
@@ -249,6 +253,8 @@ fields!(SelectCard, me {
     "name" => Val::Text(&me.name),
     "role" => Val::Text(&me.role),
     "selected" => Val::Bool(me.selected),
+    "hover" => Val::Bool(me.hover),
+    "press" => Val::Bool(me.press),
 });
 
 fields!(LoadingFacts, me {
@@ -382,6 +388,11 @@ const STATUSES: u32 = 36;
 const BLIND: u32 = 37;
 const KILL: u32 = 38;
 const ULT: u32 = 39;
+const HOVER: u32 = 40;
+const PRESS: u32 = 41;
+const LEVEL_HOVER: u32 = 42;
+const LEVEL_PRESS: u32 = 43;
+const CROSSHAIR_HOVER: u32 = 44;
 
 fn pack(group: u32, a: usize, b: usize, field: u32) -> Option<Slot> {
     let small = |value: usize| u32::try_from(value).ok().filter(|value| *value < 0xFF);
@@ -464,23 +475,39 @@ fn sided(group: u32, fields: &[&str], path: &[Seg]) -> Option<Slot> {
     pack(group, side, index, item(fields, rest)?)
 }
 
-fn focus(shown: Shown, path: &[Seg]) -> Option<Slot> {
-    let button = leaf(path)?.strip_prefix("focus_")?;
-    let buttons: &[&str] = match shown {
+fn screen_buttons(shown: Shown) -> &'static [&'static str] {
+    match shown {
         Shown::Title => &menu::TITLE,
         Shown::Pause => &menu::PAUSE,
         Shown::MatchEnd => &menu::MATCH_END,
         Shown::Settings => &menu::SETTINGS_ROWS,
         Shown::Select => &menu::SELECT,
         Shown::Loading | Shown::Hud | Shown::Buy | Shown::Scoreboard | Shown::RoundEnd => &[],
+    }
+}
+
+fn focus(shown: Shown, path: &[Seg]) -> Option<Slot> {
+    let name = leaf(path)?;
+    let (group, button) = if let Some(button) = name.strip_prefix("focus_") {
+        (FOCUS, button)
+    } else if let Some(button) = name.strip_prefix("hover_") {
+        (HOVER, button)
+    } else {
+        (PRESS, name.strip_prefix("press_")?)
     };
-    pack(FOCUS, shown as usize, among(buttons, button)?, 0)
+    pack(group, shown as usize, among(screen_buttons(shown), button)?, 0)
 }
 
 fn level(look: &ScreenSource, (place, name): (usize, &str)) -> Option<Slot> {
-    let level = name.strip_prefix("bots_")?;
+    let (group, level) = if let Some(level) = name.strip_prefix("bots_") {
+        (LEVEL, level)
+    } else if let Some(level) = name.strip_prefix("hover_bots_") {
+        (LEVEL_HOVER, level)
+    } else {
+        (LEVEL_PRESS, name.strip_prefix("press_bots_")?)
+    };
     let index = look.menu.levels.iter().position(|known| known == level)?;
-    pack(LEVEL, place, index, 0)
+    pack(group, place, index, 0)
 }
 
 fn select(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
@@ -518,8 +545,22 @@ fn settings(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
     if let Some(found) = one(SETTINGS, SettingsFacts::FIELDS, path) {
         return Some(found);
     }
-    if rest.is_empty() && name.starts_with("bots_") {
+    if rest.is_empty()
+        && (name.starts_with("bots_")
+            || name.starts_with("hover_bots_")
+            || name.starts_with("press_bots_"))
+    {
         return level(look, (1, name));
+    }
+    if let Some(index) = name
+        .strip_prefix("hover_crosshair_")
+        .and_then(|at| at.parse::<usize>().ok())
+    {
+        return if rest.is_empty() {
+            pack(CROSSHAIR_HOVER, index, 0, 0)
+        } else {
+            None
+        };
     }
     if let Some(index) = name
         .strip_prefix("crosshair_")
@@ -535,13 +576,16 @@ fn settings(look: &ScreenSource, path: &[Seg]) -> Option<Slot> {
 }
 
 fn menu_screen(look: &ScreenSource, shown: Shown, path: &[Seg]) -> Option<Slot> {
+    if shown == Shown::Settings {
+        return settings(look, path).or_else(|| focus(shown, path));
+    }
     if let Some(found) = focus(shown, path) {
         return Some(found);
     }
     match shown {
         Shown::Select => select(look, path),
         Shown::Loading => loading(path),
-        Shown::Settings => settings(look, path),
+        Shown::Settings => None,
         Shown::Title => match leaf(path)? {
             "can_quit" => pack(CAN_QUIT, 0, 0, 0),
             _ => None,
@@ -739,6 +783,12 @@ impl Facts for HudFacts {
             FOCUS => Val::Bool(
                 menu.screen.map(|shown| shown as usize) == Some(a) && menu.focus == Some(b),
             ),
+            HOVER => Val::Bool(
+                menu.screen.map(|shown| shown as usize) == Some(a) && menu.hover == Some(b),
+            ),
+            PRESS => Val::Bool(
+                menu.screen.map(|shown| shown as usize) == Some(a) && menu.press == Some(b),
+            ),
             CAN_QUIT => Val::Bool(menu.can_quit),
             SELECT_CARDS => menu
                 .select
@@ -753,6 +803,11 @@ impl Facts for HudFacts {
                 .map_or(Val::Missing, |ability| ability.field(field)),
             LEVEL if a == 0 => level_is(menu.select.level, b),
             LEVEL => level_is(menu.settings.level, b),
+            LEVEL_HOVER if a == 0 => level_is(menu.select.hover_level, b),
+            LEVEL_HOVER => level_is(menu.settings.hover_level, b),
+            LEVEL_PRESS if a == 0 => level_is(menu.select.press_level, b),
+            LEVEL_PRESS => level_is(menu.settings.press_level, b),
+            CROSSHAIR_HOVER => Val::Bool(menu.settings.hover_crosshair == Some(a)),
             LOADING => menu.loading.field(field),
             TIPS => menu
                 .loading

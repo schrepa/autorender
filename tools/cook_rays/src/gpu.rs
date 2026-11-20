@@ -5,7 +5,10 @@ use wgpu::util::DeviceExt;
 
 use crate::Occluders;
 
-const FEWEST_RAYS: u64 = 1 << 18;
+const FEWEST_RAYS: u64 = 1 << 19;
+const MOST_RAYS: u64 = 1 << 22;
+const MAX_PER_THREAD: u32 = 128;
+const MAX_DISPATCH_ITEMS: usize = 65_536;
 const SHORT_SECONDS: f64 = 0.05;
 const LONG_SECONDS: f64 = 0.2;
 const WORKGROUP: u32 = 64;
@@ -33,18 +36,48 @@ struct Upload<'a> {
     widest: u64,
 }
 
-fn taken(items: &[[u32; 3]], rays: u64, most_items: usize) -> usize {
+struct Cursor {
+    owner: usize,
+    offset: u32,
+}
+
+fn fill_batch(
+    items: &[[u32; 3]],
+    answers: &[u32],
+    cursor: &mut Cursor,
+    (rays, most_items): (u64, usize),
+    (batch, owners): (&mut Vec<[u32; 3]>, &mut Vec<(usize, u32)>),
+) {
+    batch.clear();
+    owners.clear();
     let mut cast = 0_u64;
-    let within = items.iter().take(most_items).take_while(|item| {
-        cast += u64::from(item[2]);
-        cast <= rays
-    });
-    within.count().max(1)
+    while cursor.owner < items.len() && batch.len() < most_items {
+        let [eye, start, count] = items[cursor.owner];
+        if answers[cursor.owner] != crate::NONE || cursor.offset >= count {
+            cursor.owner += 1;
+            cursor.offset = 0;
+            continue;
+        }
+        let take = (count - cursor.offset).min(MAX_PER_THREAD);
+        if !batch.is_empty() && cast + u64::from(take) > rays {
+            break;
+        }
+        batch.push([eye, start + cursor.offset, take]);
+        owners.push((cursor.owner, cursor.offset));
+        cast += u64::from(take);
+        cursor.offset += take;
+        if cursor.offset >= count {
+            cursor.owner += 1;
+            cursor.offset = 0;
+        }
+    }
 }
 
 impl Gpu {
     pub fn new() -> Result<Self, String> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::PRIMARY.with_env();
+        let instance = wgpu::Instance::new(descriptor);
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
@@ -75,7 +108,7 @@ impl Gpu {
         let limits = self.adapter.limits();
         let most_items = (limits.max_compute_workgroups_per_dimension as usize
             * WORKGROUP as usize)
-            .min(items.len());
+            .min(MAX_DISPATCH_ITEMS);
         let upload = Upload {
             nodes: &occluders.nodes,
             triangles: &occluders.triangles,
@@ -84,15 +117,38 @@ impl Gpu {
             widest: most_items as u64,
         };
         let opened = self.open(&upload, limits)?;
-        let mut answers = Vec::with_capacity(items.len());
+        let mut answers = vec![crate::NONE; items.len()];
+        let mut cursor = Cursor {
+            owner: 0,
+            offset: 0,
+        };
+        let mut batch = Vec::with_capacity(most_items);
+        let mut owners = Vec::with_capacity(most_items);
         let mut rays = FEWEST_RAYS;
-        while answers.len() < items.len() {
-            let left = &items[answers.len()..];
+        loop {
+            fill_batch(
+                items,
+                &answers,
+                &mut cursor,
+                (rays, most_items),
+                (&mut batch, &mut owners),
+            );
+            if batch.is_empty() {
+                break;
+            }
             let began = Instant::now();
-            answers.extend(opened.dispatch(&left[..taken(left, rays, most_items)], gap)?);
+            let found = opened.dispatch(&batch, gap)?;
+            for ((owner, offset), hit) in owners.iter().zip(found) {
+                if hit != crate::NONE {
+                    let absolute = offset + hit;
+                    if absolute < answers[*owner] {
+                        answers[*owner] = absolute;
+                    }
+                }
+            }
             let seconds = began.elapsed().as_secs_f64();
             if seconds < SHORT_SECONDS {
-                rays = rays.saturating_mul(2);
+                rays = rays.saturating_mul(2).min(MOST_RAYS);
             } else if seconds > LONG_SECONDS {
                 rays = (rays / 2).max(FEWEST_RAYS);
             }

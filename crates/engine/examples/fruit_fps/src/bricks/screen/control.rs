@@ -6,7 +6,7 @@ use engine_core::{Closing, DevSetting};
 use crate::play::camera::TestCamera;
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
-use crate::play::screen::{Options, ScreenBuys, ScreenState};
+use crate::play::screen::{Options, ScreenBuys, ScreenSounds, ScreenState, UiSound};
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
 use crate::rules::{BuyRequest, Phase};
@@ -76,9 +76,14 @@ fn buying(
     facts: &HudFacts,
     buys: &mut ScreenBuys,
     book: &mut ScreenBook,
+    sounds: &mut ScreenSounds,
+    prev_hovered: Option<(CardList, usize)>,
 ) {
     let keys = &loaded.keys;
     let over = hovered(draw, book.pointer);
+    if over.is_some() && over != prev_hovered {
+        sounds.play(UiSound::Hover);
+    }
     book.hovered = over;
     let mut asked = |request| {
         if let Some(request) = request {
@@ -105,19 +110,21 @@ fn menus(
     nav: &Nav<'_>,
     (flow, state): (&mut Flow, &mut Showing),
     facts: &mut HudFacts,
-    (menu_state, values): (&mut MenuState, &mut Values),
+    (menu_state, values, sounds): (&mut MenuState, &mut Values, &mut ScreenSounds),
 ) {
     let escape = engine_bindings::pressed(nav.devices, &nav.keys.back);
     if flow.stage == Stage::Playing && !flow.settings_open {
         if escape && state.buy_open {
             state.buy_open = false;
+            sounds.play(UiSound::Click);
         } else if escape {
             flow.stage = Stage::Paused;
+            sounds.play(UiSound::Click);
         }
         facts.menu.screen = None;
         return;
     }
-    menu::navigate(nav, (menu_state, flow, facts), values);
+    menu::navigate(nav, (menu_state, flow, facts), values, sounds);
 }
 
 fn options_facts(
@@ -177,7 +184,7 @@ type Reads<'w> = (
 type Writes<'w> = (
     ResMut<'w, CursorMode>,
     (ResMut<'w, ScreenState>, ResMut<'w, Showing>),
-    ResMut<'w, ScreenBuys>,
+    (ResMut<'w, ScreenBuys>, ResMut<'w, ScreenSounds>),
     ResMut<'w, ScreenBook>,
     ResMut<'w, MenuState>,
     ResMut<'w, OptionsWrite>,
@@ -186,7 +193,14 @@ type Writes<'w> = (
 pub(super) fn control(
     (devices, setup, draw, numbers, (controls, options, volume), (load, camera)): Reads,
     sources: Query<&ScreenSource>,
-    (mut cursor, (mut state, mut showing), mut buys, mut book, mut menu_state, mut writes): Writes,
+    (
+        mut cursor,
+        (mut state, mut showing),
+        (mut buys, mut sounds),
+        mut book,
+        mut menu_state,
+        mut writes,
+    ): Writes,
     (mut flow, mut closing): (Option<ResMut<Flow>>, ResMut<Closing>),
     mut facts: ResMut<HudFacts>,
 ) {
@@ -220,7 +234,7 @@ pub(super) fn control(
             &nav,
             (flow, &mut next),
             facts,
-            (&mut menu_state, &mut values),
+            (&mut menu_state, &mut values, &mut sounds),
         );
         if menu_state.quit_asked != asked
             && let Err(error) = closing.ask()
@@ -245,6 +259,7 @@ pub(super) fn control(
         next.buy_open = false;
     } else if map.is_some_and(|map| engine_bindings::pressed(&devices, &map.buy_menu)) {
         next.buy_open = !next.buy_open;
+        sounds.play(UiSound::Click);
     }
     next.board_held =
         playing && map.is_some_and(|map| engine_bindings::held(&devices, &map.scoreboard));
@@ -273,9 +288,17 @@ pub(super) fn control(
     );
     facts.screen = (!hud_hidden(camera.as_deref(), next.shown)).then_some(next.shown);
     book.pointer = devices.mouse.position_pixels;
+    let prev_hovered = book.hovered;
     book.hovered = None;
     if next.shown == Shown::Buy {
-        buying((&devices, loaded, &draw), facts, &mut buys, &mut book);
+        buying(
+            (&devices, loaded, &draw),
+            facts,
+            &mut buys,
+            &mut book,
+            &mut sounds,
+            prev_hovered,
+        );
     }
     let hovered = book.hovered;
     let lists = [

@@ -557,6 +557,7 @@ pub(super) fn demo(words: &Words) -> HudFacts {
         },
         scope_ease: 0.0,
         damage: damage(),
+        hit_mark: None,
         phase: Some(Phase::Buy),
         live: false,
     }

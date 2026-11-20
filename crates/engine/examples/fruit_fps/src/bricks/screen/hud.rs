@@ -320,6 +320,8 @@ pub struct SelectCard {
     pub name: String,
     pub role: String,
     pub selected: bool,
+    pub hover: bool,
+    pub press: bool,
     pub abilities: [AbilityCard; 4],
 }
 
@@ -327,6 +329,12 @@ pub struct SelectCard {
 pub struct SelectFacts {
     pub cards: Vec<SelectCard>,
     pub level: Option<usize>,
+    pub hover_card: Option<usize>,
+    pub press_card: Option<usize>,
+    pub hover_level: Option<usize>,
+    pub press_level: Option<usize>,
+    pub hover_play: bool,
+    pub press_play: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -361,6 +369,14 @@ pub struct SettingsFacts {
     pub invert: bool,
     pub level: Option<usize>,
     pub keys: Vec<KeyRow>,
+    pub hover_row: Option<usize>,
+    pub hover_level: Option<usize>,
+    pub press_level: Option<usize>,
+    pub hover_crosshair: Option<usize>,
+    pub hover_back: bool,
+    pub press_back: bool,
+    pub hover_invert: bool,
+    pub hover_dot: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -376,6 +392,8 @@ pub struct Reticle {
 pub struct MenuFacts {
     pub screen: Option<Shown>,
     pub focus: Option<usize>,
+    pub hover: Option<usize>,
+    pub press: Option<usize>,
     pub select: SelectFacts,
     pub loading: LoadingFacts,
     pub settings: SettingsFacts,
@@ -430,6 +448,13 @@ pub struct DamageMark {
     pub age: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HitMark {
+    pub age: f32,
+    pub headshot: bool,
+    pub killed: bool,
+}
+
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct HudFacts {
     pub version: u64,
@@ -464,6 +489,7 @@ pub struct HudFacts {
     pub kill: KillFacts,
     pub scope_ease: f32,
     pub damage: Vec<DamageMark>,
+    pub hit_mark: Option<HitMark>,
     pub phase: Option<Phase>,
     pub live: bool,
 }

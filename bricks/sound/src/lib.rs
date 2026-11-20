@@ -51,6 +51,7 @@ pub struct SoundCues {
     pub tick: u64,
     pub cues: Vec<Cue>,
     pub stops: Vec<u64>,
+    pub immediate: Vec<Cue>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -169,6 +170,7 @@ impl<O: Occluder + Resource> Brick for SoundBrick<O> {
             .resource::<Mixdown>()
             .systems(Schedule::FixedSimulation, mix::<O>)
             .systems(Schedule::Presentation, prepare)
+            .systems(Schedule::Presentation, play_immediate)
             .systems(Schedule::Presentation, flush_tunes)
             .systems(Schedule::Presentation, load)
             .dev(|dev| {
@@ -200,6 +202,62 @@ fn prepare(
     if bank.master != Some(master) {
         sounds.master(master, glide);
         bank.master = Some(master);
+    }
+}
+
+fn play_immediate(
+    bank: Res<Bank>,
+    hearing: Res<Hearing>,
+    mut cues: ResMut<SoundCues>,
+    mut mixdown: ResMut<Mixdown>,
+    mut stats: Stats<SoundStats>,
+    mut sounds: ResMut<Sounds>,
+) {
+    if cues.immediate.is_empty() {
+        return;
+    }
+    let pending = std::mem::take(&mut cues.immediate);
+    let Some(table) = bank.playable() else {
+        return;
+    };
+    let rng = mixdown.rng.get_or_insert_with(|| Random::new(table.seed));
+    for cue in pending {
+        let Some(named) = table.events.get(&cue.event) else {
+            stats.edit(|stats| stats.unmapped += 1);
+            continue;
+        };
+        let sound = &table.sounds[named.at].1;
+        let group = hearing
+            .groups
+            .get(sound.group.name.as_str())
+            .copied()
+            .unwrap_or(1.0);
+        let gain = sound.gain * sound.own_gain.unwrap_or(1.0) * cue.gain * group;
+        if gain < table.audible_gain {
+            continue;
+        }
+        let Some(file) = sound.files.first() else {
+            continue;
+        };
+        let rate = 1.0 + voices::signed(rng) * sound.jitter;
+        let played = file.sound.and_then(|id| {
+            sounds
+                .play(Play {
+                    sound: id,
+                    gain,
+                    pan: 0.0,
+                    rate,
+                    looping: false,
+                    offset_seconds: 0.0,
+                })
+                .ok()
+        });
+        stats.edit(|stats| {
+            *stats.heard.entry(cue.event.clone()).or_default() += 1;
+            stats.cues += 1;
+            stats.refused += u64::from(played.is_none());
+            stats.started += 1;
+        });
     }
 }
 

@@ -75,8 +75,8 @@ fn mark(
 }
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let span = (edge1 - edge0).max(1.0e-4);
-    let t = ((x - edge0) / span).clamp(0.0, 1.0);
+    let span = engine::math::max(edge1 - edge0, 1.0e-4);
+    let t = engine::math::clamp((x - edge0) / span, 0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -84,8 +84,8 @@ fn sample_path(path: &[Vec3], lengths: &[f32], target: f32) -> Vec3 {
     let last = path.len().saturating_sub(1);
     for i in 1..path.len() {
         if lengths[i] >= target {
-            let span = (lengths[i] - lengths[i - 1]).max(1.0e-5);
-            let share = ((target - lengths[i - 1]) / span).clamp(0.0, 1.0);
+            let span = engine::math::max(lengths[i] - lengths[i - 1], 1.0e-5);
+            let share = engine::math::clamp((target - lengths[i - 1]) / span, 0.0, 1.0);
             return path[i - 1].lerp(path[i], share);
         }
     }
@@ -115,21 +115,24 @@ fn arc_dashes(look: &PreviewLook, color: [f32; 3], preview: &Preview, glows: &mu
         lengths.push(prev + pair[0].distance(pair[1]));
     }
     let total = *lengths.last().unwrap_or(&0.0);
-    let start = START_OFFSET_M.min(total * 0.45);
+    let start = engine::math::min(START_OFFSET_M, total * 0.45);
     let span = total - start;
     if span <= 0.15 {
         return;
     }
     let shift = hand_shift(preview);
-    let blend_end = (total * 0.65).clamp(BLEND_MIN_M, BLEND_MAX_M).min(total);
-    let step = (span / MAX_DASHES as f32).max(DASH_STEP_M);
+    let blend_end = engine::math::min(
+        engine::math::clamp(total * 0.65, BLEND_MIN_M, BLEND_MAX_M),
+        total,
+    );
+    let step = engine::math::max(span / MAX_DASHES as f32, DASH_STEP_M);
     let at_distance = |dist: f32| {
         let keep = 1.0 - smoothstep(start, blend_end, dist);
         sample_path(&preview.path, &lengths, dist) + shift * keep
     };
     let mut dist = start;
     while dist < total {
-        let end = (dist + step * DASH_FILL).min(total);
+        let end = engine::math::min(dist + step * DASH_FILL, total);
         if end - dist > 0.05 {
             let mid = 0.5 * (dist + end);
             let width = look.width_m * (0.4 + 0.6 * smoothstep(start, start + 2.5, mid));

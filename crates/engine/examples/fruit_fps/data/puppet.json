@@ -837,12 +837,12 @@
       }
     },
     "scale": 0.25,
-    "scope_seconds": 0.15,
-    "lower_seconds": 0.2,
+    "scope_seconds": 0.11,
+    "lower_seconds": 0.16,
     "sway": {
       "metres_per_radian": 0.004,
       "max_m": 0.02,
-      "follow_per_second": 10.0
+      "follow_per_second": 16.0
     },
     "bob": {
       "stride_m": 1.8,
@@ -851,9 +851,9 @@
       "full_mps": 5.4
     },
     "kick": {
-      "back_m": 0.03,
-      "up_radians": 0.04,
-      "return_per_second": 12.0
+      "back_m": 0.036,
+      "up_radians": 0.048,
+      "return_per_second": 18.0
     },
     "fire": "fire",
     "reload": "reload_parts",

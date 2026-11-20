@@ -133,7 +133,51 @@ fn hud_marks(pen: &mut Pen<'_>, facts: &HudFacts, marks: &Marks) {
             (center, facts.spread_px),
         );
     }
+    hit_mark(pen, facts, &marks.outline_color, center);
     armor_and_damage(pen, facts, marks);
+}
+
+fn hit_mark(pen: &mut Pen<'_>, facts: &HudFacts, outline_color: &str, center: Vec2) {
+    let Some(mark) = facts.hit_mark else {
+        return;
+    };
+    let (duration, key, base_gap, kick_gap, base_len, base_thick) = if mark.killed {
+        (0.28, "hit_kill", 7.0, 9.0, 12.0, 3.6)
+    } else if mark.headshot {
+        (0.22, "hit_head", 6.5, 6.5, 10.5, 3.2)
+    } else {
+        (0.16, "hit_mark", 6.0, 4.0, 8.0, 2.5)
+    };
+    let t = math::clamp(mark.age / duration, 0.0, 1.0);
+    let fade = (1.0 - t) * (1.0 - t);
+    let pop = 1.0 - (1.0 - math::min(t * 4.5, 1.0)) * (1.0 - math::min(t * 4.5, 1.0));
+    let s = math::max(pen.scale(), 0.75);
+    let gap = (base_gap + kick_gap * pop) * s;
+    let len = base_len * s * (1.18 - 0.18 * t);
+    let thick = base_thick * s;
+    let rim = 2.0 * s;
+    let Some(color) = pen.palette(key) else {
+        return;
+    };
+    let ink = pen.palette(outline_color);
+    let diag = std::f32::consts::FRAC_1_SQRT_2;
+    let corners = [
+        (-diag, -diag, std::f32::consts::FRAC_PI_4),
+        (diag, -diag, -std::f32::consts::FRAC_PI_4),
+        (-diag, diag, -std::f32::consts::FRAC_PI_4),
+        (diag, diag, std::f32::consts::FRAC_PI_4),
+    ];
+    let dist = gap + len * 0.5;
+    for (paint, extra) in [(ink, rim), (Some(color), 0.0)] {
+        let Some(paint) = paint else {
+            continue;
+        };
+        let fill = paint.faded(fade);
+        for (dx, dy, angle) in corners {
+            let at = center + Vec2::new(dx * dist, dy * dist);
+            round_bar(pen, at, (len + extra * 2.0, thick + extra * 2.0), (angle, fill));
+        }
+    }
 }
 
 fn armor_and_damage(pen: &mut Pen<'_>, facts: &HudFacts, marks: &Marks) {

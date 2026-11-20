@@ -1,6 +1,6 @@
 use std::f32::consts::{FRAC_2_PI, TAU};
 
-use engine_math::{Random, min, ticks};
+use engine_math::{Random, clamp, max, min, ticks};
 use glam::Vec3;
 
 use super::numbers::{CombatNumbers, GunNumbers, RecoilNumbers, SpreadDeg};
@@ -80,8 +80,52 @@ pub struct Recoil {
 }
 
 pub fn bloomed_deg(gun: &GunNumbers, stance: Stance, scope_level: usize, shots: u32) -> f32 {
-    let bloom = gun.spread_bloom.per_shot_deg * shots as f32;
-    spread_deg(gun, stance, scope_level) + min(bloom, gun.spread_bloom.max_deg)
+    spread_deg(gun, stance, scope_level) + bloom_deg(gun, shots)
+}
+
+pub fn bloom_deg(gun: &GunNumbers, shots: u32) -> f32 {
+    min(gun.spread_bloom.per_shot_deg * shots as f32, gun.spread_bloom.max_deg)
+}
+
+pub fn continuous_spread_deg(
+    combat: &CombatNumbers,
+    run_speed_mps: f32,
+    gun: &GunNumbers,
+    scope_level: usize,
+    footing: Footing,
+    land_share: f32,
+) -> f32 {
+    let table = gun
+        .scope
+        .as_ref()
+        .filter(|_| scope_level > 0)
+        .map_or(&gun.spread_deg, |scope| &scope.spread_deg);
+    if !footing.grounded {
+        return table.air;
+    }
+    let run = max(run_speed_mps, 0.01);
+    let base = if footing.crouched {
+        let dead = run * 0.14;
+        let full = run * 0.42;
+        let t = clamp((footing.speed_mps - dead) / max(full - dead, 0.01), 0.0, 1.0);
+        table.crouch + (table.crouch_move - table.crouch) * (t * t)
+    } else {
+        let dead = combat.deadzone_share * run;
+        let walk = combat.walk_share * run;
+        if footing.speed_mps <= dead {
+            table.stand
+        } else if footing.speed_mps <= walk {
+            let u = clamp((footing.speed_mps - dead) / max(walk - dead, 0.01), 0.0, 1.0);
+            let curve = u * u * (3.0 - 2.0 * u);
+            table.stand + (table.walk - table.stand) * curve
+        } else {
+            let v = clamp((footing.speed_mps - walk) / max(run - walk, 0.01), 0.0, 1.0);
+            let curve = v * (1.6 - 0.6 * v);
+            table.walk + (table.run - table.walk) * curve
+        }
+    };
+    let land = clamp(land_share, 0.0, 1.0);
+    base + max(table.land - base, 0.0) * (land * land)
 }
 
 pub fn spread_deg(gun: &GunNumbers, stance: Stance, scope_level: usize) -> f32 {
@@ -175,8 +219,9 @@ pub fn recover(recoil_numbers: &RecoilNumbers, recoil: &mut Recoil, ticks_per_se
     } else {
         left as f32 / total as f32
     };
-    let pitch = recovery.from_pitch * share;
-    let yaw = recovery.from_yaw * share;
+    let eased = share * (0.55 + 0.45 * share);
+    let pitch = recovery.from_pitch * eased;
+    let yaw = recovery.from_yaw * eased;
     let kick = Kick {
         pitch_radians: pitch - recoil.pitch_radians,
         yaw_radians: yaw - recoil.yaw_radians,

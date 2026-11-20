@@ -28,7 +28,7 @@ settings! {
     }
 }
 
-type Defaults = (Arc<[SeatChoice]>, f64);
+type Defaults = (Arc<[SeatChoice]>, Arc<[String]>, f64);
 
 #[derive(Resource, Default)]
 struct FlowBook {
@@ -93,12 +93,13 @@ fn defaults(book: &mut FlowBook, numbers: &Numbers) -> Option<Defaults> {
     if fresh {
         book.defaults = Some((
             numbers.revision(),
-            roster::default_roster(&game.whole).map(|(seats, least)| (Arc::from(seats), least)),
+            roster::default_roster(&game.whole)
+                .map(|(seats, levels, least)| (Arc::from(seats), Arc::from(levels), least)),
         ));
     }
     match book.defaults.as_ref().map(|(_, read)| read) {
-        Some(Ok((seats, least))) => {
-            let read = (Arc::clone(seats), *least);
+        Some(Ok((seats, levels, least))) => {
+            let read = (Arc::clone(seats), Arc::clone(levels), *least);
             book.problem = None;
             Some(read)
         }
@@ -110,7 +111,7 @@ fn defaults(book: &mut FlowBook, numbers: &Numbers) -> Option<Defaults> {
     }
 }
 
-fn choose_defaults(flow: &mut Flow, seats: &[SeatChoice]) {
+fn choose_defaults(flow: &mut Flow, seats: &[SeatChoice], levels: &[String]) {
     let human = seats.iter().find(|seat| seat.control == Control::Human);
     let known = |character: &str| {
         seats.iter().any(|seat| {
@@ -122,7 +123,9 @@ fn choose_defaults(flow: &mut Flow, seats: &[SeatChoice]) {
     {
         flow.character.clone_from(&seat.character);
     }
-    if !seats.iter().any(|seat| seat.level == flow.level)
+    let level_known = levels.iter().any(|level| level == &flow.level)
+        || seats.iter().any(|seat| seat.level == flow.level);
+    if !level_known
         && let Some(seat) = seats.iter().find(|seat| seat.control == Control::Bot)
     {
         flow.level.clone_from(&seat.level);
@@ -230,12 +233,15 @@ fn steer(
     let read = numbers
         .as_deref()
         .and_then(|numbers| defaults(book, numbers));
-    let least = read.as_ref().map_or(0.0, |(_, least)| *least);
-    let seats = read.map(|(seats, _)| seats);
+    let least = read.as_ref().map_or(0.0, |(_, _, least)| *least);
+    let levels = read.as_ref().map(|(_, levels, _)| Arc::clone(levels));
+    let seats = read.map(|(seats, _, _)| seats);
     let play_now = setup.get().is_some_and(|setup| setup.play_now);
     let matched = assets.group(MATCH_GROUP);
-    if let Some(seats) = seats.as_deref().filter(|_| flow.restored) {
-        choose_defaults(flow, seats);
+    if let (Some(seats), Some(levels)) = (seats.as_deref(), levels.as_deref())
+        && flow.restored
+    {
+        choose_defaults(flow, seats, levels);
     }
     let seats = seats.filter(|_| flow.restored && landed(matched.as_ref()));
     if let Some(seats) = seats.as_deref() {

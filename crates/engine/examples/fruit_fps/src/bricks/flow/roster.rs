@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use engine::Node;
 use engine::prelude::*;
 use serde::Deserialize;
@@ -12,6 +14,12 @@ struct RosterFile {
     #[serde(rename = "match")]
     game: RosterMatch,
     flow: FlowNumbers,
+    bots: RosterBots,
+}
+
+#[derive(Deserialize)]
+struct RosterBots {
+    levels: BTreeMap<String, Value>,
 }
 
 #[derive(Deserialize)]
@@ -33,9 +41,11 @@ struct RosterSeat {
     level: String,
 }
 
-pub(super) fn default_roster(whole: &Value) -> Result<(Vec<SeatChoice>, f64), String> {
+pub(super) fn default_roster(
+    whole: &Value,
+) -> Result<(Vec<SeatChoice>, Vec<String>, f64), String> {
     let file = RosterFile::deserialize(whole)
-        .map_err(|error| format!("numbers.json match.roster and flow: {error}"))?;
+        .map_err(|error| format!("numbers.json match.roster, bots.levels and flow: {error}"))?;
     let seats = file
         .game
         .roster
@@ -47,7 +57,8 @@ pub(super) fn default_roster(whole: &Value) -> Result<(Vec<SeatChoice>, f64), St
             level: seat.level,
         })
         .collect();
-    Ok((seats, file.flow.loading_min_seconds))
+    let levels = file.bots.levels.into_keys().collect();
+    Ok((seats, levels, file.flow.loading_min_seconds))
 }
 
 pub(super) fn chosen(default: &[SeatChoice], character: &str, level: &str) -> Vec<SeatChoice> {

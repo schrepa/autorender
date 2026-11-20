@@ -7,6 +7,24 @@ pub struct ScreenState {
     pub holds_pointer: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiSound {
+    Hover,
+    Click,
+    Ready,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScreenSounds {
+    pub queued: Vec<UiSound>,
+}
+
+impl ScreenSounds {
+    pub fn play(&mut self, sound: UiSound) {
+        self.queued.push(sound);
+    }
+}
+
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScreenBuys {
     pub requests: Vec<BuyRequest>,

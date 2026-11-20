@@ -20,6 +20,7 @@ use crate::play::events::round::RoundEvents;
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::round::Round;
+use crate::play::screen::{ScreenSounds, UiSound};
 use crate::play::sound::Volume;
 use crate::play::view::Watched;
 use crate::play::world::{Arena, Barrier};
@@ -60,6 +61,7 @@ impl Brick for CuesBrick {
             .resource::<Book>()
             .systems(Schedule::FixedSimulation, cue)
             .systems(Schedule::Presentation, hear)
+            .systems(Schedule::Presentation, ui_cues)
             .dev(|dev| {
                 dev.stats::<CuesStats>()
                     .systems(Schedule::Presentation, report);
@@ -75,6 +77,18 @@ fn hear(
 ) {
     if hearing.master != Some(volume.master) {
         hearing.master = Some(volume.master);
+    }
+    for (group, gain) in [
+        ("effects", volume.effects),
+        ("interface", volume.interface),
+        ("footsteps", volume.footsteps),
+    ] {
+        match hearing.groups.get_mut(group) {
+            Some(held) => *held = gain,
+            None => {
+                hearing.groups.insert(group.to_owned(), gain);
+            }
+        }
     }
     let Some(game) = numbers.get() else {
         return;
@@ -94,6 +108,23 @@ fn hear(
             book.numbers = None;
             book.refusal = Some(error);
         }
+    }
+}
+
+fn ui_cues(mut screen: Option<ResMut<ScreenSounds>>, mut cues: ResMut<SoundCues>) {
+    let Some(screen) = screen.as_deref_mut() else {
+        return;
+    };
+    if screen.queued.is_empty() {
+        return;
+    }
+    for sound in screen.queued.drain(..) {
+        let name = match sound {
+            UiSound::Hover => "ui.hover",
+            UiSound::Click => "ui.click",
+            UiSound::Ready => "ui.ready",
+        };
+        cues.immediate.push(events::cue(name, Anchor::Listener, None));
     }
 }
 
@@ -215,6 +246,7 @@ fn cue(
     let SoundCues {
         cues: mut fresh,
         mut stops,
+        immediate,
         ..
     } = std::mem::take(&mut *cues);
     fresh.clear();
@@ -290,6 +322,7 @@ fn cue(
         tick: now,
         cues: fresh,
         stops,
+        immediate,
     };
 }
 

@@ -5,7 +5,7 @@ use engine::prelude::*;
 use engine::{FrameTime, Projection, Views};
 use engine_core::DevSetting;
 
-use crate::play::actors::{Actor, Body, Health, Human, Motion, Wish};
+use crate::play::actors::{Actor, Body, Health, Human, Wish};
 use crate::play::arms::Arms;
 use crate::play::events::arms::{ArmsEvents, Target};
 use crate::play::events::powers::PowerEvents;
@@ -18,7 +18,7 @@ use crate::rules::{
 };
 use crate::weapons::Stance;
 
-use super::hud::{DamageMark, FeedLine, HudFacts, MapItem, ResultFacts, Shown};
+use super::hud::{DamageMark, FeedLine, HitMark, HudFacts, MapItem, ResultFacts, Shown};
 use super::live::{self, character_key, character_name, named, set, tone, worded};
 use super::{DamageEdge, Loaded, ScreenLoad, ScreenSetup, ScreenSource, Words};
 
@@ -40,6 +40,7 @@ pub(super) struct Recent {
     round_result: Option<ResultFacts>,
     match_result: Option<ResultFacts>,
     armor_break: Option<f64>,
+    hit_mark: Option<(f64, bool, bool)>,
     kill: Option<(f64, u32, String)>,
     damage: Vec<(f64, Vec3)>,
     round_tick: Option<u64>,
@@ -487,8 +488,11 @@ fn arms_part(
         if let Some(dealt) = recent.dealt.get_mut(hit.shooter as usize) {
             *dealt += hit.health_lost + hit.armor_lost;
         }
-        if Some(hit.shooter as usize) == human && hit.armor_broke {
-            recent.armor_break = Some(now);
+        if Some(hit.shooter as usize) == human {
+            recent.hit_mark = Some((now, hit.headshot, hit.killed));
+            if hit.armor_broke {
+                recent.armor_break = Some(now);
+            }
         }
         if Some(hit.victim as usize) == human
             && let Some((_, body)) = bodies.iter().find(|(actor, _)| actor.slot == hit.shooter)
@@ -519,16 +523,6 @@ fn bearing(from: Vec3, at: Vec3) -> f32 {
 fn turned(angle: f32) -> f32 {
     let turn = std::f32::consts::TAU;
     angle - (angle / turn).round() * turn
-}
-
-fn stance(motion: Motion) -> Stance {
-    match motion {
-        Motion::Standing => Stance::Stand,
-        Motion::Walking => Stance::Walk,
-        Motion::Running => Stance::Run,
-        Motion::Crouching => Stance::Crouch,
-        Motion::Air => Stance::Air,
-    }
 }
 
 fn spread_px(views: &Views, spread_deg: f32) -> f32 {
@@ -562,7 +556,7 @@ type HumanRow = (
 
 fn weapon_part(
     facts: &mut HudFacts,
-    (arms, body): (Option<&Arms>, Option<&Body>),
+    arms: Option<&Arms>,
     numbers: &Numbers,
     views: &Views,
     share: f32,
@@ -574,8 +568,7 @@ fn weapon_part(
         weapon.mag_size = None;
         return;
     };
-    let motion = body.map_or(Stance::Stand, |body| stance(body.motion));
-    let shown = arms.loadout.view(&numbers.weapons, motion);
+    let shown = arms.loadout.view(&numbers.weapons, Stance::Stand);
     set(&mut weapon.name, shown.name);
     if arms.device_out {
         set(&mut weapon.icon, DEVICE_ICON);
@@ -594,7 +587,7 @@ fn weapon_part(
         (Some(mag), Some(size)) => mag as f32 <= size as f32 * share,
         (Some(_) | None, Some(_) | None) => false,
     };
-    facts.spread_px = spread_px(views, shown.spread_deg);
+    facts.spread_px = spread_px(views, arms.live_spread_deg);
 }
 
 fn marks_part(
@@ -607,6 +600,21 @@ fn marks_part(
     facts.armor_break = recent.armor_break.and_then(|born| {
         let age = (now - born) as f32;
         (age < marks.armor.seconds).then_some(age)
+    });
+    facts.hit_mark = recent.hit_mark.and_then(|(born, headshot, killed)| {
+        let age = (now - born) as f32;
+        let duration = if killed {
+            0.28
+        } else if headshot {
+            0.22
+        } else {
+            0.16
+        };
+        (age < duration).then_some(HitMark {
+            age,
+            headshot,
+            killed,
+        })
     });
     let kill = &mut facts.kill;
     kill.active = false;
@@ -847,6 +855,11 @@ fn demo_part(
     facts.scope_ease = setup.demo_scope;
     facts.scope = u32::from(setup.demo_scope > 0.0);
     facts.armor_break = setup.demo_armor.then_some(0.1);
+    facts.hit_mark = (setup.demo_kills > 0).then_some(HitMark {
+        age: 0.04,
+        headshot: true,
+        killed: false,
+    });
     let kill = &mut facts.kill;
     kill.active = setup.demo_kills > 0;
     kill.count = setup.demo_kills;
@@ -906,7 +919,7 @@ pub(super) fn fill(
         let row = rows.iter().find(|row| row.0.slot == watched)?;
         Some((view.players.get(watched as usize)?, row))
     });
-    let (seen_player, (_, seen_health, seen_arms, seen_body, _)) =
+    let (seen_player, (_, seen_health, seen_arms, _, _)) =
         seen.unwrap_or((player, (actor, health, arms, body, wish)));
     live::abilities_part(facts, &view, (seen_player, player));
     live::action_part(facts, &view, slot, words);
@@ -927,13 +940,7 @@ pub(super) fn fill(
     vitals_part(facts, &view, (seen_player, seen_health), lows);
     facts.player.credits = player.credits;
     if let Some(numbers) = numbers.as_deref() {
-        weapon_part(
-            facts,
-            (seen_arms, seen_body),
-            numbers,
-            &views,
-            lows.magazine_share,
-        );
+        weapon_part(facts, seen_arms, numbers, &views, lows.magazine_share);
     }
     if let Some(round) = round.as_deref() {
         minimap_part(facts, (&view, round), (slot, wish, body), &actors);

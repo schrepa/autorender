@@ -28,10 +28,10 @@
       },
       "values": {
         "below_deg": -5.0,
-        "above_deg": 40.0,
-        "fade_deg": 4.0,
-        "haze": 0.3,
-        "turns": 3.0
+        "above_deg": 52.0,
+        "fade_deg": 6.0,
+        "haze": 0.32,
+        "turns": 1.0
       }
     },
     {

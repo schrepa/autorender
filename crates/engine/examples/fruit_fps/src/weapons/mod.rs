@@ -21,6 +21,6 @@ pub use numbers::{
     SpreadDeg, StandJoints, StrikeSeconds, SurfaceNumbers, WeaponNumbers,
 };
 pub use recoil::{
-    Aim, Footing, Kick, Recoil, Shot, Stance, fire, forward, pattern_deg, recover, sin_cos,
-    spread_deg, stance_of,
+    Aim, Footing, Kick, Recoil, Shot, Stance, bloom_deg, continuous_spread_deg, fire, forward,
+    pattern_deg, recover, sin_cos, spread_deg, stance_of,
 };
