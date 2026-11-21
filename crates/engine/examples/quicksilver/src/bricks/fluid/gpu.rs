@@ -10,9 +10,9 @@ use engine_render::{
 
 use super::shaders::fluid::{bilateral, post, sim, splat, studio, ui};
 use super::{
-    BLOOM_0, BLOOM_1, BLOOM_2, FLUID_AUX, FLUID_DEPTH_0, FLUID_DEPTH_1, FLUID_DEPTH_2,
-    FLUID_DEPTH_3, FLUID_DEPTH_4, FLUID_SPLAT_PASS, FLUID_THICK_0, FLUID_THICK_1, FLUID_THICK_2,
-    HDR_COLOR, HW_DEPTH,
+    BLOOM_0, BLOOM_1, BLOOM_2, FLUID_DEPTH_0, FLUID_DEPTH_1, FLUID_DEPTH_2, FLUID_DEPTH_3,
+    FLUID_DEPTH_4, FLUID_SPLAT_PASS, FLUID_THICK_0, FLUID_THICK_1, FLUID_THICK_2, HDR_COLOR,
+    HW_DEPTH,
 };
 use crate::font::{ATLAS_H, ATLAS_W, build_sdf_atlas};
 use crate::state::{
@@ -21,9 +21,10 @@ use crate::state::{
 };
 use crate::ui_layout::{UiQuad, build_ui_quads, compute_layout};
 
-const PARTICLE_BYTES: u64 = 64;
+const PARTICLE_BYTES: u64 = 16;
 const GRID_CELLS: u32 = GRID_X * GRID_Y * GRID_Z;
-const SUBSTEPS: u32 = 2;
+const NUM_BRICKS: u32 = (GRID_X / 4) * (GRID_Y / 4) * (GRID_Z / 4);
+const MAX_CHUNKS: u32 = 8192;
 const UI_HEADER_BYTES: u64 = 16;
 
 const LINEAR_CLAMP: Sampler = Sampler {
@@ -48,6 +49,7 @@ struct SimParams {
     drop_info: [u32; 4],
     bounds: [f32; 4],
     time_info: [f32; 4],
+    eye_grid: [f32; 4],
 }
 
 #[repr(C)]
@@ -69,11 +71,14 @@ struct FrameUniform {
 struct SimPipelines {
     pass: Pass<FluidGpu>,
     init: ComputePipeline<FluidGpu>,
-    drop_burst: ComputePipeline<FluidGpu>,
     clear_grid: ComputePipeline<FluidGpu>,
-    p2g_fused: ComputePipeline<FluidGpu>,
+    bin_clear: ComputePipeline<FluidGpu>,
+    bin_count: ComputePipeline<FluidGpu>,
+    bin_prefix_chunks: ComputePipeline<FluidGpu>,
+    bin_scatter: ComputePipeline<FluidGpu>,
     update_grid: ComputePipeline<FluidGpu>,
-    g2p: ComputePipeline<FluidGpu>,
+    g2p2g_brick_mid: ComputePipeline<FluidGpu>,
+    g2p2g_brick_final: ComputePipeline<FluidGpu>,
     heightfield: ComputePipeline<FluidGpu>,
 }
 
@@ -105,9 +110,15 @@ struct PostPasses {
 
 struct GpuBuffers {
     particles: Buffer<FluidGpu>,
+    particles_tmp: Buffer<FluidGpu>,
     grid_atomic: Buffer<FluidGpu>,
     grid_vel: Buffer<FluidGpu>,
     heightfield: Buffer<FluidGpu>,
+    draw_args: Buffer<FluidGpu>,
+    surface_indices: Buffer<FluidGpu>,
+    brick_counts: Buffer<FluidGpu>,
+    chunk_list: Buffer<FluidGpu>,
+    dispatch_args: Buffer<FluidGpu>,
     sim_params: Buffer<FluidGpu>,
     frame: Buffer<FluidGpu>,
     ui_quads: Buffer<FluidGpu>,
@@ -131,6 +142,8 @@ pub(super) struct FluidGpu {
     ui_quad_count: u32,
     ui_scratch: Vec<UiQuad>,
     ui_bytes: Vec<u8>,
+    frame_base: FrameUniform,
+    fov_y: f32,
 }
 
 fn bound_compute(
@@ -193,7 +206,6 @@ fn declare_targets(cx: &mut Install<'_, FluidGpu>) {
         clear: TargetClear::Depth(0.0),
     });
     for name in [
-        FLUID_AUX,
         FLUID_THICK_0,
         FLUID_THICK_1,
         FLUID_THICK_2,
@@ -216,9 +228,15 @@ fn install_sim(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<SimP
     let res = [
         (sim::SIM_PARAMS, Bind::Buffer(bufs.sim_params)),
         (sim::SIM_PARTICLES, Bind::Buffer(bufs.particles)),
+        (sim::SIM_PARTICLES_TMP, Bind::Buffer(bufs.particles_tmp)),
         (sim::GRID_ATOMIC, Bind::Buffer(bufs.grid_atomic)),
         (sim::GRID_VEL, Bind::Buffer(bufs.grid_vel)),
         (sim::HEIGHTFIELD_OUT, Bind::Buffer(bufs.heightfield)),
+        (sim::DRAW_ARGS, Bind::Buffer(bufs.draw_args)),
+        (sim::SURFACE_INDICES, Bind::Buffer(bufs.surface_indices)),
+        (sim::BRICK_COUNTS, Bind::Buffer(bufs.brick_counts)),
+        (sim::CHUNK_LIST, Bind::Buffer(bufs.chunk_list)),
+        (sim::DISPATCH_ARGS, Bind::Buffer(bufs.dispatch_args)),
     ];
     let make = |cx: &mut Install<'_, FluidGpu>, entry: Entry| {
         let b = bound_compute(cx, entry, &res);
@@ -227,11 +245,14 @@ fn install_sim(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<SimP
     Ok(SimPipelines {
         pass,
         init: make(cx, sim::INIT_PARTICLES)?,
-        drop_burst: make(cx, sim::DROP_BURST)?,
         clear_grid: make(cx, sim::CLEAR_GRID)?,
-        p2g_fused: make(cx, sim::P2G_FUSED)?,
+        bin_clear: make(cx, sim::BIN_CLEAR)?,
+        bin_count: make(cx, sim::BIN_COUNT)?,
+        bin_prefix_chunks: make(cx, sim::BIN_PREFIX_CHUNKS)?,
+        bin_scatter: make(cx, sim::BIN_SCATTER)?,
         update_grid: make(cx, sim::UPDATE_GRID)?,
-        g2p: make(cx, sim::G2P)?,
+        g2p2g_brick_mid: make(cx, sim::G2P2G_BRICK_MID)?,
+        g2p2g_brick_final: make(cx, sim::G2P2G_BRICK_FINAL)?,
         heightfield: make(cx, sim::BUILD_HEIGHTFIELD)?,
     })
 }
@@ -286,7 +307,11 @@ fn install_depth_blurs(
     ))
 }
 
-fn install_blurs(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<BlurPasses, Error> {
+fn install_blurs(
+    cx: &mut Install<'_, FluidGpu>,
+    bufs: &GpuBuffers,
+    linear: engine_render::Sampler<FluidGpu>,
+) -> Result<BlurPasses, Error> {
     let (passes, pipelines) = install_depth_blurs(cx, bufs)?;
     let thick_splat_pass = cx
         .pass("fluid_thick_splat")
@@ -334,7 +359,10 @@ fn install_blurs(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<Bl
     let thick_h = cx.render_pipeline(
         thick_h_pass,
         &fs_desc(bilateral::FS_THICK_H, None, &[]),
-        &[(bilateral::THICK_IN, Bind::Target(FLUID_THICK_0))],
+        &[
+            (bilateral::THICK_IN, Bind::Target(FLUID_THICK_0)),
+            (bilateral::BLUR_SAMPLER, Bind::Sampler(linear)),
+        ],
     )?;
     let thick_v_pass = cx
         .pass("thick_v")
@@ -345,7 +373,10 @@ fn install_blurs(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<Bl
     let thick_v = cx.render_pipeline(
         thick_v_pass,
         &fs_desc(bilateral::FS_THICK_V, None, &[]),
-        &[(bilateral::THICK_IN, Bind::Target(FLUID_THICK_1))],
+        &[
+            (bilateral::THICK_IN, Bind::Target(FLUID_THICK_1)),
+            (bilateral::BLUR_SAMPLER, Bind::Sampler(linear)),
+        ],
     )?;
     Ok(BlurPasses {
         passes,
@@ -398,8 +429,11 @@ fn install_ui_pass(
     Ok((ui_pass, ui_pipe))
 }
 
-fn install_post(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<PostPasses, Error> {
-    let linear = cx.sampler(LINEAR_CLAMP);
+fn install_post(
+    cx: &mut Install<'_, FluidGpu>,
+    bufs: &GpuBuffers,
+    linear: engine_render::Sampler<FluidGpu>,
+) -> Result<PostPasses, Error> {
     let studio_pass = cx
         .pass("studio_composite")
         .label("quicksilver/studio")
@@ -412,7 +446,6 @@ fn install_post(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<Pos
         &[
             (studio::STUDIO_FRAME, Bind::Buffer(bufs.frame)),
             (studio::STUDIO_DEPTH, Bind::Target(FLUID_DEPTH_4)),
-            (studio::STUDIO_AUX, Bind::Target(FLUID_AUX)),
             (studio::STUDIO_THICK, Bind::Target(FLUID_THICK_2)),
             (studio::STUDIO_SAMPLER, Bind::Sampler(linear)),
             (studio::STUDIO_HEIGHTFIELD, Bind::Buffer(bufs.heightfield)),
@@ -496,13 +529,19 @@ fn install_post(cx: &mut Install<'_, FluidGpu>, bufs: &GpuBuffers) -> Result<Pos
 fn build_sim_params(
     state: &QuicksilverState,
     drop_cursor: u32,
+    drop_active: bool,
     frame_index: u32,
 ) -> SimParams {
     let count = state.preset.count();
     let particle_mass = (MAX_PARTICLES as f32) / (count as f32);
     let stir_grid = QuicksilverState::world_to_grid(state.stir.world_pos);
     let stir_vel_grid = state.stir.world_vel * (0.018 / CELL_SIZE);
-    let drop_count = (count / 22).max(2048);
+    let drop_count = if drop_active {
+        (count / 22).max(2048)
+    } else {
+        0
+    };
+    let eye_grid = QuicksilverState::world_to_grid(state.camera.eye);
     SimParams {
         dims: [GRID_X, GRID_Y, GRID_Z, count],
         physics: [0.135, particle_mass, 6.0, state.material.stiffness()],
@@ -524,9 +563,10 @@ fn build_sim_params(
             stir_vel_grid.z,
             state.stir.radius / CELL_SIZE,
         ],
-        drop_info: [drop_cursor % count, drop_count, state.drop_seed, frame_index],
+        drop_info: [drop_cursor % 22, drop_count, state.drop_seed, frame_index],
         bounds: [CELL_SIZE, BASIN_HALF_X, BASIN_HALF_Z, BASIN_FLOOR_Y],
         time_info: [state.elapsed, state.material.index() as f32, 0.0, 0.0],
+        eye_grid: [eye_grid.x, eye_grid.y, eye_grid.z, 0.0],
     }
 }
 
@@ -577,14 +617,7 @@ fn build_frame_uniform(state: &QuicksilverState) -> FrameUniform {
 
 impl FluidGpu {
     pub(super) fn draw_splat(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.draw(
-            &self.splat_pipe,
-            Shape::Pulled {
-                vertices: 0..6,
-                instances: 0..self.particle_count,
-                key: None,
-            },
-        );
+        draw.draw_indirect(&self.splat_pipe, self.buffers.draw_args, 0, None);
     }
 
     fn upload_ui(&mut self, state: &QuicksilverState, cx: &mut Prepare<'_, Self>) {
@@ -631,11 +664,18 @@ impl GpuPart for FluidGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         declare_targets(cx);
+        let linear = cx.sampler(LINEAR_CLAMP);
         let buffers = GpuBuffers {
             particles: cx.buffer("fluid_particles", Lifetime::Kept),
+            particles_tmp: cx.buffer("fluid_particles_tmp", Lifetime::Kept),
             grid_atomic: cx.buffer("fluid_grid_atomic", Lifetime::Kept),
             grid_vel: cx.buffer("fluid_grid_vel", Lifetime::Kept),
             heightfield: cx.buffer("fluid_heightfield", Lifetime::Kept),
+            draw_args: cx.indirect_buffer("fluid_draw_args", Lifetime::Kept),
+            surface_indices: cx.buffer("fluid_surface_indices", Lifetime::Kept),
+            brick_counts: cx.buffer("fluid_brick_counts", Lifetime::Kept),
+            chunk_list: cx.buffer("fluid_chunk_list", Lifetime::Kept),
+            dispatch_args: cx.indirect_buffer("fluid_dispatch_args", Lifetime::Kept),
             sim_params: cx.buffer("fluid_sim_params", Lifetime::Kept),
             frame: cx.buffer("fluid_frame", Lifetime::Kept),
             ui_quads: cx.buffer("fluid_ui_quads", Lifetime::Kept),
@@ -646,7 +686,7 @@ impl GpuPart for FluidGpu {
             Scene::named(FLUID_SPLAT_PASS),
             &RenderPipeline {
                 vertex: splat::VS_SPLAT,
-                fragment: Some(splat::FS_DEPTH_AUX),
+                fragment: Some(splat::FS_DEPTH_ONLY),
                 vertices: &[],
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::Compare {
@@ -656,20 +696,18 @@ impl GpuPart for FluidGpu {
                 },
                 stencil: wgpu::StencilState::default(),
                 samples: 1,
-                targets: &[
-                    (None, wgpu::ColorWrites::ALL),
-                    (None, wgpu::ColorWrites::ALL),
-                ],
+                targets: &[(None, wgpu::ColorWrites::ALL)],
                 constants: &[],
                 per_batch: PerBatch::NONE,
             },
             &[
                 (splat::SPLAT_FRAME, Bind::Buffer(buffers.frame)),
                 (splat::SPLAT_PARTICLES, Bind::Buffer(buffers.particles)),
+                (splat::SURFACE_INDICES, Bind::Buffer(buffers.surface_indices)),
             ],
         )?;
-        let blur = install_blurs(cx, &buffers)?;
-        let post = install_post(cx, &buffers)?;
+        let blur = install_blurs(cx, &buffers, linear)?;
+        let post = install_post(cx, &buffers, linear)?;
         Ok(Self {
             buffers,
             sim,
@@ -687,6 +725,8 @@ impl GpuPart for FluidGpu {
             ui_quad_count: 0,
             ui_scratch: Vec::with_capacity(256),
             ui_bytes: Vec::with_capacity(16384),
+            frame_base: FrameUniform::default(),
+            fov_y: 0.70,
         })
     }
 
@@ -695,12 +735,26 @@ impl GpuPart for FluidGpu {
         self.frame_index = self.frame_index.wrapping_add(1);
 
         let p_bytes = u64::from(MAX_PARTICLES) * PARTICLE_BYTES;
-        let g_bytes = u64::from(GRID_CELLS) * 16;
+        let ga_bytes = u64::from(GRID_CELLS) * 16;
+        let gv_bytes = u64::from(GRID_CELLS) * 8;
         let h_bytes = u64::from(GRID_X * GRID_Z) * 16;
+        let s_bytes = u64::from(MAX_PARTICLES) * 4;
+        let bc_bytes = u64::from(NUM_BRICKS) * 4;
+        let cl_bytes = u64::from(MAX_CHUNKS) * 16;
         let fresh_p = cx.allocate_buffer(self.buffers.particles, p_bytes) == Allocation::Fresh;
-        let _ = cx.allocate_buffer(self.buffers.grid_atomic, g_bytes);
-        let _ = cx.allocate_buffer(self.buffers.grid_vel, g_bytes);
+        let _ = cx.allocate_buffer(self.buffers.particles_tmp, p_bytes);
+        let _ = cx.allocate_buffer(self.buffers.grid_atomic, ga_bytes);
+        let _ = cx.allocate_buffer(self.buffers.grid_vel, gv_bytes);
         let _ = cx.allocate_buffer(self.buffers.heightfield, h_bytes);
+        if cx.allocate_buffer(self.buffers.draw_args, 16) == Allocation::Fresh {
+            cx.write(self.buffers.draw_args, 0, &[6u32, 0, 0, 0]);
+        }
+        let _ = cx.allocate_buffer(self.buffers.surface_indices, s_bytes);
+        let _ = cx.allocate_buffer(self.buffers.brick_counts, bc_bytes);
+        let _ = cx.allocate_buffer(self.buffers.chunk_list, cl_bytes);
+        if cx.allocate_buffer(self.buffers.dispatch_args, 16) == Allocation::Fresh {
+            cx.write(self.buffers.dispatch_args, 0, &[0u32, 1, 1, 0]);
+        }
         let _ = cx.allocate_buffer(self.buffers.sim_params, size_of::<SimParams>() as u64);
         let _ = cx.allocate_buffer(self.buffers.frame, size_of::<FrameUniform>() as u64);
 
@@ -713,23 +767,36 @@ impl GpuPart for FluidGpu {
             self.last_drop = state.drop_counter;
         }
 
-        let sim_params = build_sim_params(&state, self.drop_cursor, self.frame_index);
+        let drop_active = self.pending_drop && !self.needs_init;
+        let sim_params = build_sim_params(&state, self.drop_cursor, drop_active, self.frame_index);
         cx.write(self.buffers.sim_params, 0, &[sim_params]);
-        let frame_u = build_frame_uniform(&state);
-        cx.write(self.buffers.frame, 0, &[frame_u]);
+        self.frame_base = build_frame_uniform(&state);
+        self.fov_y = state.camera.fov_y;
+        cx.write(self.buffers.frame, 0, &[self.frame_base]);
 
-        cx.scale_target(FLUID_THICK_0, 0.35);
-        cx.scale_target(FLUID_THICK_1, 0.35);
-        cx.scale_target(FLUID_THICK_2, 0.35);
-        cx.scale_target(BLOOM_0, 0.25);
-        cx.scale_target(BLOOM_1, 0.25);
-        cx.scale_target(BLOOM_2, 0.25);
-
+        self.apply_target_scales(state.viewport[0], state.viewport[1], cx);
         self.upload_ui(&state, cx);
         cx.run(self.sim.pass);
     }
 
-    fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        let vw = math::max(view.pixels[2] as f32, 1.0);
+        let vh = math::max(view.pixels[3] as f32, 1.0);
+        if (vw - self.frame_base.viewport[0]).abs() > 0.5
+            || (vh - self.frame_base.viewport[1]).abs() > 0.5
+        {
+            let mut f = self.frame_base;
+            let aspect = vw / vh;
+            let near = f.splat[2];
+            let far = f.splat[3];
+            let proj = glam::Mat4::perspective_rh(self.fov_y, aspect, far, near);
+            f.proj = proj.to_cols_array_2d();
+            f.inv_proj = proj.inverse().to_cols_array_2d();
+            f.viewport = [vw, vh, 1.0 / vw, 1.0 / vh];
+            f.splat[1] = vh * 0.5 / (self.fov_y * 0.5).tan();
+            cx.write(self.buffers.frame, 0, &[f]);
+            self.apply_target_scales(vw, vh, cx);
+        }
         cx.run(self.blur.thick_splat_pass);
         cx.run(self.blur.thick_h_pass);
         cx.run(self.blur.thick_v_pass);
@@ -756,7 +823,7 @@ impl GpuPart for FluidGpu {
                 &self.blur.thick_splat,
                 Shape::Pulled {
                     vertices: 0..6,
-                    instances: 0..(self.particle_count / 4),
+                    instances: 0..(self.particle_count / 12),
                     key: None,
                 },
             );
@@ -804,9 +871,32 @@ impl GpuPart for FluidGpu {
 }
 
 impl FluidGpu {
+    fn apply_target_scales(&self, w: f32, h: f32, cx: &mut Prepare<'_, Self>) {
+        let px = math::max(w * h, 1.0);
+        let depth_scale = math::clamp((540_000.0 / px).sqrt(), 0.56, 1.0);
+        let thick_scale = math::clamp((42_000.0 / px).sqrt(), 0.16, 0.24);
+        for name in [
+            HW_DEPTH,
+            FLUID_DEPTH_0,
+            FLUID_DEPTH_1,
+            FLUID_DEPTH_2,
+            FLUID_DEPTH_3,
+            FLUID_DEPTH_4,
+        ] {
+            cx.scale_target(name, depth_scale);
+        }
+        cx.scale_target(FLUID_THICK_0, thick_scale);
+        cx.scale_target(FLUID_THICK_1, thick_scale);
+        cx.scale_target(FLUID_THICK_2, thick_scale);
+        cx.scale_target(BLOOM_0, 0.25);
+        cx.scale_target(BLOOM_1, 0.25);
+        cx.scale_target(BLOOM_2, 0.25);
+    }
+
     fn encode_sim(&mut self, cx: &mut Encode<'_, Self>) {
         let p_groups = self.particle_count.div_ceil(128);
         let g_groups = GRID_CELLS.div_ceil(256);
+        let b_groups = NUM_BRICKS.div_ceil(256);
         let h_groups = [GRID_X.div_ceil(8), GRID_Z.div_ceil(8), 1];
 
         if self.needs_init {
@@ -817,19 +907,18 @@ impl FluidGpu {
                 self.needs_init = false;
             }
         }
-        if self.pending_drop && !self.needs_init {
-            let drop_count = (self.particle_count / 22).max(2048);
-            cx.recorded();
-            cx.dispatch(&self.sim.drop_burst, [drop_count.div_ceil(128), 1, 1]);
-            if cx.recorded() == Recorded::Exact {
-                self.pending_drop = false;
-                self.drop_cursor = self.drop_cursor.wrapping_add(drop_count);
-            }
-        }
-        for _ in 0..SUBSTEPS {
-            cx.dispatch(&self.sim.p2g_fused, [p_groups, 1, 1]);
-            cx.dispatch(&self.sim.update_grid, [g_groups, 1, 1]);
-            cx.dispatch(&self.sim.g2p, [p_groups, 1, 1]);
+        cx.dispatch(&self.sim.update_grid, [g_groups, 1, 1]);
+        cx.dispatch(&self.sim.bin_clear, [b_groups, 1, 1]);
+        cx.dispatch(&self.sim.bin_count, [p_groups, 1, 1]);
+        cx.dispatch(&self.sim.bin_prefix_chunks, [1, 1, 1]);
+        cx.dispatch(&self.sim.bin_scatter, [p_groups, 1, 1]);
+        cx.dispatch_indirect(&self.sim.g2p2g_brick_mid, self.buffers.dispatch_args, 0);
+        cx.dispatch(&self.sim.update_grid, [g_groups, 1, 1]);
+        cx.recorded();
+        cx.dispatch_indirect(&self.sim.g2p2g_brick_final, self.buffers.dispatch_args, 0);
+        if self.pending_drop && !self.needs_init && cx.recorded() == Recorded::Exact {
+            self.pending_drop = false;
+            self.drop_cursor = self.drop_cursor.wrapping_add(1);
         }
         cx.dispatch(&self.sim.heightfield, h_groups);
     }

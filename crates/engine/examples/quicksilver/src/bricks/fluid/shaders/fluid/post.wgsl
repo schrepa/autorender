@@ -10,13 +10,7 @@ import package::fluid::common::FrameUniform;
 fn fs_bloom_extract(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let dims = vec2<f32>(textureDimensions(post_hdr));
     let uv = (pos.xy * 4.0) / dims;
-    let dx = 1.5 / dims.x;
-    let dy = 1.5 / dims.y;
-    let c0 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(-dx, -dy), 0.0).rgb;
-    let c1 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(dx, -dy), 0.0).rgb;
-    let c2 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(-dx, dy), 0.0).rgb;
-    let c3 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(dx, dy), 0.0).rgb;
-    let avg = (c0 + c1 + c2 + c3) * 0.25;
+    let avg = textureSampleLevel(post_hdr, post_sampler, uv, 0.0).rgb;
 
     let lum = max(avg.r, max(avg.g, avg.b));
     let thresh = 1.35;
@@ -30,14 +24,22 @@ fn bloom_blur(pos: vec2<f32>, dir: vec2<f32>) -> vec4<f32> {
     let dims = vec2<f32>(textureDimensions(post_bloom));
     let uv = pos / dims;
     let step = dir / dims;
-    let offsets = array<f32, 5>(0.0, 1.3846154, 3.2307692, 5.15, 7.1);
-    let weights = array<f32, 5>(0.215, 0.295, 0.180, 0.085, 0.0325);
-    var acc = textureSampleLevel(post_bloom, post_sampler, uv, 0.0).rgb * weights[0];
-    for (var i = 1; i < 5; i += 1) {
-        let o = step * offsets[i];
-        acc += textureSampleLevel(post_bloom, post_sampler, uv + o, 0.0).rgb * weights[i];
-        acc += textureSampleLevel(post_bloom, post_sampler, uv - o, 0.0).rgb * weights[i];
-    }
+    var acc = textureSampleLevel(post_bloom, post_sampler, uv, 0.0).rgb * 0.227;
+    let o1 = step * 1.42;
+    let o2 = step * 3.35;
+    let o3 = step * 5.45;
+    acc += (
+        textureSampleLevel(post_bloom, post_sampler, uv + o1, 0.0).rgb
+        + textureSampleLevel(post_bloom, post_sampler, uv - o1, 0.0).rgb
+    ) * 0.292;
+    acc += (
+        textureSampleLevel(post_bloom, post_sampler, uv + o2, 0.0).rgb
+        + textureSampleLevel(post_bloom, post_sampler, uv - o2, 0.0).rgb
+    ) * 0.078;
+    acc += (
+        textureSampleLevel(post_bloom, post_sampler, uv + o3, 0.0).rgb
+        + textureSampleLevel(post_bloom, post_sampler, uv - o3, 0.0).rgb
+    ) * 0.0165;
     return vec4<f32>(acc, 1.0);
 }
 
@@ -52,9 +54,7 @@ fn fs_bloom_v(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 
 fn agx_curve(v: vec3<f32>) -> vec3<f32> {
-    let v2 = v * v;
-    let v4 = v2 * v2;
-    return 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;
+    return (((((15.5 * v - 40.14) * v + 31.96) * v - 6.868) * v + 0.4298) * v + 0.1191) * v - 0.00232;
 }
 
 fn agx_tonemap(color: vec3<f32>) -> vec3<f32> {
@@ -70,7 +70,7 @@ fn agx_tonemap(color: vec3<f32>) -> vec3<f32> {
     );
     var v = agx_in * max(color, vec3<f32>(1.0e-6));
     v = clamp(log2(v), vec3<f32>(-12.47393), vec3<f32>(4.026069));
-    v = (v - (-12.47393)) / (4.026069 - (-12.47393));
+    v = (v + 12.47393) * 0.060606064;
     v = agx_curve(v);
     v = agx_out * v;
     let luma = dot(v, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -102,7 +102,7 @@ fn fs_tonemap(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     color *= max(vig, 0.72);
 
     var srgb = encode_srgb(agx_tonemap(color));
-    let dither = fract(sin(dot(pos.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453) - 0.5;
+    let dither = fract(52.9829189 * fract(dot(pos.xy, vec2<f32>(0.06711056, 0.00583715)))) - 0.5;
     srgb = saturate(srgb + dither * (1.0 / 255.0));
     return vec4<f32>(srgb, 1.0);
 }

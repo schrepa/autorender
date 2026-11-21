@@ -2,10 +2,30 @@ import package::fluid::common::FrameUniform;
 
 @group(1) @binding(0) var<uniform> studio_frame: FrameUniform;
 @group(1) @binding(1) var studio_depth: texture_2d<f32>;
-@group(1) @binding(2) var studio_aux: texture_2d<f32>;
-@group(1) @binding(3) var studio_thick: texture_2d<f32>;
-@group(1) @binding(4) var studio_sampler: sampler;
-@group(1) @binding(5) var<storage, read> studio_heightfield: array<vec4<f32>>;
+@group(1) @binding(2) var studio_thick: texture_2d<f32>;
+@group(1) @binding(3) var studio_sampler: sampler;
+@group(1) @binding(4) var<storage, read> studio_heightfield: array<vec4<f32>>;
+
+const KEY_DIR: vec3<f32> = vec3<f32>(-0.280393, 0.881235, 0.380533);
+const RIM_DIR: vec3<f32> = vec3<f32>(0.541845, 0.702392, -0.461572);
+const K1_U: vec3<f32> = vec3<f32>(0.910866, 0.160152, 0.380361);
+const K1_V: vec3<f32> = vec3<f32>(-0.200926, -0.421945, 0.884076);
+const K2_U: vec3<f32> = vec3<f32>(0.419832, 0.119952, 0.899640);
+const K2_V: vec3<f32> = vec3<f32>(-0.701968, 0.701968, 0.120337);
+const K3_C: vec3<f32> = vec3<f32>(0.804355, 0.241307, 0.542940);
+const K3_U: vec3<f32> = vec3<f32>(-0.559301, 0.0, 0.828964);
+const K4_C: vec3<f32> = vec3<f32>(-0.824131, 0.261310, -0.502519);
+const K4_U: vec3<f32> = vec3<f32>(0.521856, 0.0, -0.853034);
+const UP_AXIS: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
+
+fn pow3(x: f32) -> f32 {
+    return x * x * x;
+}
+
+fn pow5(x: f32) -> f32 {
+    let x2 = x * x;
+    return x2 * x2 * x;
+}
 
 fn hash21(p: vec2<f32>) -> f32 {
     let q = fract(p * vec2<f32>(123.34, 456.21));
@@ -59,53 +79,29 @@ fn sample_studio_hdri(dir: vec3<f32>, mat_id: f32) -> vec3<f32> {
     var base = dome_cyc + zenith_cap;
 
     let studio_bays = smoothstep(-0.15, 0.35, cos(az * 2.0 - 0.55));
-    let neg_flag_1 = exp(-pow(sin((az + 1.15) * 0.5), 2.0) * 14.0);
-    let neg_flag_2 = exp(-pow(sin((az - 2.05) * 0.5), 2.0) * 16.0);
+    let s1 = sin((az + 1.15) * 0.5);
+    let s2 = sin((az - 2.05) * 0.5);
+    let neg_flag_1 = exp(-s1 * s1 * 14.0);
+    let neg_flag_2 = exp(-s2 * s2 * 16.0);
     let neg_fill = clamp(neg_flag_1 + neg_flag_2, 0.0, 0.92);
     base *= (0.45 + 0.72 * studio_bays) * (1.0 - 0.86 * neg_fill);
 
-    let dark_equator = exp(-pow((d.y + 0.07) * 9.5, 2.0));
+    let eq_d = (d.y + 0.07) * 9.5;
+    let dark_equator = exp(-eq_d * eq_d);
     base *= (1.0 - 0.78 * dark_equator);
 
-    let horizon_strip = exp(-pow((d.y - 0.06) * 13.0, 2.0));
+    let hz_d = (d.y - 0.06) * 13.0;
+    let horizon_strip = exp(-hz_d * hz_d);
     let strip_panels = smoothstep(0.0, 0.42, cos(az * 2.0 - 0.5)) * (1.0 - neg_fill);
     base += vec3<f32>(1.15, 1.26, 1.45) * horizon_strip * strip_panels;
 
     let ground_bounce = vec3<f32>(0.045, 0.052, 0.068) * smoothstep(0.0, -0.55, d.y);
     base = mix(base, ground_bounce, smoothstep(-0.02, -0.22, d.y));
 
-    let k1 = rect_light(
-        d,
-        normalize(vec3<f32>(-0.28, 0.88, 0.38)),
-        normalize(vec3<f32>(0.91, 0.16, 0.38)),
-        normalize(vec3<f32>(-0.20, -0.42, 0.88)),
-        vec2<f32>(0.72, 0.20),
-        0.09,
-    );
-    let k2 = rect_light(
-        d,
-        normalize(vec3<f32>(0.54, 0.70, -0.46)),
-        normalize(vec3<f32>(0.42, 0.12, 0.90)),
-        normalize(vec3<f32>(-0.70, 0.70, 0.12)),
-        vec2<f32>(0.56, 0.12),
-        0.055,
-    );
-    let k3 = rect_light(
-        d,
-        normalize(vec3<f32>(0.80, 0.24, 0.54)),
-        normalize(vec3<f32>(-0.56, 0.0, 0.83)),
-        vec3<f32>(0.0, 1.0, 0.0),
-        vec2<f32>(0.36, 0.09),
-        0.06,
-    );
-    let k4 = rect_light(
-        d,
-        normalize(vec3<f32>(-0.82, 0.26, -0.50)),
-        normalize(vec3<f32>(0.52, 0.0, -0.85)),
-        vec3<f32>(0.0, 1.0, 0.0),
-        vec2<f32>(0.44, 0.09),
-        0.065,
-    );
+    let k1 = rect_light(d, KEY_DIR, K1_U, K1_V, vec2<f32>(0.72, 0.20), 0.09);
+    let k2 = rect_light(d, RIM_DIR, K2_U, K2_V, vec2<f32>(0.56, 0.12), 0.055);
+    let k3 = rect_light(d, K3_C, K3_U, UP_AXIS, vec2<f32>(0.36, 0.09), 0.06);
+    let k4 = rect_light(d, K4_C, K4_U, UP_AXIS, vec2<f32>(0.44, 0.09), 0.065);
 
     var env = base;
     env += vec3<f32>(4.6, 4.8, 5.2) * k1;
@@ -124,7 +120,8 @@ fn sample_studio_bg(dir: vec3<f32>) -> vec3<f32> {
     let up = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
     var col = mix(vec3<f32>(0.009, 0.012, 0.018), vec3<f32>(0.030, 0.037, 0.050), smoothstep(0.0, 0.52, up));
     col = mix(col, vec3<f32>(0.013, 0.017, 0.025), smoothstep(0.52, 1.0, up));
-    let glow = exp(-pow((d.y - 0.14) * 5.0, 2.0)) * 0.020;
+    let gd = (d.y - 0.14) * 5.0;
+    let glow = exp(-gd * gd) * 0.020;
     return col + vec3<f32>(0.65, 0.78, 1.0) * glow;
 }
 
@@ -142,11 +139,13 @@ fn sample_heightfield(wx: f32, wz: f32) -> vec4<f32> {
     let fx = clamp(gx_f - f32(ix), 0.0, 1.0);
     let fz = clamp(gz_f - f32(iz), 0.0, 1.0);
     let stride = u32(studio_frame.grid_dims.x);
+    let row0 = u32(iz) * stride + u32(ix);
+    let row1 = row0 + stride;
 
-    let v00 = studio_heightfield[u32(iz) * stride + u32(ix)];
-    let v10 = studio_heightfield[u32(iz) * stride + u32(ix + 1)];
-    let v01 = studio_heightfield[u32(iz + 1) * stride + u32(ix)];
-    let v11 = studio_heightfield[u32(iz + 1) * stride + u32(ix + 1)];
+    let v00 = studio_heightfield[row0];
+    let v10 = studio_heightfield[row0 + 1u];
+    let v01 = studio_heightfield[row1];
+    let v11 = studio_heightfield[row1 + 1u];
     return mix(mix(v00, v10, fx), mix(v01, v11, fx), fz);
 }
 
@@ -161,40 +160,36 @@ fn caustic_pattern(p: vec2<f32>, t: f32) -> f32 {
         acc += vec2<f32>(cos(s * 1.45), sin(s * 1.45));
         uv = rot * uv * 1.38 + vec2<f32>(0.7, -0.4);
     }
-    let mag = length(acc) / 3.0;
+    let mag = length(acc) * 0.33333334;
     let web = 1.0 - clamp(mag, 0.0, 1.0);
-    return pow(web, 3.5) * 2.25;
+    return web * web * web * sqrt(max(web, 1.0e-6)) * 2.25;
 }
 
 fn eval_floor_caustics(wx: f32, wz: f32, mat_id: f32) -> vec4<f32> {
-    let eps = 0.095;
     let hc = sample_heightfield(wx, wz);
+    if mat_id < 0.5 {
+        let shadow = clamp(1.0 - smoothstep(1.2, 48.0, hc.y) * 0.62, 0.34, 1.0);
+        return vec4<f32>(vec3<f32>(0.0), shadow);
+    }
+
+    let eps = 0.095;
     let h_xp = sample_heightfield(wx + eps, wz);
     let h_xm = sample_heightfield(wx - eps, wz);
     let h_zp = sample_heightfield(wx, wz + eps);
     let h_zm = sample_heightfield(wx, wz - eps);
 
-    let eps_sh = 0.24;
-    let s1 = sample_heightfield(wx + eps_sh, wz + eps_sh).y;
-    let s2 = sample_heightfield(wx - eps_sh, wz + eps_sh).y;
-    let s3 = sample_heightfield(wx + eps_sh, wz - eps_sh).y;
-    let s4 = sample_heightfield(wx - eps_sh, wz - eps_sh).y;
-    let col_mass = (hc.y * 2.0 + h_xp.y + h_xm.y + h_zp.y + h_zm.y) / 6.0;
-    let soft_mass = (col_mass * 2.0 + s1 + s2 + s3 + s4) / 6.0;
-
-    let coverage = smoothstep(0.6, 5.5, col_mass);
-    let lap = (h_xp.x + h_xm.x + h_zp.x + h_zm.x - 4.0 * hc.x);
-    let grad = vec2<f32>(h_xp.x - h_xm.x, h_zp.x - h_zm.x) / (2.0 * eps);
-    let focus = clamp(-lap * 0.68 + length(grad) * 0.17, 0.0, 2.5);
-
+    let col_mass = (hc.y * 2.0 + h_xp.y + h_xm.y + h_zp.y + h_zm.y) * 0.16666667;
+    let shadow = clamp(1.0 - smoothstep(1.2, 48.0, col_mass) * 0.62, 0.34, 1.0);
     let t = studio_frame.eye_time.w;
-    let shadow = clamp(1.0 - smoothstep(1.2, 48.0, soft_mass) * 0.62, 0.34, 1.0);
-    let is_zero_g = studio_frame.style.y > 0.5;
 
-    if mat_id > 0.5 && mat_id < 1.5 {
-        if is_zero_g {
-            return vec4<f32>(vec3<f32>(0.02, 0.14, 0.18) * smoothstep(2.0, 28.0, soft_mass) * 0.35, shadow);
+    if mat_id < 1.5 {
+        if studio_frame.style.y > 0.5 {
+            return vec4<f32>(vec3<f32>(0.02, 0.14, 0.18) * smoothstep(2.0, 28.0, col_mass) * 0.35, shadow);
         }
+        let coverage = smoothstep(0.6, 5.5, col_mass);
+        let lap = h_xp.x + h_xm.x + h_zp.x + h_zm.x - 4.0 * hc.x;
+        let grad = vec2<f32>(h_xp.x - h_xm.x, h_zp.x - h_zm.x) / (2.0 * eps);
+        let focus = clamp(-lap * 0.68 + length(grad) * 0.17, 0.0, 2.5);
         let warp = vec2<f32>(wx, wz) + grad * 0.068;
         let cr = caustic_pattern(warp + vec2<f32>(0.018, 0.008), t);
         let cg = caustic_pattern(warp, t);
@@ -204,19 +199,15 @@ fn eval_floor_caustics(wx: f32, wz: f32, mat_id: f32) -> vec4<f32> {
         return vec4<f32>(rgb, shadow);
     }
 
-    if mat_id > 1.5 && mat_id < 2.5 {
-        let glow = smoothstep(1.0, 18.0, soft_mass) * (0.35 + 0.45 * clamp(hc.z * 0.7, 0.0, 1.2));
+    if mat_id < 2.5 {
+        let glow = smoothstep(1.0, 18.0, col_mass) * (0.35 + 0.45 * clamp(hc.z * 0.7, 0.0, 1.2));
         return vec4<f32>(vec3<f32>(1.15, 0.42, 0.05) * glow * 0.42, shadow);
     }
 
-    if mat_id > 2.5 {
-        let glow = smoothstep(0.8, 16.0, soft_mass) * (0.42 + 0.45 * clamp(hc.z * 0.8, 0.0, 1.3));
-        let shift = 0.5 + 0.5 * sin(wx * 1.5 + wz * 1.3 - t * 1.7);
-        let tint = mix(vec3<f32>(0.05, 0.78, 1.20), vec3<f32>(0.72, 0.16, 1.18), shift);
-        return vec4<f32>(tint * glow * 0.48, shadow);
-    }
-
-    return vec4<f32>(vec3<f32>(0.0), shadow);
+    let glow = smoothstep(0.8, 16.0, col_mass) * (0.42 + 0.45 * clamp(hc.z * 0.8, 0.0, 1.3));
+    let shift = 0.5 + 0.5 * sin(wx * 1.5 + wz * 1.3 - t * 1.7);
+    let tint = mix(vec3<f32>(0.05, 0.78, 1.20), vec3<f32>(0.72, 0.16, 1.18), shift);
+    return vec4<f32>(tint * glow * 0.48, shadow);
 }
 
 struct Hit {
@@ -225,8 +216,7 @@ struct Hit {
     kind: u32,
 }
 
-fn intersect_box(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec4<f32> {
-    let inv = 1.0 / select(rd, vec3<f32>(1.0e-6), abs(rd) < vec3<f32>(1.0e-6));
+fn intersect_box(ro: vec3<f32>, inv: vec3<f32>, rd_sign: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec4<f32> {
     let t0 = (bmin - ro) * inv;
     let t1 = (bmax - ro) * inv;
     let tsmall = min(t0, t1);
@@ -238,17 +228,17 @@ fn intersect_box(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>)
     }
     var n = vec3<f32>(0.0);
     if t_enter == tsmall.x {
-        n.x = -sign(rd.x);
+        n.x = -rd_sign.x;
     } else if t_enter == tsmall.y {
-        n.y = -sign(rd.y);
+        n.y = -rd_sign.y;
     } else {
-        n.z = -sign(rd.z);
+        n.z = -rd_sign.z;
     }
     return vec4<f32>(t_enter, n);
 }
 
 fn trace_studio(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
-    var best = Hit(1.0e9, vec3<f32>(0.0, 1.0, 0.0), 0u);
+    var best = Hit(1.0e9, UP_AXIS, 0u);
     let hx = studio_frame.basin.x;
     let hz = studio_frame.basin.y;
     let fy = studio_frame.basin.z;
@@ -259,40 +249,44 @@ fn trace_studio(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
     if rd.y < -1.0e-5 {
         let t_floor = (plinth_y - ro.y) / rd.y;
         if t_floor > 0.0 && t_floor < best.t {
-            best = Hit(t_floor, vec3<f32>(0.0, 1.0, 0.0), 1u);
+            best = Hit(t_floor, UP_AXIS, 1u);
         }
         let t_basin = (fy - ro.y) / rd.y;
         if t_basin > 0.0 && t_basin < best.t {
             let p = ro + rd * t_basin;
             if abs(p.x) <= hx + 0.02 && abs(p.z) <= hz + 0.02 {
-                best = Hit(t_basin, vec3<f32>(0.0, 1.0, 0.0), 2u);
+                best = Hit(t_basin, UP_AXIS, 2u);
             }
         }
     }
 
+    let inv = 1.0 / select(rd, vec3<f32>(1.0e-6), abs(rd) < vec3<f32>(1.0e-6));
+    let rd_sign = sign(rd);
+    let outer_min = vec3<f32>(-(hx + rim_w), plinth_y, -(hz + rim_w));
+    let outer_max = vec3<f32>(hx + rim_w, fy + rim_h, hz + rim_w);
+    let outer = intersect_box(ro, inv, rd_sign, outer_min, outer_max);
+    if outer.x < 0.0 {
+        return best;
+    }
+
     let walls = array<vec3<f32>, 8>(
-        vec3<f32>(-(hx + rim_w), plinth_y, -(hz + rim_w)),
+        outer_min,
         vec3<f32>(-hx, fy + rim_h, hz + rim_w),
         vec3<f32>(hx, plinth_y, -(hz + rim_w)),
-        vec3<f32>(hx + rim_w, fy + rim_h, hz + rim_w),
+        outer_max,
         vec3<f32>(-hx, plinth_y, -(hz + rim_w)),
         vec3<f32>(hx, fy + rim_h, -hz),
         vec3<f32>(-hx, plinth_y, hz),
         vec3<f32>(hx, fy + rim_h, hz + rim_w),
     );
     for (var i = 0; i < 4; i += 1) {
-        let h = intersect_box(ro, rd, walls[i * 2], walls[i * 2 + 1]);
+        let h = intersect_box(ro, inv, rd_sign, walls[i * 2], walls[i * 2 + 1]);
         if h.x > 0.0 && h.x < best.t {
             best = Hit(h.x, h.yzw, 3u);
         }
     }
 
-    let base_hit = intersect_box(
-        ro,
-        rd,
-        vec3<f32>(-(hx + rim_w), plinth_y, -(hz + rim_w)),
-        vec3<f32>(hx + rim_w, fy, hz + rim_w),
-    );
+    let base_hit = intersect_box(ro, inv, rd_sign, outer_min, vec3<f32>(hx + rim_w, fy, hz + rim_w));
     if base_hit.x > 0.0 && base_hit.x < best.t {
         best = Hit(base_hit.x, base_hit.yzw, 3u);
     }
@@ -308,14 +302,14 @@ fn shade_studio_hit(hit: Hit, p: vec3<f32>, rd: vec3<f32>, mat_id: f32) -> vec3<
     let rim_w = 0.14;
     let v = -rd;
     let n = hit.normal;
-    let key_dir = normalize(vec3<f32>(-0.28, 0.88, 0.38));
-    let rim_dir = normalize(vec3<f32>(0.54, 0.70, -0.46));
 
     if hit.kind == 2u {
         let tile = abs(fract(p.xz * 1.45 + 0.5) - 0.5);
         let grout = 1.0 - smoothstep(0.478, 0.494, max(tile.x, tile.y));
         let grain = fbm2(p.xz * 3.6);
-        let vein = pow(1.0 - abs(value_noise(p.xz * 2.8 + vec2<f32>(grain * 1.3, -grain)) * 2.0 - 1.0), 6.0);
+        let v_base = 1.0 - abs(value_noise(p.xz * 2.8 + vec2<f32>(grain * 1.3, -grain)) * 2.0 - 1.0);
+        let v3 = pow3(v_base);
+        let vein = v3 * v3;
 
         var albedo = vec3<f32>(0.022, 0.026, 0.033) * (0.86 + 0.28 * grain) + vec3<f32>(0.013, 0.015, 0.020) * vein;
         if mat_id > 0.5 && mat_id < 1.5 {
@@ -326,12 +320,12 @@ fn shade_studio_hit(hit: Hit, p: vec3<f32>, rd: vec3<f32>, mat_id: f32) -> vec3<
         let edge_dist = min(hx - abs(p.x), hz - abs(p.z));
         let wall_ao = smoothstep(0.0, 0.34, edge_dist);
         let caust = eval_floor_caustics(p.x, p.z, mat_id);
-        let ndl = max(dot(n, key_dir), 0.0);
-        let ndr = max(dot(n, rim_dir), 0.0);
+        let ndl = max(dot(n, KEY_DIR), 0.0);
+        let ndr = max(dot(n, RIM_DIR), 0.0);
 
         let r_dir = reflect(rd, n);
         let spec_env = sample_studio_bg(r_dir);
-        let fres = 0.025 + 0.28 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        let fres = 0.025 + 0.28 * pow5(1.0 - max(dot(n, v), 0.0));
 
         var col = albedo * (0.28 + 1.15 * ndl + 0.30 * ndr) * (0.50 + 0.50 * wall_ao) * caust.w;
         col += spec_env * fres * 0.45 * wall_ao * caust.w;
@@ -352,12 +346,12 @@ fn shade_studio_hit(hit: Hit, p: vec3<f32>, rd: vec3<f32>, mat_id: f32) -> vec3<
         let obsidian = vec3<f32>(0.016, 0.019, 0.024) * (0.88 + 0.24 * grain);
         let metal_col = select(vec3<f32>(0.75, 0.80, 0.88), vec3<f32>(0.98, 0.76, 0.32), mat_id > 1.5 && mat_id < 2.5);
 
-        let ndl = max(dot(n, key_dir), 0.0);
-        let ndr = max(dot(n, rim_dir), 0.0);
-        let h_key = normalize(key_dir + v);
-        let h_rim = normalize(rim_dir + v);
+        let ndl = max(dot(n, KEY_DIR), 0.0);
+        let ndr = max(dot(n, RIM_DIR), 0.0);
+        let h_key = normalize(KEY_DIR + v);
+        let h_rim = normalize(RIM_DIR + v);
         let spec_rough = pow(max(dot(n, h_key), 0.0), 42.0) * 0.28 + pow(max(dot(n, h_rim), 0.0), 32.0) * 0.16;
-        let fres = 0.03 + 0.25 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        let fres = 0.03 + 0.25 * pow5(1.0 - max(dot(n, v), 0.0));
 
         let bottom_ao = smoothstep(-0.24, -0.05, p.y);
         var col = obsidian * (0.24 + 0.95 * ndl + 0.25 * ndr) * (0.55 + 0.45 * bottom_ao);
@@ -381,92 +375,147 @@ fn shade_studio_hit(hit: Hit, p: vec3<f32>, rd: vec3<f32>, mat_id: f32) -> vec3<
     let plinth_ao = smoothstep(0.0, 0.85, box_d);
     let fade = exp(-dot(p.xz, p.xz) * 0.022);
     let grain = value_noise(p.xz * 2.4);
-    let fres = 0.02 + 0.24 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+    let fres = 0.02 + 0.24 * pow5(1.0 - max(dot(n, v), 0.0));
     var col = vec3<f32>(0.011, 0.013, 0.018) * (0.90 + 0.20 * grain) * (0.28 + 0.72 * plinth_ao);
     col += sample_studio_bg(reflect(rd, n)) * fres * 0.55 * plinth_ao;
     return mix(sample_studio_bg(rd), col, fade);
 }
 
-fn view_pos_at(coord: vec2<i32>, z_eye: f32) -> vec3<f32> {
-    let uv = (vec2<f32>(coord) + 0.5) * studio_frame.viewport.zw;
-    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    let ray_clip = studio_frame.inv_proj * vec4<f32>(ndc, 0.5, 1.0);
-    let ray_view = ray_clip.xyz / max(ray_clip.w, 1.0e-5);
-    let scale = z_eye / max(-ray_view.z, 1.0e-5);
-    return ray_view * scale;
+fn load_depth(c: vec2<i32>, dims: vec2<i32>) -> f32 {
+    return textureLoad(studio_depth, clamp(c, vec2<i32>(0), dims - 1), 0).r;
 }
 
-fn reconstruct_normal_view(coord: vec2<i32>, dims: vec2<i32>, z_c: f32, p_c: vec3<f32>) -> vec4<f32> {
-    let c_l = clamp(coord - vec2<i32>(1, 0), vec2<i32>(0), dims - 1);
-    let c_r = clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), dims - 1);
-    let c_u = clamp(coord - vec2<i32>(0, 1), vec2<i32>(0), dims - 1);
-    let c_d = clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), dims - 1);
-
-    let z_l = textureLoad(studio_depth, c_l, 0).r;
-    let z_r = textureLoad(studio_depth, c_r, 0).r;
-    let z_u = textureLoad(studio_depth, c_u, 0).r;
-    let z_d = textureLoad(studio_depth, c_d, 0).r;
-
-    let edge_th = studio_frame.splat.x * 4.5;
+fn edge_deriv(z_l: f32, z_c: f32, z_r: f32, edge_th: f32) -> f32 {
     let dl = abs(z_l - z_c);
     let dr = abs(z_r - z_c);
-    let du = abs(z_u - z_c);
-    let dd = abs(z_d - z_c);
-    let dl_ok = z_l > 0.0 && dl < edge_th;
-    let dr_ok = z_r > 0.0 && dr < edge_th;
-    let du_ok = z_u > 0.0 && du < edge_th;
-    let dd_ok = z_d > 0.0 && dd < edge_th;
-
-    let valid_count = f32(dl_ok) + f32(dr_ok) + f32(du_ok) + f32(dd_ok);
-    let bg_count = f32(z_l <= 0.0) + f32(z_r <= 0.0) + f32(z_u <= 0.0) + f32(z_d <= 0.0);
-    let outer_cov = select(1.0, smoothstep(4.0, 0.0, bg_count), bg_count > 0.5);
-    let ridge_blend = smoothstep(0.5, 4.0, valid_count);
-
-    var dpdx = vec3<f32>(1.0, 0.0, 0.0);
-    if dl_ok && dr_ok {
-        let curv_x = abs(0.5 * (z_l + z_r) - z_c);
-        if curv_x < edge_th * 0.45 {
-            dpdx = view_pos_at(c_r, z_r) - view_pos_at(c_l, z_l);
-        } else if dr < dl {
-            dpdx = view_pos_at(c_r, z_r) - p_c;
-        } else {
-            dpdx = p_c - view_pos_at(c_l, z_l);
+    let l_ok = z_l > 0.0 && dl < edge_th;
+    let r_ok = z_r > 0.0 && dr < edge_th;
+    if l_ok && r_ok {
+        let curv = abs(0.5 * (z_l + z_r) - z_c);
+        if curv < edge_th * 0.45 {
+            return 0.5 * (z_r - z_l);
         }
-    } else if dr_ok {
-        dpdx = view_pos_at(c_r, z_r) - p_c;
-    } else if dl_ok {
-        dpdx = p_c - view_pos_at(c_l, z_l);
+        return select(z_c - z_l, z_r - z_c, dr < dl);
     }
-
-    var dpdy = vec3<f32>(0.0, -1.0, 0.0);
-    if du_ok && dd_ok {
-        let curv_y = abs(0.5 * (z_u + z_d) - z_c);
-        if curv_y < edge_th * 0.45 {
-            dpdy = view_pos_at(c_u, z_u) - view_pos_at(c_d, z_d);
-        } else if du < dd {
-            dpdy = view_pos_at(c_u, z_u) - p_c;
-        } else {
-            dpdy = p_c - view_pos_at(c_d, z_d);
-        }
-    } else if du_ok {
-        dpdy = view_pos_at(c_u, z_u) - p_c;
-    } else if dd_ok {
-        dpdy = p_c - view_pos_at(c_d, z_d);
+    if r_ok {
+        return z_r - z_c;
     }
+    if l_ok {
+        return z_c - z_l;
+    }
+    return 0.0;
+}
 
-    var n = cross(dpdx, dpdy);
+fn normal_from_grad(ndc: vec2<f32>, dims: vec2<i32>, z_eye: f32, dzdx: f32, dzdy: f32) -> vec3<f32> {
+    let rx = ndc.x * studio_frame.inv_proj[0][0];
+    let ry = ndc.y * studio_frame.inv_proj[1][1];
+    let dx_step = 2.0 * studio_frame.inv_proj[0][0] / f32(dims.x);
+    let dy_step = -2.0 * studio_frame.inv_proj[1][1] / f32(dims.y);
+    let dpdx = vec3<f32>(dx_step * z_eye + rx * dzdx, ry * dzdx, -dzdx);
+    let dpdy = vec3<f32>(rx * dzdy, dy_step * z_eye + ry * dzdy, -dzdy);
+    let n = cross(dpdy, dpdx);
     let len2 = dot(n, n);
     if len2 < 1.0e-12 {
-        return vec4<f32>(0.0, 0.0, 1.0, outer_cov);
+        return vec3<f32>(0.0, 0.0, 1.0);
     }
-    n = n * inverseSqrt(len2);
-    if n.z < 0.0 {
-        n = -n;
+    var nn = n * inverseSqrt(len2);
+    if nn.z < 0.0 {
+        nn = -nn;
     }
-    if valid_count < 3.5 {
-        n = normalize(mix(normalize(n + vec3<f32>(0.0, 0.0, 0.35)), n, ridge_blend));
+    return nn;
+}
+
+struct DepthNormal {
+    z: f32,
+    cov: f32,
+    n_view: vec3<f32>,
+}
+
+fn sample_fluid_surface(pos_xy: vec2<f32>, uv: vec2<f32>, ndc: vec2<f32>, dims: vec2<i32>) -> DepthNormal {
+    let edge_th = studio_frame.splat.x * 4.5;
+    if abs(f32(dims.x) - studio_frame.viewport.x) < 1.5 {
+        let coord = clamp(vec2<i32>(pos_xy), vec2<i32>(0), dims - 1);
+        let z_c = load_depth(coord, dims);
+        if z_c <= 0.0 {
+            return DepthNormal(0.0, 0.0, vec3<f32>(0.0, 0.0, 1.0));
+        }
+        let z_l = load_depth(coord - vec2<i32>(1, 0), dims);
+        let z_r = load_depth(coord + vec2<i32>(1, 0), dims);
+        let z_u = load_depth(coord - vec2<i32>(0, 1), dims);
+        let z_d = load_depth(coord + vec2<i32>(0, 1), dims);
+        let dzdx = edge_deriv(z_l, z_c, z_r, edge_th);
+        let dzdy = edge_deriv(z_u, z_c, z_d, edge_th);
+        let bg_count = f32(z_l <= 0.0) + f32(z_r <= 0.0) + f32(z_u <= 0.0) + f32(z_d <= 0.0);
+        let cov = select(1.0, 0.45 + 0.55 * smoothstep(4.0, 0.0, bg_count), bg_count > 0.5);
+        let valid = f32(z_l > 0.0 && abs(z_l - z_c) < edge_th)
+            + f32(z_r > 0.0 && abs(z_r - z_c) < edge_th)
+            + f32(z_u > 0.0 && abs(z_u - z_c) < edge_th)
+            + f32(z_d > 0.0 && abs(z_d - z_c) < edge_th);
+        var n = normal_from_grad(ndc, dims, z_c, dzdx, dzdy);
+        if valid < 3.5 {
+            n = normalize(mix(normalize(n + vec3<f32>(0.0, 0.0, 0.35)), n, smoothstep(0.5, 4.0, valid)));
+        }
+        return DepthNormal(z_c, cov, n);
     }
-    return vec4<f32>(n, outer_cov);
+
+    let p = uv * vec2<f32>(dims) - 0.5;
+    let b = vec2<i32>(floor(p));
+    let f = clamp(p - vec2<f32>(b), vec2<f32>(0.0), vec2<f32>(1.0));
+
+    let z00 = load_depth(b, dims);
+    let z10 = load_depth(b + vec2<i32>(1, 0), dims);
+    let z01 = load_depth(b + vec2<i32>(0, 1), dims);
+    let z11 = load_depth(b + vec2<i32>(1, 1), dims);
+
+    let bw00 = (1.0 - f.x) * (1.0 - f.y);
+    let bw10 = f.x * (1.0 - f.y);
+    let bw01 = (1.0 - f.x) * f.y;
+    let bw11 = f.x * f.y;
+
+    let cov = bw00 * f32(z00 > 0.0) + bw10 * f32(z10 > 0.0) + bw01 * f32(z01 > 0.0) + bw11 * f32(z11 > 0.0);
+    if cov < 0.22 {
+        return DepthNormal(0.0, 0.0, vec3<f32>(0.0, 0.0, 1.0));
+    }
+
+    let z_row0 = select(z00, z10, f.x >= 0.5);
+    let z_row1 = select(z01, z11, f.x >= 0.5);
+    var z_ref = select(z_row0, z_row1, f.y >= 0.5);
+    if z_ref <= 0.0 {
+        var z_near = 1.0e9;
+        if z00 > 0.0 { z_near = min(z_near, z00); }
+        if z10 > 0.0 { z_near = min(z_near, z10); }
+        if z01 > 0.0 { z_near = min(z_near, z01); }
+        if z11 > 0.0 { z_near = min(z_near, z11); }
+        z_ref = z_near;
+    }
+
+    let w00 = select(0.0, bw00, z00 > 0.0 && abs(z00 - z_ref) < edge_th);
+    let w10 = select(0.0, bw10, z10 > 0.0 && abs(z10 - z_ref) < edge_th);
+    let w01 = select(0.0, bw01, z01 > 0.0 && abs(z01 - z_ref) < edge_th);
+    let w11 = select(0.0, bw11, z11 > 0.0 && abs(z11 - z_ref) < edge_th);
+    let w_sum = max(w00 + w10 + w01 + w11, 1.0e-5);
+    let z_eye = (z00 * w00 + z10 * w10 + z01 * w01 + z11 * w11) / w_sum;
+
+    let zm0 = load_depth(b + vec2<i32>(-1, 0), dims);
+    let z20 = load_depth(b + vec2<i32>(2, 0), dims);
+    let zm1 = load_depth(b + vec2<i32>(-1, 1), dims);
+    let z21 = load_depth(b + vec2<i32>(2, 1), dims);
+    let z0m = load_depth(b + vec2<i32>(0, -1), dims);
+    let z1m = load_depth(b + vec2<i32>(1, -1), dims);
+    let z02 = load_depth(b + vec2<i32>(0, 2), dims);
+    let z12 = load_depth(b + vec2<i32>(1, 2), dims);
+
+    let g00 = vec2<f32>(edge_deriv(zm0, z00, z10, edge_th), edge_deriv(z0m, z00, z01, edge_th));
+    let g10 = vec2<f32>(edge_deriv(z00, z10, z20, edge_th), edge_deriv(z1m, z10, z11, edge_th));
+    let g01 = vec2<f32>(edge_deriv(zm1, z01, z11, edge_th), edge_deriv(z00, z01, z02, edge_th));
+    let g11 = vec2<f32>(edge_deriv(z01, z11, z21, edge_th), edge_deriv(z10, z11, z12, edge_th));
+    let grad = (g00 * w00 + g10 * w10 + g01 * w01 + g11 * w11) / w_sum;
+
+    var n = normal_from_grad(ndc, dims, z_eye, grad.x, grad.y);
+    if cov < 0.99 {
+        n = normalize(mix(normalize(n + vec3<f32>(0.0, 0.0, 0.25)), n, smoothstep(0.22, 0.98, cov)));
+    }
+    return DepthNormal(z_eye, smoothstep(0.22, 0.85, cov), n);
 }
 
 fn shade_chrome(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32) -> vec3<f32> {
@@ -480,17 +529,18 @@ fn shade_chrome(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32) -> v
     }
 
     let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);
+    let omt = 1.0 - ndv;
     let f0 = vec3<f32>(0.94, 0.96, 0.99);
-    let fres = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - ndv, 5.0);
+    let fres = f0 + (vec3<f32>(1.0) - f0) * pow5(omt);
     let floor_ao = smoothstep(0.0, 0.14, p_w.y - studio_frame.basin.z);
-    let cool_edge = mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.94, 1.06), pow(1.0 - ndv, 3.0));
+    let cool_edge = mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.94, 1.06), pow3(omt));
     let depth_polish = 0.88 + 0.12 * smoothstep(0.0, 0.40, thick);
     return refl * fres * cool_edge * (0.76 + 0.24 * floor_ao) * depth_polish;
 }
 
 fn shade_water(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, foam: f32, speed: f32) -> vec3<f32> {
     let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);
-    let fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+    let fres = 0.02 + 0.98 * pow5(1.0 - ndv);
 
     let r_w = reflect(-v_w, n_w);
     let refl_env = sample_studio_hdri(r_w, 1.0);
@@ -511,8 +561,7 @@ fn shade_water(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, foam:
     let optical_d = clamp(thick * 0.66, 0.02, 3.2);
     let absorb = exp(-optical_d * vec3<f32>(1.85, 0.34, 0.20));
     let body_tint = vec3<f32>(0.010, 0.22, 0.30);
-    let key_dir = normalize(vec3<f32>(-0.28, 0.88, 0.38));
-    let back_scatter = pow(clamp(dot(v_w, -key_dir + n_w * 0.55), 0.0, 1.0), 3.0);
+    let back_scatter = pow3(clamp(dot(v_w, -KEY_DIR + n_w * 0.55), 0.0, 1.0));
     let sss = vec3<f32>(0.04, 0.52, 0.62) * back_scatter * (1.0 - exp(-optical_d * 0.95)) * 0.55;
 
     var col = under * absorb + body_tint * (1.0 - absorb) * 0.38 + sss;
@@ -521,7 +570,7 @@ fn shade_water(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, foam:
     let lace = value_noise(p_w.xz * 22.0 + vec2<f32>(studio_frame.eye_time.w * 0.8, -studio_frame.eye_time.w * 0.6));
     let crest_sig = foam * 1.15 + smoothstep(1.15, 2.25, speed) * 0.36;
     let crest_foam = smoothstep(0.36, 0.86, crest_sig) * smoothstep(0.34, 0.78, lace);
-    let foam_lit = vec3<f32>(0.92, 0.97, 1.0) * (0.58 + 0.48 * max(dot(n_w, key_dir), 0.0));
+    let foam_lit = vec3<f32>(0.92, 0.97, 1.0) * (0.58 + 0.48 * max(dot(n_w, KEY_DIR), 0.0));
     col = mix(col, foam_lit, clamp(crest_foam * 0.68, 0.0, 0.72));
     return col;
 }
@@ -531,12 +580,12 @@ fn shade_gold(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, speed:
     let r_w = reflect(-v_w, n_w);
     let refl_env = sample_studio_hdri(r_w, 2.0);
     let f0 = vec3<f32>(1.0, 0.76, 0.22);
-    let fres = f0 + (vec3<f32>(1.0, 0.92, 0.68) - f0) * pow(1.0 - ndv, 5.0);
+    let fres = f0 + (vec3<f32>(1.0, 0.92, 0.68) - f0) * pow5(1.0 - ndv);
     let floor_ao = smoothstep(0.0, 0.16, p_w.y - studio_frame.basin.z);
     let metallic = refl_env * fres * (0.78 + 0.22 * floor_ao) * 1.12;
 
     let swirl = fbm2(p_w.xz * 4.8 + vec2<f32>(p_w.y * 3.2, studio_frame.eye_time.w * 0.40));
-    let seam = pow(clamp(1.0 - abs(swirl * 2.0 - 1.0), 0.0, 1.0), 5.0);
+    let seam = pow5(clamp(1.0 - abs(swirl * 2.0 - 1.0), 0.0, 1.0));
     let heat = clamp(
         seam * 0.72
             + smoothstep(0.85, 2.15, speed + energy * 0.45) * 0.42
@@ -551,7 +600,8 @@ fn shade_gold(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, speed:
 
 fn shade_plasma(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, speed: f32, energy: f32) -> vec3<f32> {
     let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);
-    let rim = pow(1.0 - ndv, 3.2);
+    let omt = 1.0 - ndv;
+    let rim = pow3(omt) * sqrt(max(omt, 1.0e-6));
     let r_w = reflect(-v_w, n_w);
     let refl = sample_studio_hdri(r_w, 3.0);
 
@@ -564,26 +614,32 @@ fn shade_plasma(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, spee
     let violet = vec3<f32>(1.28, 0.14, 2.05);
     let bio_hue = mix(cyan, violet, smoothstep(0.35, 0.75, w1));
 
-    let vein = pow(clamp(1.0 - abs(w2 * 2.0 - 1.0), 0.0, 1.0), 8.5);
+    let vb = clamp(1.0 - abs(w2 * 2.0 - 1.0), 0.0, 1.0);
+    let v2 = vb * vb;
+    let v4 = v2 * v2;
+    let vein = v4 * v4 * sqrt(max(vb, 1.0e-6));
     let surge = 0.42 + smoothstep(0.55, 1.90, speed + energy * 0.65) * 1.15;
     let edge_cyan = vec3<f32>(0.05, 1.25, 2.15) * rim * 1.55;
     let thin_aura = bio_hue * exp(-thick * 2.4) * 0.24;
     let filaments = bio_hue * vein * surge * 1.65;
 
-    let glass_spec = refl * (0.08 + 0.82 * pow(1.0 - ndv, 4.0));
+    let o2 = omt * omt;
+    let glass_spec = refl * (0.08 + 0.82 * o2 * o2);
     return core + glass_spec + edge_cyan + thin_aura + filaments;
 }
 
 @fragment
 fn fs_studio(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let dims = vec2<i32>(textureDimensions(studio_depth));
-    let coord = clamp(vec2<i32>(pos.xy), vec2<i32>(0), dims - 1);
-    let uv = (vec2<f32>(coord) + 0.5) * studio_frame.viewport.zw;
+    let uv = pos.xy * studio_frame.viewport.zw;
     let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let mat_id = studio_frame.style.x;
 
-    let ray_clip = studio_frame.inv_proj * vec4<f32>(ndc, 0.5, 1.0);
-    let ray_view = normalize(ray_clip.xyz / max(ray_clip.w, 1.0e-5));
+    let ray_view = normalize(vec3<f32>(
+        ndc.x * studio_frame.inv_proj[0][0],
+        ndc.y * studio_frame.inv_proj[1][1],
+        -1.0,
+    ));
     let ro = studio_frame.eye_time.xyz;
     let rd = normalize((studio_frame.inv_view * vec4<f32>(ray_view, 0.0)).xyz);
 
@@ -595,45 +651,42 @@ fn fs_studio(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         bg_z_eye = -hv.z;
     }
 
-    let z_fluid = textureLoad(studio_depth, coord, 0).r;
+    let surf = sample_fluid_surface(pos.xy, uv, ndc, dims);
     var col = vec3<f32>(0.0);
 
-    if z_fluid > 0.0 && z_fluid < bg_z_eye + 0.025 {
-        let p_view = view_pos_at(coord, z_fluid);
-        let n_cov = reconstruct_normal_view(coord, dims, z_fluid, p_view);
-        let n_view = n_cov.xyz;
-        let sil_cov = n_cov.w;
+    if surf.z > 0.0 && surf.z < bg_z_eye + 0.025 {
+        let p_view = vec3<f32>(
+            ndc.x * studio_frame.inv_proj[0][0] * surf.z,
+            ndc.y * studio_frame.inv_proj[1][1] * surf.z,
+            -surf.z,
+        );
         let p_w = (studio_frame.inv_view * vec4<f32>(p_view, 1.0)).xyz;
-        let n_w = normalize((studio_frame.inv_view * vec4<f32>(n_view, 0.0)).xyz);
+        let n_w = normalize((studio_frame.inv_view * vec4<f32>(surf.n_view, 0.0)).xyz);
         let v_w = normalize(ro - p_w);
 
         let thick_sample = textureSampleLevel(studio_thick, studio_sampler, uv, 0.0);
-        let aux_sample = textureLoad(studio_aux, coord, 0);
         let w_norm = max(thick_sample.w, 0.01);
-        let smooth_foam = clamp(thick_sample.y / w_norm, 0.0, 1.0);
-        let smooth_speed = clamp(thick_sample.z / w_norm, 0.0, 2.5);
-        let foam = mix(smooth_foam, aux_sample.y, 0.30);
-        let speed = mix(smooth_speed, aux_sample.x, 0.30);
-        let energy = aux_sample.z;
+        let meta_g = thick_sample.y / w_norm;
+        let speed = clamp(thick_sample.z / w_norm, 0.0, 2.5);
         let thick = thick_sample.x;
 
         if mat_id < 0.5 {
             col = shade_chrome(p_w, n_w, v_w, thick);
         } else if mat_id < 1.5 {
-            col = shade_water(p_w, n_w, v_w, thick, foam, speed);
+            col = shade_water(p_w, n_w, v_w, thick, clamp(meta_g, 0.0, 1.0), speed);
         } else if mat_id < 2.5 {
-            col = shade_gold(p_w, n_w, v_w, thick, speed, energy);
+            col = shade_gold(p_w, n_w, v_w, thick, speed, clamp(meta_g, 0.0, 1.5));
         } else {
-            col = shade_plasma(p_w, n_w, v_w, thick, speed, energy);
+            col = shade_plasma(p_w, n_w, v_w, thick, speed, clamp(meta_g, 0.0, 1.5));
         }
 
-        if sil_cov < 0.99 {
+        if surf.cov < 0.99 {
             var bg_edge = sample_studio_bg(rd);
             if hit.kind != 0u {
                 let hp = ro + rd * hit.t;
                 bg_edge = shade_studio_hit(hit, hp, rd, mat_id);
             }
-            col = mix(bg_edge, col, 0.45 + 0.55 * sil_cov);
+            col = mix(bg_edge, col, surf.cov);
         }
     } else if hit.kind != 0u {
         let hp = ro + rd * hit.t;
@@ -648,7 +701,9 @@ fn fs_studio(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let proj = dot(to_s, rd);
         if proj > 0.0 {
             let perp = length(to_s - rd * proj);
-            let ring = exp(-pow((perp - 0.36) * 28.0, 2.0)) * 0.45 + exp(-pow(perp * 6.5, 2.0)) * 0.08;
+            let r1 = (perp - 0.36) * 28.0;
+            let r2 = perp * 6.5;
+            let ring = exp(-r1 * r1) * 0.45 + exp(-r2 * r2) * 0.08;
             col += vec3<f32>(0.72, 0.90, 1.0) * ring;
         }
     }

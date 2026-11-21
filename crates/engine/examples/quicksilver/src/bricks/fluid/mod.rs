@@ -16,7 +16,6 @@ pub const FLUID_DEPTH_1: TargetName = TargetName("fluid_depth_1");
 pub const FLUID_DEPTH_2: TargetName = TargetName("fluid_depth_2");
 pub const FLUID_DEPTH_3: TargetName = TargetName("fluid_depth_3");
 pub const FLUID_DEPTH_4: TargetName = TargetName("fluid_depth_4");
-pub const FLUID_AUX: TargetName = TargetName("fluid_aux");
 pub const HW_DEPTH: TargetName = TargetName("fluid_hw_depth");
 pub const FLUID_THICK_0: TargetName = TargetName("fluid_thick_0");
 pub const FLUID_THICK_1: TargetName = TargetName("fluid_thick_1");
@@ -31,7 +30,7 @@ pub struct FluidSplatPass;
 impl PassName for FluidSplatPass {
     const NAME: &'static str = FLUID_SPLAT_PASS;
     const PASS: Pass = Pass {
-        writes: Writes(&[FLUID_DEPTH_0, FLUID_AUX, HW_DEPTH]),
+        writes: Writes(&[FLUID_DEPTH_0, HW_DEPTH]),
         views: PassViews::Main,
     };
 }
