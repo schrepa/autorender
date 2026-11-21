@@ -1,0 +1,34 @@
+{
+  "id": "verdant",
+  "revision": 1,
+  "entities": [
+    {
+      "id": "camera",
+      "control": {},
+      "node": {
+        "mobility": "moving"
+      },
+      "present": {
+        "antialias": true,
+        "antialias_max_pixel_ratio": 1.5
+      },
+      "view": {
+        "clear_color": [
+          0.02,
+          0.03,
+          0.06,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "meadow_world",
+      "node": {
+        "mobility": "static"
+      },
+      "drawn": {
+        "kind": "verdant_world"
+      }
+    }
+  ]
+}

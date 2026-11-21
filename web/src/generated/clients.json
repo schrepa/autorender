@@ -14,5 +14,13 @@
     "package": "quicksilver",
     "page": "quicksilver.html",
     "wasm": "quicksilver"
+  },
+  {
+    "folder": "crates/engine/examples/verdant",
+    "game": "verdant",
+    "native": "verdant-native",
+    "package": "verdant",
+    "page": "verdant.html",
+    "wasm": "verdant"
   }
 ]
