@@ -8,6 +8,10 @@ use engine_core::{GpuStruct, KindDecl, Pass, PassName, PassViews, Writes, gpu_st
 use crate::names::{COLOR, COLOR_PASS, DEPTH, WORLD};
 
 pub const MAX_BLADES: u32 = 1_000_000;
+pub const NUM_PATCHES: u32 = MAX_BLADES.div_ceil(256);
+pub const MAX_VIS_NEAR0: u32 = 262_144;
+pub const MAX_VIS_NEAR1: u32 = 262_144;
+pub const MAX_VIS_FAR: u32 = 327_680;
 pub const MAX_PARTICLES: u32 = 50_000;
 pub const WAKE_SIDE: u32 = 256;
 pub const POINT_LIGHT_COUNT: u32 = 33;
@@ -45,7 +49,26 @@ gpu_struct! {
 
 gpu_struct! {
     pub struct GrassBlade {
-        pub data: [f32; 4],
+        pub x: f32,
+        pub y: f32,
+        pub z: f32,
+        pub packed: u32,
+    }
+}
+
+gpu_struct! {
+    pub struct PatchBounds {
+        pub sphere: [f32; 4],
+    }
+}
+
+gpu_struct! {
+    pub struct VisibleBlade {
+        pub x: f32,
+        pub y: f32,
+        pub z: f32,
+        pub hw: u32,
+        pub bend_misc: [u32; 4],
     }
 }
 
@@ -53,6 +76,13 @@ gpu_struct! {
     pub struct Particle {
         pub pos_phase: [f32; 4],
         pub vel_kind: [f32; 4],
+    }
+}
+
+gpu_struct! {
+    pub struct VisibleParticle {
+        pub pos_size: [f32; 4],
+        pub color_spin: [u32; 4],
     }
 }
 
@@ -73,7 +103,10 @@ const GENERATED: &[&str] = &[
     <WorldUniforms as GpuStruct>::WGSL,
     <MeshVertex as GpuStruct>::WGSL,
     <GrassBlade as GpuStruct>::WGSL,
+    <PatchBounds as GpuStruct>::WGSL,
+    <VisibleBlade as GpuStruct>::WGSL,
     <Particle as GpuStruct>::WGSL,
+    <VisibleParticle as GpuStruct>::WGSL,
     <PointLight as GpuStruct>::WGSL,
     <WakeCell as GpuStruct>::WGSL,
 ];

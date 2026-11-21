@@ -23,6 +23,46 @@ struct VsOut {
     @location(4) mat_ao: vec2<f32>,
 }
 
+struct FoliageOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) uv_phase: vec4<f32>,
+    @location(1) lit_color: vec3<f32>,
+}
+
+fn eval_dynamic_lights(pos: vec3<f32>, n: vec3<f32>, wrap: f32) -> vec3<f32> {
+    if world.sky_zenith.w + world.sky_horizon.w < 0.05 {
+        return vec3<f32>(0.0);
+    }
+    let rel_l = pos.xz - vec2<f32>(0.0, 4.5);
+    if dot(rel_l, rel_l) > 784.0 {
+        return vec3<f32>(0.0);
+    }
+    var accum = vec3<f32>(0.0);
+    let max_i = select(5u, arrayLength(&lights), world.sky_horizon.w > 0.25);
+    let inv_wrap = 1.0 / (1.0 + wrap);
+    for (var i = 0u; i < max_i; i = i + 1u) {
+        let pr = lights[i].pos_radius;
+        let ci = lights[i].color_intensity;
+        if ci.w <= 0.005 {
+            continue;
+        }
+        let to_l = pr.xyz - pos;
+        let d2 = dot(to_l, to_l);
+        let r2 = pr.w * pr.w;
+        if d2 >= r2 {
+            continue;
+        }
+        let inv_d = inverseSqrt(max(d2, 0.001));
+        let d = d2 * inv_d;
+        let soft_d2 = max(d2, 0.95);
+        let u = 1.0 - d / pr.w;
+        let atten = (u * u) / (1.0 + 0.52 * soft_d2);
+        let ndl = clamp((dot(n, to_l * inv_d) + wrap) * inv_wrap, 0.0, 1.0);
+        accum += ci.rgb * (ci.w * atten * (0.14 + 0.86 * ndl));
+    }
+    return accum;
+}
+
 @vertex
 fn vs_mesh(@builtin(vertex_index) vid: u32) -> VsOut {
     let idx = mesh_indices[vid];
@@ -32,12 +72,7 @@ fn vs_mesh(@builtin(vertex_index) vid: u32) -> VsOut {
     let t = world.time_wind.x;
     let wind_str = world.time_wind.z;
 
-    if mat_id > 7.5 && mat_id < 9.5 {
-        let w = sample_wind(pos.xz, t, wind_str);
-        let phase = v.uv_extra.z;
-        let gust = sin(t * 2.4 + phase + pos.x * 0.45) * 0.085 * (0.45 + wind_str);
-        pos += vec3<f32>(w.x * 0.14 + gust, cos(t * 2.1 + phase) * 0.045 * wind_str, w.y * 0.14);
-    } else if mat_id > 5.5 && mat_id < 6.5 && v.uv_extra.z > 0.5 {
+    if mat_id > 5.5 && mat_id < 6.5 && v.uv_extra.z > 0.5 {
         let w = sample_wind(pos.xz, t, wind_str);
         let sway = (v.uv_extra.z - 0.5) * 0.06 * (0.5 + wind_str);
         pos.x += (w.x * 0.35 + sin(t * 3.8 + pos.x * 2.0) * 0.4) * sway;
@@ -54,31 +89,55 @@ fn vs_mesh(@builtin(vertex_index) vid: u32) -> VsOut {
     return out;
 }
 
-fn eval_dynamic_lights(pos: vec3<f32>, n: vec3<f32>, wrap: f32) -> vec3<f32> {
-    if world.sky_zenith.w + world.sky_horizon.w < 0.05 {
-        return vec3<f32>(0.0);
+@vertex
+fn vs_foliage(@builtin(vertex_index) vid: u32) -> FoliageOut {
+    let idx = mesh_indices[vid];
+    let v = mesh_verts[idx];
+    var pos = v.pos_mat.xyz;
+    let mat_id = v.pos_mat.w;
+    let ao = v.norm_ao.w;
+    let t = world.time_wind.x;
+    let wind_str = world.time_wind.z;
+    let is_blossom_or_pine = mat_id > 7.5 && mat_id < 9.5;
+
+    if is_blossom_or_pine {
+        let w = sample_wind(pos.xz, t, wind_str);
+        let phase = v.uv_extra.z;
+        let gust = sin(t * 2.4 + phase + pos.x * 0.45) * 0.085 * (0.45 + wind_str);
+        pos += vec3<f32>(w.x * 0.14 + gust, cos(t * 2.1 + phase) * 0.045 * wind_str, w.y * 0.14);
     }
-    var accum = vec3<f32>(0.0);
-    let max_i = select(5u, arrayLength(&lights), world.sky_horizon.w > 0.12);
-    for (var i = 0u; i < max_i; i = i + 1u) {
-        let pr = lights[i].pos_radius;
-        let ci = lights[i].color_intensity;
-        if ci.w <= 0.005 {
-            continue;
-        }
-        let to_l = pr.xyz - pos;
-        let d2 = dot(to_l, to_l);
-        let r2 = pr.w * pr.w;
-        if d2 >= r2 {
-            continue;
-        }
-        let d = sqrt(max(d2, 0.001));
-        let soft_d2 = max(d2, 0.95);
-        let atten = pow(1.0 - d / pr.w, 2.0) / (1.0 + 0.52 * soft_d2);
-        let ndl = clamp((dot(n, to_l / d) + wrap) / (1.0 + wrap), 0.0, 1.0);
-        accum += ci.rgb * (ci.w * atten * (0.14 + 0.86 * ndl));
+
+    let n = normalize(v.norm_ao.xyz);
+    let view_dir = normalize(world.camera_pos.xyz - pos);
+    let sun_dir = world.sun_dir.xyz;
+
+    let wrap = select(0.45, 0.30, mat_id > 8.5);
+    let ndl = clamp((dot(n, sun_dir) + wrap) / (1.0 + wrap), 0.0, 1.0);
+    let bd = clamp(dot(view_dir, -sun_dir), 0.0, 1.0);
+    let back_dot = bd * bd * bd;
+    let sss = world.sun_color.rgb * v.tint.w * (0.14 + 0.86 * back_dot) * (0.28 + 0.72 * ao);
+
+    let hemi_t = n.y * 0.5 + 0.5;
+    let ambient = mix(world.ground_ambient.rgb, world.sky_horizon.rgb * 0.58 + world.sky_zenith.rgb * 0.45, hemi_t) * 0.56;
+    let dyn_light = eval_dynamic_lights(pos, n, 0.55);
+
+    var albedo = v.tint.rgb;
+    if mat_id > 7.5 && mat_id < 8.5 {
+        let deep_rose = vec3<f32>(0.42, 0.11, 0.22);
+        let sunlit_blush = vec3<f32>(1.0, 0.80, 0.82);
+        let base_sakura = mix(deep_rose, albedo, smoothstep(0.18, 0.82, ao));
+        albedo = mix(base_sakura, sunlit_blush, smoothstep(0.65, 1.0, ao * ndl) * 0.48);
     }
-    return accum;
+
+    var lit = albedo * (world.sun_color.rgb * ndl * 0.76 + ambient * (0.35 + 0.65 * ao) + dyn_light) + albedo * sss * 0.38;
+    lit = apply_aerial_fog(lit, pos, world);
+
+    let lobes = select(0.0, select(5.0, 7.0, mat_id > 8.5), is_blossom_or_pine);
+    var out: FoliageOut;
+    out.clip_pos = view_clip(pos);
+    out.uv_phase = vec4<f32>(v.uv_extra.x, v.uv_extra.y, v.uv_extra.z, lobes);
+    out.lit_color = lit;
+    return out;
 }
 
 fn shade_water(world_pos: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
@@ -90,10 +149,13 @@ fn shade_water(world_pos: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
     let n = normalize(ripple);
     let refl = reflect(-view_dir, n);
     let sky_r = sky_radiance(vec3<f32>(refl.x, max(refl.y, 0.02), refl.z), world);
-    let fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(n, view_dir), 0.0), 4.5);
+    let omv = 1.0 - max(dot(n, view_dir), 0.0);
+    let omv2 = omv * omv;
+    let fresnel = 0.04 + 0.96 * (omv2 * omv2 * sqrt(max(omv, 0.0001)));
     let deep = mix(vec3<f32>(0.015, 0.055, 0.10), world.sky_horizon.rgb * 0.26, 0.25);
     let half_v = normalize(world.sun_dir.xyz + view_dir);
-    let spec = pow(max(dot(n, half_v), 0.0), 190.0) * 3.8;
+    let ndh = max(dot(n, half_v), 0.0);
+    let spec = select(0.0, pow(ndh, 190.0) * 3.8, ndh > 0.88);
     let col = mix(deep, sky_r, fresnel) + world.sun_color.rgb * spec;
     return apply_aerial_fog(col, world_pos, world);
 }
@@ -114,26 +176,30 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
     var rough = 0.84;
     var metallic = 0.0;
     var emissive = vec3<f32>(0.0);
-
-    let grain = vnoise3(in.world_pos * 3.8);
-    let fine = vnoise3(in.world_pos * 14.0);
-    let macro_n = fbm2(in.world_pos.xz * 0.08 + vec2<f32>(2.4, 5.1));
+    var skip_lights = false;
 
     if mat_id < 0.5 {
         let dist = length(in.world_pos.xz);
         let path = in.uv_extra.x;
+        let macro_n = fbm2(in.world_pos.xz * 0.08 + vec2<f32>(2.4, 5.1));
         let meadow_col = mix(vec3<f32>(0.032, 0.095, 0.024), vec3<f32>(0.095, 0.185, 0.040), macro_n);
-        let soil_col = mix(vec3<f32>(0.085, 0.072, 0.055), vec3<f32>(0.145, 0.125, 0.092), grain);
-        let rock_col = vec3<f32>(0.11, 0.12, 0.12) * (0.72 + 0.46 * grain);
         let mtn_col = mix(vec3<f32>(0.030, 0.068, 0.078), vec3<f32>(0.055, 0.105, 0.092), macro_n);
         let snow_cap = smoothstep(32.0, 56.0, in.world_pos.y) * smoothstep(0.55, 0.85, n.y);
         let slope = 1.0 - smoothstep(0.62, 0.88, n.y);
-        albedo = mix(meadow_col, soil_col, path * 0.72);
-        albedo = mix(albedo, rock_col, slope * 0.78);
+        albedo = meadow_col;
+        if path > 0.005 || slope > 0.005 {
+            let grain = vnoise3(in.world_pos * 3.8);
+            let soil_col = mix(vec3<f32>(0.085, 0.072, 0.055), vec3<f32>(0.145, 0.125, 0.092), grain);
+            let rock_col = vec3<f32>(0.11, 0.12, 0.12) * (0.72 + 0.46 * grain);
+            albedo = mix(albedo, soil_col, path * 0.72);
+            albedo = mix(albedo, rock_col, slope * 0.78);
+        }
         albedo = mix(albedo, mtn_col, smoothstep(46.0, 130.0, dist));
         albedo = mix(albedo, vec3<f32>(0.62, 0.66, 0.72), snow_cap * 0.55);
         rough = 0.94;
     } else if mat_id < 2.5 {
+        let grain = vnoise3(in.world_pos * 3.8);
+        let fine = vnoise3(in.world_pos * 14.0);
         let chisel = (grain - 0.5) * 0.24 + (fine - 0.5) * 0.16;
         n = normalize(n + vec3<f32>(chisel, 0.0, (fine - 0.5) * 0.20));
         albedo = albedo * (0.70 + 0.42 * grain) * (0.88 + 0.22 * fine);
@@ -148,6 +214,9 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
         albedo = mix(albedo, albedo * 0.52 + vec3<f32>(0.04, 0.07, 0.03), base_wear * 0.45);
         rough = 0.42 + 0.24 * wood;
     } else if mat_id < 4.5 {
+        let grain = vnoise3(in.world_pos * 3.8);
+        let fine = vnoise3(in.world_pos * 14.0);
+        let macro_n = fbm2(in.world_pos.xz * 0.08 + vec2<f32>(2.4, 5.1));
         let tile = sin(in.world_pos.x * 16.0) * 0.06;
         n = normalize(n + vec3<f32>(tile, 0.0, (fine - 0.5) * 0.08));
         albedo = albedo * (0.80 + 0.32 * grain);
@@ -160,17 +229,22 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
         albedo = vec3<f32>(1.0, 0.72, 0.32);
         emissive = vec3<f32>(1.0, 0.56, 0.16) * power * 3.1;
         rough = 0.6;
+        skip_lights = true;
     } else if mat_id < 6.5 {
+        let fine = vnoise3(in.world_pos * 14.0);
         albedo = albedo * (0.84 + 0.24 * fine);
         rough = 0.90;
     } else if mat_id < 7.5 {
         let bark = vnoise3(vec3<f32>(in.world_pos.x * 9.0, in.world_pos.y * 3.0, in.world_pos.z * 9.0));
+        let fine = vnoise3(in.world_pos * 14.0);
+        let grain = vnoise3(in.world_pos * 3.8);
         n = normalize(n + vec3<f32>((bark - 0.5) * 0.38, 0.0, (fine - 0.5) * 0.26));
         albedo = albedo * (0.62 + 0.58 * bark);
         let moss = smoothstep(0.42, 0.84, n.y) * in.uv_extra.w * smoothstep(0.40, 0.68, grain);
         albedo = mix(albedo, vec3<f32>(0.07, 0.18, 0.05), moss * 0.72);
         rough = 0.92;
     } else if mat_id > 9.5 {
+        let fine = vnoise3(in.world_pos * 14.0);
         albedo = albedo * (0.88 + 0.20 * fine);
         rough = 0.26;
         metallic = 0.88;
@@ -183,13 +257,18 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
     let ndv = max(dot(n, view_dir), 0.001);
     let spec_pow = mix(96.0, 12.0, rough * rough);
     let f0 = mix(vec3<f32>(0.04), albedo, metallic);
-    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - ndv, 5.0);
+    let omv = 1.0 - ndv;
+    let omv2 = omv * omv;
+    let fresnel = f0 + (vec3<f32>(1.0) - f0) * (omv2 * omv2 * omv);
     let spec = fresnel * (pow(ndh, spec_pow) * (spec_pow + 8.0) * 0.034) * ndl * shadow;
 
     let hemi_t = n.y * 0.5 + 0.5;
     let ambient = mix(world.ground_ambient.rgb, mix(world.sky_horizon.rgb * 0.65, world.sky_zenith.rgb, 0.58), hemi_t) * 0.58;
     let direct = world.sun_color.rgb * (ndl * shadow * (1.0 - metallic * 0.85));
-    let dyn_light = eval_dynamic_lights(in.world_pos, n, 0.20);
+    var dyn_light = vec3<f32>(0.0);
+    if !skip_lights {
+        dyn_light = eval_dynamic_lights(in.world_pos, n, 0.20);
+    }
 
     var lit = albedo * (direct + ambient * ao + dyn_light) + spec * world.sun_color.rgb + emissive;
     lit = apply_aerial_fog(lit, in.world_pos, world);
@@ -197,43 +276,21 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_foliage(in: VsOut) -> @location(0) vec4<f32> {
-    let mat_id = in.mat_ao.x;
-    let ao = in.mat_ao.y;
-    let uv = in.uv_extra.xy * 2.0 - 1.0;
-
-    if mat_id > 7.5 && mat_id < 9.5 {
-        let ang = atan2(uv.y, uv.x);
-        let lobes = select(5.0, 7.0, mat_id > 8.5);
-        let ruffle = 0.72 + 0.24 * sin(ang * lobes + in.uv_extra.z) + 0.09 * cos(ang * (lobes * 2.0 - 1.0));
-        let d = length(uv);
-        if d > ruffle {
+fn fs_foliage(in: FoliageOut) -> @location(0) vec4<f32> {
+    let lobes = in.uv_phase.w;
+    if lobes > 0.5 {
+        let uv = in.uv_phase.xy * 2.0 - 1.0;
+        let d2 = dot(uv, uv);
+        if d2 > 1.1025 {
             discard;
         }
+        if d2 > 0.152 {
+            let ang = atan2(uv.y, uv.x);
+            let ruffle = 0.72 + 0.24 * sin(ang * lobes + in.uv_phase.z) + 0.09 * cos(ang * (lobes * 2.0 - 1.0));
+            if d2 > ruffle * ruffle {
+                discard;
+            }
+        }
     }
-
-    let n = normalize(in.normal);
-    let view_dir = normalize(world.camera_pos.xyz - in.world_pos);
-    let sun_dir = world.sun_dir.xyz;
-
-    let wrap = select(0.45, 0.30, mat_id > 8.5);
-    let ndl = clamp((dot(n, sun_dir) + wrap) / (1.0 + wrap), 0.0, 1.0);
-    let back_dot = pow(clamp(dot(view_dir, -sun_dir), 0.0, 1.0), 2.8);
-    let sss = world.sun_color.rgb * in.tint.w * (0.14 + 0.86 * back_dot) * (0.28 + 0.72 * ao);
-
-    let hemi_t = n.y * 0.5 + 0.5;
-    let ambient = mix(world.ground_ambient.rgb, world.sky_horizon.rgb * 0.58 + world.sky_zenith.rgb * 0.45, hemi_t) * 0.56;
-    let dyn_light = eval_dynamic_lights(in.world_pos, n, 0.55);
-
-    var albedo = in.tint.rgb;
-    if mat_id > 7.5 && mat_id < 8.5 {
-        let deep_rose = vec3<f32>(0.42, 0.11, 0.22);
-        let sunlit_blush = vec3<f32>(1.0, 0.80, 0.82);
-        let base_sakura = mix(deep_rose, albedo, smoothstep(0.18, 0.82, ao));
-        albedo = mix(base_sakura, sunlit_blush, smoothstep(0.65, 1.0, ao * ndl) * 0.48);
-    }
-
-    var lit = albedo * (world.sun_color.rgb * ndl * 0.76 + ambient * (0.35 + 0.65 * ao) + dyn_light) + albedo * sss * 0.38;
-    lit = apply_aerial_fog(lit, in.world_pos, world);
-    return vec4<f32>(lit, 1.0);
+    return vec4<f32>(in.lit_color, 1.0);
 }

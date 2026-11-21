@@ -30,6 +30,7 @@ pub struct WorldMeshes {
     pub vertices: Vec<MeshVertex>,
     pub opaque_indices: Vec<u32>,
     pub foliage_indices: Vec<u32>,
+    pub terrain_index_count: u32,
 }
 
 pub struct MeshBuilder {
@@ -244,11 +245,12 @@ impl MeshBuilder {
         }
     }
 
-    pub fn build(self) -> WorldMeshes {
+    pub fn build(self, terrain_index_count: u32) -> WorldMeshes {
         WorldMeshes {
             vertices: self.vertices,
             opaque_indices: self.opaque_indices,
             foliage_indices: self.foliage_indices,
+            terrain_index_count,
         }
     }
 }
@@ -256,7 +258,8 @@ impl MeshBuilder {
 pub fn build_world_meshes() -> WorldMeshes {
     let mut builder = MeshBuilder::new();
     terrain::build_terrain(&mut builder);
+    let terrain_index_count = builder.opaque_indices.len() as u32;
     shrine::build_shrine_complex(&mut builder);
     flora::build_flora_and_rocks(&mut builder);
-    builder.build()
+    builder.build(terrain_index_count)
 }
