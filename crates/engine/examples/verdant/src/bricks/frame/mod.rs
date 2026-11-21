@@ -184,18 +184,19 @@ impl GpuPart for PostProcess {
         let bloom_u2_pass = cx.pass("verdant_bloom_u2").target(BLOOM_UP_A, Access::Clear).id();
         let bloom_u2_pipe = cx.render_pipeline(
             bloom_u2_pass,
-            &fs_pipe(bloom::FS_UP),
+            &fs_pipe(bloom::FS_UP_FINAL),
             &[
                 (bloom::SRC_TEX, Bind::Target(BLOOM_UP_B)),
                 (bloom::ADD_TEX, Bind::Target(BLOOM_A)),
                 (bloom::BLOOM_SAMPLER, Bind::Sampler(sampler)),
+                (bloom::SCENE_DEPTH, Bind::Target(DEPTH)),
+                (bloom::TONE_PARAMS, Bind::Buffer(uniforms)),
             ],
         )?;
 
         let tone_binds = [
             (tone::SCENE_COLOR, Bind::Target(COLOR)),
             (tone::SCENE_BLOOM, Bind::Target(BLOOM_UP_A)),
-            (tone::SCENE_DEPTH, Bind::Target(DEPTH)),
             (tone::TONE_SAMPLER, Bind::Sampler(sampler)),
             (tone::TONE_PARAMS, Bind::Buffer(uniforms)),
         ];

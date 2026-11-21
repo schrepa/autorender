@@ -3,9 +3,8 @@ import package::generated::frame::ToneUniforms;
 
 @group(2) @binding(0) var scene_color: texture_2d<f32>;
 @group(2) @binding(1) var scene_bloom: texture_2d<f32>;
-@group(2) @binding(2) var scene_depth: texture_depth_2d;
-@group(2) @binding(3) var tone_sampler: sampler;
-@group(2) @binding(4) var<uniform> tone_params: ToneUniforms;
+@group(2) @binding(2) var tone_sampler: sampler;
+@group(2) @binding(3) var<uniform> tone_params: ToneUniforms;
 
 fn agx_default_contrast(x: vec3<f32>) -> vec3<f32> {
     let x2 = x * x;
@@ -37,41 +36,14 @@ fn agx_tonemap(val_in: vec3<f32>) -> vec3<f32> {
     return saturate(pow(v, vec3<f32>(2.2)));
 }
 
-fn radial_sunbeams(uv: vec2<f32>, depth_size: vec2<i32>) -> vec3<f32> {
-    let vis = tone_params.sun_uv_vis.z;
-    let shaft_str = tone_params.sun_color_shaft.w;
-    if vis <= 0.01 || shaft_str <= 0.01 {
-        return vec3<f32>(0.0);
-    }
-    let sun_uv = tone_params.sun_uv_vis.xy;
-    let delta = (uv - sun_uv) * (1.0 / 16.0);
-    let dither = fract(sin(dot(uv * 912.3, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-    var sample_uv = uv - delta * dither;
-    var decay = 1.0;
-    var accum = 0.0;
-    for (var i = 0; i < 14; i = i + 1) {
-        sample_uv -= delta;
-        let clamped = clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(0.999));
-        let px = vec2<i32>(clamped * vec2<f32>(depth_size));
-        let d = textureLoad(scene_depth, px, 0);
-        let sky_open = select(0.0, 1.0, d <= 0.00001);
-        accum += sky_open * decay;
-        decay *= 0.89;
-    }
-    let radial_falloff = exp(-length((uv - sun_uv) * vec2<f32>(1.4, 1.0)) * 2.1);
-    return tone_params.sun_color_shaft.rgb * (accum * 0.048 * radial_falloff * vis * shaft_str);
-}
-
 @fragment
 fn fs_tone(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(scene_color));
     let pixel = min(vec2<i32>(pos.xy), size - 1);
-    let uv = (pos.xy) / vec2<f32>(size);
+    let uv = pos.xy / vec2<f32>(size);
 
     var hdr = textureLoad(scene_color, pixel, 0).rgb;
-    let bloom = textureSampleLevel(scene_bloom, tone_sampler, uv, 0.0).rgb;
-    let shafts = radial_sunbeams(uv, size);
-    hdr += bloom * tone_params.grade.y + shafts;
+    hdr += textureSampleLevel(scene_bloom, tone_sampler, uv, 0.0).rgb;
 
     let centered = uv * 2.0 - 1.0;
     let vig = 1.0 - dot(centered * vec2<f32>(0.78, 0.92), centered * vec2<f32>(0.78, 0.92)) * tone_params.grade.w;
