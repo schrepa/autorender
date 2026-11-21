@@ -6,5 +6,13 @@
     "package": "fruit_fps",
     "page": "fruit_fps.html",
     "wasm": "fruit_fps"
+  },
+  {
+    "folder": "crates/engine/examples/verdant",
+    "game": "verdant",
+    "native": "verdant-native",
+    "package": "verdant",
+    "page": "verdant.html",
+    "wasm": "verdant"
   }
 ]

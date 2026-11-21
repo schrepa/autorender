@@ -3578,6 +3578,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 
 [[package]]
+name = "verdant"
+version = "0.1.0"
+dependencies = [
+ "brick_present",
+ "brick_touch",
+ "bytemuck",
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_math",
+ "engine_native",
+ "engine_render",
+ "engine_sources",
+ "engine_touch",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
