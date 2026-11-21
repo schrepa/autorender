@@ -117,6 +117,16 @@ fn material_rank(key: Option<Asset<Material>>) -> u32 {
     key.map_or(0, |handle| handle.slot() as u32 + 1)
 }
 
+enum DrawCall<'a> {
+    Direct(Range<u32>, Range<u32>),
+    Indirect(&'a wgpu::Buffer, u64),
+}
+
+enum DispatchCall {
+    Direct([u32; 3]),
+    Indirect(u32, u64),
+}
+
 impl Run {
     pub(super) fn scoped(&self, part: u32, point: Option<PassBit>, pipeline: u32) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
@@ -148,11 +158,45 @@ impl Run {
             Shape::Pulled { vertices, .. } => vertices.clone(),
             Shape::Mesh { .. } => 0..0,
         };
-        let drawn = (vertices, instances.clone());
+        let drawn = DrawCall::Direct(vertices, instances.clone());
         let issued = self.head(part, point, handle).and_then(|head| {
             let record = self.build(head, handles)?;
             self.issue((part, timer), head, &record, drawn)
         });
+        self.settle_draw(part, issued, handles)
+    }
+
+    pub(crate) fn draw_indirect(
+        &mut self,
+        part: u32,
+        point: Option<PassBit>,
+        handle: u32,
+        (buffer, offset, key): (u32, u64, Option<Asset<Material>>),
+        timer: &GpuProfiler,
+    ) -> crate::Recorded {
+        let handles = (None, key);
+        let valid = self
+            .machine
+            .declared
+            .buffers
+            .get(buffer as usize)
+            .is_some_and(|decl| decl.usage.contains(wgpu::BufferUsages::INDIRECT));
+        if !valid {
+            let error = fault(self.path("draw_indirect.buffer"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return self.settle_draw(part, Err(DropReason::PipelineRefused), handles);
+        }
+        let indirect = self
+            .buffer_held(buffer)
+            .filter(|(_, size)| offset.is_multiple_of(4) && offset + 16 <= *size)
+            .map(|(made, _)| made.clone());
+        let issued = match indirect {
+            Some(indirect) => self.head(part, point, handle).and_then(|head| {
+                let record = self.build(head, handles)?;
+                self.issue((part, timer), head, &record, DrawCall::Indirect(&indirect, offset))
+            }),
+            None => Err(DropReason::MissingBindGroup),
+        };
         self.settle_draw(part, issued, handles)
     }
 
@@ -217,7 +261,7 @@ impl Run {
         if let Ok(head) = head {
             for run in &kept {
                 let batch = &batches.listed[run.at as usize];
-                let drawn = (vertices.clone(), run.instances.clone());
+                let drawn = DrawCall::Direct(vertices.clone(), run.instances.clone());
                 let record = &batch.records[run.record as usize];
                 let issued = self.issue((part, timer), head, record, drawn);
                 self.settle_draw(part, issued, (batch.geometry, batch.material));
@@ -414,7 +458,7 @@ impl Run {
         (part, timer): (u32, &GpuProfiler),
         head: Head,
         record: &DrawRecord,
-        (vertices, instances): (Range<u32>, Range<u32>),
+        call: DrawCall<'_>,
     ) -> Result<crate::Recorded, DropReason> {
         if self.recording.collecting() {
             return Ok(crate::Recorded::Waiting);
@@ -468,20 +512,29 @@ impl Run {
         for (index, group) in &record.groups {
             bound.draw_group(render, *index, group, None);
         }
-        let counted = instances.end.saturating_sub(instances.start);
         let timed = (timer, &*machine, (at.0, head.pipeline));
-        match &record.mesh {
-            Some(mesh) => {
-                for (slot, buffer) in mesh.buffers.iter().enumerate() {
-                    bound.vertex_buffer(render, slot as u32, buffer);
+        let counted = match call {
+            DrawCall::Direct(vertices, instances) => {
+                let count = instances.end.saturating_sub(instances.start);
+                match &record.mesh {
+                    Some(mesh) => {
+                        for (slot, buffer) in mesh.buffers.iter().enumerate() {
+                            bound.vertex_buffer(render, slot as u32, buffer);
+                        }
+                        bound.index_buffer(render, &mesh.indices, mesh.format);
+                        timed_draw(render, timed, |render| {
+                            render.draw_indexed(mesh.range.clone(), mesh.base_vertex, instances);
+                        });
+                    }
+                    None => timed_draw(render, timed, |render| render.draw(vertices, instances)),
                 }
-                bound.index_buffer(render, &mesh.indices, mesh.format);
-                timed_draw(render, timed, |render| {
-                    render.draw_indexed(mesh.range.clone(), mesh.base_vertex, instances);
-                });
+                count
             }
-            None => timed_draw(render, timed, |render| render.draw(vertices, instances)),
-        }
+            DrawCall::Indirect(buffer, offset) => {
+                timed_draw(render, timed, |render| render.draw_indirect(buffer, offset));
+                1
+            }
+        };
         tallies.drawn.add(at, counted);
         Ok(if record.exact {
             crate::Recorded::Exact
@@ -547,11 +600,45 @@ impl Run {
     }
 
     pub(crate) fn dispatch(&mut self, part: u32, handle: u32, groups: [u32; 3]) {
-        let recorded = self.issue_dispatch(part, handle, groups);
+        let recorded = self.issue_dispatch(part, handle, DispatchCall::Direct(groups));
         self.tallies.worst = self.tallies.worst.max(recorded);
     }
 
-    fn issue_dispatch(&mut self, part: u32, handle: u32, [x, y, z]: [u32; 3]) -> crate::Recorded {
+    pub(crate) fn dispatch_indirect(
+        &mut self,
+        part: u32,
+        handle: u32,
+        buffer: u32,
+        offset: u64,
+    ) {
+        let recorded = self.issue_dispatch(part, handle, DispatchCall::Indirect(buffer, offset));
+        self.tallies.worst = self.tallies.worst.max(recorded);
+    }
+
+    fn issue_dispatch(&mut self, part: u32, handle: u32, call: DispatchCall) -> crate::Recorded {
+        let indirect = match call {
+            DispatchCall::Direct(_) => None,
+            DispatchCall::Indirect(buffer, offset) => {
+                let valid = self
+                    .machine
+                    .declared
+                    .buffers
+                    .get(buffer as usize)
+                    .is_some_and(|decl| decl.usage.contains(wgpu::BufferUsages::INDIRECT));
+                if !valid {
+                    let error = fault(self.path("dispatch_indirect.buffer"), ErrorCode::InvalidValue);
+                    self.fault(error);
+                    return crate::Recorded::Refused;
+                }
+                let Some((made, size)) = self.buffer_held(buffer) else {
+                    return crate::Recorded::Waiting;
+                };
+                if !offset.is_multiple_of(4) || offset + 12 > *size {
+                    return crate::Recorded::Waiting;
+                }
+                Some((made.clone(), offset))
+            }
+        };
         self.end_open();
         let Some(built) = self.machine.pipelines.get(handle as usize) else {
             return crate::Recorded::Waiting;
@@ -636,7 +723,13 @@ impl Run {
                 bound.dispatch_group(pass, group.index, made, None);
             }
         }
-        pass.dispatch_workgroups(x, y, z);
+        match (call, indirect) {
+            (DispatchCall::Direct([x, y, z]), None) => pass.dispatch_workgroups(x, y, z),
+            (DispatchCall::Indirect(..), Some((buf, off))) => {
+                pass.dispatch_workgroups_indirect(&buf, off);
+            }
+            (DispatchCall::Direct(_), Some(_)) | (DispatchCall::Indirect(..), None) => {}
+        }
         crate::Recorded::Exact
     }
 }

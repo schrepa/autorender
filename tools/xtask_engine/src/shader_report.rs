@@ -37,6 +37,16 @@ fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
     let info = validator
         .validate(&module)
         .map_err(|error| error.emit_to_string(text))?;
+    let constants = naga::back::PipelineConstants::default();
+    for entry in &module.entry_points {
+        naga::back::pipeline_constants::process_overrides(
+            &module,
+            &info,
+            Some((entry.stage, &entry.name)),
+            &constants,
+        )
+        .map_err(|error| format!("entry `{}` process_overrides: {error}", entry.name))?;
+    }
     Ok((module, info))
 }
 

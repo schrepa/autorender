@@ -57,7 +57,7 @@ fn star_field(dir: vec3<f32>, star_power: f32, t: f32) -> vec3<f32> {
         let tint = mix(vec3<f32>(0.72, 0.86, 1.0), vec3<f32>(1.0, 0.88, 0.68), fract(rnd * 97.3));
         stars = tint * spot * twinkle * 2.8;
     }
-    let band_coord = abs(dot(dir, normalize(vec3<f32>(0.42, 0.68, -0.60))));
+    let band_coord = abs(dot(dir, vec3<f32>(0.42025, 0.68041, -0.60036)));
     let milky = exp(-band_coord * 7.0) * fbm2(dir.xz * 4.2 + vec2<f32>(dir.y * 3.0)) * 0.16;
     let fade = smoothstep(0.02, 0.22, dir.y) * star_power;
     return (stars + vec3<f32>(0.34, 0.48, 0.82) * milky) * fade;

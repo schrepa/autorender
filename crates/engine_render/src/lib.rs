@@ -313,6 +313,10 @@ impl<P: GpuPart> Install<'_, P> {
         Buffer(self.core.buffer(label, lifetime), PhantomData)
     }
 
+    pub fn indirect_buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
+        Buffer(self.core.indirect_buffer(label, lifetime), PhantomData)
+    }
+
     pub fn sampler(&mut self, desc: engine_core::Sampler) -> Sampler<P> {
         Sampler(self.core.sampler(desc), PhantomData)
     }
@@ -630,6 +634,17 @@ impl<P: GpuPart> Encode<'_, P> {
         let part = self.core.part;
         self.core.dispatch(part, pipeline.0, groups);
     }
+
+    pub fn dispatch_indirect(
+        &mut self,
+        pipeline: &ComputePipeline<P>,
+        buffer: Buffer<P>,
+        offset: u64,
+    ) {
+        let part = self.core.part;
+        self.core
+            .dispatch_indirect(part, pipeline.0, buffer.0, offset);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -652,6 +667,19 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let run = self.raw.run();
         let point = run.point;
         run.draw(part, point, pipeline.0, shape, timer)
+    }
+
+    pub fn draw_indirect(
+        &mut self,
+        pipeline: &Pipeline<P, S>,
+        buffer: Buffer<P>,
+        offset: u64,
+        key: Option<Asset<Material>>,
+    ) -> Recorded {
+        let (part, timer) = (self.raw.part(), self.raw.timer());
+        let run = self.raw.run();
+        let point = run.point;
+        run.draw_indirect(part, point, pipeline.0, (buffer.0, offset, key), timer)
     }
 }
 

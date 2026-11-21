@@ -39,12 +39,25 @@ const LINEAR_CLAMP: Sampler = Sampler {
     anisotropy: 1,
 };
 
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+fn default_antialias_max_pixel_ratio() -> Option<f32> {
+    Some(1.5)
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Present {
     pub antialias: bool,
-    #[serde(default)]
+    #[serde(default = "default_antialias_max_pixel_ratio")]
     pub antialias_max_pixel_ratio: Option<f32>,
+}
+
+impl Default for Present {
+    fn default() -> Self {
+        Self {
+            antialias: false,
+            antialias_max_pixel_ratio: default_antialias_max_pixel_ratio(),
+        }
+    }
 }
 
 impl Present {

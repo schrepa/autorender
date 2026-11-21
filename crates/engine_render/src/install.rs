@@ -272,11 +272,24 @@ impl InstallCore {
     }
 
     pub(crate) fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> u32 {
+        self.buffer_with(label, lifetime, wgpu::BufferUsages::empty())
+    }
+
+    pub(crate) fn indirect_buffer(&mut self, label: &'static str, lifetime: Lifetime) -> u32 {
+        self.buffer_with(label, lifetime, wgpu::BufferUsages::INDIRECT)
+    }
+
+    fn buffer_with(
+        &mut self,
+        label: &'static str,
+        lifetime: Lifetime,
+        usage: wgpu::BufferUsages,
+    ) -> u32 {
         self.declared.buffers.push(BufferDecl {
             label,
             lifetime,
             part: self.part,
-            usage: wgpu::BufferUsages::empty(),
+            usage,
         });
         (self.declared.buffers.len() - 1) as u32
     }

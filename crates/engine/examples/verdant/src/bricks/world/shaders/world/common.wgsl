@@ -172,8 +172,8 @@ fn terrain_height(x: f32, z: f32) -> f32 {
 }
 
 fn sample_wind(xz: vec2<f32>, t: f32, strength: f32) -> vec2<f32> {
-    let dir = normalize(vec2<f32>(0.86, 0.51));
-    let perp = vec2<f32>(-dir.y, dir.x);
+    let dir = vec2<f32>(0.860163, 0.510019);
+    let perp = vec2<f32>(-0.510019, 0.860163);
     let proj = dot(xz, dir);
     let cross_p = dot(xz, perp);
     let wave_a = sin(proj * 0.20 - t * (1.95 + strength * 0.85) + sin(cross_p * 0.12 + t * 0.45) * 1.45);

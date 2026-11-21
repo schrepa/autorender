@@ -1535,7 +1535,7 @@
           "type": "boolean"
         },
         "antialias_max_pixel_ratio": {
-          "default": null,
+          "default": 1.5,
           "format": "float",
           "type": [
             "number",
