@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#070a10" />
+    <title>Quicksilver</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #070a10; color: #eef2f8; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+      body:not([data-dev]) .engine-hud { display: none !important; }
+      .message { display: none !important; }
+      .stage { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; background: #070a10; }
+      #scene { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+      .overlay { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; background: #070a10; transition: opacity 220ms ease-out; }
+      .overlay[hidden] { display: none; }
+      #loading.gone { opacity: 0; pointer-events: none; }
+      .pill { display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(260px, 80vw); }
+      .track { width: 100%; height: 4px; border-radius: 999px; background: #ffffff18; overflow: hidden; }
+      #loading-bar { height: 100%; width: calc(100% * var(--done, 0)); background: linear-gradient(90deg, #9fb4cc, #ffffff); transition: width 140ms ease-out; }
+      .track[data-unknown] #loading-bar { width: 35%; animation: sweep 1.2s ease-in-out infinite alternate; }
+      @keyframes sweep { from { transform: translateX(0); } to { transform: translateX(185%); } }
+      #loading-stage, #loading-detail { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #9aa7bc; }
+      .card { max-width: 520px; padding: 24px; border-radius: 16px; background: #101520; border: 1px solid #ffffff1a; }
+      .card h2 { margin: 0 0 8px; font-size: 18px; }
+      .card p, .card pre { margin: 6px 0; font-size: 13px; color: #b6c2d6; white-space: pre-wrap; }
+      #failure-reload { margin-top: 12px; padding: 8px 18px; border: 0; border-radius: 999px; background: #eef2f8; color: #070a10; font-weight: 700; cursor: pointer; }
+    </style>
+  </head>
+  <body class="engine-page">
+    <main class="stage">
+      <canvas id="scene" tabindex="0" aria-label="Quicksilver" style="visibility: hidden"></canvas>
+      <section id="loading" class="overlay" aria-live="polite">
+        <div class="pill">
+          <div class="track" id="loading-track" data-unknown><div id="loading-bar"></div></div>
+          <div id="loading-stage">QUICKSILVER</div>
+          <div id="loading-detail"></div>
+        </div>
+      </section>
+      <section id="gpu" class="overlay" hidden>
+        <div class="card">
+          <h2>WebGPU Required</h2>
+          <p id="gpu-reason"></p>
+        </div>
+      </section>
+      <section id="failure" class="overlay" hidden role="alert">
+        <div class="card">
+          <h2 id="failure-title">Stopped</h2>
+          <p id="failure-summary"></p>
+          <p><span id="failure-code"></span> <span id="failure-path"></span></p>
+          <pre id="failure-detail"></pre>
+          <button id="failure-reload" type="button">Reload</button>
+        </div>
+      </section>
+    </main>
+    <div class="engine-hud"><span id="status" role="status"><i></i>Initializing</span><strong id="fps">—</strong>
+      <span>simulation <span id="simulation">—</span></span><span>extraction <span id="extraction">—</span></span>
+      <span>draws <span id="draws">—</span></span><span id="uploads"></span><span id="render-time"></span>
+      <button id="pause" type="button">Pause</button><button id="reset" type="button">Reset view</button></div>
+    <div id="message" class="message" role="status">Loading…</div>
+    <script type="module" src="/src/quicksilver/main.ts"></script>
+  </body>
+</html>

@@ -2871,6 +2871,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "quicksilver"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_math",
+ "engine_native",
+ "engine_render",
+ "engine_sources",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

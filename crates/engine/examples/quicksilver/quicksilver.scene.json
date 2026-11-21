@@ -1,0 +1,30 @@
+{
+  "id": "quicksilver",
+  "revision": 1,
+  "entities": [
+    {
+      "id": "camera",
+      "studio_camera": {},
+      "node": {
+        "mobility": "moving"
+      },
+      "view": {
+        "clear_color": [
+          0.015,
+          0.018,
+          0.024,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "fluid",
+      "node": {
+        "mobility": "static"
+      },
+      "drawn": {
+        "kind": "fluid"
+      }
+    }
+  ]
+}

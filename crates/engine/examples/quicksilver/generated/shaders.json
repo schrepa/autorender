@@ -1,0 +1,1593 @@
+{
+  "sources": [
+    [
+      "engine_render",
+      8706012408837700038
+    ],
+    [
+      "quicksilver_fluid",
+      17246273080577715574
+    ],
+    [
+      "quicksilver",
+      0
+    ]
+  ],
+  "generated": [
+    [
+      "engine::view",
+      9702159838692545620
+    ],
+    [
+      "engine::drawn",
+      11838548535484966004
+    ],
+    [
+      "engine::poses",
+      8217685069052711422
+    ],
+    [
+      "engine::drawn_pose",
+      12461608355867811079
+    ]
+  ],
+  "modules": [
+    {
+      "path": "engine::fullscreen",
+      "core": true,
+      "declared": [],
+      "entries": [
+        {
+          "module": "engine::fullscreen",
+          "entry": "vs_fullscreen",
+          "stage": "VERTEX",
+          "text": "@vertex\nfn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {\n    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;\n    let y = f32(index & 2u) * 2.0 - 1.0;\n    return vec4<f32>(x, y, 0.0, 1.0);\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": []
+        }
+      ]
+    },
+    {
+      "path": "engine::color",
+      "core": true,
+      "declared": [],
+      "entries": []
+    },
+    {
+      "path": "engine::math",
+      "core": true,
+      "declared": [],
+      "entries": []
+    },
+    {
+      "path": "engine::view",
+      "core": true,
+      "declared": [
+        {
+          "group": 0,
+          "binding": 0,
+          "name": "camera",
+          "ty": "Uniform"
+        }
+      ],
+      "entries": []
+    },
+    {
+      "path": "engine::post::frame",
+      "core": true,
+      "declared": [
+        {
+          "group": 0,
+          "binding": 1,
+          "name": "post",
+          "ty": "Uniform"
+        }
+      ],
+      "entries": []
+    },
+    {
+      "path": "engine::drawn",
+      "core": true,
+      "declared": [
+        {
+          "group": 0,
+          "binding": 2,
+          "name": "drawn_records",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        },
+        {
+          "group": 0,
+          "binding": 3,
+          "name": "drawn_values",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        },
+        {
+          "group": 0,
+          "binding": 4,
+          "name": "drawn_order",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        },
+        {
+          "group": 0,
+          "binding": 5,
+          "name": "drawn_poses",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        }
+      ],
+      "entries": []
+    },
+    {
+      "path": "engine::poses",
+      "core": true,
+      "declared": [],
+      "entries": []
+    },
+    {
+      "path": "engine::drawn_pose",
+      "core": true,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "pose_frame",
+          "ty": "Uniform"
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "pose_entries",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 2,
+          "name": "posed",
+          "ty": {
+            "Storage": {
+              "write": true
+            }
+          }
+        }
+      ],
+      "entries": [
+        {
+          "module": "engine::drawn_pose",
+          "entry": "drawn_pose",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> pose_frame: package_engine_poses_PoseFrame;\n\n@group(1) @binding(1)\nvar<storage, read> pose_entries: array<package_engine_poses_PoseEntry>;\n\n@group(1) @binding(2)\nvar<storage, read_write> posed: array<package_engine_drawn_DrawnPose>;\n\nfn pose_chain(first: u32, alpha: f32) -> mat4x4<f32> {\n    var m = package_engine_poses__1pose_local(pose_entries[first], alpha);\n    var at = pose_entries[first].parent;\n    while at != package_engine_poses__1NO_PARENT {\n        m = package_engine_poses__1pose_local(pose_entries[at], alpha) * m;\n        at = pose_entries[at].parent;\n    }\n    return package_engine_poses__1pose_base(pose_entries[first]) * m;\n}\n\n@compute @workgroup_size(POSE_GROUP)\nfn drawn_pose(@builtin(global_invocation_id) id: vec3<u32>) {\n    if id.x >= pose_frame.entries || pose_entries[id.x].slot == package_engine_poses__1NO_SLOT {\n        return;\n    }\n    var m = pose_chain(id.x, pose_frame.alpha);\n    if !package_engine_poses__1pose_admitted(m[0], m[1], m[2], m[3]) {\n        m = pose_chain(id.x, 1.0);\n    }\n    let rows = transpose(m);\n    posed[pose_entries[id.x].slot] = package_engine_drawn_DrawnPose(rows[0], rows[1], rows[2]);\n}\n\nconst POSE_GROUP: u32 = 64u;\n\nstruct package_engine_drawn_DrawnPose {\n    row_0: vec4<f32>,\n    row_1: vec4<f32>,\n    row_2: vec4<f32>\n}\n\nstruct package_engine_poses_PoseEntry {\n    slot: u32,\n    parent: u32,\n    blend: u32,\n    pad: u32,\n    base: array<vec4<f32>, 3>,\n    previous: array<vec4<f32>, 3>,\n    current: array<vec4<f32>, 3>\n}\n\nstruct package_engine_poses_PoseFrame {\n    alpha: f32,\n    entries: u32,\n    pad0: u32,\n    pad1: u32\n}\n\nconst package_engine_poses__1NO_PARENT: u32 = 4294967295u;\n\nconst package_engine_poses__1NO_SLOT: u32 = 4294967295u;\n\nconst package_engine_poses__1COEFFICIENT_LIMIT: f32 = 1048576.0;\n\nconst package_engine_poses__2MIN_LINEAR_SCALE: f32 = 0.0009765625;\n\nconst package_engine_poses__2COMMON_DETERMINANT_MARGIN: f32 = 0.001953125;\n\nconst package_engine_poses__3LINEAR_ROTATION_DOT_THRESHOLD: f32 = 0.9994999766349792;\n\nconst package_engine_poses__2POSE_FLOAT_LIMIT: f32 = 3.4028234663852886e38;\n\nfn package_engine_poses__1pose_trs(offset_sx: vec4f, rotation: vec4f, scale_yz: vec4f) -> mat4x4f {\n    let x = rotation.x;\n    let y = rotation.y;\n    let z = rotation.z;\n    let w = rotation.w;\n    let x2 = x + x;\n    let y2 = y + y;\n    let z2 = z + z;\n    let xx = x * x2;\n    let xy = x * y2;\n    let xz = x * z2;\n    let yy = y * y2;\n    let yz = y * z2;\n    let zz = z * z2;\n    let wx = w * x2;\n    let wy = w * y2;\n    let wz = w * z2;\n    return mat4x4f(vec4f(1.0 - (yy + zz), xy + wz, xz - wy, 0.0) * offset_sx.w, vec4f(xy - wz, 1.0 - (xx + zz), yz + wx, 0.0) * scale_yz.x, vec4f(xz + wy, yz - wx, 1.0 - (xx + yy), 0.0) * scale_yz.y, vec4f(offset_sx.x, offset_sx.y, offset_sx.z, 1.0));\n}\n\nfn package_engine_poses__1blend_rotation(previous: vec4f, current: vec4f, weight: f32) -> vec4f {\n    let p = normalize(previous);\n    let unflipped = normalize(current);\n    let d = dot(p, unflipped);\n    let c = select(unflipped, -unflipped, d < 0.0);\n    let cosine = abs(d);\n    let near = normalize(p * (1.0 - weight) + c * weight);\n    let theta = acos(cosine);\n    let far = normalize((p * sin(theta * (1.0 - weight)) + c * sin(theta * weight)) * (1.0 / sin(theta)));\n    return select(far, near, cosine >= package_engine_poses__3LINEAR_ROTATION_DOT_THRESHOLD);\n}\n\nfn package_engine_poses__1pose_mix(was: vec4f, now: vec4f, weight: f32) -> vec4f {\n    let mixed = was * (1.0 - weight) + now * weight;\n    return select(select(mixed, was, weight == 0.0), now, weight >= 1.0);\n}\n\nfn package_engine_poses__1pose_weight(alpha: f32, blend: bool) -> f32 {\n    return select(1.0, alpha, blend);\n}\n\nfn package_engine_poses__1drawn_local(was_offset_sx: vec4f, was_rotation: vec4f, was_scale_yz: vec4f, offset_sx: vec4f, rotation: vec4f, scale_yz: vec4f, weight: f32) -> mat4x4f {\n    let blended = package_engine_poses__1blend_rotation(was_rotation, rotation, weight);\n    let turned = select(select(blended, was_rotation, weight == 0.0), rotation, weight >= 1.0);\n    return package_engine_poses__1pose_trs(package_engine_poses__1pose_mix(was_offset_sx, offset_sx, weight), turned, package_engine_poses__1pose_mix(was_scale_yz, scale_yz, weight));\n}\n\nfn package_engine_poses__1pose_finite(value: vec4f) -> bool {\n    return abs(value.x) <= package_engine_poses__2POSE_FLOAT_LIMIT && abs(value.y) <= package_engine_poses__2POSE_FLOAT_LIMIT && abs(value.z) <= package_engine_poses__2POSE_FLOAT_LIMIT && abs(value.w) <= package_engine_poses__2POSE_FLOAT_LIMIT;\n}\n\nfn package_engine_poses__1pose_largest(value: vec4f) -> f32 {\n    return max(abs(value.x), max(abs(value.y), abs(value.z)));\n}\n\nfn package_engine_poses__1pose_admitted(x: vec4f, y: vec4f, z: vec4f, w: vec4f) -> bool {\n    let finite = package_engine_poses__1pose_finite(x) && package_engine_poses__1pose_finite(y) && package_engine_poses__1pose_finite(z) && package_engine_poses__1pose_finite(w);\n    let scale = max(package_engine_poses__1pose_largest(x), max(package_engine_poses__1pose_largest(y), package_engine_poses__1pose_largest(z)));\n    let determinant = x.x * (y.y * z.z - y.z * z.y) + x.y * (y.z * z.x - y.x * z.z) + x.z * (y.x * z.y - y.y * z.x);\n    return finite && scale >= package_engine_poses__2MIN_LINEAR_SCALE && package_engine_poses__1pose_largest(w) <= package_engine_poses__1COEFFICIENT_LIMIT && scale <= package_engine_poses__1COEFFICIENT_LIMIT && abs(determinant) >= package_engine_poses__2COMMON_DETERMINANT_MARGIN * ((scale * scale) * scale);\n}\n\nfn package_engine_poses__1pose_local(entry: package_engine_poses_PoseEntry, alpha: f32) -> mat4x4<f32> {\n    return package_engine_poses__1drawn_local(entry.previous[0], entry.previous[1], entry.previous[2], entry.current[0], entry.current[1], entry.current[2], package_engine_poses__1pose_weight(alpha, entry.blend != 0u));\n}\n\nfn package_engine_poses__1pose_base(entry: package_engine_poses_PoseEntry) -> mat4x4<f32> {\n    let base = entry.base;\n    return transpose(mat4x4<f32>(base[0], base[1], base[2], vec4<f32>(0.0, 0.0, 0.0, 1.0)));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "engine::drawn_pose",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "pose_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "engine::drawn_pose",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "pose_entries",
+                "ty": {
+                  "Storage": {
+                    "write": false
+                  }
+                }
+              }
+            ],
+            [
+              "engine::drawn_pose",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "posed",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "fluid::bilateral",
+      "core": false,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "blur_frame",
+          "ty": "Uniform"
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "depth_in",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 2,
+          "name": "thick_in",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        }
+      ],
+      "entries": [
+        {
+          "module": "fluid::bilateral",
+          "entry": "fs_bilateral_h",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<uniform> blur_frame: package_fluid_common_FrameUniform;\n\n@group(1) @binding(1)\nvar depth_in: texture_2d<f32>;\n\noverride FILTER_STEP: f32 = 1.0;\n\nfn bilateral_pass(pos: vec2<f32>, dir: vec2<f32>) -> f32 {\n    let dims = vec2<i32>(textureDimensions(depth_in));\n    let coord = clamp(vec2<i32>(pos), vec2<i32>(0), dims - 1);\n    let z_c = textureLoad(depth_in, coord, 0).r;\n    if z_c <= 0.0 {\n        return 0.0;\n    }\n    let r_world = blur_frame.splat.x;\n    let focal = blur_frame.splat.y;\n    let screen_r = clamp((r_world * 1.85 * focal) / max(z_c, 0.35), 2.0, 14.0);\n    var stride = 1.0;\n    if FILTER_STEP > 1.05 {\n        stride = clamp((screen_r * 0.19) * FILTER_STEP, 1.0, FILTER_STEP * 1.45);\n    }\n    let sigma_s = 3.5;\n    let inv_2s2 = 0.5 / (sigma_s * sigma_s);\n    let max_jump = r_world * 5.2;\n    let sigma_curv = r_world * 1.85;\n    let inv_2c2 = 0.5 / (sigma_curv * sigma_curv);\n    let sigma_edge = r_world * 1.35;\n    let inv_2e2 = 0.5 / (sigma_edge * sigma_edge);\n    var sum = z_c;\n    var w_sum = 1.0;\n    for (var k = 1; k <= 6; k += 1) {\n        let fk = f32(k);\n        let ws = exp(-fk * fk * inv_2s2);\n        let offset = vec2<i32>(round(dir * (fk * stride)));\n        let c_pos = clamp(coord + offset, vec2<i32>(0), dims - 1);\n        let c_neg = clamp(coord - offset, vec2<i32>(0), dims - 1);\n        let z_pos = textureLoad(depth_in, c_pos, 0).r;\n        let z_neg = textureLoad(depth_in, c_neg, 0).r;\n        let pos_ok = z_pos > 0.0 && abs(z_pos - z_c) < max_jump;\n        let neg_ok = z_neg > 0.0 && abs(z_neg - z_c) < max_jump;\n        if pos_ok && neg_ok {\n            let curv = 0.5 * (z_pos + z_neg) - z_c;\n            let wr = exp(-curv * curv * inv_2c2);\n            let w = ws * wr;\n            sum += (z_pos + z_neg) * w;\n            w_sum += 2.0 * w;\n        }\n        else if pos_ok {\n            let dz = z_pos - z_c;\n            let wr = exp(-dz * dz * inv_2e2);\n            let w = ws * wr * 0.65;\n            sum += z_pos * w;\n            w_sum += w;\n        }\n        else if neg_ok {\n            let dz = z_neg - z_c;\n            let wr = exp(-dz * dz * inv_2e2);\n            let w = ws * wr * 0.65;\n            sum += z_neg * w;\n            w_sum += w;\n        }\n    }\n    return sum / max(w_sum, 1e-5);\n}\n\n@fragment\nfn fs_bilateral_h(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {\n    return bilateral_pass(pos.xy, vec2<f32>(1.0, 0.0));\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n",
+          "overrides": [
+            [
+              "FILTER_STEP",
+              "FILTER_STEP"
+            ]
+          ],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::bilateral",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "blur_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::bilateral",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "depth_in",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::bilateral",
+          "entry": "fs_bilateral_v",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<uniform> blur_frame: package_fluid_common_FrameUniform;\n\n@group(1) @binding(1)\nvar depth_in: texture_2d<f32>;\n\noverride FILTER_STEP: f32 = 1.0;\n\nfn bilateral_pass(pos: vec2<f32>, dir: vec2<f32>) -> f32 {\n    let dims = vec2<i32>(textureDimensions(depth_in));\n    let coord = clamp(vec2<i32>(pos), vec2<i32>(0), dims - 1);\n    let z_c = textureLoad(depth_in, coord, 0).r;\n    if z_c <= 0.0 {\n        return 0.0;\n    }\n    let r_world = blur_frame.splat.x;\n    let focal = blur_frame.splat.y;\n    let screen_r = clamp((r_world * 1.85 * focal) / max(z_c, 0.35), 2.0, 14.0);\n    var stride = 1.0;\n    if FILTER_STEP > 1.05 {\n        stride = clamp((screen_r * 0.19) * FILTER_STEP, 1.0, FILTER_STEP * 1.45);\n    }\n    let sigma_s = 3.5;\n    let inv_2s2 = 0.5 / (sigma_s * sigma_s);\n    let max_jump = r_world * 5.2;\n    let sigma_curv = r_world * 1.85;\n    let inv_2c2 = 0.5 / (sigma_curv * sigma_curv);\n    let sigma_edge = r_world * 1.35;\n    let inv_2e2 = 0.5 / (sigma_edge * sigma_edge);\n    var sum = z_c;\n    var w_sum = 1.0;\n    for (var k = 1; k <= 6; k += 1) {\n        let fk = f32(k);\n        let ws = exp(-fk * fk * inv_2s2);\n        let offset = vec2<i32>(round(dir * (fk * stride)));\n        let c_pos = clamp(coord + offset, vec2<i32>(0), dims - 1);\n        let c_neg = clamp(coord - offset, vec2<i32>(0), dims - 1);\n        let z_pos = textureLoad(depth_in, c_pos, 0).r;\n        let z_neg = textureLoad(depth_in, c_neg, 0).r;\n        let pos_ok = z_pos > 0.0 && abs(z_pos - z_c) < max_jump;\n        let neg_ok = z_neg > 0.0 && abs(z_neg - z_c) < max_jump;\n        if pos_ok && neg_ok {\n            let curv = 0.5 * (z_pos + z_neg) - z_c;\n            let wr = exp(-curv * curv * inv_2c2);\n            let w = ws * wr;\n            sum += (z_pos + z_neg) * w;\n            w_sum += 2.0 * w;\n        }\n        else if pos_ok {\n            let dz = z_pos - z_c;\n            let wr = exp(-dz * dz * inv_2e2);\n            let w = ws * wr * 0.65;\n            sum += z_pos * w;\n            w_sum += w;\n        }\n        else if neg_ok {\n            let dz = z_neg - z_c;\n            let wr = exp(-dz * dz * inv_2e2);\n            let w = ws * wr * 0.65;\n            sum += z_neg * w;\n            w_sum += w;\n        }\n    }\n    return sum / max(w_sum, 1e-5);\n}\n\n@fragment\nfn fs_bilateral_v(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {\n    return bilateral_pass(pos.xy, vec2<f32>(0.0, 1.0));\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n",
+          "overrides": [
+            [
+              "FILTER_STEP",
+              "FILTER_STEP"
+            ]
+          ],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::bilateral",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "blur_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::bilateral",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "depth_in",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::bilateral",
+          "entry": "fs_thick_h",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(2)\nvar thick_in: texture_2d<f32>;\n\nfn blur_thick(pos: vec2<f32>, dir: vec2<i32>) -> vec4<f32> {\n    let dims = vec2<i32>(textureDimensions(thick_in));\n    let coord = clamp(vec2<i32>(pos), vec2<i32>(0), dims - 1);\n    let weights = array<f32, 5>(0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);\n    var acc = textureLoad(thick_in, coord, 0) * weights[0];\n    for (var i = 1; i < 5; i += 1) {\n        let off = dir * (i * 2);\n        acc += textureLoad(thick_in, clamp(coord + off, vec2<i32>(0), dims - 1), 0) * weights[i];\n        acc += textureLoad(thick_in, clamp(coord - off, vec2<i32>(0), dims - 1), 0) * weights[i];\n    }\n    return acc;\n}\n\n@fragment\nfn fs_thick_h(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    return blur_thick(pos.xy, vec2<i32>(1, 0));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::bilateral",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "thick_in",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::bilateral",
+          "entry": "fs_thick_v",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(2)\nvar thick_in: texture_2d<f32>;\n\nfn blur_thick(pos: vec2<f32>, dir: vec2<i32>) -> vec4<f32> {\n    let dims = vec2<i32>(textureDimensions(thick_in));\n    let coord = clamp(vec2<i32>(pos), vec2<i32>(0), dims - 1);\n    let weights = array<f32, 5>(0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);\n    var acc = textureLoad(thick_in, coord, 0) * weights[0];\n    for (var i = 1; i < 5; i += 1) {\n        let off = dir * (i * 2);\n        acc += textureLoad(thick_in, clamp(coord + off, vec2<i32>(0), dims - 1), 0) * weights[i];\n        acc += textureLoad(thick_in, clamp(coord - off, vec2<i32>(0), dims - 1), 0) * weights[i];\n    }\n    return acc;\n}\n\n@fragment\nfn fs_thick_v(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    return blur_thick(pos.xy, vec2<i32>(0, 1));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::bilateral",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "thick_in",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "fluid::common",
+      "core": false,
+      "declared": [],
+      "entries": []
+    },
+    {
+      "path": "fluid::post",
+      "core": false,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "post_frame",
+          "ty": "Uniform"
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "post_hdr",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 2,
+          "name": "post_bloom",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 3,
+          "name": "post_sampler",
+          "ty": "Sampler"
+        }
+      ],
+      "entries": [
+        {
+          "module": "fluid::post",
+          "entry": "fs_bloom_extract",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(1)\nvar post_hdr: texture_2d<f32>;\n\n@group(1) @binding(3)\nvar post_sampler: sampler;\n\n@fragment\nfn fs_bloom_extract(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    let dims = vec2<f32>(textureDimensions(post_hdr));\n    let uv = (pos.xy * 4.0) / dims;\n    let dx = 1.5 / dims.x;\n    let dy = 1.5 / dims.y;\n    let c0 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(-dx, -dy), 0.0).rgb;\n    let c1 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(dx, -dy), 0.0).rgb;\n    let c2 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(-dx, dy), 0.0).rgb;\n    let c3 = textureSampleLevel(post_hdr, post_sampler, uv + vec2<f32>(dx, dy), 0.0).rgb;\n    let avg = (c0 + c1 + c2 + c3) * 0.25;\n    let lum = max(avg.r, max(avg.g, avg.b));\n    let thresh = 1.35;\n    let knee = 0.45;\n    let soft = clamp(lum - thresh + knee, 0.0, 2.0 * knee);\n    let contrib = max(lum - thresh, (soft * soft) / (4.0 * knee + 1e-5)) / max(lum, 1e-5);\n    return vec4<f32>(avg * contrib, 1.0);\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "post_hdr",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "post_sampler",
+                "ty": "Sampler"
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::post",
+          "entry": "fs_bloom_h",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(2)\nvar post_bloom: texture_2d<f32>;\n\n@group(1) @binding(3)\nvar post_sampler: sampler;\n\nfn bloom_blur(pos: vec2<f32>, dir: vec2<f32>) -> vec4<f32> {\n    let dims = vec2<f32>(textureDimensions(post_bloom));\n    let uv = pos / dims;\n    let step = dir / dims;\n    let offsets = array<f32, 5>(0.0, 1.3846154, 3.2307692, 5.15, 7.1);\n    let weights = array<f32, 5>(0.215, 0.295, 0.18, 0.085, 0.0325);\n    var acc = textureSampleLevel(post_bloom, post_sampler, uv, 0.0).rgb * weights[0];\n    for (var i = 1; i < 5; i += 1) {\n        let o = step * offsets[i];\n        acc += textureSampleLevel(post_bloom, post_sampler, uv + o, 0.0).rgb * weights[i];\n        acc += textureSampleLevel(post_bloom, post_sampler, uv - o, 0.0).rgb * weights[i];\n    }\n    return vec4<f32>(acc, 1.0);\n}\n\n@fragment\nfn fs_bloom_h(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    return bloom_blur(pos.xy, vec2<f32>(1.0, 0.0));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "post_bloom",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "post_sampler",
+                "ty": "Sampler"
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::post",
+          "entry": "fs_bloom_v",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(2)\nvar post_bloom: texture_2d<f32>;\n\n@group(1) @binding(3)\nvar post_sampler: sampler;\n\nfn bloom_blur(pos: vec2<f32>, dir: vec2<f32>) -> vec4<f32> {\n    let dims = vec2<f32>(textureDimensions(post_bloom));\n    let uv = pos / dims;\n    let step = dir / dims;\n    let offsets = array<f32, 5>(0.0, 1.3846154, 3.2307692, 5.15, 7.1);\n    let weights = array<f32, 5>(0.215, 0.295, 0.18, 0.085, 0.0325);\n    var acc = textureSampleLevel(post_bloom, post_sampler, uv, 0.0).rgb * weights[0];\n    for (var i = 1; i < 5; i += 1) {\n        let o = step * offsets[i];\n        acc += textureSampleLevel(post_bloom, post_sampler, uv + o, 0.0).rgb * weights[i];\n        acc += textureSampleLevel(post_bloom, post_sampler, uv - o, 0.0).rgb * weights[i];\n    }\n    return vec4<f32>(acc, 1.0);\n}\n\n@fragment\nfn fs_bloom_v(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    return bloom_blur(pos.xy, vec2<f32>(0.0, 1.0));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "post_bloom",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "post_sampler",
+                "ty": "Sampler"
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::post",
+          "entry": "fs_tonemap",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<uniform> post_frame: package_fluid_common_FrameUniform;\n\n@group(1) @binding(1)\nvar post_hdr: texture_2d<f32>;\n\n@group(1) @binding(2)\nvar post_bloom: texture_2d<f32>;\n\n@group(1) @binding(3)\nvar post_sampler: sampler;\n\nfn agx_curve(v: vec3<f32>) -> vec3<f32> {\n    let v2 = v * v;\n    let v4 = v2 * v2;\n    return 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;\n}\n\nfn agx_tonemap(color: vec3<f32>) -> vec3<f32> {\n    let agx_in = mat3x3<f32>(vec3<f32>(0.84247906, 0.04232824, 0.04237565), vec3<f32>(0.0784336, 0.87846864, 0.0784336), vec3<f32>(0.07922375, 0.07916613, 0.87914297));\n    let agx_out = mat3x3<f32>(vec3<f32>(1.196879, -0.05289685, -0.05297163), vec3<f32>(-0.09802088, 1.15190313, -0.09804345), vec3<f32>(-0.09902974, -0.09896118, 1.15107367));\n    var v = agx_in * max(color, vec3<f32>(1e-6));\n    v = clamp(log2(v), vec3<f32>(-12.47393), vec3<f32>(4.026069));\n    v = (v - (-12.47393)) / (4.026069 - (-12.47393));\n    v = agx_curve(v);\n    v = agx_out * v;\n    let luma = dot(v, vec3<f32>(0.2126, 0.7152, 0.0722));\n    v = mix(vec3<f32>(luma), v, 1.18);\n    return saturate(pow(max(v, vec3<f32>(0.0)), vec3<f32>(2.15)));\n}\n\n@fragment\nfn fs_tonemap(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    let dims = vec2<i32>(textureDimensions(post_hdr));\n    let coord = clamp(vec2<i32>(pos.xy), vec2<i32>(0), dims - 1);\n    let uv = (vec2<f32>(coord) + 0.5) / vec2<f32>(dims);\n    let hdr = textureLoad(post_hdr, coord, 0).rgb;\n    let bloom = textureSampleLevel(post_bloom, post_sampler, uv, 0.0).rgb;\n    let mat_id = post_frame.style.x;\n    var bloom_gain = 0.11;\n    if mat_id > 0.5 && mat_id < 1.5 {\n        bloom_gain = 0.14;\n    }\n    else if mat_id > 1.5 && mat_id < 2.5 {\n        bloom_gain = 0.24;\n    }\n    else if mat_id > 2.5 {\n        bloom_gain = 0.3;\n    }\n    var color = (hdr + bloom * bloom_gain) * 1.05;\n    let centered = uv * 2.0 - 1.0;\n    let vig = 1.0 - dot(centered, centered) * 0.14;\n    color *= max(vig, 0.72);\n    var srgb = package_engine_color__1encode_srgb(agx_tonemap(color));\n    let dither = fract(sin(dot(pos.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453) - 0.5;\n    srgb = saturate(srgb + dither * (1.0 / 255.0));\n    return vec4<f32>(srgb, 1.0);\n}\n\nfn package_engine_color__1encode_srgb(color: vec3<f32>) -> vec3<f32> {\n    let low = color * 12.92;\n    let high = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;\n    return select(high, low, color <= vec3<f32>(0.0031308));\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "post_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "post_hdr",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "post_bloom",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::post",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "post_sampler",
+                "ty": "Sampler"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "fluid::sim",
+      "core": false,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "sim_params",
+          "ty": "Uniform"
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "sim_particles",
+          "ty": {
+            "Storage": {
+              "write": true
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 2,
+          "name": "grid_atomic",
+          "ty": {
+            "Storage": {
+              "write": true
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 3,
+          "name": "grid_vel",
+          "ty": {
+            "Storage": {
+              "write": true
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 4,
+          "name": "heightfield_out",
+          "ty": {
+            "Storage": {
+              "write": true
+            }
+          }
+        }
+      ],
+      "entries": [
+        {
+          "module": "fluid::sim",
+          "entry": "init_particles",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(1)\nvar<storage, read_write> sim_particles: array<package_fluid_common_Particle>;\n\n@compute @workgroup_size(128)\nfn init_particles(@builtin(global_invocation_id) id: vec3<u32>) {\n    let i = id.x;\n    let count = sim_params.dims.w;\n    if i >= count {\n        return;\n    }\n    let gx = f32(sim_params.dims.x);\n    let gz = f32(sim_params.dims.z);\n    let rest_d = sim_params.physics.z;\n    let r0 = package_fluid_common_rand01(i * 1973u + 17u);\n    let r1 = package_fluid_common_rand01(i * 9277u + 31u);\n    let r2 = package_fluid_common_rand01(i * 26699u + 53u);\n    let share = f32(i) / f32(count);\n    var pos = vec3<f32>(0.0);\n    var vel = vec3<f32>(0.0);\n    if share < 0.64 {\n        pos = vec3<f32>(3.3 + r0 * (gx - 6.6), 3.2 + r1 * 7.1, 3.3 + r2 * (gz - 6.6));\n        vel = vec3<f32>(0.12, 0.0, 0.0);\n    }\n    else if share < 0.96 {\n        let crest = sin(r2 * 3.1415926) * 2.2;\n        pos = vec3<f32>(3.3 + r0 * (gx * 0.32), 10.3 + r1 * (9.2 + crest), 3.3 + r2 * (gz - 6.6));\n        let top_boost = 0.65 + 0.75 * r1;\n        vel = vec3<f32>(1.28 * top_boost, -0.06, (r2 - 0.5) * 0.14);\n    }\n    else {\n        let u = r0 * 6.2831853;\n        let cos_t = r1 * 2.0 - 1.0;\n        let sin_t = sqrt(max(1.0 - cos_t * cos_t, 0.0));\n        let rad = 6.8 * pow(r2, 0.3333333);\n        let dir = vec3<f32>(sin_t * cos(u), cos_t, sin_t * sin(u));\n        pos = vec3<f32>(gx * 0.66, 17.6, gz * 0.5) + dir * rad;\n        vel = vec3<f32>(-0.32, -2.05, 0.0);\n    }\n    sim_particles[i] = package_fluid_common_Particle(vec4<f32>(pos, 0.0), vec4<f32>(vel, rest_d), vec4<u32>(0u), vec4<f32>(0.0, 0.0, 1.0, 1.0));\n}\n\nstruct package_fluid_common_Particle {\n    pos_foam: vec4<f32>,\n    vel_dens: vec4<f32>,\n    c_packed: vec4<u32>,\n    extra: vec4<f32>\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n\nfn package_fluid_common__1hash_u32(v: u32) -> u32 {\n    var x = v * 747796405u + 2891336453u;\n    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;\n    return (x >> 22u) ^ x;\n}\n\nfn package_fluid_common_rand01(seed: u32) -> f32 {\n    return f32(package_fluid_common__1hash_u32(seed) >> 8u) * (1.0 / 16777216.0);\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "sim_particles",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::sim",
+          "entry": "drop_burst",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(1)\nvar<storage, read_write> sim_particles: array<package_fluid_common_Particle>;\n\n@compute @workgroup_size(128)\nfn drop_burst(@builtin(global_invocation_id) id: vec3<u32>) {\n    let k = id.x;\n    let drop_count = sim_params.drop_info.y;\n    if k >= drop_count {\n        return;\n    }\n    let count = sim_params.dims.w;\n    let i = (sim_params.drop_info.x + k * 7u) % count;\n    let seed = sim_params.drop_info.z;\n    let gx = f32(sim_params.dims.x);\n    let gy = f32(sim_params.dims.y);\n    let gz = f32(sim_params.dims.z);\n    let rest_d = sim_params.physics.z;\n    let cx = gx * (0.36 + 0.28 * package_fluid_common_rand01(seed + 3u));\n    let cz = gz * (0.36 + 0.28 * package_fluid_common_rand01(seed + 11u));\n    let cy = 18.5;\n    let r0 = package_fluid_common_rand01(k * 3571u + seed);\n    let r1 = package_fluid_common_rand01(k * 7919u + seed + 19u);\n    let r2 = package_fluid_common_rand01(k * 14591u + seed + 47u);\n    let u = r0 * 6.2831853;\n    let cos_t = r1 * 2.0 - 1.0;\n    let sin_t = sqrt(max(1.0 - cos_t * cos_t, 0.0));\n    let rad = 7.4 * pow(r2, 0.3333333);\n    let dir = vec3<f32>(sin_t * cos(u), cos_t, sin_t * sin(u));\n    let pos = clamp(vec3<f32>(cx, cy, cz) + dir * rad, vec3<f32>(4.0), vec3<f32>(gx - 4.5, gy - 4.0, gz - 4.5));\n    let vel = vec3<f32>((package_fluid_common_rand01(seed + 29u) - 0.5) * 0.3, -2.25, (package_fluid_common_rand01(seed + 37u) - 0.5) * 0.22);\n    sim_particles[i] = package_fluid_common_Particle(vec4<f32>(pos, 0.0), vec4<f32>(vel, rest_d), vec4<u32>(0u), vec4<f32>(0.0, 0.35, 1.0, 1.0));\n}\n\nstruct package_fluid_common_Particle {\n    pos_foam: vec4<f32>,\n    vel_dens: vec4<f32>,\n    c_packed: vec4<u32>,\n    extra: vec4<f32>\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n\nfn package_fluid_common__1hash_u32(v: u32) -> u32 {\n    var x = v * 747796405u + 2891336453u;\n    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;\n    return (x >> 22u) ^ x;\n}\n\nfn package_fluid_common_rand01(seed: u32) -> f32 {\n    return f32(package_fluid_common__1hash_u32(seed) >> 8u) * (1.0 / 16777216.0);\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "sim_particles",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::sim",
+          "entry": "clear_grid",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(2)\nvar<storage, read_write> grid_atomic: array<atomic<i32>>;\n\n@group(1) @binding(3)\nvar<storage, read_write> grid_vel: array<vec4<f32>>;\n\n@compute @workgroup_size(256)\nfn clear_grid(@builtin(global_invocation_id) id: vec3<u32>) {\n    let idx = id.x;\n    let total = sim_params.dims.x * sim_params.dims.y * sim_params.dims.z;\n    if idx >= total {\n        return;\n    }\n    let base = idx * 4u;\n    atomicStore(&grid_atomic[base], 0);\n    atomicStore(&grid_atomic[base + 1u], 0);\n    atomicStore(&grid_atomic[base + 2u], 0);\n    atomicStore(&grid_atomic[base + 3u], 0);\n    grid_vel[idx] = vec4<f32>(0.0);\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "grid_atomic",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "grid_vel",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::sim",
+          "entry": "p2g_fused",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(1)\nvar<storage, read_write> sim_particles: array<package_fluid_common_Particle>;\n\n@group(1) @binding(2)\nvar<storage, read_write> grid_atomic: array<atomic<i32>>;\n\nfn bspline_weights(fx: vec3<f32>) -> array<vec3<f32>, 3> {\n    let w0 = 0.5 * (1.5 - fx) * (1.5 - fx);\n    let w1 = 0.75 - (fx - 1.0) * (fx - 1.0);\n    let w2 = 0.5 * (fx - 0.5) * (fx - 0.5);\n    return array<vec3<f32>, 3>(w0, w1, w2);\n}\n\n@compute @workgroup_size(128)\nfn p2g_fused(@builtin(global_invocation_id) id: vec3<u32>) {\n    let i = id.x;\n    if i >= sim_params.dims.w {\n        return;\n    }\n    let p = sim_particles[i];\n    let pos = p.pos_foam.xyz;\n    let vel = p.vel_dens.xyz;\n    let density = max(p.vel_dens.w, 0.35);\n    let c = package_fluid_common__1unpack_c(p.c_packed, p.extra.x);\n    let dt = sim_params.physics.x;\n    let mass = sim_params.physics.y;\n    let rest_density = sim_params.physics.z;\n    let stiffness = sim_params.physics.w;\n    let viscosity = sim_params.fluid.x;\n    let dims = sim_params.dims.xyz;\n    let ratio = clamp(density / rest_density, 0.2, 2.6);\n    let eq_p = stiffness * (ratio * ratio * ratio - 1.0);\n    let pressure = clamp(eq_p, -0.06, 85.0);\n    let volume = mass / density;\n    let strain = c + transpose(c);\n    let stress = mat3x3<f32>(vec3<f32>(-pressure, 0.0, 0.0), vec3<f32>(0.0, -pressure, 0.0), vec3<f32>(0.0, 0.0, -pressure)) + viscosity * strain;\n    let affine = mass * c - (volume * 4.0 * dt) * stress;\n    let mv = mass * vel;\n    let cell = vec3<i32>(floor(pos - 0.5));\n    let fx = pos - vec3<f32>(cell);\n    let w = bspline_weights(fx);\n    for (var oz = 0; oz < 3; oz += 1) {\n        let gz = cell.z + oz;\n        if gz < 0 || gz >= i32(dims.z) {\n            continue;\n        }\n        let wz = w[oz].z;\n        for (var oy = 0; oy < 3; oy += 1) {\n            let gy = cell.y + oy;\n            if gy < 0 || gy >= i32(dims.y) {\n                continue;\n            }\n            let wyz = w[oy].y * wz;\n            for (var ox = 0; ox < 3; ox += 1) {\n                let gx = cell.x + ox;\n                if gx < 0 || gx >= i32(dims.x) {\n                    continue;\n                }\n                let weight = w[ox].x * wyz;\n                if weight < 0.0005 {\n                    continue;\n                }\n                let dpos = vec3<f32>(f32(ox), f32(oy), f32(oz)) - fx;\n                let mw = mass * weight;\n                let mom = (mv + affine * dpos) * weight;\n                let base = package_fluid_common__1cell_idx(u32(gx), u32(gy), u32(gz), dims) * 4u;\n                let mx = package_fluid_common__1encode_fixed(mom.x);\n                let my = package_fluid_common__1encode_fixed(mom.y);\n                let mz = package_fluid_common__1encode_fixed(mom.z);\n                let mm = package_fluid_common__1encode_fixed(mw);\n                if mx != 0 {\n                    atomicAdd(&grid_atomic[base], mx);\n                }\n                if my != 0 {\n                    atomicAdd(&grid_atomic[base + 1u], my);\n                }\n                if mz != 0 {\n                    atomicAdd(&grid_atomic[base + 2u], mz);\n                }\n                if mm != 0 {\n                    atomicAdd(&grid_atomic[base + 3u], mm);\n                }\n            }\n        }\n    }\n}\n\nstruct package_fluid_common_Particle {\n    pos_foam: vec4<f32>,\n    vel_dens: vec4<f32>,\n    c_packed: vec4<u32>,\n    extra: vec4<f32>\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n\nconst package_fluid_common__1FIXED_SCALE: f32 = 65536.0;\n\nfn package_fluid_common__1cell_idx(x: u32, y: u32, z: u32, dims: vec3<u32>) -> u32 {\n    return (z * dims.y + y) * dims.x + x;\n}\n\nfn package_fluid_common__1unpack_c(packed: vec4<u32>, c22: f32) -> mat3x3<f32> {\n    let a = unpack2x16float(packed.x);\n    let b = unpack2x16float(packed.y);\n    let c = unpack2x16float(packed.z);\n    let d = unpack2x16float(packed.w);\n    return mat3x3<f32>(vec3<f32>(a.x, a.y, b.x), vec3<f32>(b.y, c.x, c.y), vec3<f32>(d.x, d.y, c22));\n}\n\nfn package_fluid_common__1encode_fixed(v: f32) -> i32 {\n    return i32(clamp(v * package_fluid_common__1FIXED_SCALE, -1073741824.0, 1073741824.0));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "sim_particles",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "grid_atomic",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::sim",
+          "entry": "update_grid",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(2)\nvar<storage, read_write> grid_atomic: array<atomic<i32>>;\n\n@group(1) @binding(3)\nvar<storage, read_write> grid_vel: array<vec4<f32>>;\n\n@compute @workgroup_size(256)\nfn update_grid(@builtin(global_invocation_id) id: vec3<u32>) {\n    let idx = id.x;\n    let dims = sim_params.dims.xyz;\n    let total = dims.x * dims.y * dims.z;\n    if idx >= total {\n        return;\n    }\n    let base = idx * 4u;\n    let ax = atomicLoad(&grid_atomic[base]);\n    let ay = atomicLoad(&grid_atomic[base + 1u]);\n    let az = atomicLoad(&grid_atomic[base + 2u]);\n    let am = atomicLoad(&grid_atomic[base + 3u]);\n    if (ax | ay | az | am) != 0 {\n        atomicStore(&grid_atomic[base], 0);\n        atomicStore(&grid_atomic[base + 1u], 0);\n        atomicStore(&grid_atomic[base + 2u], 0);\n        atomicStore(&grid_atomic[base + 3u], 0);\n    }\n    let mass = package_fluid_common__1decode_fixed(am);\n    if mass <= 1e-5 {\n        grid_vel[idx] = vec4<f32>(0.0);\n        return;\n    }\n    let gx = idx % dims.x;\n    let gy = (idx / dims.x) % dims.y;\n    let gz = idx / (dims.x * dims.y);\n    let pos = vec3<f32>(f32(gx), f32(gy), f32(gz));\n    let dt = sim_params.physics.x;\n    let gravity = sim_params.fluid.y;\n    let vortex = sim_params.fluid.z;\n    let zero_g = sim_params.fluid.w;\n    let elapsed = sim_params.time_info.x;\n    var vel = vec3<f32>(package_fluid_common__1decode_fixed(ax), package_fluid_common__1decode_fixed(ay), package_fluid_common__1decode_fixed(az)) / mass;\n    let center = vec3<f32>(f32(dims.x) * 0.5, f32(dims.y) * 0.56, f32(dims.z) * 0.5);\n    if zero_g > 0.5 {\n        let wobble = vec3<f32>(sin(elapsed * 1.15) * 1.3, cos(elapsed * 0.92) * 1.1, sin(elapsed * 0.78 + 1.1) * 1.0);\n        let to_c = (center + wobble) - pos;\n        let dist = length(to_c);\n        let pull = to_c * (0.165 / (1.0 + dist * 0.022));\n        let tangent = normalize(vec3<f32>(-to_c.z, 0.3 * sin(elapsed * 1.4 + pos.y * 0.14), to_c.x) + vec3<f32>(0.0001));\n        let swirl = tangent * (0.15 * smoothstep(2.0, 14.0, dist));\n        vel += (pull + swirl) * dt;\n        vel *= 0.99;\n    }\n    else {\n        vel.y += gravity * dt;\n    }\n    if vortex > 0.5 {\n        let rel = pos.xz - center.xz;\n        let r = length(rel);\n        if r > 0.4 {\n            let tang = vec2<f32>(-rel.y, rel.x) / r;\n            let rad_dir = rel / r;\n            let band = smoothstep(0.8, 10.0, r) * (1.0 - smoothstep(24.0, 40.0, r));\n            let force_xz = tang * (1.65 * band) - rad_dir * (0.36 * smoothstep(5.0, 26.0, r));\n            vel.x += force_xz.x * dt;\n            vel.z += force_xz.y * dt;\n            if zero_g < 0.5 {\n                let rim_lift = smoothstep(12.0, 26.0, r) * (1.0 - smoothstep(14.0, 28.0, pos.y));\n                vel.y += rim_lift * 0.24 * dt;\n            }\n        }\n    }\n    if sim_params.stir_pos.w > 0.01 {\n        let d = pos - sim_params.stir_pos.xyz;\n        let rad = max(sim_params.stir_vel.w, 4.0);\n        let dist = length(d);\n        if dist < rad * 1.5 {\n            let falloff = max(1.0 - dist / (rad * 1.5), 0.0);\n            let k = falloff * falloff * sim_params.stir_pos.w;\n            let push_dir = d / max(dist, 0.25);\n            let stir_v = sim_params.stir_vel.xyz;\n            let speed = length(stir_v);\n            vel += (stir_v * 3.1 + push_dir * (0.5 + speed * 0.6) + vec3<f32>(0.0, 0.3 + speed * 0.42, 0.0)) * k * dt * 3.6;\n        }\n    }\n    let pad = 3u;\n    if gx < pad && vel.x < 0.0 {\n        vel.x = 0.0;\n    }\n    if gx >= dims.x - pad && vel.x > 0.0 {\n        vel.x = 0.0;\n    }\n    if gy < pad && vel.y < 0.0 {\n        vel.y = 0.0;\n        vel.x *= 0.992;\n        vel.z *= 0.992;\n    }\n    if gy >= dims.y - pad && vel.y > 0.0 {\n        vel.y = 0.0;\n    }\n    if gz < pad && vel.z < 0.0 {\n        vel.z = 0.0;\n    }\n    if gz >= dims.z - pad && vel.z > 0.0 {\n        vel.z = 0.0;\n    }\n    let speed = length(vel);\n    if speed > 2.45 {\n        vel = vel * (2.45 / speed);\n    }\n    grid_vel[idx] = vec4<f32>(vel, mass);\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n\nconst package_fluid_common__2INV_FIXED_SCALE: f32 = 1.0 / 65536.0;\n\nfn package_fluid_common__1decode_fixed(v: i32) -> f32 {\n    return f32(v) * package_fluid_common__2INV_FIXED_SCALE;\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "grid_atomic",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "grid_vel",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::sim",
+          "entry": "g2p",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(1)\nvar<storage, read_write> sim_particles: array<package_fluid_common_Particle>;\n\n@group(1) @binding(3)\nvar<storage, read_write> grid_vel: array<vec4<f32>>;\n\nfn bspline_weights(fx: vec3<f32>) -> array<vec3<f32>, 3> {\n    let w0 = 0.5 * (1.5 - fx) * (1.5 - fx);\n    let w1 = 0.75 - (fx - 1.0) * (fx - 1.0);\n    let w2 = 0.5 * (fx - 0.5) * (fx - 0.5);\n    return array<vec3<f32>, 3>(w0, w1, w2);\n}\n\n@compute @workgroup_size(128)\nfn g2p(@builtin(global_invocation_id) id: vec3<u32>) {\n    let i = id.x;\n    if i >= sim_params.dims.w {\n        return;\n    }\n    let p = sim_particles[i];\n    let pos = p.pos_foam.xyz;\n    let dt = sim_params.physics.x;\n    let rest_density = sim_params.physics.z;\n    let dims = sim_params.dims.xyz;\n    let cell = vec3<i32>(floor(pos - 0.5));\n    let fx = pos - vec3<f32>(cell);\n    let w = bspline_weights(fx);\n    var vel = vec3<f32>(0.0);\n    var b0 = vec3<f32>(0.0);\n    var b1 = vec3<f32>(0.0);\n    var b2 = vec3<f32>(0.0);\n    var grid_dens = 0.0;\n    var min_face_m = 1000000000.0;\n    for (var oz = 0; oz < 3; oz += 1) {\n        let gz = cell.z + oz;\n        if gz < 0 || gz >= i32(dims.z) {\n            min_face_m = 0.0;\n            continue;\n        }\n        let wz = w[oz].z;\n        for (var oy = 0; oy < 3; oy += 1) {\n            let gy = cell.y + oy;\n            if gy < 0 || gy >= i32(dims.y) {\n                min_face_m = 0.0;\n                continue;\n            }\n            let wyz = w[oy].y * wz;\n            for (var ox = 0; ox < 3; ox += 1) {\n                let gx = cell.x + ox;\n                if gx < 0 || gx >= i32(dims.x) {\n                    min_face_m = 0.0;\n                    continue;\n                }\n                let weight = w[ox].x * wyz;\n                let gcell = grid_vel[package_fluid_common__1cell_idx(u32(gx), u32(gy), u32(gz), dims)];\n                let dpos = vec3<f32>(f32(ox), f32(oy), f32(oz)) - fx;\n                let wv = gcell.xyz * weight;\n                vel += wv;\n                b0 += wv * dpos.x;\n                b1 += wv * dpos.y;\n                b2 += wv * dpos.z;\n                grid_dens += gcell.w * weight;\n                let manh = abs(ox - 1) + abs(oy - 1) + abs(oz - 1);\n                if manh == 1 {\n                    min_face_m = min(min_face_m, gcell.w);\n                }\n            }\n        }\n    }\n    let c = mat3x3<f32>(b0 * 4.0, b1 * 4.0, b2 * 4.0);\n    let div_v = clamp(c[0].x + c[1].y + c[2].z, -3.2, 3.2);\n    let pred_dens = clamp(grid_dens / clamp(1.0 + dt * div_v, 0.72, 1.38), 0.3, rest_density * 2.8);\n    let ratio = pred_dens / rest_density;\n    var next_pos = pos + vel * dt;\n    let min_p = vec3<f32>(3.05, 3.05, 3.05);\n    let max_p = vec3<f32>(f32(dims.x) - 3.05, f32(dims.y) - 3.05, f32(dims.z) - 3.05);\n    if next_pos.x < min_p.x {\n        next_pos.x = min_p.x;\n        vel.x = max(vel.x, 0.0);\n    }\n    if next_pos.x > max_p.x {\n        next_pos.x = max_p.x;\n        vel.x = min(vel.x, 0.0);\n    }\n    if next_pos.y < min_p.y {\n        next_pos.y = min_p.y;\n        vel.y = max(vel.y, 0.0);\n    }\n    if next_pos.y > max_p.y {\n        next_pos.y = max_p.y;\n        vel.y = min(vel.y, 0.0);\n    }\n    if next_pos.z < min_p.z {\n        next_pos.z = min_p.z;\n        vel.z = max(vel.z, 0.0);\n    }\n    if next_pos.z > max_p.z {\n        next_pos.z = max_p.z;\n        vel.z = min(vel.z, 0.0);\n    }\n    let speed = length(vel);\n    let curl = length(vec3<f32>(c[1].z - c[2].y, c[2].x - c[0].z, c[0].y - c[1].x));\n    let crest = smoothstep(0.92, 0.32, ratio);\n    let foam_gen = (smoothstep(0.82, 1.9, speed) * 0.9 + smoothstep(1.15, 2.9, curl) * 0.45) * crest;\n    let foam = clamp(p.pos_foam.w * 0.94 + foam_gen * dt * 1.25, 0.0, 1.0);\n    let energy = clamp(p.extra.y * 0.93 + (speed * 0.6 + curl * 0.35) * dt * 0.85, 0.0, 1.5);\n    let buried = min_face_m > rest_density * 0.78 && grid_dens > rest_density * 0.92;\n    let draw_surface = select(1.0, 0.0, buried && (i & 3u) != 0u);\n    sim_particles[i] = package_fluid_common_Particle(vec4<f32>(next_pos, foam), vec4<f32>(vel, pred_dens), package_fluid_common__2pack_c_vec(c), vec4<f32>(clamp(c[2].z, -40.0, 40.0), energy, draw_surface, ratio));\n}\n\nstruct package_fluid_common_Particle {\n    pos_foam: vec4<f32>,\n    vel_dens: vec4<f32>,\n    c_packed: vec4<u32>,\n    extra: vec4<f32>\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n\nfn package_fluid_common__1cell_idx(x: u32, y: u32, z: u32, dims: vec3<u32>) -> u32 {\n    return (z * dims.y + y) * dims.x + x;\n}\n\nfn package_fluid_common__2pack_c_vec(m: mat3x3<f32>) -> vec4<u32> {\n    let c0 = clamp(m[0], vec3<f32>(-40.0), vec3<f32>(40.0));\n    let c1 = clamp(m[1], vec3<f32>(-40.0), vec3<f32>(40.0));\n    let c2 = clamp(m[2], vec3<f32>(-40.0), vec3<f32>(40.0));\n    return vec4<u32>(pack2x16float(vec2<f32>(c0.x, c0.y)), pack2x16float(vec2<f32>(c0.z, c1.x)), pack2x16float(vec2<f32>(c1.y, c1.z)), pack2x16float(vec2<f32>(c2.x, c2.y)));\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "sim_particles",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "grid_vel",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::sim",
+          "entry": "build_heightfield",
+          "stage": "COMPUTE",
+          "text": "@group(1) @binding(0)\nvar<uniform> sim_params: package_fluid_common_SimParams;\n\n@group(1) @binding(3)\nvar<storage, read_write> grid_vel: array<vec4<f32>>;\n\n@group(1) @binding(4)\nvar<storage, read_write> heightfield_out: array<vec4<f32>>;\n\n@compute @workgroup_size(8, 8, 1)\nfn build_heightfield(@builtin(global_invocation_id) id: vec3<u32>) {\n    let dims = sim_params.dims.xyz;\n    let gx = id.x;\n    let gz = id.y;\n    if gx >= dims.x || gz >= dims.z {\n        return;\n    }\n    var top_y = 0.0;\n    var min_y = f32(dims.y);\n    var col_mass = 0.0;\n    var top_speed = 0.0;\n    var prev_m = 0.0;\n    let thresh = 0.85;\n    for (var iy = i32(dims.y) - 3; iy >= 2; iy -= 1) {\n        let cell = grid_vel[package_fluid_common__1cell_idx(gx, u32(iy), gz, dims)];\n        let m = cell.w;\n        col_mass += m;\n        if m > thresh {\n            let fy = f32(iy);\n            if top_y <= 0.0 {\n                let frac = clamp((m - thresh) / max(m - prev_m, 0.01), 0.0, 1.0);\n                top_y = fy + (1.0 - frac);\n                top_speed = length(cell.xyz);\n            }\n            min_y = min(min_y, fy);\n        }\n        prev_m = m;\n    }\n    if min_y >= f32(dims.y) {\n        min_y = 0.0;\n    }\n    heightfield_out[gz * dims.x + gx] = vec4<f32>(top_y, col_mass, top_speed, min_y);\n}\n\nstruct package_fluid_common_SimParams {\n    dims: vec4<u32>,\n    physics: vec4<f32>,\n    fluid: vec4<f32>,\n    stir_pos: vec4<f32>,\n    stir_vel: vec4<f32>,\n    drop_info: vec4<u32>,\n    bounds: vec4<f32>,\n    time_info: vec4<f32>\n}\n\nfn package_fluid_common__1cell_idx(x: u32, y: u32, z: u32, dims: vec3<u32>) -> u32 {\n    return (z * dims.y + y) * dims.x + x;\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "sim_params",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "grid_vel",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::sim",
+              {
+                "group": 1,
+                "binding": 4,
+                "name": "heightfield_out",
+                "ty": {
+                  "Storage": {
+                    "write": true
+                  }
+                }
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "fluid::splat",
+      "core": false,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "splat_frame",
+          "ty": "Uniform"
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "splat_particles",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        }
+      ],
+      "entries": [
+        {
+          "module": "fluid::splat",
+          "entry": "vs_splat",
+          "stage": "VERTEX",
+          "text": "@group(1) @binding(0)\nvar<uniform> splat_frame: package_fluid_common_FrameUniform;\n\n@group(1) @binding(1)\nvar<storage, read> splat_particles: array<package_fluid_common_Particle>;\n\nstruct SplatOut {\n    @builtin(position)\n    clip: vec4<f32>,\n    @location(0)\n    uv: vec2<f32>,\n    @location(1)\n    center_view: vec3<f32>,\n    @location(2) @interpolate(flat)\n    radius: f32,\n    @location(3) @interpolate(flat)\n    aux: vec4<f32>\n}\n\nfn quad_corner(vertex: u32) -> vec2<f32> {\n    let x = f32((50u >> vertex) & 1u) * 2.0 - 1.0;\n    let y = f32((44u >> vertex) & 1u) * 2.0 - 1.0;\n    return vec2<f32>(x, y);\n}\n\nfn build_splat_vertex(vertex: u32, p: package_fluid_common_Particle, radius_mult: f32) -> SplatOut {\n    let world = package_fluid_common__2grid_to_world(p.pos_foam.xyz, splat_frame.basin, splat_frame.grid_dims);\n    let center_view = (splat_frame.view * vec4<f32>(world, 1.0)).xyz;\n    let speed = length(p.vel_dens.xyz);\n    let ratio = p.extra.w;\n    let density_scale = mix(0.86, 1.12, smoothstep(0.25, 1.15, ratio));\n    let radius = splat_frame.splat.x * density_scale * radius_mult;\n    var out: SplatOut;\n    if center_view.z > -0.18 {\n        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);\n        out.uv = vec2<f32>(2.0);\n        out.center_view = center_view;\n        out.radius = radius;\n        out.aux = vec4<f32>(0.0);\n        return out;\n    }\n    let c_clip = splat_frame.proj * vec4<f32>(center_view, 1.0);\n    let inv_w = 1.0 / max(abs(c_clip.w), 1e-5);\n    if abs(c_clip.x * inv_w) > 1.25 || abs(c_clip.y * inv_w) > 1.25 {\n        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);\n        out.uv = vec2<f32>(2.0);\n        out.center_view = center_view;\n        out.radius = radius;\n        out.aux = vec4<f32>(0.0);\n        return out;\n    }\n    let corner = quad_corner(vertex);\n    let pad = 1.05;\n    let view_pos = center_view + vec3<f32>(corner * (radius * pad), 0.0);\n    out.clip = splat_frame.proj * vec4<f32>(view_pos, 1.0);\n    out.uv = corner * pad;\n    out.center_view = center_view;\n    out.radius = radius;\n    out.aux = vec4<f32>(speed, p.pos_foam.w, p.extra.y, ratio);\n    return out;\n}\n\n@vertex\nfn vs_splat(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> SplatOut {\n    let p = splat_particles[instance];\n    if p.extra.z < 0.5 {\n        var culled: SplatOut;\n        culled.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);\n        culled.uv = vec2<f32>(2.0);\n        culled.center_view = vec3<f32>(0.0);\n        culled.radius = 0.0;\n        culled.aux = vec4<f32>(0.0);\n        return culled;\n    }\n    return build_splat_vertex(vertex, p, 1.0);\n}\n\nstruct package_fluid_common_Particle {\n    pos_foam: vec4<f32>,\n    vel_dens: vec4<f32>,\n    c_packed: vec4<u32>,\n    extra: vec4<f32>\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n\nfn package_fluid_common__2grid_to_world(g: vec3<f32>, basin: vec4<f32>, grid_dims: vec4<f32>) -> vec3<f32> {\n    let cs = basin.w;\n    return vec3<f32>((g.x - grid_dims.x * 0.5) * cs, (g.y - 3.0) * cs + basin.z, (g.z - grid_dims.z * 0.5) * cs);\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                1,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                2,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                3,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::splat",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "splat_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::splat",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "splat_particles",
+                "ty": {
+                  "Storage": {
+                    "write": false
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::splat",
+          "entry": "vs_thick",
+          "stage": "VERTEX",
+          "text": "@group(1) @binding(0)\nvar<uniform> splat_frame: package_fluid_common_FrameUniform;\n\n@group(1) @binding(1)\nvar<storage, read> splat_particles: array<package_fluid_common_Particle>;\n\nstruct SplatOut {\n    @builtin(position)\n    clip: vec4<f32>,\n    @location(0)\n    uv: vec2<f32>,\n    @location(1)\n    center_view: vec3<f32>,\n    @location(2) @interpolate(flat)\n    radius: f32,\n    @location(3) @interpolate(flat)\n    aux: vec4<f32>\n}\n\nfn quad_corner(vertex: u32) -> vec2<f32> {\n    let x = f32((50u >> vertex) & 1u) * 2.0 - 1.0;\n    let y = f32((44u >> vertex) & 1u) * 2.0 - 1.0;\n    return vec2<f32>(x, y);\n}\n\nfn build_splat_vertex(vertex: u32, p: package_fluid_common_Particle, radius_mult: f32) -> SplatOut {\n    let world = package_fluid_common__2grid_to_world(p.pos_foam.xyz, splat_frame.basin, splat_frame.grid_dims);\n    let center_view = (splat_frame.view * vec4<f32>(world, 1.0)).xyz;\n    let speed = length(p.vel_dens.xyz);\n    let ratio = p.extra.w;\n    let density_scale = mix(0.86, 1.12, smoothstep(0.25, 1.15, ratio));\n    let radius = splat_frame.splat.x * density_scale * radius_mult;\n    var out: SplatOut;\n    if center_view.z > -0.18 {\n        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);\n        out.uv = vec2<f32>(2.0);\n        out.center_view = center_view;\n        out.radius = radius;\n        out.aux = vec4<f32>(0.0);\n        return out;\n    }\n    let c_clip = splat_frame.proj * vec4<f32>(center_view, 1.0);\n    let inv_w = 1.0 / max(abs(c_clip.w), 1e-5);\n    if abs(c_clip.x * inv_w) > 1.25 || abs(c_clip.y * inv_w) > 1.25 {\n        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);\n        out.uv = vec2<f32>(2.0);\n        out.center_view = center_view;\n        out.radius = radius;\n        out.aux = vec4<f32>(0.0);\n        return out;\n    }\n    let corner = quad_corner(vertex);\n    let pad = 1.05;\n    let view_pos = center_view + vec3<f32>(corner * (radius * pad), 0.0);\n    out.clip = splat_frame.proj * vec4<f32>(view_pos, 1.0);\n    out.uv = corner * pad;\n    out.center_view = center_view;\n    out.radius = radius;\n    out.aux = vec4<f32>(speed, p.pos_foam.w, p.extra.y, ratio);\n    return out;\n}\n\n@vertex\nfn vs_thick(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> SplatOut {\n    return build_splat_vertex(vertex, splat_particles[instance * 4u], 1.48);\n}\n\nstruct package_fluid_common_Particle {\n    pos_foam: vec4<f32>,\n    vel_dens: vec4<f32>,\n    c_packed: vec4<u32>,\n    extra: vec4<f32>\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n\nfn package_fluid_common__2grid_to_world(g: vec3<f32>, basin: vec4<f32>, grid_dims: vec4<f32>) -> vec3<f32> {\n    let cs = basin.w;\n    return vec3<f32>((g.x - grid_dims.x * 0.5) * cs, (g.y - 3.0) * cs + basin.z, (g.z - grid_dims.z * 0.5) * cs);\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                1,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                2,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                3,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::splat",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "splat_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::splat",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "splat_particles",
+                "ty": {
+                  "Storage": {
+                    "write": false
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::splat",
+          "entry": "fs_depth_aux",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<uniform> splat_frame: package_fluid_common_FrameUniform;\n\nstruct SplatOut {\n    @builtin(position)\n    clip: vec4<f32>,\n    @location(0)\n    uv: vec2<f32>,\n    @location(1)\n    center_view: vec3<f32>,\n    @location(2) @interpolate(flat)\n    radius: f32,\n    @location(3) @interpolate(flat)\n    aux: vec4<f32>\n}\n\nstruct DepthAuxOut {\n    @builtin(frag_depth)\n    hw_depth: f32,\n    @location(0)\n    linear_depth: f32,\n    @location(1)\n    aux: vec4<f32>\n}\n\n@fragment\nfn fs_depth_aux(in: SplatOut) -> DepthAuxOut {\n    let r2 = dot(in.uv, in.uv);\n    if r2 > 1.0 {\n        discard;\n    }\n    let nz = sqrt(max(1.0 - r2, 0.0));\n    let surf_view = in.center_view + vec3<f32>(in.uv * in.radius, nz * in.radius);\n    let z_eye = -surf_view.z;\n    if z_eye <= splat_frame.splat.z {\n        discard;\n    }\n    let clip = splat_frame.proj * vec4<f32>(surf_view, 1.0);\n    let hw_depth = clamp(clip.z / max(clip.w, 1e-5), 0.0, 1.0);\n    var out: DepthAuxOut;\n    out.hw_depth = hw_depth;\n    out.linear_depth = z_eye;\n    out.aux = vec4<f32>(in.aux.x, in.aux.y, in.aux.z, 1.0);\n    return out;\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                1,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
+          "reached": [
+            [
+              "fluid::splat",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "splat_frame",
+                "ty": "Uniform"
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::splat",
+          "entry": "fs_thickness",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<uniform> splat_frame: package_fluid_common_FrameUniform;\n\nstruct SplatOut {\n    @builtin(position)\n    clip: vec4<f32>,\n    @location(0)\n    uv: vec2<f32>,\n    @location(1)\n    center_view: vec3<f32>,\n    @location(2) @interpolate(flat)\n    radius: f32,\n    @location(3) @interpolate(flat)\n    aux: vec4<f32>\n}\n\n@fragment\nfn fs_thickness(in: SplatOut) -> @location(0) vec4<f32> {\n    let r2 = dot(in.uv, in.uv);\n    if r2 > 1.0 {\n        discard;\n    }\n    let nz = sqrt(max(1.0 - r2, 0.0));\n    let smooth_w = nz * nz * (3.0 - 2.0 * nz);\n    let count_norm = 250000.0 / max(splat_frame.style.w, 1000.0);\n    let scale = pow(count_norm, 0.66);\n    let w = smooth_w * 0.16 * scale;\n    let thick = nz * in.radius * 0.56 * scale;\n    return vec4<f32>(thick, in.aux.y * w, in.aux.x * w, w);\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
+          "reached": [
+            [
+              "fluid::splat",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "splat_frame",
+                "ty": "Uniform"
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "fluid::studio",
+      "core": false,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "studio_frame",
+          "ty": "Uniform"
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "studio_depth",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 2,
+          "name": "studio_aux",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 3,
+          "name": "studio_thick",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 4,
+          "name": "studio_sampler",
+          "ty": "Sampler"
+        },
+        {
+          "group": 1,
+          "binding": 5,
+          "name": "studio_heightfield",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        }
+      ],
+      "entries": [
+        {
+          "module": "fluid::studio",
+          "entry": "fs_studio",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<uniform> studio_frame: package_fluid_common_FrameUniform;\n\n@group(1) @binding(1)\nvar studio_depth: texture_2d<f32>;\n\n@group(1) @binding(2)\nvar studio_aux: texture_2d<f32>;\n\n@group(1) @binding(3)\nvar studio_thick: texture_2d<f32>;\n\n@group(1) @binding(4)\nvar studio_sampler: sampler;\n\n@group(1) @binding(5)\nvar<storage, read> studio_heightfield: array<vec4<f32>>;\n\nfn hash21(p: vec2<f32>) -> f32 {\n    let q = fract(p * vec2<f32>(123.34, 456.21));\n    let r = q + dot(q, q + 45.32);\n    return fract(r.x * r.y);\n}\n\nfn value_noise(p: vec2<f32>) -> f32 {\n    let i = floor(p);\n    let f = fract(p);\n    let u = f * f * (3.0 - 2.0 * f);\n    let a = hash21(i);\n    let b = hash21(i + vec2<f32>(1.0, 0.0));\n    let c = hash21(i + vec2<f32>(0.0, 1.0));\n    let d = hash21(i + vec2<f32>(1.0, 1.0));\n    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);\n}\n\nfn fbm2(p: vec2<f32>) -> f32 {\n    var v = value_noise(p) * 0.56;\n    let q = mat2x2<f32>(1.6, 1.2, -1.2, 1.6) * p;\n    v += value_noise(q) * 0.29;\n    let q2 = mat2x2<f32>(1.6, 1.2, -1.2, 1.6) * q;\n    v += value_noise(q2) * 0.15;\n    return v;\n}\n\nfn rect_light(dir: vec3<f32>, center: vec3<f32>, u_axis: vec3<f32>, v_axis: vec3<f32>, half_uv: vec2<f32>, soft: f32) -> f32 {\n    let d_dot = dot(dir, center);\n    if d_dot <= 0.05 {\n        return 0.0;\n    }\n    let proj = dir / d_dot - center;\n    let u = abs(dot(proj, u_axis)) - half_uv.x;\n    let v = abs(dot(proj, v_axis)) - half_uv.y;\n    let dist = length(max(vec2<f32>(u, v), vec2<f32>(0.0))) + min(max(u, v), 0.0);\n    return 1.0 - smoothstep(-soft, soft, dist);\n}\n\nfn sample_studio_hdri(dir: vec3<f32>, mat_id: f32) -> vec3<f32> {\n    let d = normalize(dir);\n    let az = atan2(d.z, d.x);\n    let sky_band = smoothstep(-0.08, 0.42, d.y) * (1.0 - smoothstep(0.68, 0.98, d.y));\n    let dome_cyc = mix(vec3<f32>(0.055, 0.064, 0.082), vec3<f32>(0.36, 0.41, 0.5), sky_band);\n    let zenith_cap = vec3<f32>(0.18, 0.21, 0.27) * smoothstep(0.55, 1.0, d.y);\n    var base = dome_cyc + zenith_cap;\n    let studio_bays = smoothstep(-0.15, 0.35, cos(az * 2.0 - 0.55));\n    let neg_flag_1 = exp(-pow(sin((az + 1.15) * 0.5), 2.0) * 14.0);\n    let neg_flag_2 = exp(-pow(sin((az - 2.05) * 0.5), 2.0) * 16.0);\n    let neg_fill = clamp(neg_flag_1 + neg_flag_2, 0.0, 0.92);\n    base *= (0.45 + 0.72 * studio_bays) * (1.0 - 0.86 * neg_fill);\n    let dark_equator = exp(-pow((d.y + 0.07) * 9.5, 2.0));\n    base *= (1.0 - 0.78 * dark_equator);\n    let horizon_strip = exp(-pow((d.y - 0.06) * 13.0, 2.0));\n    let strip_panels = smoothstep(0.0, 0.42, cos(az * 2.0 - 0.5)) * (1.0 - neg_fill);\n    base += vec3<f32>(1.15, 1.26, 1.45) * horizon_strip * strip_panels;\n    let ground_bounce = vec3<f32>(0.045, 0.052, 0.068) * smoothstep(0.0, -0.55, d.y);\n    base = mix(base, ground_bounce, smoothstep(-0.02, -0.22, d.y));\n    let k1 = rect_light(d, normalize(vec3<f32>(-0.28, 0.88, 0.38)), normalize(vec3<f32>(0.91, 0.16, 0.38)), normalize(vec3<f32>(-0.2, -0.42, 0.88)), vec2<f32>(0.72, 0.2), 0.09);\n    let k2 = rect_light(d, normalize(vec3<f32>(0.54, 0.7, -0.46)), normalize(vec3<f32>(0.42, 0.12, 0.9)), normalize(vec3<f32>(-0.7, 0.7, 0.12)), vec2<f32>(0.56, 0.12), 0.055);\n    let k3 = rect_light(d, normalize(vec3<f32>(0.8, 0.24, 0.54)), normalize(vec3<f32>(-0.56, 0.0, 0.83)), vec3<f32>(0.0, 1.0, 0.0), vec2<f32>(0.36, 0.09), 0.06);\n    let k4 = rect_light(d, normalize(vec3<f32>(-0.82, 0.26, -0.5)), normalize(vec3<f32>(0.52, 0.0, -0.85)), vec3<f32>(0.0, 1.0, 0.0), vec2<f32>(0.44, 0.09), 0.065);\n    var env = base;\n    env += vec3<f32>(4.6, 4.8, 5.2) * k1;\n    env += vec3<f32>(3.6, 4.1, 4.9) * k2;\n    env += vec3<f32>(2.9, 1.82, 1.02) * k3;\n    env += vec3<f32>(1.15, 1.72, 2.75) * k4;\n    if mat_id > 2.5 {\n        env *= 0.28;\n    }\n    return env;\n}\n\nfn sample_studio_bg(dir: vec3<f32>) -> vec3<f32> {\n    let d = normalize(dir);\n    let up = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);\n    var col = mix(vec3<f32>(0.009, 0.012, 0.018), vec3<f32>(0.03, 0.037, 0.05), smoothstep(0.0, 0.52, up));\n    col = mix(col, vec3<f32>(0.013, 0.017, 0.025), smoothstep(0.52, 1.0, up));\n    let glow = exp(-pow((d.y - 0.14) * 5.0, 2.0)) * 0.02;\n    return col + vec3<f32>(0.65, 0.78, 1.0) * glow;\n}\n\nfn sample_heightfield(wx: f32, wz: f32) -> vec4<f32> {\n    let cs = studio_frame.basin.w;\n    let gx_f = wx / cs + studio_frame.grid_dims.x * 0.5;\n    let gz_f = wz / cs + studio_frame.grid_dims.z * 0.5;\n    let gx_max = i32(studio_frame.grid_dims.x) - 1;\n    let gz_max = i32(studio_frame.grid_dims.z) - 1;\n    if gx_f < 0.0 || gz_f < 0.0 || gx_f > f32(gx_max) || gz_f > f32(gz_max) {\n        return vec4<f32>(0.0);\n    }\n    let ix = clamp(i32(floor(gx_f)), 0, gx_max - 1);\n    let iz = clamp(i32(floor(gz_f)), 0, gz_max - 1);\n    let fx = clamp(gx_f - f32(ix), 0.0, 1.0);\n    let fz = clamp(gz_f - f32(iz), 0.0, 1.0);\n    let stride = u32(studio_frame.grid_dims.x);\n    let v00 = studio_heightfield[u32(iz) * stride + u32(ix)];\n    let v10 = studio_heightfield[u32(iz) * stride + u32(ix + 1)];\n    let v01 = studio_heightfield[u32(iz + 1) * stride + u32(ix)];\n    let v11 = studio_heightfield[u32(iz + 1) * stride + u32(ix + 1)];\n    return mix(mix(v00, v10, fx), mix(v01, v11, fx), fz);\n}\n\nfn caustic_pattern(p: vec2<f32>, t: f32) -> f32 {\n    var uv = p * 2.65;\n    var acc = vec2<f32>(0.0);\n    let rot = mat2x2<f32>(0.8, -0.6, 0.6, 0.8);\n    for (var i = 0; i < 3; i += 1) {\n        let fi = f32(i);\n        let phase = t * (0.95 + fi * 0.28);\n        let s = sin(uv.x + cos(uv.y + phase)) + cos(uv.y - sin(uv.x - phase * 0.8));\n        acc += vec2<f32>(cos(s * 1.45), sin(s * 1.45));\n        uv = rot * uv * 1.38 + vec2<f32>(0.7, -0.4);\n    }\n    let mag = length(acc) / 3.0;\n    let web = 1.0 - clamp(mag, 0.0, 1.0);\n    return pow(web, 3.5) * 2.25;\n}\n\nfn eval_floor_caustics(wx: f32, wz: f32, mat_id: f32) -> vec4<f32> {\n    let eps = 0.095;\n    let hc = sample_heightfield(wx, wz);\n    let h_xp = sample_heightfield(wx + eps, wz);\n    let h_xm = sample_heightfield(wx - eps, wz);\n    let h_zp = sample_heightfield(wx, wz + eps);\n    let h_zm = sample_heightfield(wx, wz - eps);\n    let eps_sh = 0.24;\n    let s1 = sample_heightfield(wx + eps_sh, wz + eps_sh).y;\n    let s2 = sample_heightfield(wx - eps_sh, wz + eps_sh).y;\n    let s3 = sample_heightfield(wx + eps_sh, wz - eps_sh).y;\n    let s4 = sample_heightfield(wx - eps_sh, wz - eps_sh).y;\n    let col_mass = (hc.y * 2.0 + h_xp.y + h_xm.y + h_zp.y + h_zm.y) / 6.0;\n    let soft_mass = (col_mass * 2.0 + s1 + s2 + s3 + s4) / 6.0;\n    let coverage = smoothstep(0.6, 5.5, col_mass);\n    let lap = (h_xp.x + h_xm.x + h_zp.x + h_zm.x - 4.0 * hc.x);\n    let grad = vec2<f32>(h_xp.x - h_xm.x, h_zp.x - h_zm.x) / (2.0 * eps);\n    let focus = clamp(-lap * 0.68 + length(grad) * 0.17, 0.0, 2.5);\n    let t = studio_frame.eye_time.w;\n    let shadow = clamp(1.0 - smoothstep(1.2, 48.0, soft_mass) * 0.62, 0.34, 1.0);\n    let is_zero_g = studio_frame.style.y > 0.5;\n    if mat_id > 0.5 && mat_id < 1.5 {\n        if is_zero_g {\n            return vec4<f32>(vec3<f32>(0.02, 0.14, 0.18) * smoothstep(2.0, 28.0, soft_mass) * 0.35, shadow);\n        }\n        let warp = vec2<f32>(wx, wz) + grad * 0.068;\n        let cr = caustic_pattern(warp + vec2<f32>(0.018, 0.008), t);\n        let cg = caustic_pattern(warp, t);\n        let cb = caustic_pattern(warp - vec2<f32>(0.018, 0.01), t);\n        let dyn = (0.52 + focus * 1.25) * (0.88 + 0.35 * clamp(hc.z, 0.0, 1.5)) * coverage;\n        let rgb = vec3<f32>(cr, cg, cb) * vec3<f32>(0.84, 1.06, 1.18) * dyn * 1.32;\n        return vec4<f32>(rgb, shadow);\n    }\n    if mat_id > 1.5 && mat_id < 2.5 {\n        let glow = smoothstep(1.0, 18.0, soft_mass) * (0.35 + 0.45 * clamp(hc.z * 0.7, 0.0, 1.2));\n        return vec4<f32>(vec3<f32>(1.15, 0.42, 0.05) * glow * 0.42, shadow);\n    }\n    if mat_id > 2.5 {\n        let glow = smoothstep(0.8, 16.0, soft_mass) * (0.42 + 0.45 * clamp(hc.z * 0.8, 0.0, 1.3));\n        let shift = 0.5 + 0.5 * sin(wx * 1.5 + wz * 1.3 - t * 1.7);\n        let tint = mix(vec3<f32>(0.05, 0.78, 1.2), vec3<f32>(0.72, 0.16, 1.18), shift);\n        return vec4<f32>(tint * glow * 0.48, shadow);\n    }\n    return vec4<f32>(vec3<f32>(0.0), shadow);\n}\n\nstruct Hit {\n    t: f32,\n    normal: vec3<f32>,\n    kind: u32\n}\n\nfn intersect_box(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec4<f32> {\n    let inv = 1.0 / select(rd, vec3<f32>(1e-6), abs(rd) < vec3<f32>(1e-6));\n    let t0 = (bmin - ro) * inv;\n    let t1 = (bmax - ro) * inv;\n    let tsmall = min(t0, t1);\n    let tbig = max(t0, t1);\n    let t_enter = max(max(tsmall.x, tsmall.y), tsmall.z);\n    let t_exit = min(min(tbig.x, tbig.y), tbig.z);\n    if t_exit < max(t_enter, 0.0) {\n        return vec4<f32>(-1.0, 0.0, 0.0, 0.0);\n    }\n    var n = vec3<f32>(0.0);\n    if t_enter == tsmall.x {\n        n.x = -sign(rd.x);\n    }\n    else if t_enter == tsmall.y {\n        n.y = -sign(rd.y);\n    }\n    else {\n        n.z = -sign(rd.z);\n    }\n    return vec4<f32>(t_enter, n);\n}\n\nfn trace_studio(ro: vec3<f32>, rd: vec3<f32>) -> Hit {\n    var best = Hit(1000000000.0, vec3<f32>(0.0, 1.0, 0.0), 0u);\n    let hx = studio_frame.basin.x;\n    let hz = studio_frame.basin.y;\n    let fy = studio_frame.basin.z;\n    let rim_h = 0.17;\n    let rim_w = 0.14;\n    let plinth_y = -0.24;\n    if rd.y < -1e-5 {\n        let t_floor = (plinth_y - ro.y) / rd.y;\n        if t_floor > 0.0 && t_floor < best.t {\n            best = Hit(t_floor, vec3<f32>(0.0, 1.0, 0.0), 1u);\n        }\n        let t_basin = (fy - ro.y) / rd.y;\n        if t_basin > 0.0 && t_basin < best.t {\n            let p = ro + rd * t_basin;\n            if abs(p.x) <= hx + 0.02 && abs(p.z) <= hz + 0.02 {\n                best = Hit(t_basin, vec3<f32>(0.0, 1.0, 0.0), 2u);\n            }\n        }\n    }\n    let walls = array<vec3<f32>, 8>(vec3<f32>(-(hx + rim_w), plinth_y, -(hz + rim_w)), vec3<f32>(-hx, fy + rim_h, hz + rim_w), vec3<f32>(hx, plinth_y, -(hz + rim_w)), vec3<f32>(hx + rim_w, fy + rim_h, hz + rim_w), vec3<f32>(-hx, plinth_y, -(hz + rim_w)), vec3<f32>(hx, fy + rim_h, -hz), vec3<f32>(-hx, plinth_y, hz), vec3<f32>(hx, fy + rim_h, hz + rim_w));\n    for (var i = 0; i < 4; i += 1) {\n        let h = intersect_box(ro, rd, walls[i * 2], walls[i * 2 + 1]);\n        if h.x > 0.0 && h.x < best.t {\n            best = Hit(h.x, h.yzw, 3u);\n        }\n    }\n    let base_hit = intersect_box(ro, rd, vec3<f32>(-(hx + rim_w), plinth_y, -(hz + rim_w)), vec3<f32>(hx + rim_w, fy, hz + rim_w));\n    if base_hit.x > 0.0 && base_hit.x < best.t {\n        best = Hit(base_hit.x, base_hit.yzw, 3u);\n    }\n    return best;\n}\n\nfn shade_studio_hit(hit: Hit, p: vec3<f32>, rd: vec3<f32>, mat_id: f32) -> vec3<f32> {\n    let hx = studio_frame.basin.x;\n    let hz = studio_frame.basin.y;\n    let fy = studio_frame.basin.z;\n    let rim_h = 0.17;\n    let rim_w = 0.14;\n    let v = -rd;\n    let n = hit.normal;\n    let key_dir = normalize(vec3<f32>(-0.28, 0.88, 0.38));\n    let rim_dir = normalize(vec3<f32>(0.54, 0.7, -0.46));\n    if hit.kind == 2u {\n        let tile = abs(fract(p.xz * 1.45 + 0.5) - 0.5);\n        let grout = 1.0 - smoothstep(0.478, 0.494, max(tile.x, tile.y));\n        let grain = fbm2(p.xz * 3.6);\n        let vein = pow(1.0 - abs(value_noise(p.xz * 2.8 + vec2<f32>(grain * 1.3, -grain)) * 2.0 - 1.0), 6.0);\n        var albedo = vec3<f32>(0.022, 0.026, 0.033) * (0.86 + 0.28 * grain) + vec3<f32>(0.013, 0.015, 0.02) * vein;\n        if mat_id > 0.5 && mat_id < 1.5 {\n            albedo = vec3<f32>(0.044, 0.068, 0.084) * (0.84 + 0.3 * grain) + vec3<f32>(0.02, 0.032, 0.04) * vein;\n        }\n        albedo *= (0.72 + 0.28 * grout);\n        let edge_dist = min(hx - abs(p.x), hz - abs(p.z));\n        let wall_ao = smoothstep(0.0, 0.34, edge_dist);\n        let caust = eval_floor_caustics(p.x, p.z, mat_id);\n        let ndl = max(dot(n, key_dir), 0.0);\n        let ndr = max(dot(n, rim_dir), 0.0);\n        let r_dir = reflect(rd, n);\n        let spec_env = sample_studio_bg(r_dir);\n        let fres = 0.025 + 0.28 * pow(1.0 - max(dot(n, v), 0.0), 5.0);\n        var col = albedo * (0.28 + 1.15 * ndl + 0.3 * ndr) * (0.5 + 0.5 * wall_ao) * caust.w;\n        col += spec_env * fres * 0.45 * wall_ao * caust.w;\n        col += caust.rgb * (0.62 + 0.38 * wall_ao);\n        return col;\n    }\n    if hit.kind == 3u {\n        let rim_top = smoothstep(fy + rim_h - 0.015, fy + rim_h, p.y);\n        let inner_d = max(abs(p.x) - hx, abs(p.z) - hz);\n        let outer_d = max(abs(p.x) - (hx + rim_w), abs(p.z) - (hz + rim_w));\n        let top_bevel = rim_top * ((1.0 - smoothstep(0.0, 0.016, abs(inner_d))) + (1.0 - smoothstep(0.0, 0.016, abs(outer_d))));\n        let inlay = rim_top * (1.0 - smoothstep(0.008, 0.018, abs(inner_d - 0.032)));\n        let grain = value_noise(p.xz * 8.0 + vec2<f32>(p.y * 6.0, 0.0));\n        let obsidian = vec3<f32>(0.016, 0.019, 0.024) * (0.88 + 0.24 * grain);\n        let metal_col = select(vec3<f32>(0.75, 0.8, 0.88), vec3<f32>(0.98, 0.76, 0.32), mat_id > 1.5 && mat_id < 2.5);\n        let ndl = max(dot(n, key_dir), 0.0);\n        let ndr = max(dot(n, rim_dir), 0.0);\n        let h_key = normalize(key_dir + v);\n        let h_rim = normalize(rim_dir + v);\n        let spec_rough = pow(max(dot(n, h_key), 0.0), 42.0) * 0.28 + pow(max(dot(n, h_rim), 0.0), 32.0) * 0.16;\n        let fres = 0.03 + 0.25 * pow(1.0 - max(dot(n, v), 0.0), 5.0);\n        let bottom_ao = smoothstep(-0.24, -0.05, p.y);\n        var col = obsidian * (0.24 + 0.95 * ndl + 0.25 * ndr) * (0.55 + 0.45 * bottom_ao);\n        col += vec3<f32>(0.72, 0.78, 0.88) * spec_rough * (0.45 + 0.55 * rim_top);\n        col += sample_studio_bg(reflect(rd, n)) * fres * 0.45;\n        col += metal_col * clamp(inlay * 0.55 + top_bevel * 0.22, 0.0, 0.75) * (0.35 + 0.65 * ndl + spec_rough * 1.4);\n        let is_inner_face = inner_d <= 0.006 && abs(n.y) < 0.5 && dot(n.xz, -p.xz) > 0.0;\n        if is_inner_face {\n            let near_x = clamp(p.x, -hx + 0.08, hx - 0.08);\n            let near_z = clamp(p.z, -hz + 0.08, hz - 0.08);\n            let bounce = eval_floor_caustics(near_x, near_z, mat_id);\n            let h_fade = exp(-max(p.y - fy, 0.0) * 5.2);\n            let ripple = 0.65 + 0.35 * sin(p.y * 28.0 - studio_frame.eye_time.w * 2.5);\n            col += bounce.rgb * h_fade * ripple * 0.22;\n        }\n        return col;\n    }\n    let box_d = length(max(abs(p.xz) - vec2<f32>(hx + rim_w, hz + rim_w), vec2<f32>(0.0)));\n    let plinth_ao = smoothstep(0.0, 0.85, box_d);\n    let fade = exp(-dot(p.xz, p.xz) * 0.022);\n    let grain = value_noise(p.xz * 2.4);\n    let fres = 0.02 + 0.24 * pow(1.0 - max(dot(n, v), 0.0), 5.0);\n    var col = vec3<f32>(0.011, 0.013, 0.018) * (0.9 + 0.2 * grain) * (0.28 + 0.72 * plinth_ao);\n    col += sample_studio_bg(reflect(rd, n)) * fres * 0.55 * plinth_ao;\n    return mix(sample_studio_bg(rd), col, fade);\n}\n\nfn view_pos_at(coord: vec2<i32>, z_eye: f32) -> vec3<f32> {\n    let uv = (vec2<f32>(coord) + 0.5) * studio_frame.viewport.zw;\n    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n    let ray_clip = studio_frame.inv_proj * vec4<f32>(ndc, 0.5, 1.0);\n    let ray_view = ray_clip.xyz / max(ray_clip.w, 1e-5);\n    let scale = z_eye / max(-ray_view.z, 1e-5);\n    return ray_view * scale;\n}\n\nfn reconstruct_normal_view(coord: vec2<i32>, dims: vec2<i32>, z_c: f32, p_c: vec3<f32>) -> vec4<f32> {\n    let c_l = clamp(coord - vec2<i32>(1, 0), vec2<i32>(0), dims - 1);\n    let c_r = clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), dims - 1);\n    let c_u = clamp(coord - vec2<i32>(0, 1), vec2<i32>(0), dims - 1);\n    let c_d = clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), dims - 1);\n    let z_l = textureLoad(studio_depth, c_l, 0).r;\n    let z_r = textureLoad(studio_depth, c_r, 0).r;\n    let z_u = textureLoad(studio_depth, c_u, 0).r;\n    let z_d = textureLoad(studio_depth, c_d, 0).r;\n    let edge_th = studio_frame.splat.x * 4.5;\n    let dl = abs(z_l - z_c);\n    let dr = abs(z_r - z_c);\n    let du = abs(z_u - z_c);\n    let dd = abs(z_d - z_c);\n    let dl_ok = z_l > 0.0 && dl < edge_th;\n    let dr_ok = z_r > 0.0 && dr < edge_th;\n    let du_ok = z_u > 0.0 && du < edge_th;\n    let dd_ok = z_d > 0.0 && dd < edge_th;\n    let valid_count = f32(dl_ok) + f32(dr_ok) + f32(du_ok) + f32(dd_ok);\n    let bg_count = f32(z_l <= 0.0) + f32(z_r <= 0.0) + f32(z_u <= 0.0) + f32(z_d <= 0.0);\n    let outer_cov = select(1.0, smoothstep(4.0, 0.0, bg_count), bg_count > 0.5);\n    let ridge_blend = smoothstep(0.5, 4.0, valid_count);\n    var dpdx = vec3<f32>(1.0, 0.0, 0.0);\n    if dl_ok && dr_ok {\n        let curv_x = abs(0.5 * (z_l + z_r) - z_c);\n        if curv_x < edge_th * 0.45 {\n            dpdx = view_pos_at(c_r, z_r) - view_pos_at(c_l, z_l);\n        }\n        else if dr < dl {\n            dpdx = view_pos_at(c_r, z_r) - p_c;\n        }\n        else {\n            dpdx = p_c - view_pos_at(c_l, z_l);\n        }\n    }\n    else if dr_ok {\n        dpdx = view_pos_at(c_r, z_r) - p_c;\n    }\n    else if dl_ok {\n        dpdx = p_c - view_pos_at(c_l, z_l);\n    }\n    var dpdy = vec3<f32>(0.0, -1.0, 0.0);\n    if du_ok && dd_ok {\n        let curv_y = abs(0.5 * (z_u + z_d) - z_c);\n        if curv_y < edge_th * 0.45 {\n            dpdy = view_pos_at(c_u, z_u) - view_pos_at(c_d, z_d);\n        }\n        else if du < dd {\n            dpdy = view_pos_at(c_u, z_u) - p_c;\n        }\n        else {\n            dpdy = p_c - view_pos_at(c_d, z_d);\n        }\n    }\n    else if du_ok {\n        dpdy = view_pos_at(c_u, z_u) - p_c;\n    }\n    else if dd_ok {\n        dpdy = p_c - view_pos_at(c_d, z_d);\n    }\n    var n = cross(dpdx, dpdy);\n    let len2 = dot(n, n);\n    if len2 < 1e-12 {\n        return vec4<f32>(0.0, 0.0, 1.0, outer_cov);\n    }\n    n = n * inverseSqrt(len2);\n    if n.z < 0.0 {\n        n = -n;\n    }\n    if valid_count < 3.5 {\n        n = normalize(mix(normalize(n + vec3<f32>(0.0, 0.0, 0.35)), n, ridge_blend));\n    }\n    return vec4<f32>(n, outer_cov);\n}\n\nfn shade_chrome(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32) -> vec3<f32> {\n    let r_w = reflect(-v_w, n_w);\n    var refl = sample_studio_hdri(r_w, 0.0);\n    if r_w.y < -0.04 {\n        let stage_fade = smoothstep(-0.04, -0.45, r_w.y);\n        let dark_stage = vec3<f32>(0.06, 0.072, 0.092);\n        refl = mix(refl, dark_stage, stage_fade * 0.55);\n    }\n    let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);\n    let f0 = vec3<f32>(0.94, 0.96, 0.99);\n    let fres = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - ndv, 5.0);\n    let floor_ao = smoothstep(0.0, 0.14, p_w.y - studio_frame.basin.z);\n    let cool_edge = mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.94, 1.06), pow(1.0 - ndv, 3.0));\n    let depth_polish = 0.88 + 0.12 * smoothstep(0.0, 0.4, thick);\n    return refl * fres * cool_edge * (0.76 + 0.24 * floor_ao) * depth_polish;\n}\n\nfn shade_water(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, foam: f32, speed: f32) -> vec3<f32> {\n    let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);\n    let fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);\n    let r_w = reflect(-v_w, n_w);\n    let refl_env = sample_studio_hdri(r_w, 1.0);\n    let t_dir = refract(-v_w, n_w, 1.0 / 1.333);\n    var under = refl_env * 0.72;\n    if dot(t_dir, t_dir) > 0.0001 {\n        let refr_ray = normalize(t_dir);\n        let refr_hit = trace_studio(p_w - n_w * 0.012, refr_ray);\n        if refr_hit.kind != 0u {\n            let rp = p_w + refr_ray * refr_hit.t;\n            under = shade_studio_hit(refr_hit, rp, refr_ray, 1.0);\n        }\n        else {\n            under = sample_studio_bg(refr_ray) * 0.85;\n        }\n    }\n    let optical_d = clamp(thick * 0.66, 0.02, 3.2);\n    let absorb = exp(-optical_d * vec3<f32>(1.85, 0.34, 0.2));\n    let body_tint = vec3<f32>(0.01, 0.22, 0.3);\n    let key_dir = normalize(vec3<f32>(-0.28, 0.88, 0.38));\n    let back_scatter = pow(clamp(dot(v_w, -key_dir + n_w * 0.55), 0.0, 1.0), 3.0);\n    let sss = vec3<f32>(0.04, 0.52, 0.62) * back_scatter * (1.0 - exp(-optical_d * 0.95)) * 0.55;\n    var col = under * absorb + body_tint * (1.0 - absorb) * 0.38 + sss;\n    col = mix(col, refl_env, fres);\n    let lace = value_noise(p_w.xz * 22.0 + vec2<f32>(studio_frame.eye_time.w * 0.8, -studio_frame.eye_time.w * 0.6));\n    let crest_sig = foam * 1.15 + smoothstep(1.15, 2.25, speed) * 0.36;\n    let crest_foam = smoothstep(0.36, 0.86, crest_sig) * smoothstep(0.34, 0.78, lace);\n    let foam_lit = vec3<f32>(0.92, 0.97, 1.0) * (0.58 + 0.48 * max(dot(n_w, key_dir), 0.0));\n    col = mix(col, foam_lit, clamp(crest_foam * 0.68, 0.0, 0.72));\n    return col;\n}\n\nfn shade_gold(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, speed: f32, energy: f32) -> vec3<f32> {\n    let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);\n    let r_w = reflect(-v_w, n_w);\n    let refl_env = sample_studio_hdri(r_w, 2.0);\n    let f0 = vec3<f32>(1.0, 0.76, 0.22);\n    let fres = f0 + (vec3<f32>(1.0, 0.92, 0.68) - f0) * pow(1.0 - ndv, 5.0);\n    let floor_ao = smoothstep(0.0, 0.16, p_w.y - studio_frame.basin.z);\n    let metallic = refl_env * fres * (0.78 + 0.22 * floor_ao) * 1.12;\n    let swirl = fbm2(p_w.xz * 4.8 + vec2<f32>(p_w.y * 3.2, studio_frame.eye_time.w * 0.4));\n    let seam = pow(clamp(1.0 - abs(swirl * 2.0 - 1.0), 0.0, 1.0), 5.0);\n    let heat = clamp(seam * 0.72 + smoothstep(0.85, 2.15, speed + energy * 0.45) * 0.42 + exp(-thick * 2.2) * 0.18, 0.0, 1.0);\n    let magma = mix(vec3<f32>(0.85, 0.16, 0.01), vec3<f32>(2.4, 0.98, 0.12), heat);\n    let emissive = magma * heat * 0.34;\n    return metallic + emissive;\n}\n\nfn shade_plasma(p_w: vec3<f32>, n_w: vec3<f32>, v_w: vec3<f32>, thick: f32, speed: f32, energy: f32) -> vec3<f32> {\n    let ndv = clamp(dot(n_w, v_w), 0.0, 1.0);\n    let rim = pow(1.0 - ndv, 3.2);\n    let r_w = reflect(-v_w, n_w);\n    let refl = sample_studio_hdri(r_w, 3.0);\n    let t = studio_frame.eye_time.w;\n    let w1 = fbm2(p_w.xz * 3.8 + vec2<f32>(p_w.y * 2.4 - t * 0.85, t * 0.6));\n    let w2 = value_noise(p_w.xz * 7.8 + vec2<f32>(w1 * 2.4 + t * 0.55, -p_w.y * 3.2));\n    let core = vec3<f32>(0.007, 0.006, 0.028) * (0.5 + 0.5 * exp(-thick * 0.75));\n    let cyan = vec3<f32>(0.04, 1.15, 1.95);\n    let violet = vec3<f32>(1.28, 0.14, 2.05);\n    let bio_hue = mix(cyan, violet, smoothstep(0.35, 0.75, w1));\n    let vein = pow(clamp(1.0 - abs(w2 * 2.0 - 1.0), 0.0, 1.0), 8.5);\n    let surge = 0.42 + smoothstep(0.55, 1.9, speed + energy * 0.65) * 1.15;\n    let edge_cyan = vec3<f32>(0.05, 1.25, 2.15) * rim * 1.55;\n    let thin_aura = bio_hue * exp(-thick * 2.4) * 0.24;\n    let filaments = bio_hue * vein * surge * 1.65;\n    let glass_spec = refl * (0.08 + 0.82 * pow(1.0 - ndv, 4.0));\n    return core + glass_spec + edge_cyan + thin_aura + filaments;\n}\n\n@fragment\nfn fs_studio(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {\n    let dims = vec2<i32>(textureDimensions(studio_depth));\n    let coord = clamp(vec2<i32>(pos.xy), vec2<i32>(0), dims - 1);\n    let uv = (vec2<f32>(coord) + 0.5) * studio_frame.viewport.zw;\n    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n    let mat_id = studio_frame.style.x;\n    let ray_clip = studio_frame.inv_proj * vec4<f32>(ndc, 0.5, 1.0);\n    let ray_view = normalize(ray_clip.xyz / max(ray_clip.w, 1e-5));\n    let ro = studio_frame.eye_time.xyz;\n    let rd = normalize((studio_frame.inv_view * vec4<f32>(ray_view, 0.0)).xyz);\n    let hit = trace_studio(ro, rd);\n    var bg_z_eye = 1000000000.0;\n    if hit.kind != 0u {\n        let hp = ro + rd * hit.t;\n        let hv = (studio_frame.view * vec4<f32>(hp, 1.0)).xyz;\n        bg_z_eye = -hv.z;\n    }\n    let z_fluid = textureLoad(studio_depth, coord, 0).r;\n    var col = vec3<f32>(0.0);\n    if z_fluid > 0.0 && z_fluid < bg_z_eye + 0.025 {\n        let p_view = view_pos_at(coord, z_fluid);\n        let n_cov = reconstruct_normal_view(coord, dims, z_fluid, p_view);\n        let n_view = n_cov.xyz;\n        let sil_cov = n_cov.w;\n        let p_w = (studio_frame.inv_view * vec4<f32>(p_view, 1.0)).xyz;\n        let n_w = normalize((studio_frame.inv_view * vec4<f32>(n_view, 0.0)).xyz);\n        let v_w = normalize(ro - p_w);\n        let thick_sample = textureSampleLevel(studio_thick, studio_sampler, uv, 0.0);\n        let aux_sample = textureLoad(studio_aux, coord, 0);\n        let w_norm = max(thick_sample.w, 0.01);\n        let smooth_foam = clamp(thick_sample.y / w_norm, 0.0, 1.0);\n        let smooth_speed = clamp(thick_sample.z / w_norm, 0.0, 2.5);\n        let foam = mix(smooth_foam, aux_sample.y, 0.3);\n        let speed = mix(smooth_speed, aux_sample.x, 0.3);\n        let energy = aux_sample.z;\n        let thick = thick_sample.x;\n        if mat_id < 0.5 {\n            col = shade_chrome(p_w, n_w, v_w, thick);\n        }\n        else if mat_id < 1.5 {\n            col = shade_water(p_w, n_w, v_w, thick, foam, speed);\n        }\n        else if mat_id < 2.5 {\n            col = shade_gold(p_w, n_w, v_w, thick, speed, energy);\n        }\n        else {\n            col = shade_plasma(p_w, n_w, v_w, thick, speed, energy);\n        }\n        if sil_cov < 0.99 {\n            var bg_edge = sample_studio_bg(rd);\n            if hit.kind != 0u {\n                let hp = ro + rd * hit.t;\n                bg_edge = shade_studio_hit(hit, hp, rd, mat_id);\n            }\n            col = mix(bg_edge, col, 0.45 + 0.55 * sil_cov);\n        }\n    }\n    else if hit.kind != 0u {\n        let hp = ro + rd * hit.t;\n        col = shade_studio_hit(hit, hp, rd, mat_id);\n    }\n    else {\n        col = sample_studio_bg(rd);\n    }\n    if studio_frame.stir.w > 0.5 {\n        let stir_c = studio_frame.stir.xyz;\n        let to_s = stir_c - ro;\n        let proj = dot(to_s, rd);\n        if proj > 0.0 {\n            let perp = length(to_s - rd * proj);\n            let ring = exp(-pow((perp - 0.36) * 28.0, 2.0)) * 0.45 + exp(-pow(perp * 6.5, 2.0)) * 0.08;\n            col += vec3<f32>(0.72, 0.9, 1.0) * ring;\n        }\n    }\n    return vec4<f32>(max(col, vec3<f32>(0.0)), 1.0);\n}\n\nstruct package_fluid_common_FrameUniform {\n    view: mat4x4<f32>,\n    proj: mat4x4<f32>,\n    inv_proj: mat4x4<f32>,\n    inv_view: mat4x4<f32>,\n    eye_time: vec4<f32>,\n    viewport: vec4<f32>,\n    splat: vec4<f32>,\n    style: vec4<f32>,\n    stir: vec4<f32>,\n    basin: vec4<f32>,\n    grid_dims: vec4<f32>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::studio",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "studio_frame",
+                "ty": "Uniform"
+              }
+            ],
+            [
+              "fluid::studio",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "studio_depth",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::studio",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "studio_aux",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::studio",
+              {
+                "group": 1,
+                "binding": 3,
+                "name": "studio_thick",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::studio",
+              {
+                "group": 1,
+                "binding": 4,
+                "name": "studio_sampler",
+                "ty": "Sampler"
+              }
+            ],
+            [
+              "fluid::studio",
+              {
+                "group": 1,
+                "binding": 5,
+                "name": "studio_heightfield",
+                "ty": {
+                  "Storage": {
+                    "write": false
+                  }
+                }
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "path": "fluid::ui",
+      "core": false,
+      "declared": [
+        {
+          "group": 1,
+          "binding": 0,
+          "name": "ui_data",
+          "ty": {
+            "Storage": {
+              "write": false
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 1,
+          "name": "ui_font",
+          "ty": {
+            "Texture": {
+              "sample": "Float",
+              "view": "2d"
+            }
+          }
+        },
+        {
+          "group": 1,
+          "binding": 2,
+          "name": "ui_sampler",
+          "ty": "Sampler"
+        }
+      ],
+      "entries": [
+        {
+          "module": "fluid::ui",
+          "entry": "vs_ui",
+          "stage": "VERTEX",
+          "text": "@group(1) @binding(0)\nvar<storage, read> ui_data: package_fluid_common_UiBuffer;\n\nstruct UiOut {\n    @builtin(position)\n    clip: vec4<f32>,\n    @location(0)\n    local: vec2<f32>,\n    @location(1)\n    uv: vec2<f32>,\n    @location(2) @interpolate(flat)\n    idx: u32\n}\n\nfn ui_corner(vertex: u32) -> vec2<f32> {\n    let x = f32((50u >> vertex) & 1u);\n    let y = f32((44u >> vertex) & 1u);\n    return vec2<f32>(x, y);\n}\n\n@vertex\nfn vs_ui(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> UiOut {\n    let q = ui_data.quads[instance];\n    let c = ui_corner(vertex);\n    let pad = select(1.5, 10.0, q.params.x < 0.5);\n    let size = q.rect.zw;\n    let local = mix(-size * 0.5 - pad, size * 0.5 + pad, c);\n    let at = q.rect.xy + size * 0.5 + local;\n    let canvas = max(ui_data.header.xy, vec2<f32>(1.0));\n    var out: UiOut;\n    out.clip = vec4<f32>(at.x / canvas.x * 2.0 - 1.0, 1.0 - at.y / canvas.y * 2.0, 0.0, 1.0);\n    out.local = local;\n    out.uv = q.uv.xy + ((local / max(size, vec2<f32>(0.0001))) + 0.5) * q.uv.zw;\n    out.idx = instance;\n    return out;\n}\n\nstruct package_fluid_common_UiQuad {\n    rect: vec4<f32>,\n    uv: vec4<f32>,\n    color: vec4<f32>,\n    params: vec4<f32>\n}\n\nstruct package_fluid_common_UiBuffer {\n    header: vec4<f32>,\n    quads: array<package_fluid_common_UiQuad>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                1,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ],
+              [
+                2,
+                "Uint"
+              ]
+            ],
+            "inputs": []
+          },
+          "reached": [
+            [
+              "fluid::ui",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "ui_data",
+                "ty": {
+                  "Storage": {
+                    "write": false
+                  }
+                }
+              }
+            ]
+          ]
+        },
+        {
+          "module": "fluid::ui",
+          "entry": "fs_ui",
+          "stage": "FRAGMENT",
+          "text": "@group(1) @binding(0)\nvar<storage, read> ui_data: package_fluid_common_UiBuffer;\n\n@group(1) @binding(1)\nvar ui_font: texture_2d<f32>;\n\n@group(1) @binding(2)\nvar ui_sampler: sampler;\n\nstruct UiOut {\n    @builtin(position)\n    clip: vec4<f32>,\n    @location(0)\n    local: vec2<f32>,\n    @location(1)\n    uv: vec2<f32>,\n    @location(2) @interpolate(flat)\n    idx: u32\n}\n\nfn sdf_rrect(p: vec2<f32>, half_s: vec2<f32>, r: f32) -> f32 {\n    let rr = clamp(r, 0.0, min(half_s.x, half_s.y));\n    let q = abs(p) - half_s + vec2<f32>(rr);\n    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - rr;\n}\n\n@fragment\nfn fs_ui(in: UiOut) -> @location(0) vec4<f32> {\n    let sdf = textureSampleLevel(ui_font, ui_sampler, in.uv, 0.0).r;\n    let fw = max(fwidth(sdf), 0.025);\n    let q = ui_data.quads[in.idx];\n    let kind = q.params.x;\n    let half_s = q.rect.zw * 0.5;\n    if kind > 2.5 && kind < 3.5 {\n        let alpha = smoothstep(0.5 - fw * 0.72, 0.5 + fw * 0.72, sdf) * q.color.a;\n        if alpha <= 0.002 {\n            discard;\n        }\n        return vec4<f32>(q.color.rgb * alpha, alpha);\n    }\n    let d = sdf_rrect(in.local, half_s, q.params.y);\n    if kind < 0.5 {\n        let shadow_d = sdf_rrect(in.local - vec2<f32>(0.0, 3.5), half_s + 1.0, q.params.y + 1.0);\n        let shadow = exp(-max(shadow_d, 0.0) * 0.28) * 0.44;\n        let body = clamp(0.5 - d, 0.0, 1.0);\n        let grad_t = clamp((in.local.y / max(half_s.y, 1.0)) * 0.5 + 0.5, 0.0, 1.0);\n        let top_sheen = mix(vec3<f32>(0.11, 0.13, 0.17), q.color.rgb, smoothstep(0.0, 0.45, grad_t));\n        let border = clamp(0.5 - abs(d + 0.65), 0.0, 1.0) * mix(0.28, 0.09, grad_t);\n        let fill_a = body * q.color.a;\n        let rim_a = border * body;\n        let out_rgb = top_sheen * fill_a + vec3<f32>(0.92, 0.96, 1.0) * rim_a;\n        let out_a = max(fill_a, rim_a);\n        let below_a = shadow * (1.0 - body);\n        return vec4<f32>(out_rgb, clamp(out_a + below_a, 0.0, 1.0));\n    }\n    if kind < 1.5 {\n        let body = clamp(0.5 - d, 0.0, 1.0);\n        if body <= 0.002 {\n            discard;\n        }\n        let glow = q.params.z;\n        let grad_t = clamp((in.local.y / max(half_s.y, 1.0)) * 0.5 + 0.5, 0.0, 1.0);\n        let tint = mix(q.color.rgb * 1.18, q.color.rgb * 0.88, grad_t);\n        let border = clamp(0.5 - abs(d + 0.6), 0.0, 1.0) * (0.12 + 0.3 * glow);\n        let a = body * q.color.a;\n        let rgb = tint * a + vec3<f32>(0.92, 0.96, 1.0) * (border * body);\n        return vec4<f32>(rgb, clamp(a + border * body * 0.6, 0.0, 1.0));\n    }\n    if kind < 2.5 {\n        let body = clamp(0.5 - d, 0.0, 1.0);\n        if body <= 0.002 {\n            discard;\n        }\n        let n = in.local / max(half_s.x, 1.0);\n        let spec = exp(-dot(n - vec2<f32>(-0.32, -0.34), n - vec2<f32>(-0.32, -0.34)) * 7.5);\n        let shade = 0.72 + 0.28 * (1.0 - n.y);\n        let col = q.color.rgb * shade + vec3<f32>(0.9, 0.95, 1.0) * spec * 0.85;\n        let a = body * (0.55 + 0.45 * q.params.z);\n        return vec4<f32>(col * a, a);\n    }\n    let body = clamp(0.5 - d, 0.0, 1.0);\n    let a = body * q.color.a;\n    if a <= 0.002 {\n        discard;\n    }\n    return vec4<f32>(q.color.rgb * a, a);\n}\n\nstruct package_fluid_common_UiQuad {\n    rect: vec4<f32>,\n    uv: vec4<f32>,\n    color: vec4<f32>,\n    params: vec4<f32>\n}\n\nstruct package_fluid_common_UiBuffer {\n    header: vec4<f32>,\n    quads: array<package_fluid_common_UiQuad>\n}\n",
+          "overrides": [],
+          "fragment": {
+            "outputs": [
+              [
+                0,
+                {
+                  "Float": {
+                    "filterable": true
+                  }
+                }
+              ]
+            ],
+            "inputs": [
+              0,
+              1,
+              2
+            ]
+          },
+          "reached": [
+            [
+              "fluid::ui",
+              {
+                "group": 1,
+                "binding": 0,
+                "name": "ui_data",
+                "ty": {
+                  "Storage": {
+                    "write": false
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::ui",
+              {
+                "group": 1,
+                "binding": 1,
+                "name": "ui_font",
+                "ty": {
+                  "Texture": {
+                    "sample": "Float",
+                    "view": "2d"
+                  }
+                }
+              }
+            ],
+            [
+              "fluid::ui",
+              {
+                "group": 1,
+                "binding": 2,
+                "name": "ui_sampler",
+                "ty": "Sampler"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

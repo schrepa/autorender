@@ -6,5 +6,13 @@
     "package": "fruit_fps",
     "page": "fruit_fps.html",
     "wasm": "fruit_fps"
+  },
+  {
+    "folder": "crates/engine/examples/quicksilver",
+    "game": "quicksilver",
+    "native": "quicksilver-native",
+    "package": "quicksilver",
+    "page": "quicksilver.html",
+    "wasm": "quicksilver"
   }
 ]
