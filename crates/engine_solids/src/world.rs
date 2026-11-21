@@ -302,6 +302,60 @@ impl Solids {
         })
     }
 
+    fn cast_blocks(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max: f32,
+        first: bool,
+    ) -> Option<(f32, Vec3, Owner)> {
+        if self.placed.is_empty() {
+            return None;
+        }
+        let length = direction.length();
+        if !(length.is_finite() && length > 0.0 && max > 0.0) {
+            return None;
+        }
+        let along = direction / length;
+        let grow = Vec3::splat(BOUNDS_MARGIN);
+        let mut limit = max.next_up();
+        let mut best = None;
+        for (index, placed) in self.placed.iter().enumerate() {
+            let low = placed.low - grow;
+            let high = placed.high + grow;
+            if tree::slab(origin, along, low, high, limit).is_none() {
+                continue;
+            }
+            for (k, triangle) in placed.triangles.iter().enumerate() {
+                if let Some(t) = shapes::ray_triangle(origin, along, triangle)
+                    .filter(|t| *t >= 0.0 && *t < limit)
+                {
+                    limit = t;
+                    best = Some((t, along, Owner::Block(index, k)));
+                    if first {
+                        return best;
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    pub fn ray_blocks(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<Hit> {
+        let (t, along, owner) = self.cast_blocks(origin, direction, max, false)?;
+        let normal = shapes::facing(self.triangle(owner).normal, -along);
+        Some(Hit {
+            distance: t,
+            point: origin + along * t,
+            normal,
+            kind: self.label(owner),
+        })
+    }
+
+    pub fn blocked_blocks(&self, a: Vec3, b: Vec3) -> bool {
+        self.cast_blocks(a, b - a, a.distance(b), true).is_some()
+    }
+
     pub fn blocked(&self, a: Vec3, b: Vec3) -> bool {
         self.cast(a, b - a, a.distance(b), true).is_some()
     }

@@ -10,6 +10,8 @@ mod list;
 mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
 mod sets;
+#[cfg(not(target_arch = "wasm32"))]
+mod sound;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {

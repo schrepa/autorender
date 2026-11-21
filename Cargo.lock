@@ -4364,6 +4364,7 @@ dependencies = [
  "engine_dev",
  "engine_registry",
  "engine_scene",
+ "flate2",
  "naga",
  "png",
  "serde",

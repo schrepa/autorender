@@ -233,6 +233,17 @@ pub(crate) fn gpu_format(
         ),
         TextureFormat::Bc5 if srgb => return None,
         TextureFormat::Bc5 => (Gpu::Bc5RgUnorm, wgpu::Features::TEXTURE_COMPRESSION_BC),
+        TextureFormat::Astc4x4 => (
+            Gpu::Astc {
+                block: wgpu::AstcBlock::B4x4,
+                channel: if srgb {
+                    wgpu::AstcChannel::UnormSrgb
+                } else {
+                    wgpu::AstcChannel::Unorm
+                },
+            },
+            wgpu::Features::TEXTURE_COMPRESSION_ASTC,
+        ),
     })
 }
 

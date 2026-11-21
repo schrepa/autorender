@@ -100,7 +100,7 @@ export interface StartWatch {
 
 export interface GameOptions<T extends Runtime> extends StartWatch {
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
-  source: { url: string; load(signal: AbortSignal): Promise<string>; feed(game: Runtime, signal: AbortSignal): Promise<void> };
+  source: { url: string; load(signal: AbortSignal): Promise<string>; feed(game: Runtime, signal: AbortSignal, shown?: Promise<void>): Promise<void> };
 }
 
 interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; shown: boolean }
@@ -135,6 +135,10 @@ let pixelWidth = 1;
 let pixelHeight = 1;
 let sampled = { at: -Infinity, phase: -1 };
 let feeding: Promise<unknown> = Promise.resolve();
+let releaseShown: (() => void) | undefined;
+const firstShown = new Promise<void>(resolve => { releaseShown = resolve; });
+const unblockFeed = () => { releaseShown?.(); releaseShown = undefined; };
+lifecycle.signal.addEventListener("abort", unblockFeed, { once: true });
 
 function prepared(game: T, phase: number) {
   const at = performance.now();
@@ -148,7 +152,7 @@ function handOver(game: T, hand: () => void): Promise<void> {
   const fed = feeding.then(() => {
     lifecycle.signal.throwIfAborted();
     hand();
-    return options.source.feed(game, lifecycle.signal);
+    return options.source.feed(game, lifecycle.signal, firstShown);
   });
   feeding = fed.catch(() => undefined);
   return fed;
@@ -216,6 +220,7 @@ function wake() {
 
 function fail(error: unknown) {
   if (state.kind === "disposed" || state.kind === "failed") return;
+  unblockFeed();
   const stopped = fatal(error) ? panicReport(error)?.message ?? String(error) : undefined;
   state = { kind: "failed" };
   connectInput();
@@ -259,6 +264,7 @@ function starting(current: Live<T>) {
 
 function started(current: Live<T>) {
   current.shown = true;
+  unblockFeed();
   hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;

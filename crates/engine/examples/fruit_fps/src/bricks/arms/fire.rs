@@ -718,7 +718,7 @@ impl Shooter<'_> {
         let range = numbers.range_m();
         let weapon = Weapon::Gun(gun);
         let ray = (origin, direction);
-        let wall = self.arena.ray(origin, direction, range);
+        let wall = self.arena.bullet_ray(origin, direction, range);
         let shooter = Some(CharacterId(self.slot));
         let blocker = Known(wall.map(|hit| hit.distance));
         let struck = trace(origin, direction, range, shooter, &blocker, self.targets);
@@ -780,10 +780,10 @@ impl Shooter<'_> {
         }
         let beyond = origin + direction * probe;
         let skin = (probe + 1.0) * 16.0 * f32::EPSILON;
-        self.arena.ray(beyond, -direction, reach - skin)?;
+        self.arena.bullet_ray(beyond, -direction, reach - skin)?;
         let onward = self
             .arena
-            .ray(beyond, direction, range - probe)
+            .bullet_ray(beyond, direction, range - probe)
             .map(|hit| Hit {
                 distance: hit.distance + probe,
                 ..hit
@@ -800,7 +800,7 @@ impl Shooter<'_> {
         let melee_numbers = &self.numbers.weapons.melee;
         let direction = forward(aim.yaw_radians, aim.pitch_radians);
         let range = melee_numbers.range_m;
-        let wall = self.arena.ray(aim.eye, direction, range);
+        let wall = self.arena.bullet_ray(aim.eye, direction, range);
         let blocker = Known(wall.map(|hit| hit.distance));
         let hit = melee(
             melee_numbers,

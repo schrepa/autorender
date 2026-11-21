@@ -9,6 +9,8 @@ import clients from "./src/generated/clients.json";
 const instrumented = new Map([["profiling", "profile"]]);
 const selected = process.env.ENGINE_GAME;
 const games = clients.flatMap(({ game, page }) => game && page && (!selected || game === selected) ? [{ game, page }] : []);
+const inputs: Record<string, string> = Object.fromEntries(games.map(({ game, page }) => [game, resolve(import.meta.dirname, page)]));
+if (!selected) inputs.index = resolve(import.meta.dirname, "index.html");
 const workspace = resolve(import.meta.dirname, "..");
 const gameFolders = clients.map(client => resolve(workspace, client.folder) + sep);
 
@@ -72,7 +74,7 @@ export default defineConfig(({ command, mode }) => ({
   build: {
     outDir: instrumented.has(mode) ? `dist-${instrumented.get(mode)}` : "dist",
     rollupOptions: {
-      input: Object.fromEntries(games.map(({ game, page }) => [game, resolve(import.meta.dirname, page)])),
+      input: inputs,
     },
   },
 }));

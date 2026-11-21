@@ -21,10 +21,13 @@ function ramp(param: AudioParam, value: number, at: number, seconds: number) {
 }
 
 export class PageSound {
+  private static readonly MAX_DECODING = 4;
   private context: AudioContext | undefined;
   private master: GainNode | undefined;
   private readonly buffers = new Map<number, AudioBuffer>();
   private readonly voices = new Map<number, Voice>();
+  private readonly pendingDecodes: { sound: number; buffer: ArrayBuffer }[] = [];
+  private decoding = 0;
   private replies: ((game: SoundGame) => void)[] = [];
   private readonly told = { state: "", rate: 0, channels: 0, latency: 0 };
   private readonly abort = new AbortController();
@@ -56,6 +59,7 @@ export class PageSound {
 
   dispose() {
     this.abort.abort();
+    this.pendingDecodes.length = 0;
     for (const voice of this.voices.values()) voice.source.onended = null;
     this.voices.clear();
     void this.context?.close().catch(() => undefined);
@@ -108,17 +112,30 @@ export class PageSound {
   }
 
   private decode(sound: number, bytes: Uint8Array) {
-    const context = this.context;
     if (!oggVorbis(bytes)) { this.replies.push(game => game.sound_failed(sound, "not_ogg_vorbis")); return; }
-    if (!context) { this.replies.push(game => game.sound_failed(sound, "no_output")); return; }
+    if (!this.context) { this.replies.push(game => game.sound_failed(sound, "no_output")); return; }
     const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    context.decodeAudioData(copy).then(
-      buffer => {
-        this.buffers.set(sound, buffer);
-        this.replies.push(game => game.sound_decoded(sound, buffer.length, buffer.sampleRate, buffer.numberOfChannels));
-      },
-      (error: unknown) => { this.replies.push(game => game.sound_failed(sound, String(error))); },
-    );
+    this.pendingDecodes.push({ sound, buffer: copy });
+    this.pumpDecodes();
+  }
+
+  private pumpDecodes() {
+    while (this.decoding < PageSound.MAX_DECODING && this.pendingDecodes.length > 0 && this.context) {
+      const next = this.pendingDecodes.shift();
+      if (!next) return;
+      const context = this.context;
+      this.decoding += 1;
+      context.decodeAudioData(next.buffer).then(
+        buffer => {
+          this.buffers.set(next.sound, buffer);
+          this.replies.push(game => game.sound_decoded(next.sound, buffer.length, buffer.sampleRate, buffer.numberOfChannels));
+        },
+        (error: unknown) => { this.replies.push(game => game.sound_failed(next.sound, String(error))); },
+      ).finally(() => {
+        this.decoding -= 1;
+        this.pumpDecodes();
+      });
+    }
   }
 
   private start(voice: number, sound: number, level: number, pan: number, rate: number, looping: boolean, offset: number) {

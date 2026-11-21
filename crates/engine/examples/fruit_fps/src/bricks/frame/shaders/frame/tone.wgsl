@@ -4,8 +4,6 @@ import package::generated::frame::FrameGrade;
 @group(0) @binding(2) var scene: texture_2d<f32>;
 @group(2) @binding(0) var<uniform> tone_grade: FrameGrade;
 
-const GRADE_MIDDLE: f32 = 0.18;
-
 fn filmic(x: vec3<f32>) -> vec3<f32> {
     return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
 }
@@ -22,18 +20,18 @@ fn graded(color: vec3<f32>) -> vec3<f32> {
     if grade.y == 1.0 {
         return saturated;
     }
-    return GRADE_MIDDLE * pow(saturated / GRADE_MIDDLE, vec3<f32>(grade.y));
+    return pow(saturated, vec3<f32>(grade.y)) * grade.w;
 }
 
 fn tonemap(exposed: vec3<f32>) -> vec3<f32> {
     let peak = max(exposed.r, max(exposed.g, exposed.b));
     let shown = filmic_scalar(peak);
     let kept = exposed * (shown / max(peak, 1.0e-6));
-    let burnt = 1.0 - 1.0 / (max(peak - shown, 0.0) + 1.0);
-    if burnt <= 0.0 {
+    let diff = max(peak - shown, 0.0);
+    if diff <= 0.0 {
         return saturate(kept);
     }
-    return saturate(mix(kept, filmic(exposed), burnt));
+    return saturate(mix(kept, filmic(exposed), diff / (diff + 1.0)));
 }
 
 @fragment

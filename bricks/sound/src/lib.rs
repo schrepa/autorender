@@ -5,9 +5,12 @@
 
 engine::brick!();
 
+mod bank;
 mod spatial;
 mod table;
 mod voices;
+
+pub use bank::{SoundBank, is_ogg_vorbis};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
@@ -84,6 +87,14 @@ pub struct SoundLoad {
 #[serde(deny_unknown_fields)]
 struct SoundTable {
     table: Asset<Table>,
+    #[serde(default)]
+    packed: bool,
+}
+
+#[derive(Component, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SoundBankRef {
+    bank: Asset<SoundBank>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -126,7 +137,9 @@ stats! {
 struct Bank {
     table: Option<Arc<Table>>,
     refusal: Option<String>,
+    expected: BTreeSet<String>,
     files: BTreeMap<String, SoundId>,
+    ingested: BTreeSet<Asset<SoundBank>>,
     opened: bool,
     master: Option<f32>,
     reached: Option<BTreeMap<String, f32>>,
@@ -162,7 +175,12 @@ impl<O: Occluder + Resource> Brick for SoundBrick<O> {
                 ComponentKind::of::<SoundTable>("sound")
                     .schema(engine_core::schema_of::<SoundTable>),
             )
+            .join::<SceneComponents>(
+                ComponentKind::of::<SoundBankRef>("sound_bank")
+                    .schema(engine_core::schema_of::<SoundBankRef>),
+            )
             .join::<AssetKinds>(AssetKind::of("sound_table", Table::read))
+            .join::<AssetKinds>(AssetKind::of("sound_bank", SoundBank::read))
             .resource::<SoundLoad>()
             .resource::<SoundCues>()
             .resource::<Hearing>()
@@ -181,7 +199,7 @@ impl<O: Occluder + Resource> Brick for SoundBrick<O> {
 }
 
 fn prepare(
-    (tables, assets): (Query<Ref<SoundTable>>, Res<Assets>),
+    (tables, bank_refs, assets): (Query<Ref<SoundTable>>, Query<&SoundBankRef>, Res<Assets>),
     hearing: Res<Hearing>,
     (mut bank, mut mixdown): (ResMut<Bank>, ResMut<Mixdown>),
     mut sounds: ResMut<Sounds>,
@@ -190,7 +208,17 @@ fn prepare(
         if table.is_changed()
             && let Ok(read) = assets.get(table.table)
         {
-            adopt(&mut bank, read.clone(), &mut mixdown, &mut sounds);
+            adopt(&mut bank, read.clone(), table.packed, &mut mixdown, &mut sounds);
+        }
+    }
+    if bank.table.is_some() {
+        for bank_ref in &bank_refs {
+            if !bank.ingested.contains(&bank_ref.bank)
+                && let Ok(packed) = assets.get(bank_ref.bank)
+            {
+                ingest(&mut bank, packed, &mut sounds);
+                bank.ingested.insert(bank_ref.bank);
+            }
         }
     }
     reach(&mut bank, &hearing);
@@ -272,19 +300,33 @@ fn reach(bank: &mut Bank, hearing: &Hearing) {
     bank.refusal = Arc::make_mut(table).reach(reach).err();
 }
 
-fn adopt(bank: &mut Bank, mut table: Table, mixdown: &mut Mixdown, sounds: &mut Sounds) {
+fn adopt(
+    bank: &mut Bank,
+    mut table: Table,
+    packed: bool,
+    mixdown: &mut Mixdown,
+    sounds: &mut Sounds,
+) {
     if !bank.opened {
         sounds.open(table.latency_seconds);
         bank.opened = true;
     }
     bank.master = None;
     bank.events = Arc::new(table.events.keys().cloned().collect());
+    bank.expected.clear();
+    bank.ingested.clear();
     for (_, sound) in &mut table.sounds {
         for file in &mut sound.files {
-            let id = *(bank.files)
-                .entry(file.file.clone())
-                .or_insert_with(|| sounds.load(&file.file));
-            file.sound = Some(id);
+            bank.expected.insert(file.file.clone());
+            if let Some(&id) = bank.files.get(&file.file) {
+                file.sound = Some(id);
+            } else if !packed {
+                let id = sounds.load(&file.file);
+                bank.files.insert(file.file.clone(), id);
+                file.sound = Some(id);
+            } else {
+                file.sound = None;
+            }
         }
     }
     for mut voice in mixdown.voices.drain(..) {
@@ -295,6 +337,31 @@ fn adopt(bank: &mut Bank, mut table: Table, mixdown: &mut Mixdown, sounds: &mut 
     bank.table = Some(Arc::new(table));
     bank.refusal = None;
     bank.reached = None;
+}
+
+fn ingest(bank: &mut Bank, packed: &SoundBank, sounds: &mut Sounds) {
+    let mut added = false;
+    for (path, bytes) in packed.iter() {
+        if bank.expected.contains(path) && !bank.files.contains_key(path) {
+            let id = sounds.load_bytes(Arc::from(bytes));
+            bank.files.insert(path.to_owned(), id);
+            added = true;
+        }
+    }
+    if !added {
+        return;
+    }
+    if let Some(table) = bank.table.as_mut() {
+        for (_, sound) in &mut Arc::make_mut(table).sounds {
+            for file in &mut sound.files {
+                if file.sound.is_none()
+                    && let Some(&id) = bank.files.get(&file.file)
+                {
+                    file.sound = Some(id);
+                }
+            }
+        }
+    }
 }
 
 fn mix<O: Occluder + Resource>(
@@ -596,15 +663,17 @@ fn clashed(mixdown: &mut Mixdown, place: &Place<'_>, sound: usize, sounds: &mut 
 }
 
 fn load(bank: Res<Bank>, sounds: Res<Sounds>, mut load: ResMut<SoundLoad>) {
-    let asked = u32::try_from(bank.files.len()).unwrap_or(u32::MAX);
+    let asked = u32::try_from(bank.expected.len()).unwrap_or(u32::MAX);
     let (mut loaded, mut failed) = (load.loaded, load.failed);
-    if loaded + failed < asked {
+    if load.asked != asked || loaded + failed < asked {
         (loaded, failed) = (0, 0);
-        for id in bank.files.values() {
-            match sounds.loaded(*id) {
-                Some(Loaded::Ready(_)) => loaded += 1,
-                Some(Loaded::Failed(_)) => failed += 1,
-                Some(Loaded::Reading | Loaded::Decoding) | None => {}
+        for file in &bank.expected {
+            if let Some(id) = bank.files.get(file) {
+                match sounds.loaded(*id) {
+                    Some(Loaded::Ready(_)) => loaded += 1,
+                    Some(Loaded::Failed(_)) => failed += 1,
+                    Some(Loaded::Reading | Loaded::Decoding) | None => {}
+                }
             }
         }
     }
@@ -627,13 +696,16 @@ fn report(
 ) {
     let door = sounds.report();
     let waiting: Vec<String> = bank
-        .files
+        .expected
         .iter()
-        .filter_map(|(file, id)| match sounds.loaded(*id) {
-            Some(Loaded::Reading) => Some(format!("{file} reading")),
-            Some(Loaded::Decoding) => Some(format!("{file} decoding")),
-            None => Some(format!("{file} unknown")),
-            Some(Loaded::Ready(_) | Loaded::Failed(_)) => None,
+        .filter_map(|file| match bank.files.get(file) {
+            None => Some(format!("{file} waiting_bank")),
+            Some(id) => match sounds.loaded(*id) {
+                Some(Loaded::Reading) => Some(format!("{file} reading")),
+                Some(Loaded::Decoding) => Some(format!("{file} decoding")),
+                None => Some(format!("{file} unknown")),
+                Some(Loaded::Ready(_) | Loaded::Failed(_)) => None,
+            },
         })
         .take(10)
         .collect();

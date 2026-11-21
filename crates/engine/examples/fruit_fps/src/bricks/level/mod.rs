@@ -136,7 +136,7 @@ impl Brick for LevelBrick {
             })
             .draw_kind(KindDecl {
                 kind: LEVEL_DETAIL,
-                passes: &[COLOR_PASS],
+                passes: &[DEPTH_PASS, COLOR_PASS],
             })
             .draw_kind(KindDecl {
                 kind: LIGHT_FIELD,

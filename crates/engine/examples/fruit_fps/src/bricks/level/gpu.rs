@@ -559,10 +559,7 @@ impl GpuPart for LevelGpu {
                 (map::VS_LEVEL_DETAIL, map::FS_LEVEL),
                 &DETAIL_STREAMS,
                 true,
-                PerBatch {
-                    cull: true,
-                    ..PerBatch::NONE
-                },
+                per_batch,
                 &[("LEVEL_DETAIL", 1.0)],
             ),
             &lit,
@@ -724,7 +721,11 @@ impl LevelGpu {
     }
 
     pub(super) fn draw_detail(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.detail, 0..0, DrawOrder::Sorted);
+        if draw.pass() == self.depth_pass {
+            self.draw_depth(draw);
+        } else {
+            draw.batches(&self.detail, 0..0, DrawOrder::Grouped);
+        }
     }
 
     pub(super) fn draw_field(&self, _draw: &mut Draw<'_, Self, Scene>) {}

@@ -282,6 +282,20 @@
     "Cooked": {
       "additionalProperties": false,
       "properties": {
+        "bullet_collision": {
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bullet_ranges": {
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "collision": {
           "minLength": 1,
           "type": "string"
@@ -2367,6 +2381,16 @@
             }
           ]
         },
+        "sound_bank": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SoundBankRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "tags": {
           "default": [],
           "items": {
@@ -2966,9 +2990,26 @@
       ],
       "type": "object"
     },
+    "SoundBankRef": {
+      "additionalProperties": false,
+      "properties": {
+        "bank": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "bank"
+      ],
+      "type": "object"
+    },
     "SoundTable": {
       "additionalProperties": false,
       "properties": {
+        "packed": {
+          "default": false,
+          "type": "boolean"
+        },
         "table": {
           "minLength": 1,
           "type": "string"

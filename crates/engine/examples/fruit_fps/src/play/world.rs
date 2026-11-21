@@ -76,6 +76,7 @@ pub struct Markers {
 #[derive(Resource, Clone, Debug)]
 pub struct Arena {
     solids: Solids,
+    bullets: Option<Solids>,
     markers: Markers,
     ready: bool,
     revision: u64,
@@ -85,6 +86,7 @@ impl Default for Arena {
     fn default() -> Self {
         Arena {
             solids: Solids::build(&[], &[], &[]),
+            bullets: None,
             markers: Markers::default(),
             ready: false,
             revision: 0,
@@ -95,9 +97,14 @@ impl Default for Arena {
 impl Arena {
     pub fn adopt(&mut self, solids: Solids, markers: Markers) {
         self.solids = solids;
+        self.bullets = None;
         self.markers = markers;
         self.ready = true;
         self.revision += 1;
+    }
+
+    pub fn adopt_bullets(&mut self, bullets: Option<Solids>) {
+        self.bullets = bullets;
     }
 
     pub fn ready(&self) -> bool {
@@ -138,8 +145,21 @@ impl Arena {
         self.solids.ray(origin, direction, max)
     }
 
+    pub fn bullet_ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<Hit> {
+        let Some(bullets) = &self.bullets else {
+            return self.solids.ray(origin, direction, max);
+        };
+        let static_hit = bullets.ray(origin, direction, max);
+        let limit = static_hit.map_or(max, |hit| hit.distance);
+        let block_hit = self.solids.ray_blocks(origin, direction, limit);
+        block_hit.or(static_hit)
+    }
+
     pub fn sees(&self, from: Vec3, to: Vec3) -> bool {
-        !self.solids.blocked(from, to)
+        match &self.bullets {
+            Some(bullets) => !bullets.blocked(from, to) && !self.solids.blocked_blocks(from, to),
+            None => !self.solids.blocked(from, to),
+        }
     }
 
     pub fn ground_under(&self, point: Vec3, max_drop: f32) -> Option<Hit> {

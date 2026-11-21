@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 use crate::frame::FRAME;
 use crate::level::LEVEL;
 use crate::sets::VISIBLE_SETS;
+use crate::sound::{SOUND_BANK, bank_sources};
 
 const LIST: &str = "cook.json";
 
@@ -50,7 +51,7 @@ fn planned(assets: &Path) -> Result<Plan, Refusal> {
     let list: List = serde_json::from_slice(&bytes).map_err(|error| refuse(error.to_string()))?;
     let mut plan = Plan::new(assets, &assets.join("cooked"));
     for entry in &list.entries {
-        declare(&mut plan, &list, entry)
+        declare(&mut plan, assets, &list, entry)
             .map_err(|detail| refuse(format!("entries.{}: {detail}", entry.name)))?;
     }
     Ok(plan)
@@ -89,7 +90,7 @@ fn sets(plan: &mut Plan, entry: &Entry, params: Map<String, Value>) -> Result<()
     Ok(())
 }
 
-fn declare(plan: &mut Plan, list: &List, entry: &Entry) -> Result<(), String> {
+fn declare(plan: &mut Plan, assets: &Path, list: &List, entry: &Entry) -> Result<(), String> {
     let mut params = entry.params.clone();
     for key in ["textures", "encodings"] {
         if let Some(Value::String(set)) = params.get(key) {
@@ -140,6 +141,13 @@ fn declare(plan: &mut Plan, list: &List, entry: &Entry) -> Result<(), String> {
         "level" => {
             shared(&mut params, &[tolerance]);
             &LEVEL
+        }
+        "sound_bank" => {
+            let [table] = entry.sources.as_slice() else {
+                return Err("sound_bank reads one sound table source".to_owned());
+            };
+            sources.extend(bank_sources(assets, table, &params)?);
+            &SOUND_BANK
         }
         "visible_sets" => return sets(plan, entry, params),
         other => return Err(format!("no kind `{other}`")),

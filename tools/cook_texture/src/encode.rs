@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::image::Image;
 use crate::mips::Texels;
-use crate::{bc5, bc7};
+use crate::{astc, bc5, bc7};
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -16,6 +16,8 @@ pub enum Encoding {
     Bc7Srgb,
     Bc7,
     Bc5,
+    Astc4x4Srgb,
+    Astc4x4,
 }
 
 impl Encoding {
@@ -26,11 +28,13 @@ impl Encoding {
             Self::Bc7Srgb => "bc7_srgb",
             Self::Bc7 => "bc7",
             Self::Bc5 => "bc5",
+            Self::Astc4x4Srgb => "astc4x4_srgb",
+            Self::Astc4x4 => "astc4x4",
         }
     }
 
     pub const fn srgb(self) -> bool {
-        matches!(self, Self::Rgba8Srgb | Self::Bc7Srgb)
+        matches!(self, Self::Rgba8Srgb | Self::Bc7Srgb | Self::Astc4x4Srgb)
     }
 
     const fn texture(self) -> (TextureFormat, ColorSpace) {
@@ -40,6 +44,8 @@ impl Encoding {
             Self::Bc7Srgb => (TextureFormat::Bc7, ColorSpace::Srgb),
             Self::Bc7 => (TextureFormat::Bc7, ColorSpace::Linear),
             Self::Bc5 => (TextureFormat::Bc5, ColorSpace::Linear),
+            Self::Astc4x4Srgb => (TextureFormat::Astc4x4, ColorSpace::Srgb),
+            Self::Astc4x4 => (TextureFormat::Astc4x4, ColorSpace::Linear),
         }
     }
 }
@@ -131,6 +137,8 @@ fn decoded(encoding: Encoding, width: u32, height: u32, level: &[u8]) -> Vec<u8>
         Encoding::Bc7 | Encoding::Bc7Srgb => {
             blocks_decoded(width, height, level, bc7::decode_block)
         }
+        Encoding::Astc4x4 => blocks_decoded(width, height, level, astc::decode_block_linear),
+        Encoding::Astc4x4Srgb => blocks_decoded(width, height, level, astc::decode_block_srgb),
     }
 }
 
@@ -219,6 +227,13 @@ pub fn encode(
                 blocks(image, bc7::encode_block_exact_alpha)
             }
             Encoding::Bc7 | Encoding::Bc7Srgb => blocks(image, bc7::encode_block),
+            Encoding::Astc4x4 | Encoding::Astc4x4Srgb if exact_alpha => {
+                blocks(image, astc::encode_block_exact_alpha)
+            }
+            Encoding::Astc4x4 | Encoding::Astc4x4Srgb if texels == Texels::Normal => {
+                blocks(image, astc::encode_block_normal)
+            }
+            Encoding::Astc4x4 | Encoding::Astc4x4Srgb => blocks(image, astc::encode_block),
         })
         .collect();
     let (width, height) = (chain[0].width, chain[0].height);

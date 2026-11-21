@@ -99,7 +99,12 @@ struct Tone {
 
 fn graded(grade: Grade) -> FrameGrade {
     FrameGrade {
-        grade: [grade.exposure, grade.contrast, grade.saturation, 0.0],
+        grade: [
+            grade.exposure,
+            grade.contrast,
+            grade.saturation,
+            0.18_f32.powf(1.0 - grade.contrast),
+        ],
     }
 }
 

@@ -33,8 +33,21 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
   } finally { reader.releaseLock(); }
 }
 
-export async function feedSceneFiles(game: Runtime, sceneUrl: string, signal: AbortSignal): Promise<void> {
+async function fetchPool(uris: string[], limit: number, work: (uri: string) => Promise<void>): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, uris.length) }, async () => {
+    while (next < uris.length) {
+      const uri = uris[next];
+      next += 1;
+      await work(uri);
+    }
+  });
+  await Promise.all(workers);
+}
+
+export async function feedSceneFiles(game: Runtime, sceneUrl: string, signal: AbortSignal, shown?: Promise<void>): Promise<void> {
   const base = new URL(sceneUrl, location.href);
+  let waited = false;
   for (let files = parseJson(game.files()); files.length; files = parseJson(game.files())) {
     const groups = new Map<string, string[]>();
     for (const { uri, group } of files) {
@@ -42,13 +55,21 @@ export async function feedSceneFiles(game: Runtime, sceneUrl: string, signal: Ab
       if (uris) uris.push(uri);
       else groups.set(group, [uri]);
     }
+    let index = 0;
     for (const uris of groups.values()) {
-      await Promise.all(uris.map(async uri => {
+      if (index > 0 && shown && !waited) {
+        waited = true;
+        await shown;
+        signal.throwIfAborted();
+      }
+      const limit = index === 0 && !waited ? 6 : 4;
+      await fetchPool(uris, limit, async uri => {
         const read = await fetchBytes(new URL(uri, base).href, signal);
         signal.throwIfAborted();
         if (typeof read === "string") game.file_failed(uri, read);
         else game.file(uri, read);
-      }));
+      });
+      index += 1;
     }
   }
 }

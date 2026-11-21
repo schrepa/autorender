@@ -22,7 +22,7 @@ page = "fruit_fps.html"
 game = "fruit_fps"
 native = "fruit_fps-native"
 cook = "fruit_fps-cook"
-ship = ["data", "assets/ui", "assets/sfx"]
+ship = ["data", "assets/ui"]
 
 [features]
 default = []

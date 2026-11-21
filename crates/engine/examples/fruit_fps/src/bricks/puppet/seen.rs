@@ -123,7 +123,7 @@ impl Tests<'_> {
         if distance <= 1.0e-3 {
             return true;
         }
-        match arena.solids().ray(self.eye.at, toward / distance, distance) {
+        match arena.bullet_ray(self.eye.at, toward / distance, distance) {
             None => true,
             Some(hit) => {
                 hit.distance >= distance - 0.05

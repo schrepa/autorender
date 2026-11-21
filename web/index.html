@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a101b" />
+    <title>Game Player</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      :root {
+        --bg: #080d16;
+        --frame: #111827;
+        --bar: #0f172a;
+        --surface: #162033;
+        --surface-2: #1e293b;
+        --border: #ffffff1a;
+        --ink: #f1f5f9;
+        --muted: #94a3b8;
+        --accent: #70e4c5;
+        --accent-ink: #07131a;
+        --danger: #f87171;
+        --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+      html body.engine-page { background: var(--bg); color: var(--ink); }
+      body:not([data-dev]) .engine-hud { display: none !important; }
+      .message { display: none !important; }
+      .player {
+        --bar-h: 52px;
+        --w: min(1280px, 100vw - 48px, (100vh - var(--bar-h) - 48px) * 16 / 9);
+        position: fixed; inset: 0; margin: auto;
+        width: var(--w); height: calc(var(--w) * 9 / 16 + var(--bar-h));
+        display: flex; flex-direction: column;
+        border-radius: 14px; overflow: hidden;
+        background: var(--frame);
+        border: 1px solid var(--border);
+        box-shadow: 0 24px 64px #00000080;
+      }
+      .player[data-view="theater"], :root:fullscreen .player {
+        --w: 100vw; width: 100vw; height: 100vh; height: 100dvh;
+        border-radius: 0; border: 0; box-shadow: none;
+      }
+      .screen { position: relative; flex: 1 1 0; min-height: 0; background: #000; overflow: hidden; }
+      .engine-page .screen #scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .bar {
+        flex: none; height: var(--bar-h);
+        display: flex; align-items: center; gap: 8px; padding: 0 12px 0 18px;
+        background: var(--bar); border-top: 1px solid var(--border);
+        color: var(--ink); font: 600 15px/1 var(--sans);
+      }
+      .title-slot {
+        margin-right: auto; min-width: 0; display: flex; align-items: center; gap: 10px;
+      }
+      #game-title {
+        min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        letter-spacing: -0.01em;
+      }
+      #game-select {
+        max-width: min(320px, 55vw); height: 34px; padding: 0 12px;
+        border-radius: 8px; border: 1px solid var(--border);
+        background: var(--surface); color: var(--ink);
+        font: 600 14px/1 var(--sans); cursor: pointer;
+      }
+      #game-select:hover, #game-select:focus-visible { border-color: var(--accent); outline: none; }
+      #game-select[hidden], #game-title[hidden] { display: none; }
+      .bar button {
+        flex: none; display: grid; place-items: center;
+        width: 40px; height: 34px; padding: 0;
+        border: 1px solid var(--border); border-radius: 8px;
+        cursor: pointer; background: var(--surface); color: var(--ink);
+        transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+      }
+      .bar button:hover, .bar button:focus-visible { background: var(--surface-2); border-color: #ffffff38; outline: none; }
+      .bar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+      .bar svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+      :root:fullscreen .bar { display: none; }
+      .overlay {
+        position: absolute; inset: 0; z-index: 10;
+        display: flex; align-items: center; justify-content: center;
+        padding: 24px; overflow-y: auto;
+        background: radial-gradient(circle at 50% 35%, #132036, #080d16 72%);
+        color: var(--ink);
+      }
+      .overlay[hidden] { display: none; }
+      #loading { transition: opacity 260ms ease-out; }
+      #loading.gone { opacity: 0; pointer-events: none; }
+      .loader {
+        width: min(380px, 100%); display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center;
+      }
+      .loader-title {
+        margin: 0; font: 700 clamp(22px, 3vw, 28px)/1.2 var(--sans); letter-spacing: -0.02em;
+      }
+      .meter { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+      .track {
+        position: relative; height: 10px; border-radius: 999px; overflow: hidden;
+        background: #ffffff14; border: 1px solid #ffffff14;
+      }
+      #loading-bar {
+        position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px;
+        background: var(--accent); width: calc(100% * var(--done, 0));
+        transition: width 160ms ease-out;
+      }
+      .track[data-unknown] #loading-bar {
+        width: 32%; transition: none; animation: sweep 1.5s ease-in-out infinite alternate;
+      }
+      .loader-meta {
+        display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+        font: 500 13px/1.4 var(--sans); color: var(--muted); font-variant-numeric: tabular-nums;
+      }
+      #loading-stage { color: var(--ink); font-weight: 600; }
+      #loading-detail { text-align: right; }
+      @keyframes sweep { from { transform: translateX(0); } to { transform: translateX(212%); } }
+      .card {
+        width: min(640px, 100%); margin: auto;
+        display: flex; flex-direction: column; gap: 14px; padding: 26px 28px;
+        border-radius: 14px; background: var(--frame); border: 1px solid var(--border);
+        box-shadow: 0 20px 50px #00000066;
+      }
+      .card h2 { margin: 0; font: 700 22px/1.25 var(--sans); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+      .card p { margin: 0; font: 400 14px/1.55 var(--sans); color: var(--muted); }
+      .card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+      .card li { padding: 10px 14px; border-radius: 10px; background: var(--surface); font: 400 13.5px/1.45 var(--sans); color: var(--ink); }
+      .links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+      .links a {
+        display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border-radius: 8px;
+        background: var(--surface); border: 1px solid var(--border);
+        color: var(--accent); font: 600 13px/1 var(--sans); text-decoration: none;
+      }
+      .links a:hover, .links a:focus-visible { background: var(--surface-2); border-color: var(--accent); outline: none; }
+      .card dl { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+      .card dl div { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; border-radius: 8px; background: var(--surface); }
+      .card dt { flex: none; min-width: 52px; color: var(--muted); font: 600 12px/1 var(--mono); text-transform: uppercase; }
+      .card dd { margin: 0; min-width: 0; color: var(--ink); font: 500 13px/1.4 var(--mono); overflow-wrap: anywhere; }
+      .card pre {
+        margin: 0; max-height: 220px; overflow: auto; padding: 12px 14px; border-radius: 8px;
+        background: var(--surface); color: #fda4af; font: 500 12.5px/1.5 var(--mono);
+        white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      .card pre:empty { display: none; }
+      .actions { display: flex; justify-content: flex-end; padding-top: 4px; }
+      #failure-reload {
+        height: 38px; padding: 0 20px; border: 0; border-radius: 8px; cursor: pointer;
+        background: var(--accent); color: var(--accent-ink); font: 700 14px/1 var(--sans);
+      }
+      #failure-reload:hover, #failure-reload:focus-visible { filter: brightness(1.08); outline: none; }
+      @media (max-width: 640px) {
+        .player { --w: 100vw; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; border: 0; box-shadow: none; }
+        .card { padding: 20px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .overlay, .overlay * { animation: none !important; transition: none !important; }
+        .track[data-unknown] #loading-bar { transform: translateX(106%); }
+      }
+    </style>
+  </head>
+  <body class="engine-page">
+    <main id="player" class="player" data-view="window">
+      <div class="screen">
+        <canvas id="scene" tabindex="0" aria-label="Game view" style="visibility: hidden"></canvas>
+        <section id="loading" class="overlay" aria-live="polite">
+          <div class="loader">
+            <h1 id="loading-title" class="loader-title">Loading</h1>
+            <div class="meter">
+              <div class="track" id="loading-track" data-unknown><div id="loading-bar"></div></div>
+              <div class="loader-meta">
+                <span id="loading-stage">Opening</span>
+                <span id="loading-detail"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="gpu" class="overlay" hidden>
+          <div class="card">
+            <h2 id="gpu-title">WebGPU required</h2>
+            <p id="gpu-reason"></p>
+            <ul>
+              <li>Chrome and Edge 113 or later on Windows, macOS and ChromeOS; Chrome 121 or later on Android 12+ with a Qualcomm or ARM GPU.</li>
+              <li>Firefox 141 or later on Windows; Firefox 145 or later on Apple-silicon Macs with macOS 26.</li>
+              <li>Safari 26 on macOS, iOS, iPadOS and visionOS.</li>
+              <li>Linux: Chrome is rolling out WebGPU support progressively; hardware acceleration must be enabled.</li>
+            </ul>
+            <p class="links">
+              <a href="https://web.dev/blog/webgpu-supported-major-browsers" target="_blank" rel="noopener">WebGPU in major browsers</a>
+              <a href="https://caniuse.com/webgpu" target="_blank" rel="noopener">Can I use WebGPU</a>
+              <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API#browser_compatibility" target="_blank" rel="noopener">MDN compatibility</a>
+            </p>
+          </div>
+        </section>
+        <section id="failure" class="overlay" hidden role="alert">
+          <div class="card">
+            <h2 id="failure-title">Game stopped</h2>
+            <p id="failure-summary"></p>
+            <dl>
+              <div><dt>code</dt><dd id="failure-code">—</dd></div>
+              <div><dt>path</dt><dd id="failure-path">—</dd></div>
+            </dl>
+            <pre id="failure-detail"></pre>
+            <div class="actions">
+              <button id="failure-reload" type="button">Reload</button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="bar">
+        <div class="title-slot">
+          <span id="game-title">Game Player</span>
+          <select id="game-select" aria-label="Select game" hidden></select>
+        </div>
+        <button id="view-theater" type="button" aria-pressed="false" aria-label="Theater mode" title="Theater mode">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/></svg>
+        </button>
+        <button id="view-full" type="button" aria-label="Full screen" title="Full screen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>
+        </button>
+      </div>
+    </main>
+    <div class="engine-hud"><span id="status" role="status"><i></i>Initializing</span><strong id="fps">—</strong>
+      <span>simulation <span id="simulation">—</span></span><span>extraction <span id="extraction">—</span></span>
+      <span>draws <span id="draws">—</span></span><span id="uploads"></span><span id="render-time"></span>
+      <button id="pause" type="button">Pause</button><button id="reset" type="button">Reset view</button></div>
+    <div id="message" class="message" role="status">Loading…</div>
+    <script type="module" src="/src/player/main.ts"></script>
+  </body>
+</html>

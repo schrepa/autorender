@@ -15,12 +15,14 @@ const IDENTIFIER: [u8; 12] = [
 
 const HEADER: usize = 80;
 
-const FORMATS: [(u32, TextureFormat, ColorSpace); 5] = [
+const FORMATS: [(u32, TextureFormat, ColorSpace); 7] = [
     (37, TextureFormat::Rgba8, ColorSpace::Linear),
     (43, TextureFormat::Rgba8, ColorSpace::Srgb),
     (141, TextureFormat::Bc5, ColorSpace::Linear),
     (145, TextureFormat::Bc7, ColorSpace::Linear),
     (146, TextureFormat::Bc7, ColorSpace::Srgb),
+    (157, TextureFormat::Astc4x4, ColorSpace::Linear),
+    (158, TextureFormat::Astc4x4, ColorSpace::Srgb),
 ];
 
 struct Ktx2 {
@@ -146,6 +148,7 @@ fn descriptor(format: TextureFormat, space: ColorSpace) -> Vec<u8> {
             ],
         ),
         TextureFormat::Bc7 => (134, 3 | (3 << 8), 16, vec![sample(0, 128, 0, 0, u32::MAX)]),
+        TextureFormat::Astc4x4 => (162, 3 | (3 << 8), 16, vec![sample(0, 128, 0, 0, u32::MAX)]),
     };
     let block = 24 + 16 * samples.len() as u32;
     let mut words = vec![
@@ -221,4 +224,30 @@ pub fn write(
     }
     out[index_end..index_end + dfd.len()].copy_from_slice(&dfd);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn astc_round_trip() {
+        for (space, expected_vk) in [(ColorSpace::Linear, 157_u32), (ColorSpace::Srgb, 158_u32)] {
+            let level0 = vec![0xAA_u8; 4 * 16];
+            let level1 = vec![0x55_u8; 16];
+            let encoded = write(TextureFormat::Astc4x4, space, 8, 8, &[&level0, &level1])
+                .expect("write_astc_ktx2");
+            assert_eq!(word(&encoded, 12), expected_vk, "vk_format_matches_astc_4x4");
+            let texture = read_texture(Arc::from(encoded), "test.astc.ktx2")
+                .expect("read_astc_ktx2");
+            assert_eq!(texture.format(), TextureFormat::Astc4x4, "format_is_astc4x4");
+            assert_eq!(texture.color_space(), space, "color_space_matches");
+            assert_eq!(texture.width(), 8, "width_matches");
+            assert_eq!(texture.height(), 8, "height_matches");
+            let levels: Vec<&[u8]> = texture.levels().collect();
+            assert_eq!(levels.len(), 2, "two_mip_levels");
+            assert_eq!(levels[0], level0.as_slice(), "level0_bytes_preserved");
+            assert_eq!(levels[1], level1.as_slice(), "level1_bytes_preserved");
+        }
+    }
 }

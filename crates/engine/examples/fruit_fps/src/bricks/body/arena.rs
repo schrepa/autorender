@@ -35,6 +35,10 @@ pub struct BlockForm {
 pub struct Cooked {
     pub collision: Asset<Triangles>,
     pub ranges: Asset<CollisionRanges>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bullet_collision: Option<Asset<Triangles>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bullet_ranges: Option<Asset<CollisionRanges>>,
     pub markers: Asset<ArenaMarkers>,
     pub records: Asset<Layout>,
 }
@@ -74,12 +78,21 @@ struct Marker {
 
 const DEFAULT_KIND: &str = "stone";
 
-pub(super) fn stone_unknown(solids: &mut Solids, markers: &mut Markers, known: &[String]) {
+pub(super) fn stone_unknown(
+    solids: &mut Solids,
+    bullets: Option<&mut Solids>,
+    markers: &mut Markers,
+    known: &[String],
+) {
     let (kept, unknown): (Vec<_>, Vec<_>) = std::mem::take(&mut markers.kinds)
         .into_iter()
         .partition(|(_, name)| known.contains(name));
+    let mut bullets = bullets;
     for (kind, _) in &unknown {
         solids.relabel(*kind, STONE);
+        if let Some(bullets) = bullets.as_deref_mut() {
+            bullets.relabel(*kind, STONE);
+        }
     }
     markers.kinds = kept;
     if !unknown.is_empty() && !markers.kinds.iter().any(|(kind, _)| *kind == STONE) {
@@ -192,19 +205,43 @@ fn markers(file: &ArenaMarkers) -> Markers {
     }
 }
 
-fn cooked(files: &Cooked, assets: &Assets) -> Option<(Solids, Markers)> {
+fn bullet_grounds(
+    ranges: &CollisionRanges,
+    kinds: &mut Vec<(Kind, String)>,
+) -> Vec<(Range<u32>, Kind)> {
+    ranges
+        .meshes
+        .iter()
+        .map(|entry| {
+            let name = entry.node.strip_prefix("bul_").unwrap_or(DEFAULT_KIND);
+            (entry.triangles[0]..entry.triangles[1], ground(name, kinds))
+        })
+        .collect()
+}
+
+fn cooked(files: &Cooked, assets: &Assets) -> Option<(Solids, Option<Solids>, Markers)> {
     let mesh = assets.get(files.collision).ok()?;
     let ranges = assets.get(files.ranges).ok()?;
     let layout = assets.get(files.records).ok()?;
     let marked = assets.get(files.markers).ok()?;
     let mut kinds = Vec::new();
     let labels = grounds(ranges, &layout.collision, &mut kinds);
+    let bullets = match (files.bullet_collision, files.bullet_ranges) {
+        (Some(col), Some(rng)) => {
+            let bmesh = assets.get(col).ok()?;
+            let branges = assets.get(rng).ok()?;
+            let blabels = bullet_grounds(branges, &mut kinds);
+            Some(Solids::build(&bmesh.positions, &bmesh.indices, &blabels))
+        }
+        _ => None,
+    };
     let markers = Markers {
         kinds,
         ..markers(marked)
     };
     Some((
         Solids::build(&mesh.positions, &mesh.indices, &labels),
+        bullets,
         markers,
     ))
 }
@@ -214,9 +251,12 @@ impl ArenaFile {
         floor_or_cooked(self.floor.as_ref(), self.cooked.as_ref(), path)
     }
 
-    pub(super) fn built(&self, assets: &Assets) -> Option<(Solids, Markers)> {
+    pub(super) fn built(&self, assets: &Assets) -> Option<(Solids, Option<Solids>, Markers)> {
         match (&self.floor, &self.cooked) {
-            (Some(plain), _) => Some(floor(plain)),
+            (Some(plain), _) => {
+                let (solids, markers) = floor(plain);
+                Some((solids, None, markers))
+            }
             (None, Some(files)) => cooked(files, assets),
             (None, None) => None,
         }

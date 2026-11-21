@@ -10,6 +10,12 @@
         "orm": "bc7"
       },
       {
+        "name": "astc",
+        "base_color": "astc4x4_srgb",
+        "normal": "astc4x4",
+        "orm": "astc4x4"
+      },
+      {
         "name": "rgba8",
         "base_color": "rgba8_srgb",
         "normal": "rgba8",
@@ -18,10 +24,12 @@
     ],
     "linear": {
       "bc": "bc7",
+      "astc": "astc4x4",
       "rgba8": "rgba8"
     },
     "srgb": {
       "bc": "bc7_srgb",
+      "astc": "astc4x4_srgb",
       "rgba8": "rgba8_srgb"
     }
   },
@@ -574,12 +582,17 @@
             "prefix": "nav_",
             "output": "mercato_nav",
             "triangles": 20000
+          },
+          {
+            "prefix": "bul_",
+            "output": "mercato_bullet",
+            "triangles": 160000
           }
         ],
         "budgets": {
-          "triangles": 370000,
-          "vertices": 575000,
-          "materials": 20,
+          "triangles": 500000,
+          "vertices": 780000,
+          "materials": 24,
           "object_vertices": 131072
         },
         "textures": [
@@ -587,49 +600,13 @@
             "name": "bc",
             "base_color": "bc7_srgb",
             "normal": "bc5",
-            "orm": "bc7",
-            "material_sizes": {
-              "m_wood_blue": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_green": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_teal": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_raw": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_crate": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_limestone": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_rooftile": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_sage": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_sky": {
-                "base_color": 512,
-                "normal": 512
-              },
-              "m_wood_brick": {
-                "base_color": 512,
-                "normal": 512
-              }
-            }
+            "orm": "bc7"
+          },
+          {
+            "name": "astc",
+            "base_color": "astc4x4_srgb",
+            "normal": "astc4x4",
+            "orm": "astc4x4"
           },
           {
             "name": "rgba8",
@@ -670,7 +647,22 @@
         },
         "material_sizes": {
           "m_props_atlas": {
-            "base_color": 2048,
+            "base_color": 4096,
+            "normal": 2048,
+            "orm": 1024
+          },
+          "m_hero_atlas": {
+            "base_color": 4096,
+            "normal": 2048,
+            "orm": 1024
+          },
+          "m_water": {
+            "base_color": 512,
+            "normal": 512,
+            "orm": 512
+          },
+          "m_hero_atlas_2": {
+            "base_color": 4096,
             "normal": 2048,
             "orm": 1024
           }
@@ -1644,6 +1636,31 @@
         "wrap": [
           "clamp_to_edge",
           "clamp_to_edge"
+        ]
+      }
+    },
+    {
+      "kind": "sound_bank",
+      "name": "sfx_ui",
+      "sources": [
+        "../data/sound.json"
+      ],
+      "params": {
+        "groups": [
+          "interface"
+        ]
+      }
+    },
+    {
+      "kind": "sound_bank",
+      "name": "sfx_match",
+      "sources": [
+        "../data/sound.json"
+      ],
+      "params": {
+        "groups": [
+          "effects",
+          "footsteps"
         ]
       }
     }

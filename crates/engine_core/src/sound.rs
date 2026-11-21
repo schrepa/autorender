@@ -218,6 +218,14 @@ impl Sounds {
         sound
     }
 
+    pub fn load_bytes(&mut self, bytes: Arc<[u8]>) -> SoundId {
+        let sound = SoundId(u32::try_from(self.sounds.len()).unwrap_or(u32::MAX));
+        self.bytes_read += bytes.len() as u64;
+        self.sounds.push(Loaded::Decoding);
+        self.orders.push(SoundOrder::Decode { sound, bytes });
+        sound
+    }
+
     pub fn loaded(&self, sound: SoundId) -> Option<&Loaded> {
         self.sounds.get(sound.0 as usize)
     }

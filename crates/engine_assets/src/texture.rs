@@ -8,13 +8,14 @@ pub enum TextureFormat {
     Rgba8,
     Bc7,
     Bc5,
+    Astc4x4,
 }
 
 impl TextureFormat {
     pub const fn block(self) -> (u32, u32) {
         match self {
             Self::Rgba8 => (1, 4),
-            Self::Bc7 | Self::Bc5 => (4, 16),
+            Self::Bc7 | Self::Bc5 | Self::Astc4x4 => (4, 16),
         }
     }
 

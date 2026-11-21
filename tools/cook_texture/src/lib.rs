@@ -1,3 +1,5 @@
+mod astc;
+mod astc_bits;
 mod bc5;
 mod bc7;
 mod encode;

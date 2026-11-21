@@ -80,7 +80,17 @@
         "file": "data/puppet.json"
       },
       "sound": {
-        "table": "data/sound.json"
+        "table": "data/sound.json",
+        "packed": true
+      },
+      "sound_bank": {
+        "bank": "assets/cooked/sfx_ui.esb"
+      }
+    },
+    {
+      "id": "match_sound",
+      "sound_bank": {
+        "bank": "assets/cooked/sfx_match.esb"
       }
     },
     {
@@ -215,6 +225,8 @@
         "cooked": {
           "collision": "assets/cooked/mercato_col.emb",
           "ranges": "assets/cooked/mercato_col.json",
+          "bullet_collision": "assets/cooked/mercato_bullet.emb",
+          "bullet_ranges": "assets/cooked/mercato_bullet.json",
           "markers": "assets/cooked/mercato.markers.json",
           "records": "data/mercato.json"
         }

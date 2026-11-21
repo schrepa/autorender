@@ -75,6 +75,8 @@ impl Game for FruitFps {
 fn texture_variant(features: Features) -> &'static str {
     if features.contains(Features::TEXTURE_COMPRESSION_BC) {
         "bc"
+    } else if features.contains(Features::TEXTURE_COMPRESSION_ASTC) {
+        "astc"
     } else {
         "rgba8"
     }

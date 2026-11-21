@@ -167,7 +167,7 @@ impl Brick for BodyBrick {
 fn adopt(
     (files, assets, numbers): (Query<Ref<ArenaFile>>, Res<Assets>, Res<Numbers>),
     mut arena: ResMut<Arena>,
-    mut built: Local<Option<(Solids, Markers)>>,
+    mut built: Local<Option<(Solids, Option<Solids>, Markers)>>,
     mut applied: Local<Option<Vec<String>>>,
 ) {
     for file in &files {
@@ -181,11 +181,13 @@ fn adopt(
     };
     let known = &numbers.player.surface_kinds;
     if applied.as_ref() != Some(known)
-        && let Some((solids, markers)) = built.as_ref()
+        && let Some((solids, bullets, markers)) = built.as_ref()
     {
-        let (mut solids, mut markers) = (solids.clone(), markers.clone());
-        arena::stone_unknown(&mut solids, &mut markers, known);
+        let (mut solids, mut bullets, mut markers) =
+            (solids.clone(), bullets.clone(), markers.clone());
+        arena::stone_unknown(&mut solids, bullets.as_mut(), &mut markers, known);
         arena.adopt(solids, markers);
+        arena.adopt_bullets(bullets);
         *applied = Some(known.clone());
     }
 }

@@ -40,7 +40,7 @@ export function playGame<T extends Runtime, B extends GameBindings>(game: Played
   const source = {
     url,
     load: (signal: AbortSignal) => loadSceneSource(sceneUrl(), signal),
-    feed: (running: Runtime, signal: AbortSignal) => feedSceneFiles(running, sceneUrl(), signal),
+    feed: (running: Runtime, signal: AbortSignal, shown?: Promise<void>) => feedSceneFiles(running, sceneUrl(), signal, shown),
   };
   const opening = new AbortController();
   const firstText = settled(Promise.resolve().then(() => source.load(opening.signal)));

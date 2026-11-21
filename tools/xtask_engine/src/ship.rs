@@ -1,7 +1,10 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use engine_checks::Package;
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use serde_json::{Value, json};
 use xtask::pipeline;
 use xtask::process::{DEV_FEATURES, clients, run, slashed};
@@ -11,6 +14,10 @@ use zip::write::SimpleFileOptions;
 const SHIPPED: &str = "target/ship";
 const PAGES: &str = "web/dist";
 const SCENE_SUFFIX: &str = ".scene.json";
+const MIN_PRECOMPRESS_BYTES: u64 = 512;
+const PRECOMPRESS_EXTENSIONS: &[&str] = &[
+    "ktx2", "emb", "clip", "skel", "json", "bin", "svg", "html", "css", "js", "wasm",
+];
 
 pub fn ship(root: &Path, options: &[String]) -> Result<(), String> {
     if !options.is_empty() {
@@ -54,7 +61,7 @@ fn game(root: &Path, package: &Package) -> Result<(), String> {
     let native = shipped.join("native");
     copied(&root.join("target/release").join(&program), &native.join(&program))?;
     let bytes = placed(&package.folder, &content, &native)?;
-    archived(game, &native, (content.len(), hands), bytes, Some(program.as_str()))?;
+    archived(game, &native, (content.len(), hands), bytes, (0, 0), Some(program.as_str()))?;
     let web = shipped.join("web");
     let pages = root.join(PAGES);
     let mut built = Vec::new();
@@ -64,7 +71,8 @@ fn game(root: &Path, package: &Package) -> Result<(), String> {
         copied(&page, &web.join(relative))?;
     }
     let bytes = placed(&package.folder, &content, &web.join(game))?;
-    archived(game, &web, (content.len(), hands), bytes, None)
+    let precompressed = precompress(&web)?;
+    archived(game, &web, (content.len(), hands), bytes, precompressed, None)
 }
 
 fn hand(package: &Package) -> Result<Vec<PathBuf>, String> {
@@ -164,6 +172,7 @@ fn archived(
     folder: &Path,
     (files, hand_files): (usize, usize),
     bytes: u64,
+    (precompressed_files, precompressed_bytes): (usize, u64),
     program: Option<&str>,
 ) -> Result<(), String> {
     let archive = folder.with_extension("zip");
@@ -175,11 +184,105 @@ fn archived(
         "files": files,
         "hand_files": hand_files,
         "bytes": bytes,
+        "precompressed_files": precompressed_files,
+        "precompressed_bytes": precompressed_bytes,
         "archive": slashed(&archive),
         "archive_bytes": fs::metadata(&archive).map_or(0, |metadata| metadata.len()),
     });
     println!("{record}");
     Ok(())
+}
+
+fn should_precompress(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    if !PRECOMPRESS_EXTENSIONS
+        .iter()
+        .any(|wanted| extension.eq_ignore_ascii_case(wanted))
+    {
+        return false;
+    }
+    let sidecar = sidecar_gz(path);
+    if sidecar.exists() {
+        return false;
+    }
+    fs::metadata(path).is_ok_and(|metadata| metadata.len() >= MIN_PRECOMPRESS_BYTES)
+}
+
+fn sidecar_gz(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".gz");
+    PathBuf::from(name)
+}
+
+fn compress_file(path: &Path) -> Result<Option<u64>, String> {
+    let raw = fs::read(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder
+        .write_all(&raw)
+        .map_err(|error| format!("cannot compress {}: {error}", path.display()))?;
+    let compressed = encoder
+        .finish()
+        .map_err(|error| format!("cannot finish {}: {error}", path.display()))?;
+    if compressed.len() >= raw.len() {
+        return Ok(None);
+    }
+    let out = sidecar_gz(path);
+    fs::write(&out, &compressed)
+        .map_err(|error| format!("cannot write {}: {error}", out.display()))?;
+    Ok(Some(compressed.len() as u64))
+}
+
+fn precompress(folder: &Path) -> Result<(usize, u64), String> {
+    let mut files = Vec::new();
+    files_under(folder, &mut files)?;
+    let targets: Vec<PathBuf> = files
+        .into_iter()
+        .filter(|path| should_precompress(path))
+        .collect();
+    if targets.is_empty() {
+        return Ok((0, 0));
+    }
+    let threads = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(targets.len());
+    let chunk = targets.len().div_ceil(threads);
+    let results: Vec<Result<(usize, u64), String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = targets
+            .chunks(chunk)
+            .map(|slice| {
+                scope.spawn(move || -> Result<(usize, u64), String> {
+                    let mut count = 0;
+                    let mut bytes = 0;
+                    for path in slice {
+                        if let Some(written) = compress_file(path)? {
+                            count += 1;
+                            bytes += written;
+                        }
+                    }
+                    Ok((count, bytes))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    let mut total_count = 0;
+    let mut total_bytes = 0;
+    for result in results {
+        let (count, bytes) = result?;
+        total_count += count;
+        total_bytes += bytes;
+    }
+    Ok((total_count, total_bytes))
 }
 
 fn files_under(folder: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {

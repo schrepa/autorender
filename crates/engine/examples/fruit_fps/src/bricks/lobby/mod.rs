@@ -3,10 +3,12 @@ engine::brick!(lobby);
 mod numbers;
 
 use std::collections::BTreeMap;
+use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 use engine::math;
 use engine::prelude::*;
+use engine::{Devices, MouseButton};
 use engine_core::{Assets, Stats};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,6 +25,19 @@ use crate::play::skinned::{
 use crate::play::world::Arena;
 
 use numbers::{Clips, LobbyNumbers};
+
+const CAMERA_BLEND_SECONDS: f64 = 0.58;
+const STAGE_SWAP_SECONDS: f64 = 0.56;
+const CAROUSEL_STEP_SECONDS: f64 = 0.54;
+const CAROUSEL_FAR_SECONDS: f64 = 0.68;
+const CAROUSEL_OVERSHOOT: f32 = 1.05;
+const CAROUSEL_DEPTH_M: f32 = 2.05;
+const CAROUSEL_WIDTH_M: f32 = 1.05;
+const CAROUSEL_LIFT_M: f32 = 0.035;
+const UNSPIN_SECONDS: f64 = 0.48;
+const DRAG_START_PX: f32 = 4.0;
+const DRAG_RAD_PER_PX: f32 = 0.011;
+const DRAG_DAMP_RATE: f32 = 7.5;
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -89,14 +104,152 @@ struct Cue {
     done_at: Option<f64>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct CarouselRing {
+    from_angle: f32,
+    to_angle: f32,
+    started: f64,
+    duration: f64,
+    primed: bool,
+}
+
+impl CarouselRing {
+    fn sample(&self, now: f64) -> (f32, f32, f32) {
+        if !self.primed || self.duration <= 0.0 {
+            return (self.to_angle, 0.0, 1.0);
+        }
+        let raw = math::clamp(((now - self.started) / self.duration) as f32, 0.0, 1.0);
+        if raw >= 1.0 {
+            return (self.to_angle, 0.0, 1.0);
+        }
+        let delta = self.to_angle - self.from_angle;
+        let u = ease_out_back(raw, CAROUSEL_OVERSHOOT);
+        let du = ease_out_back_deriv(raw, CAROUSEL_OVERSHOOT) / self.duration as f32;
+        (self.from_angle + delta * u, delta * du, raw)
+    }
+
+    fn snap(&mut self, target: f32) {
+        self.from_angle = target;
+        self.to_angle = target;
+        self.started = 0.0;
+        self.duration = 0.0;
+        self.primed = true;
+    }
+
+    fn turn_to(&mut self, target: f32, now: f64) -> f32 {
+        if !self.primed {
+            self.snap(target);
+            return 0.0;
+        }
+        let (cur, _, _) = self.sample(now);
+        let delta = shortest_delta(cur, target);
+        if delta.abs() < 1e-4 {
+            return 0.0;
+        }
+        self.from_angle = cur;
+        self.to_angle = cur + delta;
+        self.started = now;
+        self.duration = if delta.abs() > 1.8 {
+            CAROUSEL_FAR_SECONDS
+        } else {
+            CAROUSEL_STEP_SECONDS
+        };
+        delta
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FigureMotion {
+    last_pos: Vec3,
+    last_yaw: f32,
+    last_scale: f32,
+    base_scale: Vec3,
+    blend_from: Option<(Vec3, f32, f32)>,
+    blend_started: f64,
+    blend_duration: f64,
+}
+
+impl FigureMotion {
+    fn settled(pos: Vec3, yaw: f32, scale: f32, base_scale: Vec3) -> Self {
+        Self {
+            last_pos: pos,
+            last_yaw: yaw,
+            last_scale: scale,
+            base_scale,
+            blend_from: None,
+            blend_started: 0.0,
+            blend_duration: 0.0,
+        }
+    }
+
+    fn begin_blend(&mut self, now: f64, duration: f64) {
+        self.blend_from = Some((self.last_pos, self.last_yaw, self.last_scale));
+        self.blend_started = now;
+        self.blend_duration = duration;
+    }
+
+    fn apply(&mut self, now: f64, target: (Vec3, f32, f32)) -> (Vec3, f32, f32) {
+        let (to_pos, to_yaw, to_scale) = target;
+        let out = if let Some((from_pos, from_yaw, from_scale)) = self.blend_from
+            && self.blend_duration > 0.0
+        {
+            let raw = math::clamp(((now - self.blend_started) / self.blend_duration) as f32, 0.0, 1.0);
+            if raw >= 1.0 {
+                self.blend_from = None;
+                (to_pos, to_yaw, to_scale)
+            } else {
+                let u = ease_out_quint(raw);
+                let pos = from_pos.lerp(to_pos, u);
+                let yaw = from_yaw + shortest_delta(from_yaw, to_yaw) * u;
+                let scale = from_scale + (to_scale - from_scale) * u;
+                (pos, yaw, scale)
+            }
+        } else {
+            (to_pos, to_yaw, to_scale)
+        };
+        self.last_pos = out.0;
+        self.last_yaw = out.1;
+        self.last_scale = out.2;
+        out
+    }
+}
+
+fn shortest_delta(from: f32, to: f32) -> f32 {
+    (to - from + PI).rem_euclid(TAU) - PI
+}
+
+fn ease_out_quint(t: f32) -> f32 {
+    let k = 1.0 - math::clamp(t, 0.0, 1.0);
+    1.0 - k * k * k * k * k
+}
+
+fn ease_out_back(t: f32, overshoot: f32) -> f32 {
+    let x = math::clamp(t, 0.0, 1.0) - 1.0;
+    1.0 + (overshoot + 1.0) * x * x * x + overshoot * x * x
+}
+
+fn ease_out_back_deriv(t: f32, overshoot: f32) -> f32 {
+    let x = math::clamp(t, 0.0, 1.0) - 1.0;
+    3.0 * (overshoot + 1.0) * x * x + 2.0 * overshoot * x
+}
+
 type Read = Result<Arc<LobbyNumbers>, String>;
 
 #[derive(Resource, Default)]
 struct LobbyBook {
-    numbers: Option<(u64, Read)>,
+    numbers: Option<(u64, Read, Vec<String>)>,
     shot: Option<Shot>,
     chosen: String,
+    hero: Option<Entity>,
+    ring: CarouselRing,
+    user_yaw: f32,
+    user_yaw_vel: f32,
+    unspin: Option<(Entity, f32, f64)>,
+    drag_px: f32,
+    drag_x: Option<f32>,
+    last_frame: f64,
     cues: BTreeMap<Entity, Cue>,
+    motions: BTreeMap<Entity, FigureMotion>,
     bound: BTreeMap<Entity, Bound>,
 }
 
@@ -164,22 +317,41 @@ impl Brick for LobbyBrick {
     }
 }
 
-fn numbers_of(book: &mut LobbyBook, numbers: &Numbers) -> Option<Read> {
+fn roster_of(whole: &serde_json::Value) -> Vec<String> {
+    whole
+        .get("characters")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("key").and_then(serde_json::Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn numbers_of(book: &mut LobbyBook, numbers: &Numbers) -> Option<(Read, Vec<String>)> {
     let game = numbers.get()?;
     let fresh = book
         .numbers
         .as_ref()
-        .is_none_or(|(revision, _)| *revision != numbers.revision());
+        .is_none_or(|(revision, ..)| *revision != numbers.revision());
     if fresh {
         let read = numbers::read(&game.whole).map(Arc::new);
-        book.numbers = Some((numbers.revision(), read));
+        let roster = roster_of(&game.whole);
+        book.numbers = Some((numbers.revision(), read, roster));
     }
-    book.numbers.as_ref().map(|(_, read)| read.clone())
+    book.numbers
+        .as_ref()
+        .map(|(_, read, roster)| (read.clone(), roster.clone()))
 }
 
 struct Wanted {
     at: Vec3,
     turn_degrees: f32,
+    scale: f32,
+    yaw_offset: f32,
     speed: f32,
     lead_seconds: f32,
     path: String,
@@ -192,6 +364,31 @@ fn entity_of(listed: &Listed, character: &str) -> Option<Entity> {
         .iter()
         .find(|(_, known)| known == character)
         .map(|(entity, _)| *entity)
+}
+
+fn carousel_order<'a>(
+    lobby: &'a LobbyNumbers,
+    roster: &'a [String],
+    listed: &'a Listed,
+) -> Vec<&'a str> {
+    let mut order: Vec<&str> = roster.iter().map(String::as_str).collect();
+    for member in &lobby.title.group {
+        if !order.contains(&member.character.as_str()) {
+            order.push(member.character.as_str());
+        }
+    }
+    for (_, character) in listed {
+        if !order.contains(&character.as_str()) {
+            order.push(character.as_str());
+        }
+    }
+    order
+}
+
+fn ring_target_angle(order: &[&str], chosen: &str) -> f32 {
+    let count = order.len().max(1);
+    let slot = order.iter().position(|known| *known == chosen).unwrap_or(0);
+    -(slot as f32) * (TAU / count as f32)
 }
 
 fn title_plan(
@@ -215,6 +412,8 @@ fn title_plan(
             Wanted {
                 at: anchor + Vec3::from_array(member.at),
                 turn_degrees: member.turn_degrees,
+                scale: 1.0,
+                yaw_offset: 0.0,
                 speed: member.speed,
                 lead_seconds: member.lead_seconds,
                 path,
@@ -226,10 +425,19 @@ fn title_plan(
 
 fn select_plan(
     lobby: &LobbyNumbers,
-    (listed, chosen): (&Listed, &str),
+    (listed, order, chosen): (&Listed, &[&str], &str),
+    (ring_angle, ring_vel, ring_raw): (f32, f32, f32),
     problems: &mut Vec<String>,
 ) -> Vec<(Entity, Wanted)> {
     let anchor = Vec3::from_array(lobby.place.at);
+    let front = anchor + Vec3::from_array(lobby.select.front.at);
+    let cam_pos = anchor + Vec3::from_array(lobby.select.camera.position);
+    let axis = (front - cam_pos)
+        .with_y(0.0)
+        .try_normalize()
+        .unwrap_or(Vec3::NEG_Z);
+    let lat = Vec3::new(-axis.z, 0.0, axis.x);
+    let center = front + axis * CAROUSEL_DEPTH_M;
     let group = &lobby.title.group;
     let speed = |character: &str| {
         group
@@ -237,63 +445,147 @@ fn select_plan(
             .find(|member| member.character == character)
             .map_or(1.0, |member| member.speed)
     };
-    let mut order: Vec<&str> = group
-        .iter()
-        .map(|member| member.character.as_str())
-        .collect();
-    for (_, character) in listed {
-        if !order.contains(&character.as_str()) {
-            order.push(character.as_str());
-        }
+    if entity_of(listed, chosen).is_none() {
+        problems.push(format!(
+            "flow.character {chosen:?}: no scene entity carries lobby_figure {{character {chosen:?}}}"
+        ));
     }
+    let count = order.len().max(1);
+    let step = TAU / count as f32;
+    let motion_bank = math::clamp(ring_vel * 0.065, -0.26, 0.26);
+    let travel_arc = math::sin(math::clamp(ring_raw, 0.0, 1.0) * PI);
+    let arrive_pop = if ring_raw < 1.0 {
+        math::sin(math::clamp(ring_raw, 0.0, 1.0) * PI) * 0.035
+    } else {
+        0.0
+    };
     let mut planned = Vec::new();
-    match entity_of(listed, chosen) {
-        Some(entity) => planned.push((
+    for (slot, character) in order.iter().enumerate() {
+        let Some(entity) = entity_of(listed, character) else {
+            continue;
+        };
+        let theta = slot as f32 * step + ring_angle;
+        let (sin, cos) = math::sin_cos(theta);
+        let is_chosen = *character == chosen;
+        let lift = if is_chosen { CAROUSEL_LIFT_M * travel_arc } else { 0.0 };
+        let at = center - axis * (CAROUSEL_DEPTH_M * cos) + lat * (CAROUSEL_WIDTH_M * sin)
+            + Vec3::Y * lift;
+        let frontness = (cos + 1.0) * 0.5;
+        let scale = 0.88 + 0.12 * frontness + if is_chosen { arrive_pop } else { 0.0 };
+        let path = if is_chosen {
+            "$.lobby.select.front".to_owned()
+        } else {
+            format!("$.lobby.select.carousel[{slot}]")
+        };
+        planned.push((
             entity,
             Wanted {
-                at: anchor + Vec3::from_array(lobby.select.front.at),
+                at,
                 turn_degrees: lobby.select.front.turn_degrees,
-                speed: speed(chosen),
+                scale,
+                yaw_offset: motion_bank,
+                speed: speed(character),
                 lead_seconds: 0.0,
-                path: "$.lobby.select.front".to_owned(),
+                path,
             },
-        )),
-        None => problems.push(format!(
-            "flow.character {chosen:?}: no scene entity carries lobby_figure {{character {chosen:?}}}"
-        )),
-    }
-    let others = order.into_iter().filter(|character| *character != chosen);
-    for ((at, spot), character) in lobby.select.back.iter().enumerate().zip(others) {
-        if let Some(entity) = entity_of(listed, character) {
-            planned.push((
-                entity,
-                Wanted {
-                    at: anchor + Vec3::from_array(spot.at),
-                    turn_degrees: spot.turn_degrees,
-                    speed: speed(character),
-                    lead_seconds: 0.0,
-                    path: format!("$.lobby.select.back[{at}]"),
-                },
-            ));
-        }
+        ));
     }
     planned
+}
+
+fn update_turntable(
+    book: &mut LobbyBook,
+    devices: &Devices,
+    shot: Shot,
+    settings_open: bool,
+    now: f64,
+) {
+    let dt = if book.last_frame > 0.0 {
+        math::clamp((now - book.last_frame) as f32, 0.0, 0.1)
+    } else {
+        0.0
+    };
+    book.last_frame = now;
+    if shot != Shot::Select || settings_open {
+        book.drag_px = 0.0;
+        book.drag_x = None;
+        book.user_yaw_vel = 0.0;
+        if shot != Shot::Select {
+            book.user_yaw = 0.0;
+        }
+        return;
+    }
+    if devices.mouse.buttons.held(MouseButton::Left) {
+        let dx = if let Some(pos) = devices.mouse.position_pixels {
+            let delta = book.drag_x.map_or(0.0, |prev| pos.x - prev);
+            book.drag_x = Some(pos.x);
+            delta
+        } else {
+            book.drag_x = None;
+            devices.mouse.motion_pixels.x
+        };
+        book.drag_px += dx.abs();
+        if book.drag_px >= DRAG_START_PX && dx != 0.0 {
+            let delta = dx * DRAG_RAD_PER_PX;
+            book.user_yaw += delta;
+            if dt > 0.001 {
+                book.user_yaw_vel = delta / dt;
+            }
+        }
+    } else {
+        book.drag_px = 0.0;
+        book.drag_x = None;
+        if book.user_yaw_vel.abs() > 0.001 {
+            book.user_yaw += book.user_yaw_vel * dt;
+            book.user_yaw_vel *= (-DRAG_DAMP_RATE * dt).exp();
+        } else {
+            book.user_yaw_vel = 0.0;
+        }
+    }
 }
 
 fn cue_up(
     book: &mut LobbyBook,
     (shot, chosen, hero): (Option<Shot>, &str, Option<Entity>),
-    (lobby, now): (&LobbyNumbers, f64),
-    listed: &Listed,
-) {
-    let entering = book.shot != shot;
-    let from_hidden = book.shot.is_none() && shot.is_some();
+    (lobby, now, real_now): (&LobbyNumbers, f64, f64),
+    (listed, order): (&Listed, &[&str]),
+) -> (bool, bool, bool, f32) {
+    let prev_shot = book.shot;
+    let prev_hero = book.hero;
+    let entering = prev_shot != shot;
+    let from_hidden = prev_shot.is_none() && shot.is_some();
     book.shot = shot;
     let changed = book.chosen != chosen;
+    let target_angle = ring_target_angle(order, chosen);
+    let mut ring_delta = 0.0;
+    if entering && shot == Some(Shot::Select) {
+        book.ring.snap(target_angle);
+        book.user_yaw = 0.0;
+        book.user_yaw_vel = 0.0;
+        book.unspin = None;
+    } else if changed {
+        if shot == Some(Shot::Select) {
+            ring_delta = book.ring.turn_to(target_angle, real_now);
+        }
+        if let Some(old_hero) = prev_hero
+            && book.user_yaw.abs() > 1e-3
+        {
+            book.unspin = Some((old_hero, shortest_delta(0.0, book.user_yaw), real_now));
+        }
+        book.user_yaw = 0.0;
+        book.user_yaw_vel = 0.0;
+    } else if entering {
+        book.user_yaw = 0.0;
+        book.user_yaw_vel = 0.0;
+        book.unspin = None;
+    }
     if changed {
         chosen.clone_into(&mut book.chosen);
     }
+    book.hero = hero;
     book.cues
+        .retain(|entity, _| listed.iter().any(|(known, _)| known == entity));
+    book.motions
         .retain(|entity, _| listed.iter().any(|(known, _)| known == entity));
     book.bound
         .retain(|entity, _| listed.iter().any(|(known, _)| known == entity));
@@ -312,6 +604,12 @@ fn cue_up(
             cue.picking = false;
         }
     }
+    if entering && !from_hidden {
+        for motion in book.motions.values_mut() {
+            motion.begin_blend(real_now, STAGE_SWAP_SECONDS);
+        }
+    }
+    (entering, from_hidden, changed, ring_delta)
 }
 
 fn picked(
@@ -413,8 +711,10 @@ fn floored(
         return wanted.at;
     };
     let probe = lobby.checks.floor_probe_m;
-    match arena.ground_under(wanted.at + Vec3::Y * probe, probe * 2.0) {
-        Some(hit) => wanted.at.with_y(hit.point.y),
+    let lift = wanted.at.y;
+    let sample = wanted.at.with_y(0.0);
+    match arena.ground_under(sample + Vec3::Y * probe, probe * 2.0) {
+        Some(hit) => sample.with_y(hit.point.y + lift),
         None => {
             problems.push(format!(
                 "{}.at: no floor within {probe} m above or below {:?}",
@@ -452,7 +752,7 @@ type Figures<'w, 's> = Query<
 
 type Reads<'w> = (
     (Res<'w, Numbers>, Res<'w, Puppet>, Res<'w, Assets>),
-    Res<'w, Flow>,
+    (Res<'w, Flow>, Res<'w, Devices>),
     (Res<'w, FrameTime>, Res<'w, FixedTime>),
     Option<Res<'w, Arena>>,
 );
@@ -471,6 +771,11 @@ struct Scene<'a> {
     arena: Option<&'a Arena>,
     fit: Option<FigureFit>,
     now: f64,
+    real_now: f64,
+    shot: Shot,
+    hero: Option<Entity>,
+    user_yaw: f32,
+    unspin: Option<(Entity, f32, f64)>,
 }
 
 fn hide(
@@ -494,21 +799,80 @@ fn hide(
     }
 }
 
+fn clear_lobby(
+    book: &mut LobbyBook,
+    view: &mut ResMut<'_, LobbyView>,
+    figures: &Figures<'_, '_>,
+    spawner: &mut Spawner<LobbyBrick>,
+) {
+    book.shot = None;
+    book.hero = None;
+    book.ring = CarouselRing::default();
+    book.motions.clear();
+    book.user_yaw = 0.0;
+    book.user_yaw_vel = 0.0;
+    book.unspin = None;
+    book.drag_px = 0.0;
+    book.drag_x = None;
+    view.set_if_neq(LobbyView::default());
+    for (entity, _, _, node, play, (joints, _), _) in figures {
+        hide(spawner, (entity, node, play.is_some(), joints.is_some()));
+    }
+}
+
+fn place_figures<'a>(
+    scene: &'a Scene<'_>,
+    (planned, lobby, assets): (&[(Entity, Wanted)], &'a Arc<LobbyNumbers>, &Assets),
+    (book, figures): (&mut LobbyBook, &'a mut Figures<'_, '_>),
+    (moves, spawner, problems): (
+        &mut Moves<LobbyBrick>,
+        &mut Spawner<LobbyBrick>,
+        &mut Vec<String>,
+    ),
+) -> Vec<(&'a str, Option<Shown<'a>>)> {
+    let mut rows = Vec::new();
+    for (entity, lobby_figure, figure, node, play, (joints, clock), given) in figures {
+        let character = lobby_figure.character.as_str();
+        let clips = lobby.clips.get(character);
+        if clips.is_none() {
+            problems.push(format!("$.lobby.clips: no row for lobby figure {character:?}"));
+        }
+        let found = planned.iter().find(|(known, _)| *known == entity);
+        let (Some((_, wanted)), Some(clips)) = (found, clips) else {
+            book.motions.remove(&entity);
+            hide(spawner, (entity, node, play.is_some(), joints.is_some()));
+            rows.push((character, None));
+            continue;
+        };
+        let picked = bound(book, (entity, &figure, assets), (lobby, clips, character), problems);
+        let cue = book.cues.entry(entity).or_default();
+        let shown = placed(
+            scene,
+            (wanted, clips, picked),
+            (cue, &mut book.motions),
+            (entity, node, play, (joints, clock), given),
+            (moves, spawner, problems),
+        );
+        rows.push((character, Some(shown)));
+    }
+    rows
+}
+
 fn stage(
-    ((numbers, puppet, assets), flow, (frame, fixed), arena): Reads,
+    ((numbers, puppet, assets), (flow, devices), (frame, fixed), arena): Reads,
     mut figures: Figures,
     (mut book, mut view, mut stats, (mut moves, mut spawner)): Writes,
 ) {
     let book = &mut *book;
     let mut problems = Vec::new();
     let read = numbers_of(book, &numbers);
-    let lobby = match &read {
-        Some(Ok(lobby)) => Some(Arc::clone(lobby)),
-        Some(Err(problem)) => {
+    let (lobby, roster) = match &read {
+        Some((Ok(lobby), roster)) => (Some(Arc::clone(lobby)), roster.as_slice()),
+        Some((Err(problem), _)) => {
             problems.push(problem.clone());
-            None
+            (None, &[][..])
         }
-        None => None,
+        None => (None, &[][..]),
     };
     let shot = lobby.as_ref().and(Shot::of(flow.stage));
     let mut listed: Vec<(Entity, String)> = figures
@@ -517,44 +881,39 @@ fn stage(
         .collect();
     listed.sort_unstable_by_key(|(entity, _)| *entity);
     let (Some(lobby), Some(shot)) = (lobby, shot) else {
-        book.shot = None;
-        view.set_if_neq(LobbyView::default());
-        for (entity, _, _, node, play, (joints, _), _) in &figures {
-            hide(
-                &mut spawner,
-                (entity, node, play.is_some(), joints.is_some()),
-            );
-        }
+        clear_lobby(book, &mut view, &figures, &mut spawner);
         report(&mut stats, (flow.stage, None, None), Vec::new, problems);
         return;
     };
-    let planned = match shot {
-        Shot::Title => title_plan(&lobby, &listed, &mut problems),
-        Shot::Select => select_plan(&lobby, (&listed, &flow.character), &mut problems),
-    };
+    let order = carousel_order(&lobby, roster, &listed);
     let hero = (shot == Shot::Select)
         .then(|| entity_of(&listed, &flow.character))
         .flatten();
-    let now = fixed.elapsed_seconds;
-    let entering = book.shot != Some(shot);
-    cue_up(
+    let (now, real_now) = (fixed.elapsed_seconds, frame.real_elapsed);
+    let (entering, from_hidden, changed, ring_delta) = cue_up(
         book,
         (Some(shot), &flow.character, hero),
-        (&lobby, now),
-        &listed,
+        (&lobby, now, real_now),
+        (&listed, &order),
     );
+    update_turntable(book, &devices, shot, flow.settings_open, real_now);
+    let ring_sample = book.ring.sample(real_now);
+    let planned = match shot {
+        Shot::Title => title_plan(&lobby, &listed, &mut problems),
+        Shot::Select => select_plan(&lobby, (&listed, &order, &flow.character), ring_sample, &mut problems),
+    };
     let camera = match shot {
         Shot::Title => lobby.title.camera,
         Shot::Select => lobby.select.camera,
     }
     .moved(Vec3::from_array(lobby.place.at));
     if entering || view.camera != Some(camera) {
-        view.set_if_neq(LobbyView {
-            camera: Some(camera),
-            since: frame.real_elapsed,
-        });
+        let duration = if from_hidden { 0.0 } else { CAMERA_BLEND_SECONDS };
+        view.transition_to(camera, real_now, duration);
+    } else if shot == Shot::Select && changed {
+        view.nudge(real_now, if ring_delta >= 0.0 { 1.0 } else { -1.0 });
     }
-    let drifted = view.shot(frame.real_elapsed).unwrap_or((
+    let drifted = view.shot(real_now).unwrap_or((
         Vec3::from_array(camera.position),
         Vec3::from_array(camera.target),
         camera.fov_degrees,
@@ -566,49 +925,22 @@ fn stage(
         arena: arena.as_deref(),
         fit: puppet.eye_fit(&numbers),
         now,
+        real_now,
+        shot,
+        hero,
+        user_yaw: book.user_yaw,
+        unspin: book.unspin,
     };
-    let mut rows = Vec::new();
-    for (entity, lobby_figure, figure, node, play, (joints, clock), given) in &mut figures {
-        let character = lobby_figure.character.as_str();
-        let clips = lobby.clips.get(character);
-        if clips.is_none() {
-            problems.push(format!(
-                "$.lobby.clips: no row for lobby figure {character:?}"
-            ));
-        }
-        let found = planned.iter().find(|(known, _)| *known == entity);
-        let (Some((_, wanted)), Some(clips)) = (found, clips) else {
-            hide(
-                &mut spawner,
-                (entity, node, play.is_some(), joints.is_some()),
-            );
-            rows.push((character, None));
-            continue;
-        };
-        let picks = (&lobby, clips, character);
-        let picked = bound(book, (entity, &figure, &assets), picks, &mut problems);
-        let cue = book.cues.entry(entity).or_default();
-        let shown = placed(
-            &scene,
-            (wanted, clips, picked),
-            cue,
-            (entity, node, play, (joints, clock), given),
-            (&mut moves, &mut spawner, &mut problems),
-        );
-        rows.push((character, Some(shown)));
-    }
+    let rows = place_figures(
+        &scene,
+        (&planned, &lobby, &assets),
+        (book, &mut figures),
+        (&mut moves, &mut spawner, &mut problems),
+    );
     report(
         &mut stats,
-        (
-            flow.stage,
-            Some(shot),
-            Some((lobby.place.name.as_str(), drifted.0)),
-        ),
-        || {
-            (rows.into_iter())
-                .map(|(character, shown)| row(&scene, character, shown))
-                .collect()
-        },
+        (flow.stage, Some(shot), Some((lobby.place.name.as_str(), drifted.0))),
+        || rows.into_iter().map(|(c, s)| row(&scene, c, s)).collect(),
         problems,
     );
 }
@@ -655,6 +987,21 @@ fn row(scene: &Scene<'_>, character: &str, shown: Option<Shown<'_>>) -> LobbyFig
     }
 }
 
+fn extra_yaw(scene: &Scene<'_>, entity: Entity) -> f32 {
+    if scene.shot == Shot::Select && scene.hero == Some(entity) {
+        return scene.user_yaw;
+    }
+    if let Some((who, yaw, started)) = scene.unspin
+        && who == entity
+    {
+        let t = math::clamp(((scene.real_now - started) / UNSPIN_SECONDS) as f32, 0.0, 1.0);
+        if t < 1.0 {
+            return yaw * (1.0 - ease_out_quint(t));
+        }
+    }
+    0.0
+}
+
 type Standing<'r, 'a> = (
     Entity,
     &'r Node,
@@ -666,7 +1013,7 @@ type Standing<'r, 'a> = (
 fn placed<'a>(
     scene: &Scene<'_>,
     (wanted, clips, picked): (&Wanted, &'a Clips, Picked),
-    cue: &mut Cue,
+    (cue, motions): (&mut Cue, &mut BTreeMap<Entity, FigureMotion>),
     (entity, node, play, (joints, clock), (limbs, fit)): Standing<'_, 'a>,
     (moves, spawner, problems): (
         &mut Moves<LobbyBrick>,
@@ -677,12 +1024,23 @@ fn placed<'a>(
     let lobby = scene.lobby;
     let feet = floored(scene.arena, (lobby, wanted), problems);
     let toward = Vec3::from_array(scene.camera.position) - feet;
-    let yaw = math::atan2(toward.x, toward.z) + wanted.turn_degrees.to_radians();
+    let base_yaw = math::atan2(toward.x, toward.z)
+        + wanted.turn_degrees.to_radians()
+        + wanted.yaw_offset
+        + extra_yaw(scene, entity);
+    let mut drawn_feet = feet;
+    let mut drawn_yaw = base_yaw;
     if let Some(mut transform) = moves.get_mut(entity) {
+        let motion = motions
+            .entry(entity)
+            .or_insert_with(|| FigureMotion::settled(feet, base_yaw, wanted.scale, transform.scale));
+        let (pos, yaw, scale) = motion.apply(scene.real_now, (feet, base_yaw, wanted.scale));
+        drawn_feet = pos;
+        drawn_yaw = yaw;
         let next = Transform {
-            translation: feet,
+            translation: pos,
             rotation: Quat::from_rotation_y(yaw),
-            scale: transform.scale,
+            scale: motion.base_scale * scale,
         };
         transform.set_if_neq(next);
     }
@@ -719,8 +1077,8 @@ fn placed<'a>(
         );
     }
     Shown {
-        feet,
-        yaw,
+        feet: drawn_feet,
+        yaw: drawn_yaw,
         clips,
         weight,
         visible: shown,
