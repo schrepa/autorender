@@ -189,6 +189,28 @@ impl<G: Game> PageHost<G> {
         self.host.cursor_mode() as u32
     }
 
+    pub fn max_pixel_ratio(&self) -> f32 {
+        self.host.max_pixel_ratio().unwrap_or(0.0)
+    }
+
+    pub fn set_safe_insets(&mut self, top: f32, right: f32, bottom: f32, left: f32) {
+        self.host.set_safe_insets([top, right, bottom, left]);
+    }
+
+    pub fn set_input_capabilities(
+        &mut self,
+        coarse_pointer: bool,
+        can_hover: bool,
+        can_lock_pointer: bool,
+    ) {
+        self.host
+            .set_input_capabilities(engine_core::InputCapabilities {
+                coarse_pointer,
+                can_hover,
+                can_lock_pointer,
+            });
+    }
+
     pub fn take_sound(&mut self) -> Vec<f64> {
         use engine_core::SoundOrder;
         let mut orders = Vec::new();

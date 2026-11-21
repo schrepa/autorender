@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0a101b" />
-    <title>Game Player</title>
+    <title>Player</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <style>
       :root {
@@ -24,7 +24,7 @@
         --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
       html body.engine-page { background: var(--bg); color: var(--ink); }
       body:not([data-dev]) .engine-hud { display: none !important; }
       .message { display: none !important; }
@@ -39,18 +39,35 @@
         border: 1px solid var(--border);
         box-shadow: 0 24px 64px #00000080;
       }
-      .player[data-view="theater"], :root:fullscreen .player {
+      .player[data-view="theater"], .player[data-view="immersive"], :root:fullscreen .player {
         --w: 100vw; width: 100vw; height: 100vh; height: 100dvh;
         border-radius: 0; border: 0; box-shadow: none;
       }
       .screen { position: relative; flex: 1 1 0; min-height: 0; background: #000; overflow: hidden; }
-      .engine-page .screen #scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .engine-page .screen #scene { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
       .bar {
-        flex: none; height: var(--bar-h);
-        display: flex; align-items: center; gap: 8px; padding: 0 12px 0 18px;
+        flex: none;
+        height: calc(var(--bar-h) + env(safe-area-inset-bottom, 0px));
+        display: flex; align-items: center; gap: 10px;
+        padding: 0 max(12px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(16px, env(safe-area-inset-left, 0px));
         background: var(--bar); border-top: 1px solid var(--border);
         color: var(--ink); font: 600 15px/1 var(--sans);
       }
+      .exit-immersive {
+        display: none;
+        position: absolute;
+        top: calc(10px + env(safe-area-inset-top, 0px));
+        right: calc(10px + env(safe-area-inset-right, 0px));
+        z-index: 8;
+        width: 36px; height: 36px; padding: 0;
+        place-items: center;
+        border: 1px solid #ffffff30; border-radius: 10px;
+        background: #0b1422a8; color: var(--ink);
+        cursor: pointer;
+      }
+      .exit-immersive svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .player[data-view="immersive"] .exit-immersive { display: grid; }
+      .player[data-view="immersive"] .bar { display: none; }
       .title-slot {
         margin-right: auto; min-width: 0; display: flex; align-items: center; gap: 10px;
       }
@@ -146,9 +163,14 @@
         background: var(--accent); color: var(--accent-ink); font: 700 14px/1 var(--sans);
       }
       #failure-reload:hover, #failure-reload:focus-visible { filter: brightness(1.08); outline: none; }
-      @media (max-width: 640px) {
+      @media (max-width: 640px), (max-height: 520px) {
         .player { --w: 100vw; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; border: 0; box-shadow: none; }
         .card { padding: 20px; }
+      }
+      @media (max-height: 520px) {
+        .player { --bar-h: 40px; }
+        .bar { font-size: 13px; }
+        .bar button { width: 34px; height: 28px; }
       }
       @media (prefers-reduced-motion: reduce) {
         .overlay, .overlay * { animation: none !important; transition: none !important; }
@@ -160,6 +182,9 @@
     <main id="player" class="player" data-view="window">
       <div class="screen">
         <canvas id="scene" tabindex="0" aria-label="Game view" style="visibility: hidden"></canvas>
+        <button id="view-exit" class="exit-immersive" type="button" aria-label="Exit full screen" title="Exit full screen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v4a1 1 0 0 1-1 1H4M15 4v4a1 1 0 0 0 1 1h4M20 15h-4a1 1 0 0 0-1 1v4M4 15h4a1 1 0 0 1 1 1v4"/></svg>
+        </button>
         <section id="loading" class="overlay" aria-live="polite">
           <div class="loader">
             <h1 id="loading-title" class="loader-title">Loading</h1>
@@ -206,14 +231,14 @@
       </div>
       <div class="bar">
         <div class="title-slot">
-          <span id="game-title">Game Player</span>
+          <span id="game-title">Player</span>
           <select id="game-select" aria-label="Select game" hidden></select>
         </div>
         <button id="view-theater" type="button" aria-pressed="false" aria-label="Theater mode" title="Theater mode">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/></svg>
         </button>
         <button id="view-full" type="button" aria-label="Full screen" title="Full screen">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15h-4a1 1 0 0 0-1 1v4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>
         </button>
       </div>
     </main>

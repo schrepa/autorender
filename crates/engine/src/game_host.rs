@@ -368,6 +368,18 @@ impl<G: Game> GameHost<G> {
         self.app.set_pixel_ratio(ratio);
     }
 
+    pub fn max_pixel_ratio(&self) -> Option<f32> {
+        self.app.max_pixel_ratio()
+    }
+
+    pub fn set_safe_insets(&mut self, insets: [f32; 4]) {
+        self.app.set_safe_insets(insets);
+    }
+
+    pub fn set_input_capabilities(&mut self, capabilities: engine_core::InputCapabilities) {
+        self.app.set_input_capabilities(capabilities);
+    }
+
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
         self.app.set_refresh_interval(milliseconds);
     }

@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use engine::math;
 use engine::prelude::*;
-use engine::{FrameTime, Projection, Views};
+use engine::{FrameTime, Views};
 use engine_core::DevSetting;
 
 use crate::play::actors::{Actor, Body, Health, Human, Wish};
@@ -529,11 +529,8 @@ fn spread_px(views: &Views, spread_deg: f32) -> f32 {
     let Some(main) = views.main() else {
         return 0.0;
     };
-    let fov = match main.lens.projection {
-        Projection::Perspective {
-            vertical_fov_radians,
-        } => vertical_fov_radians,
-        Projection::Orthographic { .. } | Projection::Fitted { .. } => return 0.0,
+    let Some(fov) = main.lens.projection.effective_vertical_fov(main.aspect()) else {
+        return 0.0;
     };
     let tan = |angle: f32| {
         let (sin, cos) = math::sin_cos(angle);

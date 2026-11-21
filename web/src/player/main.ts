@@ -6,6 +6,13 @@ import { failed, part, progress, refuseGpu, setGameName, shown } from "./shell";
 
 interface KeyboardLock { lock(codes?: string[]): Promise<void>; unlock(): void }
 
+interface OrientationLock {
+  lock?(orientation: "landscape" | "portrait"): Promise<void>;
+  unlock?(): void;
+}
+
+type PreferredOrientation = "landscape" | "portrait" | "any";
+
 interface GameEntry {
   id: string;
   title: string;
@@ -13,6 +20,7 @@ interface GameEntry {
   scene: string;
   export?: string;
   wasm?: string;
+  preferred_orientation?: PreferredOrientation;
 }
 
 interface GameCatalog {
@@ -30,13 +38,42 @@ interface GameModule extends Record<string, unknown> {
 
 const SCENE_SUFFIX = ".scene.json";
 const keyboard = (navigator as Navigator & { keyboard?: KeyboardLock }).keyboard;
+const orientationApi = (screen as Screen & { orientation?: OrientationLock }).orientation;
+let preferredOrientation: PreferredOrientation = "any";
+let orientationLocked = false;
 
-function immerse() {
+function lockPreferredOrientation() {
+  if (preferredOrientation !== "landscape" && preferredOrientation !== "portrait") return;
+  if (typeof orientationApi?.lock !== "function") return;
+  void orientationApi.lock(preferredOrientation).then(
+    () => { orientationLocked = true; },
+    () => undefined,
+  );
+}
+
+function unlockOrientation() {
+  if (!orientationLocked) return;
+  orientationLocked = false;
+  try { orientationApi?.unlock?.(); } catch {}
+}
+
+function immerse(player: HTMLElement) {
   if (document.fullscreenElement) return;
   const root = document.documentElement;
-  if (typeof root.requestFullscreen !== "function") return;
+  if (typeof root.requestFullscreen !== "function") {
+    player.dataset.view = player.dataset.view === "immersive" ? "window" : "immersive";
+    return;
+  }
   const entered = root.requestFullscreen({ navigationUI: "hide" });
-  void entered.then(() => keyboard?.lock()).catch(() => undefined);
+  void entered.then(
+    () => {
+      lockPreferredOrientation();
+      void keyboard?.lock().catch(() => undefined);
+    },
+    () => {
+      player.dataset.view = "immersive";
+    },
+  );
 }
 
 function followRatio() {
@@ -57,7 +94,12 @@ function views() {
     scene.focus();
   });
   part("view-full").addEventListener("click", () => {
-    immerse();
+    immerse(player);
+    scene.focus();
+  });
+  part("view-exit").addEventListener("click", () => {
+    player.dataset.view = "window";
+    theater.setAttribute("aria-pressed", "false");
     scene.focus();
   });
 }
@@ -65,8 +107,11 @@ function views() {
 function interruptions() {
   document.addEventListener("fullscreenchange", () => {
     if (document.fullscreenElement) return;
+    unlockOrientation();
     keyboard?.unlock();
-    if (document.pointerLockElement) document.exitPointerLock();
+    if (document.pointerLockElement && typeof document.exitPointerLock === "function") {
+      document.exitPointerLock();
+    }
   });
   window.addEventListener("beforeunload", event => {
     if (document.pointerLockElement || document.fullscreenElement) event.preventDefault();
@@ -127,6 +172,7 @@ async function loadCatalog(): Promise<GameCatalog> {
 }
 
 function setupCatalogUi(games: GameEntry[], active: GameEntry) {
+  preferredOrientation = active.preferred_orientation ?? "any";
   setGameName(active.title);
   if (games.length <= 1) return;
   const title = part("game-title");

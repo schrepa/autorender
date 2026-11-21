@@ -28,12 +28,14 @@ mod games {
     pub use engine_core::{
         AlphaMode, Asset, AssetId, AssetKind, AssetKinds, Assets, Brick, BrickList, Bricks, Camera,
         Clear, Clock, Compare, ComponentKind, Cull, CursorMode, DepthBias, DevSetting, Devices,
-        DrawKind, Drawn, DrawnTable, Engine, Filter, FixedTime, FrameTime, GlobalTransforms,
-        GroupReport, GroupStage, Host, InstanceValues, KindDecl, Layers, LightingModel, Listing,
-        Material, MeshFile, Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, Poses,
-        Present, Projection, Rect, RenderState, Sampler, SceneComponents, Schedule, Show, Source,
-        Spawner, Stats, Target, Teleport, Texture, TextureRef, TouchPhase, Transform, UvTransform,
-        VertexStream, View, ViewFacts, ViewSkip, Views, math, set_parent,
+        DrawKind, Drawn, DrawnTable, Engine, Filter, FixedTime, FovFit, FrameFacts, FrameTime,
+        GlobalTransforms, GroupReport, GroupStage, Host, InputCapabilities, InputModality,
+        InputProfile, InstanceValues, KindDecl, Layers, LightingModel, Listing, Material, MeshFile,
+        Mobility, MouseButton, Mover, Moves, Node, Pace, Parent, Pause, Pointer, PointerKind,
+        Poses, Present, Projection, Rect, RenderState, Sampler, SceneComponents, Schedule, Show,
+        Source, Spawner, Stats, Target, Teleport, Texture, TextureRef, TouchPhase, Transform,
+        UvTransform, VertexStream, View, ViewFacts, ViewSkip, ViewportClass, Views, math,
+        set_parent,
     };
 }
 pub use games::*;

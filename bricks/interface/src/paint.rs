@@ -5,6 +5,7 @@ use engine::math;
 use glam::Vec2;
 
 use super::draw::{Align, Anchor, Area, Case, InterfaceDraw, Plate, Rgba, Stroke, TextStyle, Weight};
+use super::env::EnvFacts;
 use super::layout::{
     Arc, Cond, Element, FlowItem, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint,
     Picture, Piece, Screen, Set, Shadow, Stack, Template, TextKind, Want,
@@ -17,6 +18,7 @@ const WHITE: Rgba = Rgba([1.0; 4]);
 pub(super) struct Painter<'a, F: Facts> {
     pub draw: &'a mut InterfaceDraw,
     pub facts: &'a F,
+    pub env: EnvFacts,
     pub look: &'a F::Look,
     pub layout: &'a Layout,
     pub maps: &'a BTreeMap<String, MapFrame>,
@@ -106,9 +108,13 @@ fn placed(draw: &InterfaceDraw, rows: &[RowState], element: &Element) -> Option<
     Some(area)
 }
 
-fn met<F: Facts>(facts: &F, conds: &[Cond]) -> bool {
+fn read_val<'a, F: Facts>(facts: &'a F, env: EnvFacts, slot: super::Slot) -> Val<'a> {
+    env.read(slot).unwrap_or_else(|| facts.read(slot))
+}
+
+fn met<F: Facts>(facts: &F, env: EnvFacts, conds: &[Cond]) -> bool {
     conds.iter().all(|cond| {
-        let value = facts.read(cond.slot);
+        let value = read_val(facts, env, cond.slot);
         let met = match &cond.equals {
             None => value.truthy(),
             Some(wanted) => equal(value, wanted),
@@ -309,7 +315,7 @@ impl<F: Facts> Painter<'_, F> {
     }
 
     fn holds(&self, conds: &[Cond]) -> bool {
-        met(self.facts, conds)
+        met(self.facts, self.env, conds)
     }
 
     fn color(&self, paint: Option<&Paint>) -> Option<Rgba> {
@@ -347,7 +353,9 @@ impl<F: Facts> Painter<'_, F> {
         for piece in &template.pieces {
             match piece {
                 Piece::Text(text) => out.push_str(text),
-                Piece::Value(slot, format) => formatted(self.facts.read(*slot), *format, out),
+                Piece::Value(slot, format) => {
+                formatted(read_val(self.facts, self.env, *slot), *format, out)
+            }
             }
         }
     }
@@ -653,7 +661,8 @@ impl<F: Facts> Painter<'_, F> {
             Kind::Flow { .. } => self.flow(element, &look, area, s),
             Kind::Piece(name) => {
                 let facts = self.facts;
-                let holds = |conds: &[Cond]| met(facts, conds);
+                let env = self.env;
+                let holds = |conds: &[Cond]| met(facts, env, conds);
                 let mut pen = Pen {
                     draw: &mut *self.draw,
                     layout: self.layout,

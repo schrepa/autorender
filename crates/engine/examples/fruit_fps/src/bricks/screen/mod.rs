@@ -10,6 +10,7 @@ mod more;
 mod paths;
 mod pieces;
 mod tactics;
+mod touch;
 
 use std::collections::BTreeMap;
 
@@ -337,6 +338,7 @@ impl Brick for ScreenBrick {
             .systems(Schedule::Presentation, more::fill_more)
             .systems(Schedule::Presentation, tactics::fill_tactics)
             .systems(Schedule::Presentation, control::control)
+            .systems(Schedule::Presentation, touch::sync)
             .systems(Schedule::Presentation, more::fill_menu)
             .systems(Schedule::Presentation, facts::fill_board)
             .dev(|dev| {

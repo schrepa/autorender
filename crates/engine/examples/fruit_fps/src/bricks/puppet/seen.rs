@@ -165,6 +165,7 @@ fn eye_of(scene: Option<&SceneContext>, cameras: &Lenses, aspect_max: f32) -> Op
     let vertical = match camera.projection {
         Projection::Perspective {
             vertical_fov_radians,
+            ..
         } => Some(vertical_fov_radians),
         Projection::Orthographic { .. } | Projection::Fitted { .. } => None,
     };

@@ -41,6 +41,7 @@ pub struct Start {
     pub surface: SurfaceForm,
     pub present: Present,
     pub show: Show,
+    pub max_pixel_ratio: Option<f32>,
     pub groups: &'static [&'static str],
     pub variant: Option<fn(wgpu::Features) -> &'static str>,
 }
@@ -81,6 +82,7 @@ impl Default for Start {
                 latency: 2,
             },
             show: Show::WhenReady,
+            max_pixel_ratio: Some(2.0),
             groups: &[],
             variant: None,
         }

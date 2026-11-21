@@ -117,7 +117,12 @@ const status = element("status");
 const message = element("message");
 const pause = element<HTMLButtonElement>("pause");
 const reset = element<HTMLButtonElement>("reset");
-const input = new BrowserInput(canvas);
+const safeProbe = document.createElement("div");
+safeProbe.style.cssText = "position:fixed;inset:0;width:0;height:0;pointer-events:none;visibility:hidden;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)";
+document.body.append(safeProbe);
+let ratioCap = 0;
+let effectiveRatio = window.devicePixelRatio || 1;
+const input = new BrowserInput(canvas, () => effectiveRatio);
 const sound = new PageSound(canvas);
 const instrumented = import.meta.env.MODE === "profiling";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
@@ -179,22 +184,42 @@ function suspendGame() {
   live()?.game.suspend();
 }
 
+function readSafeInsets(ratio: number): [number, number, number, number] {
+  const style = getComputedStyle(safeProbe);
+  const parse = (value: string) => {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed * ratio : 0;
+  };
+  return [
+    parse(style.paddingTop),
+    parse(style.paddingRight),
+    parse(style.paddingBottom),
+    parse(style.paddingLeft),
+  ];
+}
+
 function resize() {
   const current = live();
   if (!current) return;
   const bounds = canvas.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
+  const raw = window.devicePixelRatio || 1;
+  const ratio = ratioCap > 0 ? Math.min(raw, ratioCap) : raw;
+  effectiveRatio = ratio;
   const width = Math.round(bounds.width * ratio);
   const height = Math.round(bounds.height * ratio);
   const idle = pixelWidth === 0 || pixelHeight === 0;
   pixelWidth = width;
   pixelHeight = height;
   current.game.set_pixel_ratio(ratio);
+  const [top, right, bottom, left] = readSafeInsets(ratio);
+  current.game.set_safe_insets(top, right, bottom, left);
   if (idle && width > 0 && height > 0) resume();
 }
 const observer = new ResizeObserver(resize);
 observer.observe(canvas);
 window.addEventListener("resize", resize, listenerOptions);
+window.visualViewport?.addEventListener("resize", resize, listenerOptions);
+window.visualViewport?.addEventListener("scroll", resize, listenerOptions);
 
 function halt() {
   if (request > 0) cancelAnimationFrame(request);
@@ -373,6 +398,7 @@ async function start() {
   state = { kind: "preparing", game: created, paused: false, shown: false };
   handOver(created, () => undefined).catch(fail);
   created.apply_host_settings(location.search);
+  ratioCap = created.max_pixel_ratio();
   connectInput();
   resize();
   message.hidden = true;
@@ -389,7 +415,7 @@ async function start() {
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
   lifecycle.abort();
-  stopClock(); observer.disconnect(); input.dispose(); sound.dispose(); ticks.port1.close();
+  stopClock(); observer.disconnect(); safeProbe.remove(); input.dispose(); sound.dispose(); ticks.port1.close();
   state = { kind: "disposed" };
   current?.game.free();
 });

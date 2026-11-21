@@ -213,6 +213,14 @@ impl<B: Copy + Into<u8>, const WORDS: usize> Buttons<B, WORDS> {
             *released |= std::mem::take(held);
         }
     }
+
+    pub fn any_held(&self) -> bool {
+        self.held.iter().any(|&word| word != 0)
+    }
+
+    pub fn any_pressed(&self) -> bool {
+        self.pressed.iter().any(|&word| word != 0)
+    }
 }
 
 impl<B, const WORDS: usize> Buttons<B, WORDS> {
@@ -335,12 +343,173 @@ impl Devices {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerKind {
+    #[default]
+    Fine,
+    Coarse,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pointer {
+    pub position_pixels: Option<Vec2>,
+    pub delta_pixels: Vec2,
+    pub down: bool,
+    pub pressed: bool,
+    pub released: bool,
+    pub cancelled: bool,
+    pub hovering: bool,
+    pub kind: PointerKind,
+    primary_touch: Option<u32>,
+}
+
+impl Pointer {
+    pub const fn is_coarse(self) -> bool {
+        matches!(self.kind, PointerKind::Coarse)
+    }
+
+    pub fn update(&mut self, devices: &Devices) {
+        let prev = self.position_pixels;
+        if let Some(id) = self.primary_touch {
+            if let Some(touch) = devices.touches.iter().find(|touch| touch.id == id) {
+                self.apply_touch(*touch, prev);
+                return;
+            }
+            self.primary_touch = None;
+            self.position_pixels = None;
+            self.delta_pixels = Vec2::ZERO;
+            self.down = false;
+            self.pressed = false;
+            self.released = false;
+            self.cancelled = true;
+            self.hovering = false;
+            self.kind = PointerKind::Coarse;
+            return;
+        }
+        if let Some(touch) = devices
+            .touches
+            .iter()
+            .find(|touch| touch.phase == TouchPhase::Began)
+        {
+            self.primary_touch = Some(touch.id);
+            self.apply_touch(*touch, None);
+            return;
+        }
+        if !devices.touches.is_empty() {
+            self.position_pixels = None;
+            self.delta_pixels = Vec2::ZERO;
+            self.down = false;
+            self.pressed = false;
+            self.released = false;
+            self.cancelled = false;
+            self.hovering = false;
+            self.kind = PointerKind::Coarse;
+            return;
+        }
+        let left = &devices.mouse.buttons;
+        let down = left.held(MouseButton::Left);
+        let pressed = left.pressed(MouseButton::Left);
+        let released = left.released(MouseButton::Left);
+        let mouse_present = devices.mouse.inside || down || pressed || released;
+        if mouse_present {
+            let pos = devices.mouse.position_pixels;
+            self.delta_pixels = match (pos, prev) {
+                (Some(now), Some(before)) if self.kind == PointerKind::Fine => now - before,
+                _ => Vec2::ZERO,
+            };
+            self.position_pixels = pos;
+            self.down = down;
+            self.pressed = pressed;
+            self.released = released;
+            self.cancelled = false;
+            self.hovering = devices.mouse.inside;
+            self.kind = PointerKind::Fine;
+        } else {
+            self.position_pixels = None;
+            self.delta_pixels = Vec2::ZERO;
+            self.down = false;
+            self.pressed = false;
+            self.released = false;
+            self.cancelled = false;
+            self.hovering = false;
+        }
+    }
+
+    fn apply_touch(&mut self, touch: Touch, prev: Option<Vec2>) {
+        self.kind = PointerKind::Coarse;
+        self.hovering = false;
+        match touch.phase {
+            TouchPhase::Began => {
+                self.position_pixels = Some(touch.position_pixels);
+                self.delta_pixels = Vec2::ZERO;
+                self.down = true;
+                self.pressed = true;
+                self.released = false;
+                self.cancelled = false;
+            }
+            TouchPhase::Moved => {
+                self.delta_pixels = prev.map_or(Vec2::ZERO, |before| touch.position_pixels - before);
+                self.position_pixels = Some(touch.position_pixels);
+                self.down = true;
+                self.pressed = false;
+                self.released = false;
+                self.cancelled = false;
+            }
+            TouchPhase::Ended => {
+                self.delta_pixels = prev.map_or(Vec2::ZERO, |before| touch.position_pixels - before);
+                self.position_pixels = Some(touch.position_pixels);
+                self.down = false;
+                self.pressed = false;
+                self.released = true;
+                self.cancelled = false;
+                self.primary_touch = None;
+            }
+            TouchPhase::Cancelled => {
+                self.position_pixels = None;
+                self.delta_pixels = Vec2::ZERO;
+                self.down = false;
+                self.pressed = false;
+                self.released = false;
+                self.cancelled = true;
+                self.primary_touch = None;
+            }
+        }
+    }
+
+    pub fn drop_edges(&mut self) {
+        self.delta_pixels = Vec2::ZERO;
+        self.pressed = false;
+        self.released = false;
+        self.cancelled = false;
+        if self.kind == PointerKind::Coarse && !self.down {
+            self.position_pixels = None;
+        }
+    }
+}
+
 impl crate::Engine {
     pub fn accept_input(&mut self, devices: Devices) {
         let mut ticked = devices.clone();
         ticked.carry(&self.ticked);
         self.ticked = ticked;
-        self.app.world_mut().insert_resource(devices);
+        let world = self.app.world_mut();
+        let mut profile = world
+            .get_resource::<crate::host::InputProfile>()
+            .copied()
+            .unwrap_or_default();
+        let prev_profile = profile;
+        profile.observe(&devices);
+        if profile != prev_profile {
+            world.insert_resource(profile);
+        }
+        let mut pointer = world
+            .get_resource::<Pointer>()
+            .copied()
+            .unwrap_or_default();
+        pointer.update(&devices);
+        world.insert_resource(pointer);
+        world.insert_resource(devices);
     }
 
     pub fn drop_marks(&mut self) {
@@ -348,6 +517,9 @@ impl crate::Engine {
         let world = self.app.world_mut();
         let held = world.resource::<Devices>().held();
         world.insert_resource(held);
+        if let Some(mut pointer) = world.get_resource_mut::<Pointer>() {
+            pointer.drop_edges();
+        }
     }
 
     pub(crate) fn drop_tick_marks(&mut self) {

@@ -62,7 +62,7 @@ pub use engine_place::{
 pub use engine_place::{BitValue, FrameId, GpuBits, Readable, Readback, gpu_bits};
 pub use engine_place::{Clear, Rect, Target, View, ViewSkip};
 pub use engine_codec::content_hash;
-pub use engine_registry::FrameFacts;
+pub use engine_registry::{FrameFacts, ViewportClass};
 #[cfg(feature = "dev")]
 pub use engine_registry::{
     Answer, Kind, Lands, NameEntry, Reach, ReachMut, register, unavailable,
@@ -317,6 +317,8 @@ impl Engine {
             .init_resource::<Closing>()
             .init_resource::<DeviceLimits>()
             .init_resource::<Devices>()
+            .init_resource::<Pointer>()
+            .init_resource::<InputProfile>()
             .init_resource::<CursorMode>()
             .init_resource::<Sounds>()
             .init_resource::<engine_place::DrawnPoses>()

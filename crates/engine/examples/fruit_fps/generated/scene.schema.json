@@ -669,6 +669,14 @@
       ],
       "type": "object"
     },
+    "FovFit": {
+      "enum": [
+        "vertical",
+        "horizontal",
+        "min_span"
+      ],
+      "type": "string"
+    },
     "FreeCamera": {
       "additionalProperties": false,
       "properties": {
@@ -1547,6 +1555,10 @@
           "properties": {
             "Perspective": {
               "properties": {
+                "fit": {
+                  "$ref": "#/$defs/FovFit",
+                  "default": "vertical"
+                },
                 "vertical_fov_radians": {
                   "format": "float",
                   "type": "number"

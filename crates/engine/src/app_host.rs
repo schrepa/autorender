@@ -1,5 +1,7 @@
 use bevy_ecs::resource::Resource;
-use engine_core::{BrickList, Devices, Engine, FrameFacts, Host, Present, RenderStats};
+use engine_core::{
+    BrickList, Devices, Engine, FrameFacts, Host, InputCapabilities, Present, RenderStats,
+};
 use engine_registry::Registry;
 use engine_render::{Picture, RenderTarget, Renderer};
 
@@ -47,6 +49,8 @@ pub(crate) struct AppHost {
     overlay: crate::host::SettingsLog,
     pipelines_kept: u32,
     pixel_ratio: f64,
+    max_pixel_ratio: Option<f32>,
+    safe_insets: [f32; 4],
     refresh: f64,
     gpu_ms: GpuTime,
 }
@@ -96,6 +100,7 @@ impl AppHost {
             gpu,
             surface,
             present,
+            max_pixel_ratio,
             ..
         } = start;
         let mut start = std::pin::pin!(Renderer::start(target, gpu, surface, present));
@@ -109,7 +114,7 @@ impl AppHost {
             std::task::Poll::Pending => start.await,
         }?;
         let renderer = Box::new(starting.finish());
-        let mut host = Self::with(engine, renderer, ticks_per_second);
+        let mut host = Self::with(engine, renderer, ticks_per_second, max_pixel_ratio);
         host.claim_passes(ahead)?;
         for error in host.engine.notices() {
             log_notice(error);
@@ -117,7 +122,12 @@ impl AppHost {
         Ok(host)
     }
 
-    fn with(mut engine: Engine, renderer: Box<Renderer>, ticks_per_second: u32) -> Self {
+    fn with(
+        mut engine: Engine,
+        renderer: Box<Renderer>,
+        ticks_per_second: u32,
+        max_pixel_ratio: Option<f32>,
+    ) -> Self {
         engine.app.world_mut().init_resource::<FrameStats>();
         engine
             .app
@@ -141,6 +151,8 @@ impl AppHost {
             overlay: crate::host::SettingsLog::default(),
             pipelines_kept: 0,
             pixel_ratio: 1.0,
+            max_pixel_ratio: max_pixel_ratio.filter(|ratio| ratio.is_finite() && *ratio > 0.0),
+            safe_insets: [0.0; 4],
             refresh: 1000.0 / f64::from(ticks_per_second),
             gpu_ms,
         }
@@ -181,6 +193,24 @@ impl AppHost {
         } else {
             1.0
         };
+    }
+
+    pub fn max_pixel_ratio(&self) -> Option<f32> {
+        self.max_pixel_ratio
+    }
+
+    pub fn set_safe_insets(&mut self, insets: [f32; 4]) {
+        self.safe_insets = insets.map(|value| {
+            if value.is_finite() && value > 0.0 {
+                value
+            } else {
+                0.0
+            }
+        });
+    }
+
+    pub fn set_input_capabilities(&mut self, capabilities: InputCapabilities) {
+        self.engine.report_input_capabilities(capabilities);
     }
 
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
@@ -343,6 +373,7 @@ impl AppHost {
         let facts = FrameFacts {
             display_size,
             pixel_ratio: self.pixel_ratio as f32,
+            safe_insets_pixels: self.safe_insets,
         };
         self.engine.set_frame(facts);
         self.collect_pipelines();

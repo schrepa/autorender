@@ -521,6 +521,7 @@ dependencies = [
  "engine_ecs",
  "engine_render",
  "engine_sources",
+ "engine_touch",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -552,6 +553,17 @@ dependencies = [
  "glam 0.30.9",
  "schemars",
  "serde",
+]
+
+[[package]]
+name = "brick_touch"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_sources",
+ "engine_touch",
 ]
 
 [[package]]
@@ -1333,6 +1345,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_touch"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "engine_visible_sets"
 version = "0.1.0"
 
@@ -1441,6 +1464,7 @@ dependencies = [
  "brick_interface",
  "brick_present",
  "brick_sound",
+ "brick_touch",
  "bytemuck",
  "cook",
  "cook_model",
@@ -1459,6 +1483,7 @@ dependencies = [
  "engine_rig",
  "engine_solids",
  "engine_sources",
+ "engine_touch",
  "engine_visible_sets",
  "glam 0.30.9",
  "gltf",

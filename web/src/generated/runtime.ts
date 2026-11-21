@@ -34,6 +34,8 @@ export interface Runtime {
   file_failed(uri: string, error: string): void;
   set_file_root(root: string): void;
   set_pixel_ratio(ratio: number): void;
+  set_safe_insets(top: number, right: number, bottom: number, left: number): void;
+  set_input_capabilities(coarse_pointer: boolean, can_hover: boolean, can_lock_pointer: boolean): void;
   apply_host_settings(query: string): void;
   take_sound(): Float64Array;
   take_sound_bytes(): Uint8Array;
@@ -45,6 +47,7 @@ export interface Runtime {
   voice_dropped(voice: number, error: string): void;
   stats(): Json<FrameStats>;
   cursor_mode(): number;
+  max_pixel_ratio(): number;
   files(): Json<SceneFileList>;
   dev_push?(line: string): number;
   dev_take?(): Json<DevTake>;

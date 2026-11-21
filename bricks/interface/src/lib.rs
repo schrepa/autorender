@@ -6,9 +6,11 @@
 engine::brick!();
 
 mod draw;
+mod env;
 mod gpu;
 mod layout;
 mod paint;
+mod touch_paint;
 mod value;
 
 use std::collections::BTreeMap;
@@ -467,7 +469,7 @@ stats! {
 #[derive(Resource, Default)]
 struct InterfaceBook {
     applied: Option<Arc<Loaded>>,
-    painted: Option<(Option<u64>, Vec2)>,
+    painted: Option<(Option<u64>, FrameFacts, env::EnvFacts, Option<u64>)>,
     pulsing: bool,
     pulses: Vec<paint::PulseState>,
     rows: Vec<paint::RowState>,
@@ -567,18 +569,21 @@ type Shared<'w, 's, F> = (
     Res<'w, Views>,
     Option<Res<'w, F>>,
     Res<'w, FrameTime>,
+    Option<Res<'w, InputProfile>>,
+    Option<Res<'w, engine_touch::TouchState>>,
 );
 
 fn draw_interface<F: Facts>(
-    (sources, looks, load, views, facts, time): Shared<F>,
+    (sources, looks, load, views, facts, time, profile, touch): Shared<F>,
     mut draw: ResMut<InterfaceDraw>,
     mut book: ResMut<InterfaceBook>,
     mut stats: Stats<InterfaceStats>,
     (mut scratch, mut spare): (Local<String>, Local<String>),
     skipped: Query<(), With<ViewSkip>>,
 ) {
-    let shown = views.frame().display_size;
-    let size = Vec2::new(shown.x as f32, shown.y as f32);
+    let frame_facts = views.frame();
+    let env = env::EnvFacts::of(frame_facts, profile.as_deref().copied());
+    let touch_rev = touch.as_deref().map(engine_touch::TouchState::revision);
     let source = sources.iter().next();
     let look = looks.iter().next();
     let draw = &mut *draw;
@@ -600,11 +605,12 @@ fn draw_interface<F: Facts>(
         .zip(book.applied.clone())
         .zip(facts);
     let mark = ready.as_ref().map(|(_, facts)| facts.version());
+    let key = (mark, frame_facts, env, touch_rev);
     let fresh = book.pulsing
-        || book.painted != Some((mark, size))
+        || book.painted != Some(key)
         || look.as_ref().is_some_and(|look| look.is_changed());
     if fresh {
-        draw.begin(size);
+        draw.begin(frame_facts);
         book.pulsing = false;
         if let Some(((look, applied), facts)) = ready
             && let Some(screen) = facts.screen()
@@ -612,6 +618,7 @@ fn draw_interface<F: Facts>(
             let mut painter = paint::Painter {
                 draw: &mut *draw,
                 facts,
+                env,
                 look,
                 layout: &applied.layout,
                 maps: &applied.maps,
@@ -627,8 +634,11 @@ fn draw_interface<F: Facts>(
             };
             painter.screen(screen);
         }
+        if let Some(touch) = touch.as_deref() {
+            touch_paint::paint_touch(draw, touch);
+        }
         draw.settle();
-        book.painted = Some((mark, size));
+        book.painted = Some(key);
     }
     let held = book.held.filter(|_| !skipped.is_empty() && !draw.opaque);
     let changed = fresh || draw.held != held;

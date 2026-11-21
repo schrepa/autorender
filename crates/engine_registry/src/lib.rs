@@ -22,5 +22,5 @@ pub use record::{BrickRecord, BrickSystems, RecordExt};
 pub use registry::register;
 pub use registry::{BrickId, Registry, RegistryBuilder, settings};
 pub use scene::{SceneRead, SpawnedBy};
-pub use services::FrameFacts;
+pub use services::{FrameFacts, ViewportClass};
 pub use state::{BrickStates, Despawn, SwitchFn, Switches};

@@ -20,6 +20,7 @@ pub mod round;
 pub mod screen;
 pub mod skinned;
 pub mod sound;
+pub mod touch;
 pub mod turns;
 pub mod view;
 pub mod walk;

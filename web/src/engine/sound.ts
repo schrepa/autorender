@@ -33,9 +33,16 @@ export class PageSound {
   private readonly abort = new AbortController();
 
   constructor(canvas: HTMLCanvasElement) {
-    const wake = () => { if (this.context?.state === "suspended") void this.context.resume().catch(() => undefined); };
-    canvas.addEventListener("pointerdown", wake, { signal: this.abort.signal });
-    canvas.addEventListener("keydown", wake, { signal: this.abort.signal });
+    const wake = () => {
+      if (this.context && this.context.state !== "running") {
+        void this.context.resume().catch(() => undefined);
+      }
+    };
+    const options = { signal: this.abort.signal, passive: true };
+    window.addEventListener("pointerdown", wake, options);
+    window.addEventListener("touchstart", wake, options);
+    window.addEventListener("touchend", wake, options);
+    canvas.addEventListener("keydown", wake, options);
   }
 
   exchange(game: SoundGame) {

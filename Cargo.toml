@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_profile", "crates/engine_sources", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "tools/xtask", "tools/xtask_engine", "crates/engine_checks", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_codec", "tools/kinds", "crates/engine_gpu_bits", "tools/command_line", "crates/engine_rig", "crates/engine_meshpack", "crates/engine_solids", "crates/engine_nav", "crates/engine_bindings", "crates/engine_visible_sets", "crates/engine_drawing", "bricks/present", "tools/cook", "tools/cook_texture", "tools/cook_rays", "tools/cook_model", "crates/engine/examples/fruit_fps", "bricks/sound", "bricks/interface"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_profile", "crates/engine_sources", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "tools/xtask", "tools/xtask_engine", "crates/engine_checks", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_codec", "tools/kinds", "crates/engine_gpu_bits", "tools/command_line", "crates/engine_rig", "crates/engine_meshpack", "crates/engine_solids", "crates/engine_nav", "crates/engine_bindings", "crates/engine_touch", "crates/engine_visible_sets", "crates/engine_drawing", "bricks/present", "bricks/touch", "tools/cook", "tools/cook_texture", "tools/cook_rays", "tools/cook_model", "crates/engine/examples/fruit_fps", "bricks/sound", "bricks/interface"]
 resolver = "3"
 exclude = ["vendor", "archive"]
 
@@ -40,9 +40,11 @@ engine_solids = { path = "crates/engine_solids" }
 engine_nav = { path = "crates/engine_nav" }
 brick_sound = { path = "bricks/sound" }
 engine_bindings = { path = "crates/engine_bindings" }
+engine_touch = { path = "crates/engine_touch" }
 engine_visible_sets = { path = "crates/engine_visible_sets" }
 engine_drawing = { path = "crates/engine_drawing" }
 brick_present = { path = "bricks/present" }
+brick_touch = { path = "bricks/touch" }
 brick_interface = { path = "bricks/interface" }
 cook = { path = "tools/cook" }
 cook_texture = { path = "tools/cook_texture" }

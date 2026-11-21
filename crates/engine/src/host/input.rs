@@ -76,7 +76,9 @@ impl DeviceGatherer {
 
     pub fn touch(&mut self, id: u32, x: f32, y: f32, phase: TouchPhase) {
         let position_pixels = Vec2::new(finite(x), finite(y));
-        let ends = matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled);
+        if phase == TouchPhase::Began {
+            self.ending.retain(|touch| touch.id != id);
+        }
         let Some(touch) = self.devices.touches.iter_mut().find(|touch| touch.id == id) else {
             if phase == TouchPhase::Began {
                 self.devices.touches.push(Touch {
@@ -89,15 +91,28 @@ impl DeviceGatherer {
             return;
         };
         touch.position_pixels = position_pixels;
-        match (touch.phase, ends) {
-            (TouchPhase::Began, true) => self.ending.push(Touch {
-                id,
-                position_pixels,
-                motion_pixels: Vec2::ZERO,
-                phase,
-            }),
-            (TouchPhase::Began, false) => {}
-            (TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled, _) => {
+        match (touch.phase, phase) {
+            (TouchPhase::Began, TouchPhase::Ended | TouchPhase::Cancelled) => {
+                self.ending.retain(|touch| touch.id != id);
+                self.ending.push(Touch {
+                    id,
+                    position_pixels,
+                    motion_pixels: Vec2::ZERO,
+                    phase,
+                });
+            }
+            (TouchPhase::Began, TouchPhase::Began) => {
+                touch.motion_pixels = Vec2::ZERO;
+            }
+            (TouchPhase::Began, TouchPhase::Moved) => {}
+            (TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled, TouchPhase::Began) => {
+                touch.phase = TouchPhase::Began;
+                touch.motion_pixels = Vec2::ZERO;
+            }
+            (
+                TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled,
+                TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled,
+            ) => {
                 touch.phase = phase;
             }
         }

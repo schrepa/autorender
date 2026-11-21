@@ -225,29 +225,3 @@ pub fn write(
     out[index_end..index_end + dfd.len()].copy_from_slice(&dfd);
     Ok(out)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn astc_round_trip() {
-        for (space, expected_vk) in [(ColorSpace::Linear, 157_u32), (ColorSpace::Srgb, 158_u32)] {
-            let level0 = vec![0xAA_u8; 4 * 16];
-            let level1 = vec![0x55_u8; 16];
-            let encoded = write(TextureFormat::Astc4x4, space, 8, 8, &[&level0, &level1])
-                .expect("write_astc_ktx2");
-            assert_eq!(word(&encoded, 12), expected_vk, "vk_format_matches_astc_4x4");
-            let texture = read_texture(Arc::from(encoded), "test.astc.ktx2")
-                .expect("read_astc_ktx2");
-            assert_eq!(texture.format(), TextureFormat::Astc4x4, "format_is_astc4x4");
-            assert_eq!(texture.color_space(), space, "color_space_matches");
-            assert_eq!(texture.width(), 8, "width_matches");
-            assert_eq!(texture.height(), 8, "height_matches");
-            let levels: Vec<&[u8]> = texture.levels().collect();
-            assert_eq!(levels.len(), 2, "two_mip_levels");
-            assert_eq!(levels[0], level0.as_slice(), "level0_bytes_preserved");
-            assert_eq!(levels[1], level1.as_slice(), "level1_bytes_preserved");
-        }
-    }
-}

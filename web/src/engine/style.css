@@ -1,5 +1,5 @@
-body.engine-page{margin:0;background:#0a101b;color:#e4eaf4;font:12px/1.5 ui-sans-serif,system-ui,sans-serif;overflow:hidden}
-.engine-page #scene{position:fixed;inset:0;width:100vw;height:100vh;display:block;outline:none;touch-action:none}
+body.engine-page{margin:0;background:#0a101b;color:#e4eaf4;font:12px/1.5 ui-sans-serif,system-ui,sans-serif;overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.engine-page #scene{position:fixed;inset:0;width:100vw;height:100vh;display:block;outline:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .engine-page .engine-hud{position:fixed;top:12px;left:12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;max-width:calc(100vw - 24px);padding:8px 12px;border-radius:6px;background:#0b1422d0}
 .engine-page .engine-hud button{font:inherit;color:inherit;background:#111c2b;border:1px solid #364253;border-radius:4px;padding:4px 9px;cursor:pointer}
 .engine-page #status i{display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50%;background:#71e0ba}

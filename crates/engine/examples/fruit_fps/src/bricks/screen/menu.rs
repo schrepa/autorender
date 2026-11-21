@@ -3,7 +3,7 @@ use std::fmt::Write;
 
 use brick_interface::{Area, InterfaceDraw, Slot};
 use engine::prelude::*;
-use engine::{Devices, MouseButton};
+use engine::{Devices, Pointer};
 use engine_bindings::{Binding, Input};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -251,6 +251,7 @@ pub(super) struct MenuState {
 
 pub(super) struct Nav<'a> {
     pub devices: &'a Devices,
+    pub pointer: &'a Pointer,
     pub keys: &'a MenuInputs,
     pub draw: &'a InterfaceDraw,
     pub source: &'a MenuSource,
@@ -263,25 +264,31 @@ impl Nav<'_> {
     }
 
     fn clicked(&self) -> bool {
-        self.devices.mouse.buttons.pressed(MouseButton::Left)
+        self.pointer.pressed
     }
 
     fn held(&self) -> bool {
-        self.devices.mouse.buttons.held(MouseButton::Left)
+        self.pointer.down
+    }
+
+    fn hovering(&self) -> bool {
+        self.pointer.hovering
     }
 
     fn over(&self, shown: Shown, spot: Slot) -> Option<Area> {
-        let pointer = self.devices.mouse.position_pixels?;
-        self.draw
-            .element(shown as usize, spot)
-            .filter(|area| area.contains(pointer))
+        self.draw.element_hit(shown as usize, spot, self.pointer)
     }
 
     fn over_slider(&self, shown: Shown, spot: Slot) -> Option<Area> {
-        let pointer = self.devices.mouse.position_pixels?;
+        let pointer = self.pointer.position_pixels?;
+        let coarse_pad = if self.pointer.is_coarse() {
+            22.0 * self.draw.pixel_ratio()
+        } else {
+            0.0
+        };
         self.draw.element(shown as usize, spot).filter(|area| {
-            let pad_x = area.h;
-            let pad_y = area.h * 1.4;
+            let pad_x = engine::math::max(area.h, coarse_pad);
+            let pad_y = engine::math::max(area.h * 1.4, coarse_pad);
             pointer.x >= area.x - pad_x
                 && pointer.x <= area.x + area.w + pad_x
                 && pointer.y >= area.y - pad_y
@@ -325,15 +332,16 @@ fn buttons<const N: usize>(
     (names, spots): ([&'static str; N], [Slot; N]),
     sounds: &mut ScreenSounds,
 ) -> Option<&'static str> {
-    let hover = nav.hovered(shown, spots);
+    let hit = nav.hovered(shown, spots);
+    let hover = hit.filter(|_| nav.hovering());
     state.hover = hover;
-    state.press = hover.filter(|_| nav.held());
+    state.press = hit.filter(|_| nav.held());
     note_hover(state, hover.map(|at| hover_tag(shown, 1, at)), sounds);
-    if let Some(hover) = hover {
-        state.focus = hover;
+    if let Some(hit) = hit {
+        state.focus = hit;
         if nav.clicked() {
             sounds.play(UiSound::Click);
-            return Some(names[hover]);
+            return Some(names[hit]);
         }
     }
     let before = state.focus;
@@ -469,23 +477,27 @@ fn select(
             sounds.play(UiSound::Click);
         }
     }
-    let hover_play = nav.over(Shown::Select, PLAY).is_some();
+    let hit_play = nav.over(Shown::Select, PLAY).is_some();
     let held = nav.held();
-    let key = hover_card
+    let hovering = nav.hovering();
+    let hover_card_ui = hover_card.filter(|_| hovering);
+    let hover_level_ui = hover_level.filter(|_| hovering);
+    let hover_play_ui = hit_play && hovering;
+    let key = hover_card_ui
         .map(|index| hover_tag(Shown::Select, 1, index))
-        .or_else(|| hover_level.map(|index| hover_tag(Shown::Select, 2, index)))
-        .or_else(|| hover_play.then(|| hover_tag(Shown::Select, 3, 0)));
+        .or_else(|| hover_level_ui.map(|index| hover_tag(Shown::Select, 2, index)))
+        .or_else(|| hover_play_ui.then(|| hover_tag(Shown::Select, 3, 0)));
     note_hover(state, key, sounds);
-    state.hover = hover_play.then_some(0);
-    state.press = (hover_play && held).then_some(0);
+    state.hover = hover_play_ui.then_some(0);
+    state.press = (hit_play && held).then_some(0);
     let select_facts = &mut facts.menu.select;
-    select_facts.hover_card = hover_card;
+    select_facts.hover_card = hover_card_ui;
     select_facts.press_card = hover_card.filter(|_| held);
-    select_facts.hover_level = hover_level;
+    select_facts.hover_level = hover_level_ui;
     select_facts.press_level = hover_level.filter(|_| held);
-    select_facts.hover_play = hover_play;
-    select_facts.press_play = hover_play && held;
-    if nav.pressed(&nav.keys.confirm) || (nav.clicked() && hover_play) {
+    select_facts.hover_play = hover_play_ui;
+    select_facts.press_play = hit_play && held;
+    if nav.pressed(&nav.keys.confirm) || (nav.clicked() && hit_play) {
         sounds.play(UiSound::Ready);
         start(flow);
     }
@@ -657,7 +669,7 @@ fn settings(
 fn slider_drag(nav: &Nav<'_>, slider: usize, values: &mut Values) {
     let (Some(area), Some(pointer)) = (
         nav.draw.element(Shown::Settings as usize, spot_of(SLIDER, slider)),
-        nav.devices.mouse.position_pixels,
+        nav.pointer.position_pixels,
     ) else {
         return;
     };
@@ -705,38 +717,47 @@ fn settings_pointer(
         slider_drag(nav, slider, values);
         state.focus = SLIDER_ROWS[slider];
     }
-    let hover_row = if hover_back {
-        Some(BACK_ROW)
-    } else if hover_invert {
-        Some(INVERT_ROW)
-    } else if hover_dot {
-        Some(DOT_ROW)
-    } else if hover_crosshair.is_some() {
-        Some(CROSSHAIR_ROW)
-    } else if hover_level.is_some() {
-        Some(BOTS_ROW)
+    let hovering = nav.hovering();
+    let hover_row = if hovering {
+        if hover_back {
+            Some(BACK_ROW)
+        } else if hover_invert {
+            Some(INVERT_ROW)
+        } else if hover_dot {
+            Some(DOT_ROW)
+        } else if hover_crosshair.is_some() {
+            Some(CROSSHAIR_ROW)
+        } else if hover_level.is_some() {
+            Some(BOTS_ROW)
+        } else {
+            hover_slider.map(|(_, row)| row)
+        }
     } else {
-        hover_slider.map(|(_, row)| row)
+        None
     };
-    let key = hover_back
-        .then(|| hover_tag(Shown::Settings, 1, 0))
-        .or_else(|| hover_invert.then(|| hover_tag(Shown::Settings, 2, 0)))
-        .or_else(|| hover_dot.then(|| hover_tag(Shown::Settings, 3, 0)))
-        .or_else(|| hover_level.map(|index| hover_tag(Shown::Settings, 4, index)))
-        .or_else(|| hover_crosshair.map(|index| hover_tag(Shown::Settings, 5, index)))
-        .or_else(|| hover_slider.map(|(slider, _)| hover_tag(Shown::Settings, 6, slider)));
+    let key = if hovering {
+        hover_back
+            .then(|| hover_tag(Shown::Settings, 1, 0))
+            .or_else(|| hover_invert.then(|| hover_tag(Shown::Settings, 2, 0)))
+            .or_else(|| hover_dot.then(|| hover_tag(Shown::Settings, 3, 0)))
+            .or_else(|| hover_level.map(|index| hover_tag(Shown::Settings, 4, index)))
+            .or_else(|| hover_crosshair.map(|index| hover_tag(Shown::Settings, 5, index)))
+            .or_else(|| hover_slider.map(|(slider, _)| hover_tag(Shown::Settings, 6, slider)))
+    } else {
+        None
+    };
     note_hover(state, key, sounds);
     state.hover = hover_row;
     state.press = (hover_back && held).then_some(BACK_ROW);
     let shown = &mut facts.menu.settings;
     shown.hover_row = hover_row;
-    shown.hover_level = hover_level;
+    shown.hover_level = hover_level.filter(|_| hovering);
     shown.press_level = hover_level.filter(|_| held);
-    shown.hover_crosshair = hover_crosshair;
-    shown.hover_back = hover_back;
+    shown.hover_crosshair = hover_crosshair.filter(|_| hovering);
+    shown.hover_back = hover_back && hovering;
     shown.press_back = hover_back && held;
-    shown.hover_invert = hover_invert;
-    shown.hover_dot = hover_dot;
+    shown.hover_invert = hover_invert && hovering;
+    shown.hover_dot = hover_dot && hovering;
 }
 
 fn settings_click(

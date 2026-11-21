@@ -35,6 +35,7 @@ engine_sources.workspace = true
 [dependencies]
 engine.workspace = true
 engine_bindings.workspace = true
+engine_touch.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
 engine_math.workspace = true
@@ -47,6 +48,7 @@ engine_visible_sets.workspace = true
 engine_drawing.workspace = true
 brick_sound.workspace = true
 brick_present.workspace = true
+brick_touch.workspace = true
 brick_interface.workspace = true
 bytemuck.workspace = true
 glam.workspace = true

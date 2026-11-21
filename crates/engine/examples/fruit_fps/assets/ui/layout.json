@@ -6777,7 +6777,8 @@
           ],
           "when": [
             "round.buying",
-            "!round.ready"
+            "!round.ready",
+            "!input.touch"
           ]
         },
         {
@@ -14052,7 +14053,8 @@
               "weight": "bold",
               "color": "paper"
             }
-          ]
+          ],
+          "when": "!input.touch"
         }
       ]
     },
@@ -20355,7 +20357,8 @@
               "weight": "bold",
               "color": "paper"
             }
-          ]
+          ],
+          "when": "!input.touch"
         }
       ]
     },
@@ -20975,7 +20978,8 @@
           "face": "text_bold",
           "weight": "bold",
           "align": "center",
-          "color": "ink_soft"
+          "color": "ink_soft",
+          "when": "!input.touch"
         }
       ]
     },
@@ -25493,7 +25497,8 @@
               "weight": "bold",
               "color": "paper"
             }
-          ]
+          ],
+          "when": "!input.touch"
         },
         {
           "id": "name_0",

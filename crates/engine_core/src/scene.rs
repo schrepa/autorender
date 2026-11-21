@@ -100,12 +100,59 @@ pub struct Camera {
     pub projection: Projection,
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FovFit {
+    #[default]
+    Vertical,
+    Horizontal,
+    MinSpan,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
 #[derive(schemars::JsonSchema)]
 pub enum Projection {
-    Perspective { vertical_fov_radians: f32 },
+    Perspective {
+        vertical_fov_radians: f32,
+        #[serde(default)]
+        fit: FovFit,
+    },
     Orthographic { height: f32 },
     Fitted { clip: [[f32; 4]; 4] },
+}
+
+impl Projection {
+    pub fn effective_vertical_fov(self, aspect: f32) -> Option<f32> {
+        let aspect = if aspect.is_finite() && aspect > 0.0 {
+            aspect
+        } else {
+            1.0
+        };
+        let Self::Perspective {
+            vertical_fov_radians,
+            fit,
+        } = self
+        else {
+            return None;
+        };
+        let min_fov = Camera::MIN_FOV_DEGREES.to_radians();
+        let max_fov = Camera::MAX_FOV_DEGREES.to_radians();
+        let adjusted = match fit {
+            FovFit::Vertical => vertical_fov_radians,
+            FovFit::Horizontal => 2.0 * ((vertical_fov_radians * 0.5).tan() / aspect).atan(),
+            FovFit::MinSpan => {
+                if aspect < 1.0 {
+                    2.0 * ((vertical_fov_radians * 0.5).tan() / aspect).atan()
+                } else {
+                    vertical_fov_radians
+                }
+            }
+        };
+        Some(crate::math::clamp(adjusted, min_fov, max_fov))
+    }
 }
 
 fn within(value: f32, min: f32, max: f32) -> bool {
@@ -130,6 +177,7 @@ impl Camera {
         match self.projection {
             Projection::Perspective {
                 vertical_fov_radians,
+                ..
             } if !within(
                 vertical_fov_radians,
                 Self::MIN_FOV_DEGREES.to_radians(),
@@ -163,9 +211,13 @@ impl Camera {
             1.0
         };
         match self.projection {
-            Projection::Perspective {
-                vertical_fov_radians,
-            } => Mat4::perspective_rh(vertical_fov_radians, aspect, self.far, self.near),
+            Projection::Perspective { .. } => {
+                let vertical_fov_radians = self
+                    .projection
+                    .effective_vertical_fov(aspect)
+                    .unwrap_or(1.0);
+                Mat4::perspective_rh(vertical_fov_radians, aspect, self.far, self.near)
+            }
             Projection::Orthographic { height } => {
                 let (half_width, half_height) = (height * aspect * 0.5, height * 0.5);
                 Mat4::orthographic_rh(

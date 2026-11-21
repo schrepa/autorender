@@ -411,7 +411,9 @@ fn read_of(text: &str, cx: &Context<'_>, at: &str) -> Result<Slot, String> {
             Err(_) => Seg::Key(part.to_owned()),
         })
         .collect();
-    (cx.slot)(&path).ok_or_else(|| format!("{at}: reads unknown data `{text}`"))
+    super::env::slot(&path)
+        .or_else(|| (cx.slot)(&path))
+        .ok_or_else(|| format!("{at}: reads unknown data `{text}`"))
 }
 
 fn cond(text: &str, cx: &Context<'_>, at: &str) -> Result<Cond, String> {

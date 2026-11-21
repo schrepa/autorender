@@ -1,13 +1,15 @@
 use brick_interface::{Element, InterfaceDraw};
 use engine::prelude::*;
-use engine::{CursorMode, Devices};
+use engine::{CursorMode, Devices, Pointer};
 use engine_core::{Closing, DevSetting};
+use engine_touch::TouchState;
 
 use crate::play::camera::TestCamera;
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::screen::{Options, ScreenBuys, ScreenSounds, ScreenState, UiSound};
 use crate::play::sound::Volume;
+use crate::play::touch;
 use crate::play::view::Controls;
 use crate::rules::{BuyRequest, Phase};
 
@@ -67,12 +69,13 @@ fn actions(
     }
 }
 
-fn hovered(draw: &InterfaceDraw, pointer: Option<Vec2>) -> Option<(CardList, usize)> {
-    draw.under(Shown::Buy as usize, pointer?).find_map(card_of)
+fn hovered(draw: &InterfaceDraw, pointer: &Pointer) -> Option<(CardList, usize)> {
+    draw.under_pointer(Shown::Buy as usize, pointer)
+        .find_map(card_of)
 }
 
 fn buying(
-    (devices, loaded, draw): (&Devices, &Loaded, &InterfaceDraw),
+    (devices, pointer, loaded, draw): (&Devices, &Pointer, &Loaded, &InterfaceDraw),
     facts: &HudFacts,
     buys: &mut ScreenBuys,
     book: &mut ScreenBook,
@@ -80,11 +83,12 @@ fn buying(
     prev_hovered: Option<(CardList, usize)>,
 ) {
     let keys = &loaded.keys;
-    let over = hovered(draw, book.pointer);
-    if over.is_some() && over != prev_hovered {
+    let over = hovered(draw, pointer);
+    let shown_hover = over.filter(|_| pointer.hovering);
+    if shown_hover.is_some() && shown_hover != prev_hovered {
         sounds.play(UiSound::Hover);
     }
-    book.hovered = over;
+    book.hovered = shown_hover;
     let mut asked = |request| {
         if let Some(request) = request {
             buys.requests.push(request);
@@ -92,7 +96,7 @@ fn buying(
         }
     };
     if let Some((take, give_back)) = over.map(|over| actions(facts, over)) {
-        if engine_bindings::pressed(devices, &keys.take) {
+        if pointer.pressed || engine_bindings::pressed(devices, &keys.take) {
             asked(take);
         }
         if engine_bindings::pressed(devices, &keys.give_back) {
@@ -108,6 +112,7 @@ fn buying(
 
 fn menus(
     nav: &Nav<'_>,
+    touch_pause: bool,
     (flow, state): (&mut Flow, &mut Showing),
     facts: &mut HudFacts,
     (menu_state, values, sounds): (&mut MenuState, &mut Values, &mut ScreenSounds),
@@ -117,7 +122,7 @@ fn menus(
         if escape && state.buy_open {
             state.buy_open = false;
             sounds.play(UiSound::Click);
-        } else if escape {
+        } else if escape || touch_pause {
             flow.stage = Stage::Paused;
             sounds.play(UiSound::Click);
         }
@@ -173,7 +178,7 @@ fn options_facts(
 }
 
 type Reads<'w> = (
-    Res<'w, Devices>,
+    (Res<'w, Devices>, Res<'w, Pointer>, Option<Res<'w, TouchState>>),
     DevSetting<'w, ScreenSetup>,
     Res<'w, InterfaceDraw>,
     Option<Res<'w, Numbers>>,
@@ -191,7 +196,7 @@ type Writes<'w> = (
 );
 
 pub(super) fn control(
-    (devices, setup, draw, numbers, (controls, options, volume), (load, camera)): Reads,
+    ((devices, pointer, touch_state), setup, draw, numbers, (controls, options, volume), (load, camera)): Reads,
     sources: Query<&ScreenSource>,
     (
         mut cursor,
@@ -215,6 +220,15 @@ pub(super) fn control(
         .as_deref()
         .and_then(Numbers::get)
         .map(|numbers| &numbers.keys);
+    let touch_pause = touch_state
+        .as_deref()
+        .is_some_and(|state| state.pressed(touch::PAUSE));
+    let touch_buy = touch_state
+        .as_deref()
+        .is_some_and(|state| state.pressed(touch::BUY));
+    let touch_close = touch_state
+        .as_deref()
+        .is_some_and(|state| state.pressed(touch::CLOSE));
     let mut next = *showing;
     let mut values = Values {
         controls: controls.clone(),
@@ -224,6 +238,7 @@ pub(super) fn control(
     if let Some(flow) = flow.as_deref_mut() {
         let nav = Nav {
             devices: &devices,
+            pointer: &pointer,
             keys: &loaded.menu_keys,
             draw: &draw,
             source: &source.menu,
@@ -232,6 +247,7 @@ pub(super) fn control(
         let asked = menu_state.quit_asked;
         menus(
             &nav,
+            touch_pause,
             (flow, &mut next),
             facts,
             (&mut menu_state, &mut values, &mut sounds),
@@ -257,12 +273,17 @@ pub(super) fn control(
         .is_none_or(|flow| flow.stage == Stage::Playing && !flow.settings_open);
     if facts.phase != Some(Phase::Buy) || !playing {
         next.buy_open = false;
-    } else if map.is_some_and(|map| engine_bindings::pressed(&devices, &map.buy_menu)) {
+    } else if touch_close && next.buy_open {
+        next.buy_open = false;
+        sounds.play(UiSound::Click);
+    } else if touch_buy || map.is_some_and(|map| engine_bindings::pressed(&devices, &map.buy_menu))
+    {
         next.buy_open = !next.buy_open;
         sounds.play(UiSound::Click);
     }
-    next.board_held =
-        playing && map.is_some_and(|map| engine_bindings::held(&devices, &map.scoreboard));
+    next.board_held = !touch_close
+        && playing
+        && map.is_some_and(|map| engine_bindings::held(&devices, &map.scoreboard));
     let flowing = flow.as_deref().and_then(menu::chosen_screen);
     next.shown = setup
         .get()
@@ -287,12 +308,12 @@ pub(super) fn control(
         numbers.as_deref(),
     );
     facts.screen = (!hud_hidden(camera.as_deref(), next.shown)).then_some(next.shown);
-    book.pointer = devices.mouse.position_pixels;
+    book.pointer = pointer.position_pixels;
     let prev_hovered = book.hovered;
     book.hovered = None;
-    if next.shown == Shown::Buy {
+    if next.shown == Shown::Buy && !touch_close {
         buying(
-            (&devices, loaded, &draw),
+            (&devices, &pointer, loaded, &draw),
             facts,
             &mut buys,
             &mut book,
@@ -301,6 +322,10 @@ pub(super) fn control(
         );
     }
     let hovered = book.hovered;
+    apply_buy_focus(facts, hovered);
+}
+
+fn apply_buy_focus(facts: &mut HudFacts, hovered: Option<(CardList, usize)>) {
     let lists = [
         (CardList::Weapons, &mut facts.buy.weapons),
         (CardList::Armor, &mut facts.buy.armor),

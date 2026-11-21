@@ -5,6 +5,7 @@
 
 use brick_present::PresentBrick;
 use brick_sound::SoundBrick;
+use brick_touch::TouchBrick;
 use engine::Start;
 use engine::prelude::wgpu::Features;
 use engine::prelude::*;
@@ -87,6 +88,7 @@ pub fn bricks<L: Listing>(list: L) -> L {
         .with::<LobbyBrick>()
         .with::<PathsBrick>()
         .with::<BotsBrick>()
+        .with::<TouchBrick>()
         .with::<BodyBrick>()
         .with::<ArmsBrick>()
         .with::<PowersBrick>()

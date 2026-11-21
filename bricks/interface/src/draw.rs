@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use engine::math;
 use engine::prelude::Resource;
-use engine_core::{Asset, Texture};
+use engine_core::{Asset, FrameFacts, Pointer, Texture};
 use glam::Vec2;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,18 @@ impl Area {
 
     pub fn center(&self) -> Vec2 {
         Vec2::new(self.x + self.w * 0.5, self.y + self.h * 0.5)
+    }
+
+    #[must_use]
+    pub fn expanded_to_min(&self, min_px: f32) -> Self {
+        let pad_x = math::max((min_px - self.w) * 0.5, 0.0);
+        let pad_y = math::max((min_px - self.h) * 0.5, 0.0);
+        Self {
+            x: self.x - pad_x,
+            y: self.y - pad_y,
+            w: self.w + pad_x * 2.0,
+            h: self.h + pad_y * 2.0,
+        }
     }
 }
 
@@ -293,6 +305,8 @@ fn span(size: f32, grow: f32, (offset, doubled): (f32, bool)) -> f32 {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct InterfaceDraw {
     pub(super) size: Vec2,
+    pub(super) safe: Area,
+    pub(super) pixel_ratio: f32,
     pub(super) reference: Vec2,
     pub(super) min_text_px: f32,
     pub(super) sharpen_levels: f32,
@@ -315,7 +329,33 @@ pub struct InterfaceDraw {
     pub(super) layout: Option<Arc<Layout>>,
 }
 
+const COARSE_MIN_TARGET_DP: f32 = 44.0;
+
 impl InterfaceDraw {
+    pub fn pixel_ratio(&self) -> f32 {
+        if self.pixel_ratio.is_finite() && self.pixel_ratio > 0.0 {
+            self.pixel_ratio
+        } else {
+            1.0
+        }
+    }
+
+    pub fn safe_area(&self) -> Area {
+        self.safe
+    }
+
+    pub fn hit(&self, area: Area, pointer: &Pointer) -> bool {
+        let Some(point) = pointer.position_pixels else {
+            return false;
+        };
+        let target = if pointer.is_coarse() {
+            area.expanded_to_min(COARSE_MIN_TARGET_DP * self.pixel_ratio())
+        } else {
+            area
+        };
+        target.contains(point)
+    }
+
     pub fn element(&self, screen: usize, spot: Slot) -> Option<Area> {
         let screen = self.layout.as_deref()?.screens.get(screen)?;
         let element = screen
@@ -323,6 +363,11 @@ impl InterfaceDraw {
             .iter()
             .find(|element| element.spot == Some(spot))?;
         Some(self.place(element.rect, element.anchor))
+    }
+
+    pub fn element_hit(&self, screen: usize, spot: Slot, pointer: &Pointer) -> Option<Area> {
+        self.element(screen, spot)
+            .filter(|area| self.hit(*area, pointer))
     }
 
     pub fn under(&self, screen: usize, point: Vec2) -> impl Iterator<Item = &Element> {
@@ -333,8 +378,26 @@ impl InterfaceDraw {
             .filter(move |element| self.place(element.rect, element.anchor).contains(point))
     }
 
-    pub(super) fn begin(&mut self, size: Vec2) {
+    pub fn under_pointer(&self, screen: usize, pointer: &Pointer) -> impl Iterator<Item = &Element> {
+        let screen = self.layout.as_deref().and_then(|layout| layout.screens.get(screen));
+        let pointer = *pointer;
+        screen
+            .into_iter()
+            .flat_map(|screen| screen.elements.iter().rev())
+            .filter(move |element| self.hit(self.place(element.rect, element.anchor), &pointer))
+    }
+
+    pub(super) fn begin(&mut self, facts: FrameFacts) {
+        let size = Vec2::new(facts.display_size.x as f32, facts.display_size.y as f32);
+        let [sx, sy, sw, sh] = facts.safe_rect_pixels();
         self.size = size;
+        self.pixel_ratio = facts.effective_pixel_ratio();
+        self.safe = Area {
+            x: sx,
+            y: sy,
+            w: sw,
+            h: sh,
+        };
         self.quads.clear();
         self.first = 0;
         self.floor.clear();
@@ -426,10 +489,17 @@ impl InterfaceDraw {
         if self.reference.x <= 0.0 || self.reference.y <= 0.0 {
             return 0.0;
         }
-        math::min(
-            self.size.x / self.reference.x,
-            self.size.y / self.reference.y,
-        )
+        let w = if self.safe.w > 0.0 {
+            self.safe.w
+        } else {
+            self.size.x
+        };
+        let h = if self.safe.h > 0.0 {
+            self.safe.h
+        } else {
+            self.size.y
+        };
+        math::min(w / self.reference.x, h / self.reference.y)
     }
 
     pub(super) fn place(&self, rect: [f32; 4], anchor: Anchor) -> Area {
@@ -448,8 +518,18 @@ impl InterfaceDraw {
             Anchor::At(at) => at,
         };
         let s = self.scale();
-        let origin_x = (ax * self.size.x).round();
-        let origin_y = (ay * self.size.y).round();
+        let safe = if self.safe.w > 0.0 && self.safe.h > 0.0 {
+            self.safe
+        } else {
+            Area {
+                x: 0.0,
+                y: 0.0,
+                w: self.size.x,
+                h: self.size.y,
+            }
+        };
+        let origin_x = (safe.x + ax * safe.w).round();
+        let origin_y = (safe.y + ay * safe.h).round();
         Area {
             x: origin_x + (x - ax * self.reference.x) * s,
             y: origin_y + (y - ay * self.reference.y) * s,
@@ -458,8 +538,12 @@ impl InterfaceDraw {
         }
     }
 
+    pub(super) fn min_text_pixels(&self) -> f32 {
+        self.min_text_px * math::max(self.pixel_ratio(), 1.0)
+    }
+
     pub(super) fn text_px(&self, size: f32) -> f32 {
-        math::max(self.min_text_px, size * self.scale())
+        math::max(self.min_text_pixels(), size * self.scale())
     }
 
     pub(super) fn plate(&mut self, rect: Area, plate: Plate) {
@@ -711,8 +795,9 @@ impl InterfaceDraw {
             return;
         }
         let mut style = style;
-        if rect.w > 0.0 && width > rect.w && style.px > self.min_text_px {
-            let px = math::max(self.min_text_px, style.px * rect.w / width);
+        let min_px = self.min_text_pixels();
+        if rect.w > 0.0 && width > rect.w && style.px > min_px {
+            let px = math::max(min_px, style.px * rect.w / width);
             width *= px / style.px;
             style.px = px;
             self.fitted += 1;

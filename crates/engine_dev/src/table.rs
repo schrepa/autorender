@@ -365,6 +365,7 @@ fn set_camera(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {
         far: needed(given.far, "far")?,
         projection: Projection::Perspective {
             vertical_fov_radians: needed(given.vertical_fov_radians, "vertical_fov_radians")?,
+            fit: engine_core::FovFit::Vertical,
         },
     };
     lens.check().map_err(|error| error.within("$.args"))?;

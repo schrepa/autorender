@@ -1,0 +1,14 @@
+pub const FIRE: u32 = 1;
+pub const SCOPE: u32 = 2;
+pub const JUMP: u32 = 3;
+pub const CROUCH: u32 = 4;
+pub const RELOAD: u32 = 5;
+pub const SWAP: u32 = 6;
+pub const USE: u32 = 7;
+pub const ABILITY_C: u32 = 8;
+pub const ABILITY_Q: u32 = 9;
+pub const ABILITY_E: u32 = 10;
+pub const ABILITY_X: u32 = 11;
+pub const PAUSE: u32 = 12;
+pub const BUY: u32 = 13;
+pub const CLOSE: u32 = 14;

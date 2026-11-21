@@ -24,6 +24,8 @@ macro_rules! __game_surface {
                 fn file_failed(uri: &str, error: &str) -> Result<(), $crate::__private::JsValue>;
                 fn set_file_root(root: &str);
                 fn set_pixel_ratio(ratio: f64);
+                fn set_safe_insets(top: f32, right: f32, bottom: f32, left: f32);
+                fn set_input_capabilities(coarse_pointer: bool, can_hover: bool, can_lock_pointer: bool);
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
                 fn take_sound() -> Vec<f64>;
                 fn take_sound_bytes() -> Vec<u8>;
@@ -37,6 +39,7 @@ macro_rules! __game_surface {
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn cursor_mode() -> u32;
+                fn max_pixel_ratio() -> f32;
                 fn files() -> String as Json<SceneFileList>;
             }
             dev_mut {

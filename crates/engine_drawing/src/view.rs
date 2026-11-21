@@ -30,9 +30,11 @@ pub fn outside(view_projection: Mat4, [low, high]: [Vec3; 2]) -> bool {
 pub fn pixel_scale(facts: &ViewFacts) -> Option<(f32, bool)> {
     let half = facts.pixels[3] as f32 * 0.5;
     match facts.lens.projection {
-        Projection::Perspective {
-            vertical_fov_radians,
-        } => {
+        Projection::Perspective { .. } => {
+            let vertical_fov_radians = facts
+                .lens
+                .projection
+                .effective_vertical_fov(facts.aspect())?;
             let slope = (vertical_fov_radians * 0.5).tan();
             (slope > 0.0).then(|| (half / slope, false))
         }

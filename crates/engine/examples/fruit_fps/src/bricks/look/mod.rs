@@ -100,6 +100,7 @@ fn lens_of(fov_degrees: f32, zoom: f32) -> Camera {
         far: FAR,
         projection: Projection::Perspective {
             vertical_fov_radians: 2.0 * ((base * 0.5).tan() / zoom).atan(),
+            fit: FovFit::MinSpan,
         },
     }
 }
@@ -333,6 +334,7 @@ fn place(
     let fov = match lens.projection {
         Projection::Perspective {
             vertical_fov_radians,
+            ..
         } => vertical_fov_radians,
         Projection::Orthographic { .. } | Projection::Fitted { .. } => 0.0,
     };
