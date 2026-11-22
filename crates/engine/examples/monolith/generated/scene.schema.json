@@ -1,0 +1,1237 @@
+{
+  "$defs": {
+    "Camera": {
+      "additionalProperties": false,
+      "properties": {
+        "far": {
+          "format": "float",
+          "type": "number"
+        },
+        "near": {
+          "format": "float",
+          "type": "number"
+        },
+        "projection": {
+          "$ref": "#/$defs/Projection"
+        }
+      },
+      "required": [
+        "near",
+        "far",
+        "projection"
+      ],
+      "type": "object"
+    },
+    "Clear": {
+      "enum": [
+        "all",
+        "depth_only",
+        "nothing"
+      ],
+      "type": "string"
+    },
+    "Clock": {
+      "enum": [
+        "game",
+        "real"
+      ],
+      "type": "string"
+    },
+    "Control": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "DrawnForm": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layers": {
+          "$ref": "#/$defs/Layers",
+          "default": 1
+        },
+        "material": {
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mesh": {
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order": {
+          "default": 0,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "passes": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "type": "object"
+        },
+        "values": {
+          "$ref": "#/$defs/InstanceValues",
+          "default": {
+            "emission": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "floats": [],
+            "tint": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "type": "object"
+    },
+    "DrawnSettings": {
+      "properties": {
+        "instance_floats": {
+          "default": 16,
+          "format": "uint32",
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "FovFit": {
+      "enum": [
+        "vertical",
+        "horizontal",
+        "min_span"
+      ],
+      "type": "string"
+    },
+    "InstanceValues": {
+      "additionalProperties": false,
+      "properties": {
+        "emission": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "floats": {
+          "default": [],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "tint": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Layers": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "Mobility": {
+      "enum": [
+        "static",
+        "moving"
+      ],
+      "type": "string"
+    },
+    "MonolithDevControl": {
+      "properties": {
+        "bookmark": {
+          "default": "vista",
+          "type": "string"
+        },
+        "dolly": {
+          "default": false,
+          "type": "boolean"
+        },
+        "freeze_culling": {
+          "default": false,
+          "type": "boolean"
+        },
+        "heap_mb": {
+          "default": 32,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hud_hidden": {
+          "default": false,
+          "type": "boolean"
+        },
+        "hw_only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "lod_px": {
+          "default": 2,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shadows": {
+          "default": true,
+          "type": "boolean"
+        },
+        "view_mode": {
+          "default": "lit",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Mover": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/MoverId"
+        },
+        "pace": {
+          "$ref": "#/$defs/Pace"
+        }
+      },
+      "required": [
+        "by",
+        "pace"
+      ],
+      "type": "object"
+    },
+    "MoverId": {
+      "type": "string"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "default": true,
+          "type": "boolean"
+        },
+        "clock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Clock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mobility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mobility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "visible": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Pace": {
+      "enum": [
+        "tick",
+        "frame"
+      ],
+      "type": "string"
+    },
+    "Present": {
+      "additionalProperties": false,
+      "properties": {
+        "antialias": {
+          "type": "boolean"
+        },
+        "antialias_max_pixel_ratio": {
+          "default": 1.5,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "antialias"
+      ],
+      "type": "object"
+    },
+    "Projection": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Perspective": {
+              "properties": {
+                "fit": {
+                  "$ref": "#/$defs/FovFit",
+                  "default": "vertical"
+                },
+                "vertical_fov_radians": {
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "vertical_fov_radians"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Perspective"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Orthographic": {
+              "properties": {
+                "height": {
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "height"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Orthographic"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Fitted": {
+              "properties": {
+                "clip": {
+                  "items": {
+                    "items": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "clip"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Fitted"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Rect": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        },
+        "x": {
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "RenderSettings": {
+      "properties": {
+        "readback_slots": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timer_draws": {
+          "default": 2048,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timer_slots": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timer_spans": {
+          "default": 128,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneAlphaMode": {
+      "enum": [
+        "opaque",
+        "mask",
+        "blend",
+        "additive"
+      ],
+      "type": "string"
+    },
+    "SceneCull": {
+      "enum": [
+        "back",
+        "front",
+        "none"
+      ],
+      "type": "string"
+    },
+    "SceneDepthBias": {
+      "additionalProperties": false,
+      "properties": {
+        "constant": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "slope": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "constant",
+        "slope"
+      ],
+      "type": "object"
+    },
+    "SceneEnvironment": {
+      "additionalProperties": false,
+      "properties": {
+        "drawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "monolith": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MonolithDevControl"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "render": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RenderSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneFilter": {
+      "enum": [
+        "nearest",
+        "linear"
+      ],
+      "type": "string"
+    },
+    "SceneMap": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SceneTextureMap"
+        }
+      ]
+    },
+    "SceneMaterial": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha_cutoff": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "alpha_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAlphaMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "cull": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCull"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_bias": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDepthBias"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_test": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "depth_write": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "emissive": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "lighting": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "normal_scale": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "opacity": {
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "slots": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SceneSlot"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "surface": {
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "values": {
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneMesh": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "uri": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "uri"
+      ],
+      "type": "object"
+    },
+    "SceneMipmapFilter": {
+      "enum": [
+        "none",
+        "nearest",
+        "linear"
+      ],
+      "type": "string"
+    },
+    "SceneObject": {
+      "additionalProperties": false,
+      "properties": {
+        "camera": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Camera"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Control"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "drawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnForm"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "mover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mover"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "default": "",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "node": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Node"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prefab": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "present": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Present"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "transform": {
+          "$ref": "#/$defs/SceneTransform",
+          "default": {
+            "rotation_degrees": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewForm"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ScenePrefab": {
+      "additionalProperties": false,
+      "properties": {
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/SceneObject"
+          },
+          "type": "array"
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "entities"
+      ],
+      "type": "object"
+    },
+    "SceneSlot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SceneSlotFill"
+        }
+      ]
+    },
+    "SceneSlotFill": {
+      "additionalProperties": false,
+      "properties": {
+        "maps": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SceneMap"
+          },
+          "type": "object"
+        },
+        "module": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "module"
+      ],
+      "type": "object"
+    },
+    "SceneTexture": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "rgba8": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variants": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneTextureMap": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "mag_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mipmap_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMipmapFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rotation": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "scale": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "tex_coord": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "wrap_u": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWrap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wrap_v": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWrap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneTransform": {
+      "additionalProperties": false,
+      "properties": {
+        "rotation_degrees": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 360000.0,
+            "minimum": -360000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "scale": {
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0001,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "translation": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneWrap": {
+      "enum": [
+        "repeat",
+        "mirrored_repeat",
+        "clamp_to_edge"
+      ],
+      "type": "string"
+    },
+    "ViewForm": {
+      "additionalProperties": false,
+      "properties": {
+        "camera": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clear": {
+          "$ref": "#/$defs/Clear",
+          "default": "all"
+        },
+        "clear_color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "layers": {
+          "$ref": "#/$defs/Layers",
+          "default": 4294967295
+        },
+        "order": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "texture": {
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "viewport": {
+          "$ref": "#/$defs/Rect",
+          "default": {
+            "height": 1.0,
+            "width": 1.0,
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cooked": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/SceneObject"
+      },
+      "type": "array"
+    },
+    "environment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SceneEnvironment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.-]+$",
+      "type": "string"
+    },
+    "materials": {
+      "items": {
+        "$ref": "#/$defs/SceneMaterial"
+      },
+      "type": "array"
+    },
+    "meshes": {
+      "items": {
+        "$ref": "#/$defs/SceneMesh"
+      },
+      "type": "array"
+    },
+    "prefabs": {
+      "items": {
+        "$ref": "#/$defs/ScenePrefab"
+      },
+      "type": "array"
+    },
+    "revision": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "textures": {
+      "items": {
+        "$ref": "#/$defs/SceneTexture"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "revision",
+    "entities"
+  ],
+  "title": "SceneDocument",
+  "type": "object"
+}

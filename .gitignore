@@ -7,5 +7,6 @@
 /web/pkg-ship/
 /web/dist-profile/
 /artifacts/
+/web/public/monolith/
 *.log
 zz-*

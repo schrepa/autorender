@@ -1,0 +1,57 @@
+[package]
+name = "monolith"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "monolith-native"
+path = "src/main.rs"
+
+[package.metadata.engine]
+kind = "game"
+page = "monolith.html"
+game = "monolith"
+native = "monolith-native"
+
+[features]
+default = []
+dev = ["engine/dev", "engine_native/dev"]
+profiling = ["dev", "engine/profiling", "engine_native/profiling"]
+
+[build-dependencies]
+engine_sources.workspace = true
+
+[dependencies]
+brick_hiz.workspace = true
+brick_nanite.workspace = true
+brick_present.workspace = true
+brick_touch.workspace = true
+bytemuck.workspace = true
+engine.workspace = true
+engine_core.workspace = true
+engine_ecs.workspace = true
+engine_math.workspace = true
+engine_meshlet.workspace = true
+engine_render.workspace = true
+engine_touch.workspace = true
+glam.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_native.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+
+[lints]
+workspace = true

@@ -22,5 +22,13 @@
     "package": "verdant",
     "page": "verdant.html",
     "wasm": "verdant"
+  },
+  {
+    "folder": "crates/engine/examples/monolith",
+    "game": "monolith",
+    "native": "monolith-native",
+    "package": "monolith",
+    "page": "monolith.html",
+    "wasm": "monolith"
   }
 ]
