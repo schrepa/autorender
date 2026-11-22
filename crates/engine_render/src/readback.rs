@@ -17,6 +17,7 @@ pub(crate) enum Reader {
         expect(dead_code, reason = "only dev and profiling builds count shader work")
     )]
     Work,
+    Part(u32, u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

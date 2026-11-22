@@ -29,7 +29,7 @@ pub(crate) use compile::Resolve;
 pub(crate) use draw::DrawRecord;
 pub(crate) use recording::{Ended, Recording, Step};
 pub(crate) use resources::{BatchEntryRaw, HeldBatches};
-pub(crate) use run::{Bindings, DroppedTally, KindTallies, Pipelines, Run};
+pub(crate) use run::{Bindings, DroppedTally, KindTallies, Pipelines, Reading, Run};
 pub(crate) use views::Tables;
 
 pub(crate) type FrameCore = Run;
@@ -116,7 +116,9 @@ impl Holders {
     fn hold(&mut self, bound: &Bound, holder: Holder) {
         match bound {
             Bound::Buffer(buffer) => self.buffers[*buffer as usize].push(holder),
-            Bound::Texture(texture) => self.textures[*texture as usize].push(holder),
+            Bound::Texture(texture) | Bound::TextureMip(texture, _) => {
+                self.textures[*texture as usize].push(holder);
+            }
             Bound::Target(_) => self.targets.push(holder),
             Bound::Sampler(_) | Bound::Asset => {}
         }
@@ -172,7 +174,9 @@ pub(crate) struct Allocated {
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
     pub(crate) size: wgpu::Extent3d,
-    views: Vec<(Option<wgpu::TextureViewDimension>, wgpu::TextureView)>,
+    pub(crate) mip_levels: u32,
+    default_dimension: wgpu::TextureViewDimension,
+    views: Vec<(Option<wgpu::TextureViewDimension>, Option<u32>, wgpu::TextureView)>,
 }
 
 pub(crate) struct Made {
@@ -183,18 +187,33 @@ pub(crate) struct Made {
     pub(crate) samples: u32,
 }
 
+fn default_view_dimension(
+    dimension: wgpu::TextureDimension,
+    size: wgpu::Extent3d,
+) -> wgpu::TextureViewDimension {
+    match dimension {
+        wgpu::TextureDimension::D1 => wgpu::TextureViewDimension::D1,
+        wgpu::TextureDimension::D2 if size.depth_or_array_layers > 1 => {
+            wgpu::TextureViewDimension::D2Array
+        }
+        wgpu::TextureDimension::D2 => wgpu::TextureViewDimension::D2,
+        wgpu::TextureDimension::D3 => wgpu::TextureViewDimension::D3,
+    }
+}
+
 impl Allocated {
-    fn new(device: &wgpu::Device, made: &Made, size: wgpu::Extent3d) -> Self {
+    fn new(device: &wgpu::Device, made: &Made, size: wgpu::Extent3d, mip_levels: u32) -> Self {
         let texture = crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
             label: Some(made.label),
             size,
-            mip_level_count: 1,
+            mip_level_count: mip_levels,
             sample_count: made.samples,
             dimension: made.dimension,
             format: made.format,
             usage: made.usage,
             view_formats: &[],
         });
+        let default_dimension = default_view_dimension(made.dimension, size);
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: match made.dimension {
                 wgpu::TextureDimension::D3 => Some(wgpu::TextureViewDimension::D3),
@@ -209,23 +228,62 @@ impl Allocated {
             texture,
             view,
             size,
+            mip_levels,
+            default_dimension,
             views: Vec::new(),
         }
     }
 
     fn viewed(&mut self, dimension: Option<wgpu::TextureViewDimension>) -> &wgpu::TextureView {
-        let at = match self.views.iter().position(|(known, _)| *known == dimension) {
+        if dimension.is_none() || dimension == Some(self.default_dimension) {
+            return &self.view;
+        }
+        let key = (dimension, None);
+        let at = match self
+            .views
+            .iter()
+            .position(|(known, level, _)| (*known, *level) == key)
+        {
             Some(at) => at,
             None => {
                 let view = self.texture.create_view(&wgpu::TextureViewDescriptor {
                     dimension,
                     ..Default::default()
                 });
-                self.views.push((dimension, view));
+                self.views.push((dimension, None, view));
                 self.views.len() - 1
             }
         };
-        &self.views[at].1
+        &self.views[at].2
+    }
+
+    fn viewed_mip(
+        &mut self,
+        dimension: Option<wgpu::TextureViewDimension>,
+        mip: u32,
+    ) -> Option<&wgpu::TextureView> {
+        if mip >= self.mip_levels {
+            return None;
+        }
+        let key = (dimension, Some(mip));
+        let at = match self
+            .views
+            .iter()
+            .position(|(known, level, _)| (*known, *level) == key)
+        {
+            Some(at) => at,
+            None => {
+                let view = self.texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension,
+                    base_mip_level: mip,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                });
+                self.views.push((dimension, Some(mip), view));
+                self.views.len() - 1
+            }
+        };
+        Some(&self.views[at].2)
     }
 }
 
@@ -404,24 +462,213 @@ impl Run {
         }
     }
 
-    pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d) -> Allocation {
+    pub(crate) fn allocate_mips(
+        &mut self,
+        texture: u32,
+        size: wgpu::Extent3d,
+        mip_levels: u32,
+    ) -> Allocation {
         let Some(decl) = self.machine.declared.textures.get(texture as usize) else {
             return Allocation::Fresh;
         };
+        let max_dim = match decl.dimension {
+            wgpu::TextureDimension::D1 => size.width,
+            wgpu::TextureDimension::D2 => size.width.max(size.height),
+            wgpu::TextureDimension::D3 => size
+                .width
+                .max(size.height)
+                .max(size.depth_or_array_layers),
+        };
+        let max_mips = if max_dim == 0 {
+            0
+        } else {
+            32 - max_dim.leading_zeros()
+        };
+        if size.width == 0
+            || size.height == 0
+            || size.depth_or_array_layers == 0
+            || mip_levels == 0
+            || mip_levels > max_mips
+        {
+            let error = fault(self.path("allocate_mips"), ErrorCode::OutOfRange)
+                .allowed(engine_core::Allowed::Range {
+                    min: 1.0,
+                    max: f64::from(max_mips.max(1)),
+                })
+                .got(mip_levels);
+            self.fault(error);
+            return Allocation::Fresh;
+        }
         let at = texture as usize;
-        if self.tables.textures[at].as_ref().is_some_and(|made| made.size == size) {
+        if self.tables.textures[at]
+            .as_ref()
+            .is_some_and(|made| made.size == size && made.mip_levels == mip_levels)
+        {
             return Allocation::Kept;
         }
         let made = Made {
             label: decl.label,
             format: decl.format,
             dimension: decl.dimension,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: decl.usage
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
             samples: 1,
         };
-        self.tables.textures[at] = Some(Allocated::new(&self.device, &made, size));
+        self.tables.textures[at] = Some(Allocated::new(&self.device, &made, size, mip_levels));
         self.touch(Held::Texture(texture));
         Allocation::Fresh
+    }
+
+    pub(crate) fn take_readback(&mut self, readback: u32) -> Option<Vec<u8>> {
+        let owned = self
+            .machine
+            .declared
+            .readbacks
+            .get(readback as usize)
+            .is_some_and(|decl| decl.part == self.part);
+        if !owned {
+            let error = fault(self.path("take_readback"), ErrorCode::UnknownVariable).got(readback);
+            self.fault(error);
+            return None;
+        }
+        self.reading
+            .arrived
+            .get_mut(readback as usize)
+            .and_then(Option::take)
+            .map(|(_, bytes)| bytes)
+    }
+
+    pub(crate) fn clear_buffer(&mut self, buffer: u32, range: std::ops::Range<u64>) {
+        let Some((buf, size)) = self
+            .buffer_held(buffer)
+            .map(|(made, bytes)| (made.clone(), *bytes))
+        else {
+            let error = fault(self.path("clear_buffer"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return;
+        };
+        if range.start > range.end
+            || range.end > size
+            || !range.start.is_multiple_of(4)
+            || !range.end.is_multiple_of(4)
+        {
+            let error = fault(self.path("clear_buffer"), ErrorCode::OutOfRange);
+            self.fault(error);
+            return;
+        }
+        let len = range.end - range.start;
+        if len == 0 {
+            return;
+        }
+        self.end_render();
+        if let Some(encoder) = self.recording.encoder() {
+            encoder.clear_buffer(&buf, range.start, Some(len));
+        }
+    }
+
+    pub(crate) fn copy_buffer(
+        &mut self,
+        src: u32,
+        src_offset: u64,
+        dst: u32,
+        dst_offset: u64,
+        size: u64,
+    ) {
+        let (Some((src_buf, src_size)), Some((dst_buf, dst_size))) = (
+            self.buffer_held(src)
+                .map(|(made, bytes)| (made.clone(), *bytes)),
+            self.buffer_held(dst)
+                .map(|(made, bytes)| (made.clone(), *bytes)),
+        ) else {
+            let error = fault(self.path("copy_buffer"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return;
+        };
+        let src_ok = src_offset.is_multiple_of(4)
+            && src_offset
+                .checked_add(size)
+                .is_some_and(|end| end <= src_size);
+        let dst_ok = dst_offset.is_multiple_of(4)
+            && dst_offset
+                .checked_add(size)
+                .is_some_and(|end| end <= dst_size);
+        if !size.is_multiple_of(4) || !src_ok || !dst_ok {
+            let error = fault(self.path("copy_buffer"), ErrorCode::OutOfRange);
+            self.fault(error);
+            return;
+        }
+        if size == 0 {
+            return;
+        }
+        if src == dst && src_offset < dst_offset + size && dst_offset < src_offset + size {
+            let error = fault(self.path("copy_buffer"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return;
+        }
+        self.end_render();
+        if let Some(encoder) = self.recording.encoder() {
+            encoder.copy_buffer_to_buffer(&src_buf, src_offset, &dst_buf, dst_offset, size);
+        }
+    }
+
+    pub(crate) fn copy_to_readback(
+        &mut self,
+        readback: u32,
+        buffer: u32,
+        range: std::ops::Range<u64>,
+    ) {
+        let owned = self
+            .machine
+            .declared
+            .readbacks
+            .get(readback as usize)
+            .is_some_and(|decl| decl.part == self.part);
+        if !owned {
+            let error = fault(
+                self.path("copy_to_readback.readback"),
+                ErrorCode::UnknownVariable,
+            )
+            .got(readback);
+            self.fault(error);
+            return;
+        }
+        let Some((buf, size)) = self
+            .buffer_held(buffer)
+            .map(|(made, bytes)| (made.clone(), *bytes))
+        else {
+            let error = fault(self.path("copy_to_readback.buffer"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return;
+        };
+        if range.start > range.end
+            || range.end > size
+            || !range.start.is_multiple_of(4)
+            || !range.end.is_multiple_of(4)
+        {
+            let error = fault(self.path("copy_to_readback.range"), ErrorCode::OutOfRange);
+            self.fault(error);
+            return;
+        }
+        if range.start == range.end {
+            return;
+        }
+        self.end_render();
+        let (device, written, slots, part) = (
+            self.device.clone(),
+            self.written(),
+            self.reading.slots,
+            self.part,
+        );
+        let Some(encoder) = self.recording.encoder() else {
+            return;
+        };
+        self.reading.list.record(
+            (&device, encoder),
+            (&buf, range),
+            (crate::readback::Reader::Part(part, readback), written),
+            slots,
+        );
     }
 
     pub(crate) fn written(&self) -> FrameId {

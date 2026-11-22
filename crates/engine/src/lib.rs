@@ -151,7 +151,7 @@ pub mod prelude {
     };
     pub use engine_render::{
         Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
-        RenderBricks, RenderPipeline, Shape, wgpu,
+        Readback, RenderBricks, RenderPipeline, Shape, wgpu,
     };
     pub use engine_scene::{SceneDocument, SceneEntity, SceneInstance};
     pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};

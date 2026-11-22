@@ -11,6 +11,7 @@ use crate::{Access, DepthUse, Lifetime};
 pub(crate) enum Bound {
     Buffer(u32),
     Texture(u32),
+    TextureMip(u32, u32),
     Sampler(u32),
     Target(TargetName),
     Asset,
@@ -38,6 +39,7 @@ pub(crate) struct TextureDecl {
     pub(crate) dimension: wgpu::TextureDimension,
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
+    pub(crate) usage: wgpu::TextureUsages,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +48,12 @@ pub(crate) struct BufferDecl {
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
     pub(crate) usage: wgpu::BufferUsages,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ReadbackDecl {
+    pub(crate) label: &'static str,
+    pub(crate) part: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +139,7 @@ pub(crate) struct Declared {
     pub(crate) parts: Vec<PartInfo>,
     pub(crate) textures: Vec<TextureDecl>,
     pub(crate) buffers: Vec<BufferDecl>,
+    pub(crate) readbacks: Vec<ReadbackDecl>,
     pub(crate) samplers: Vec<engine_core::Sampler>,
     pub(crate) targets: Vec<crate::SharedTarget>,
     pub(crate) target_fallbacks: Vec<Option<wgpu::TextureFormat>>,
@@ -151,6 +160,7 @@ pub(crate) struct Counts {
     targets: usize,
     textures: usize,
     buffers: usize,
+    readbacks: usize,
     passes: usize,
     pipelines: usize,
     frame: usize,
@@ -170,6 +180,7 @@ impl Declared {
             targets: self.targets.len(),
             textures: self.textures.len(),
             buffers: self.buffers.len(),
+            readbacks: self.readbacks.len(),
             passes: self.passes.len(),
             pipelines: self.pipelines.len(),
             frame: self.frame.len(),
@@ -185,6 +196,7 @@ impl Declared {
             parts: self.parts.clone(),
             textures: kept(&self.textures, counts.textures),
             buffers: kept(&self.buffers, counts.buffers),
+            readbacks: kept(&self.readbacks, counts.readbacks),
             samplers: self.samplers.clone(),
             targets: kept(&self.targets, counts.targets),
             target_fallbacks: kept(&self.target_fallbacks, counts.targets),
@@ -267,16 +279,27 @@ impl InstallCore {
             dimension,
             lifetime,
             part: self.part,
+            usage: wgpu::TextureUsages::empty(),
         });
         (self.declared.textures.len() - 1) as u32
     }
 
+    pub(crate) fn use_texture(&mut self, texture: u32, usage: wgpu::TextureUsages) {
+        if let Some(declared) = self.declared.textures.get_mut(texture as usize) {
+            declared.usage |= usage;
+        }
+    }
+
     pub(crate) fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> u32 {
-        self.buffer_with(label, lifetime, wgpu::BufferUsages::empty())
+        self.buffer_with(label, lifetime, wgpu::BufferUsages::COPY_SRC)
     }
 
     pub(crate) fn indirect_buffer(&mut self, label: &'static str, lifetime: Lifetime) -> u32 {
-        self.buffer_with(label, lifetime, wgpu::BufferUsages::INDIRECT)
+        self.buffer_with(
+            label,
+            lifetime,
+            wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
+        )
     }
 
     fn buffer_with(
@@ -292,6 +315,14 @@ impl InstallCore {
             usage,
         });
         (self.declared.buffers.len() - 1) as u32
+    }
+
+    pub(crate) fn readback(&mut self, label: &'static str) -> u32 {
+        self.declared.readbacks.push(ReadbackDecl {
+            label,
+            part: self.part,
+        });
+        (self.declared.readbacks.len() - 1) as u32
     }
 
     pub(crate) fn use_buffer(&mut self, buffer: u32, usage: wgpu::BufferUsages) {
@@ -326,9 +357,16 @@ impl InstallCore {
         if bound == Bound::Asset {
             return Err(Error::new(ErrorCode::UnknownVariable, path).got("asset"));
         }
-        if let Bound::Buffer(buffer) = bound {
-            let usage = self.linked.buffer_usage(var);
-            self.use_buffer(buffer, usage);
+        match bound {
+            Bound::Buffer(buffer) => {
+                let usage = self.linked.buffer_usage(var);
+                self.use_buffer(buffer, usage);
+            }
+            Bound::Texture(texture) | Bound::TextureMip(texture, _) => {
+                let usage = self.linked.texture_usage(var);
+                self.use_texture(texture, usage);
+            }
+            Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => {}
         }
         self.declared.frame.push(FrameBind { var, bound });
         Ok(())
@@ -392,9 +430,16 @@ impl InstallCore {
                     return Err(Error::new(ErrorCode::UnknownVariable, path).got(var.name()));
                 }
             }
-            if let Bound::Buffer(buffer) = bound {
-                let usage = self.linked.buffer_usage(*var);
-                self.use_buffer(*buffer, usage);
+            match bound {
+                Bound::Buffer(buffer) => {
+                    let usage = self.linked.buffer_usage(*var);
+                    self.use_buffer(*buffer, usage);
+                }
+                Bound::Texture(texture) | Bound::TextureMip(texture, _) => {
+                    let usage = self.linked.texture_usage(*var);
+                    self.use_texture(*texture, usage);
+                }
+                Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => {}
             }
         }
         self.declared.pipelines.push(decl);

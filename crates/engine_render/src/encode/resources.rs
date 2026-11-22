@@ -53,6 +53,7 @@ impl HeldBatches {
 pub(crate) enum BatchEntryRaw {
     Range { buffer: u32, offset: u64, size: u64 },
     Texture(u32),
+    TextureMip(u32, u32),
     Asset(Asset<engine_core::Texture>),
     AssetSampler(engine_core::Sampler),
 }
@@ -64,6 +65,71 @@ enum Held {
 }
 
 impl Run {
+    fn resolve_batch_entry(
+        &mut self,
+        entry: &crate::machine::BatchEntry,
+        given: &BatchEntryRaw,
+        group: u32,
+        path: &str,
+    ) -> Result<Held, Error> {
+        match given {
+            BatchEntryRaw::Range {
+                buffer,
+                offset,
+                size,
+            } => match self.buffer_held(*buffer) {
+                Some((made, bytes)) if offset + size <= *bytes => {
+                    Ok(Held::Range(made.clone(), *offset, *size))
+                }
+                Some(_) | None => {
+                    Err(fault(path.to_owned(), ErrorCode::InvalidValue).got(entry.name.as_str()))
+                }
+            },
+            BatchEntryRaw::Texture(texture) => {
+                let dimension = view_dimension(entry.ty);
+                match self
+                    .tables
+                    .textures
+                    .get_mut(*texture as usize)
+                    .and_then(Option::as_mut)
+                {
+                    Some(made) => Ok(Held::View(made.viewed(dimension).clone())),
+                    None => self.batch_stand_in(entry, group, path),
+                }
+            }
+            BatchEntryRaw::TextureMip(texture, mip) => {
+                let dimension = view_dimension(entry.ty);
+                match self
+                    .tables
+                    .textures
+                    .get_mut(*texture as usize)
+                    .and_then(Option::as_mut)
+                {
+                    Some(made) => match made.viewed_mip(dimension, *mip) {
+                        Some(view) => Ok(Held::View(view.clone())),
+                        None => Err(fault(path.to_owned(), ErrorCode::OutOfRange)
+                            .allowed(engine_core::Allowed::Range {
+                                min: 0.0,
+                                max: f64::from(made.mip_levels.saturating_sub(1)),
+                            })
+                            .got(*mip)),
+                    },
+                    None => self.batch_stand_in(entry, group, path),
+                }
+            }
+            BatchEntryRaw::Asset(texture) => match self.assets.textures.texture_view(*texture) {
+                Some(view) => Ok(Held::View(view.clone())),
+                None => self.batch_stand_in(entry, group, path),
+            },
+            BatchEntryRaw::AssetSampler(sampler) => {
+                let device = self.device.clone();
+                Ok(Held::Sampler(
+                    self.assets.textures.sampler(&device, *sampler).clone(),
+                ))
+            }
+        }
+    }
+
     pub(crate) fn set_batch(
         &mut self,
         batch: u32,
@@ -109,35 +175,7 @@ impl Run {
             let Some((_, given)) = given else {
                 return Err(fault(path, ErrorCode::UnknownVariable).got(entry.name.as_str()));
             };
-            let resolved = match given {
-                BatchEntryRaw::Range {
-                    buffer,
-                    offset,
-                    size,
-                } => match self.buffer_held(*buffer) {
-                    Some((made, bytes)) if offset + size <= *bytes => {
-                        Held::Range(made.clone(), *offset, *size)
-                    }
-                    Some(_) | None => {
-                        return Err(fault(path, ErrorCode::InvalidValue).got(entry.name.as_str()));
-                    }
-                },
-                BatchEntryRaw::Texture(texture) => {
-                    let dimension = view_dimension(entry.ty);
-                    match self.tables.textures.get_mut(*texture as usize).and_then(Option::as_mut) {
-                        Some(made) => Held::View(made.viewed(dimension).clone()),
-                        None => self.batch_stand_in(entry, decl.index, &path)?,
-                    }
-                }
-                BatchEntryRaw::Asset(texture) => match self.assets.textures.texture_view(*texture) {
-                    Some(view) => Held::View(view.clone()),
-                    None => self.batch_stand_in(entry, decl.index, &path)?,
-                },
-                BatchEntryRaw::AssetSampler(sampler) => {
-                    let device = self.device.clone();
-                    Held::Sampler(self.assets.textures.sampler(&device, *sampler).clone())
-                }
-            };
+            let resolved = self.resolve_batch_entry(entry, given, decl.index, &path)?;
             held.push((entry.binding, resolved));
         }
         let bound: Vec<wgpu::BindGroupEntry<'_>> = held

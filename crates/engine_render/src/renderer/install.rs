@@ -331,6 +331,8 @@ impl Renderer {
         run.take_states(world.get_resource::<BrickStates>());
         run.canvas.surface = self.core.display.format();
         run.canvas.format = run.canvas.surface;
+        let canvas_size = self.core.display.size().pixels();
+        run.canvas.size = (canvas_size.0.max(1), canvas_size.1.max(1));
         let mut stages: Vec<(&'static str, &'static str)> = Vec::new();
         self.spans = run
             .machine
@@ -410,6 +412,7 @@ struct Kept {
     filled: Vec<crate::encode::Filled>,
     frames: (u64, u64),
     readbacks: crate::readback::Readbacks,
+    arrived: Vec<Option<(engine_core::FrameId, Vec<u8>)>>,
     shaders: std::collections::BTreeMap<u64, wgpu::ShaderModule>,
     made: Vec<crate::machine::BuiltPipeline>,
     pipelines: crate::encode::Pipelines,
@@ -434,6 +437,7 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         filled,
         frames: (frames.current, frames.asked),
         readbacks: reading.list,
+        arrived: reading.arrived,
         shaders: machine.shaders,
         made: machine.pipelines,
         pipelines,
@@ -457,8 +461,10 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
                 (
                     texture.label,
                     texture.format,
+                    texture.dimension,
                     texture.lifetime,
                     texture.part,
+                    texture.usage,
                 )
             })
             .collect::<Vec<_>>()
@@ -468,6 +474,13 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
             .buffers
             .iter()
             .map(|buffer| (buffer.label, buffer.lifetime, buffer.part, buffer.usage))
+            .collect::<Vec<_>>()
+    };
+    let readbacks = |declared: &crate::install::Declared| {
+        declared
+            .readbacks
+            .iter()
+            .map(|readback| (readback.label, readback.part))
             .collect::<Vec<_>>()
     };
     let passes = |declared: &crate::install::Declared| {
@@ -494,6 +507,7 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
     parts(old) == parts(new)
         && textures(old) == textures(new)
         && buffers(old) == buffers(new)
+        && readbacks(old) == readbacks(new)
         && old.samplers == new.samplers
         && passes(old) == passes(new)
         && pipelines(old) == pipelines(new)
@@ -507,6 +521,7 @@ fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
     if !same_shape(&kept.declared, &run.machine.declared) {
         return;
     }
+    run.reading.arrived = kept.arrived;
     for (slot, held) in run.parts.iter_mut().zip(kept.parts) {
         if let Some(mut held) = held {
             held.rebind(world);

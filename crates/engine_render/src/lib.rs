@@ -117,6 +117,7 @@ macro_rules! handle {
 
 handle!(Texture<P>);
 handle!(Buffer<P>);
+handle!(Readback<P>);
 handle!(Sampler<P>);
 handle!(Pass<P>);
 handle!(Pipeline<P, S>);
@@ -188,6 +189,7 @@ pub enum Access {
 pub enum Bind<P> {
     Buffer(Buffer<P>),
     Texture(Texture<P>),
+    TextureMip(Texture<P>, u32),
     Sampler(Sampler<P>),
     Target(TargetName),
     Asset,
@@ -198,6 +200,7 @@ impl<P> Clone for Bind<P> {
         match self {
             Self::Buffer(buffer) => Self::Buffer(*buffer),
             Self::Texture(texture) => Self::Texture(*texture),
+            Self::TextureMip(texture, mip) => Self::TextureMip(*texture, *mip),
             Self::Sampler(sampler) => Self::Sampler(*sampler),
             Self::Target(name) => Self::Target(*name),
             Self::Asset => Self::Asset,
@@ -212,6 +215,7 @@ pub enum GroupEntry<P> {
         size: u64,
     },
     Texture(Texture<P>),
+    TextureMip(Texture<P>, u32),
     Asset(Asset<engine_core::Texture>),
     AssetSampler(engine_core::Sampler),
 }
@@ -256,6 +260,7 @@ fn bound_of<P>(bound: &Bind<P>) -> install::Bound {
     match bound {
         Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
         Bind::Texture(texture) => install::Bound::Texture(texture.0),
+        Bind::TextureMip(texture, mip) => install::Bound::TextureMip(texture.0, *mip),
         Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
         Bind::Target(name) => install::Bound::Target(*name),
         Bind::Asset => install::Bound::Asset,
@@ -315,6 +320,10 @@ impl<P: GpuPart> Install<'_, P> {
 
     pub fn indirect_buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
         Buffer(self.core.indirect_buffer(label, lifetime), PhantomData)
+    }
+
+    pub fn readback(&mut self, label: &'static str) -> Readback<P> {
+        Readback(self.core.readback(label), PhantomData)
     }
 
     pub fn sampler(&mut self, desc: engine_core::Sampler) -> Sampler<P> {
@@ -528,6 +537,9 @@ impl<P: GpuPart> Prepare<'_, P> {
                         size: *size,
                     },
                     GroupEntry::Texture(texture) => encode::BatchEntryRaw::Texture(texture.0),
+                    GroupEntry::TextureMip(texture, mip) => {
+                        encode::BatchEntryRaw::TextureMip(texture.0, *mip)
+                    }
                     GroupEntry::Asset(texture) => encode::BatchEntryRaw::Asset(*texture),
                     GroupEntry::AssetSampler(sampler) => {
                         encode::BatchEntryRaw::AssetSampler(*sampler)
@@ -556,11 +568,24 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d) -> Allocation {
-        self.core.allocate(texture.0, size)
+        self.allocate_mips(texture, size, 1)
+    }
+
+    pub fn allocate_mips(
+        &mut self,
+        texture: Texture<P>,
+        size: wgpu::Extent3d,
+        mip_levels: u32,
+    ) -> Allocation {
+        self.core.allocate_mips(texture.0, size, mip_levels)
     }
 
     pub fn allocate_buffer(&mut self, buffer: Buffer<P>, bytes: u64) -> Allocation {
         self.core.allocate_buffer(buffer.0, bytes)
+    }
+
+    pub fn take_readback(&mut self, readback: Readback<P>) -> Option<Vec<u8>> {
+        self.core.take_readback(readback.0)
     }
 
     pub fn write<T: bytemuck::Pod>(&mut self, buffer: Buffer<P>, offset: u64, data: &[T]) {
@@ -591,6 +616,11 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.fault(error);
     }
 
+    pub fn canvas_size(&self) -> (u32, u32) {
+        let (width, height) = self.core.canvas.size;
+        (width.max(1), height.max(1))
+    }
+
     pub fn scale_target(&mut self, name: TargetName, fraction: f32) {
         let path = format!("$.targets.{}", name.name());
         if self.core.machine.declared.shared_target(name).is_none() {
@@ -604,6 +634,14 @@ impl<P: GpuPart> Prepare<'_, P> {
                 .got(fraction);
             self.core.refuse(error);
         }
+    }
+
+    pub fn scale_target_to_pixels(&mut self, name: TargetName, max_pixels: u32) {
+        let (width, height) = self.canvas_size();
+        let fraction = (f64::from(max_pixels.max(1)) / (f64::from(width) * f64::from(height)))
+            .sqrt()
+            .clamp(0.25, 1.0) as f32;
+        self.scale_target(name, fraction);
     }
 }
 
@@ -644,6 +682,26 @@ impl<P: GpuPart> Encode<'_, P> {
         let part = self.core.part;
         self.core
             .dispatch_indirect(part, pipeline.0, buffer.0, offset);
+    }
+
+    pub fn clear_buffer(&mut self, buffer: Buffer<P>, range: Range<u64>) {
+        self.core.clear_buffer(buffer.0, range);
+    }
+
+    pub fn copy_buffer(
+        &mut self,
+        src: Buffer<P>,
+        src_offset: u64,
+        dst: Buffer<P>,
+        dst_offset: u64,
+        size: u64,
+    ) {
+        self.core
+            .copy_buffer(src.0, src_offset, dst.0, dst_offset, size);
+    }
+
+    pub fn copy_to_readback(&mut self, readback: Readback<P>, buffer: Buffer<P>, range: Range<u64>) {
+        self.core.copy_to_readback(readback.0, buffer.0, range);
     }
 }
 

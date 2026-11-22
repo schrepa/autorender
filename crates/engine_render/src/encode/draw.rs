@@ -615,28 +615,39 @@ impl Run {
         self.tallies.worst = self.tallies.worst.max(recorded);
     }
 
+    fn indirect_dispatch_buffer(
+        &mut self,
+        buffer: u32,
+        offset: u64,
+    ) -> Result<(wgpu::Buffer, u64), crate::Recorded> {
+        let valid = self
+            .machine
+            .declared
+            .buffers
+            .get(buffer as usize)
+            .is_some_and(|decl| decl.usage.contains(wgpu::BufferUsages::INDIRECT));
+        if !valid {
+            let error = fault(self.path("dispatch_indirect.buffer"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return Err(crate::Recorded::Refused);
+        }
+        let Some((made, size)) = self.buffer_held(buffer) else {
+            return Err(crate::Recorded::Waiting);
+        };
+        if !offset.is_multiple_of(4) || offset + 12 > *size {
+            return Err(crate::Recorded::Waiting);
+        }
+        Ok((made.clone(), offset))
+    }
+
     fn issue_dispatch(&mut self, part: u32, handle: u32, call: DispatchCall) -> crate::Recorded {
         let indirect = match call {
             DispatchCall::Direct(_) => None,
             DispatchCall::Indirect(buffer, offset) => {
-                let valid = self
-                    .machine
-                    .declared
-                    .buffers
-                    .get(buffer as usize)
-                    .is_some_and(|decl| decl.usage.contains(wgpu::BufferUsages::INDIRECT));
-                if !valid {
-                    let error = fault(self.path("dispatch_indirect.buffer"), ErrorCode::InvalidValue);
-                    self.fault(error);
-                    return crate::Recorded::Refused;
+                match self.indirect_dispatch_buffer(buffer, offset) {
+                    Ok(found) => Some(found),
+                    Err(recorded) => return recorded,
                 }
-                let Some((made, size)) = self.buffer_held(buffer) else {
-                    return crate::Recorded::Waiting;
-                };
-                if !offset.is_multiple_of(4) || offset + 12 > *size {
-                    return crate::Recorded::Waiting;
-                }
-                Some((made.clone(), offset))
             }
         };
         self.end_open();
@@ -706,17 +717,29 @@ impl Run {
         let Some(compute) = built.compute_ready.as_ref() else {
             return crate::Recorded::Waiting;
         };
-        bound.dispatch_pipeline(pass, compute);
-        if let Some(group) = frame_groups
+        let Some(frame) = frame_groups
             .get(built.variant as usize)
             .and_then(|groups| held_group(groups, set, built.variant, parity))
-        {
-            let camera = machine
-                .variants
-                .get(built.variant as usize)
-                .is_some_and(|found| found.camera);
-            bound.dispatch_group(pass, 0, group, camera.then_some(offset));
+        else {
+            return crate::Recorded::Waiting;
+        };
+        let mut ready = true;
+        for (at, _) in built.groups.iter().enumerate() {
+            let holder = holders.index(Holder::Own(handle, at as u32));
+            if held_group(&own_groups[handle as usize][at], set, holder, parity).is_none() {
+                ready = false;
+                break;
+            }
         }
+        if !ready {
+            return crate::Recorded::Waiting;
+        }
+        bound.dispatch_pipeline(pass, compute);
+        let camera = machine
+            .variants
+            .get(built.variant as usize)
+            .is_some_and(|found| found.camera);
+        bound.dispatch_group(pass, 0, frame, camera.then_some(offset));
         for (at, group) in built.groups.iter().enumerate() {
             let holder = holders.index(Holder::Own(handle, at as u32));
             if let Some(made) = held_group(&own_groups[handle as usize][at], set, holder, parity) {

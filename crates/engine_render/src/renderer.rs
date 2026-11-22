@@ -89,6 +89,10 @@ impl Renderer {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         let notice = self.core.display.resize(width, height);
+        if let Some(run) = self.run.as_mut() {
+            let size = self.core.display.size().pixels();
+            run.canvas.size = (size.0.max(1), size.1.max(1));
+        }
         self.notice(notice);
     }
 

@@ -289,6 +289,7 @@ pub(crate) struct Canvas {
     pub(crate) texture: Option<wgpu::Texture>,
     pub(crate) surface: wgpu::TextureFormat,
     pub(crate) format: wgpu::TextureFormat,
+    pub(crate) size: (u32, u32),
     pub(crate) rect: Option<[u32; 4]>,
     pub(crate) load: bool,
     pub(crate) carried: bool,
@@ -524,6 +525,35 @@ impl KindTallies {
 pub(crate) struct Reading {
     pub(crate) list: Readbacks,
     pub(crate) slots: usize,
+    pub(crate) arrived: Vec<Option<(FrameId, Vec<u8>)>>,
+}
+
+impl Reading {
+    pub(crate) fn land_into(
+        arrived: &mut Vec<Option<(FrameId, Vec<u8>)>>,
+        declared: &[crate::install::ReadbackDecl],
+        (part, id): (u32, u32),
+        written: FrameId,
+        bytes: &[u8],
+    ) {
+        if !declared
+            .get(id as usize)
+            .is_some_and(|decl| decl.part == part)
+        {
+            return;
+        }
+        let at = id as usize;
+        if arrived.len() <= at {
+            arrived.resize_with(at + 1, || None);
+        }
+        if arrived[at]
+            .as_ref()
+            .is_some_and(|(known, _)| *known > written)
+        {
+            return;
+        }
+        arrived[at] = Some((written, bytes.to_vec()));
+    }
 }
 
 fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
@@ -659,6 +689,7 @@ impl Canvas {
             texture: None,
             surface: wgpu::TextureFormat::Bgra8Unorm,
             format: wgpu::TextureFormat::Bgra8Unorm,
+            size: (1, 1),
             rect: None,
             load: false,
             carried: false,

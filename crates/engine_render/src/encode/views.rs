@@ -124,15 +124,31 @@ impl Run {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
                 None => Resolved::Missing,
             },
-            Bound::Texture(texture) => match self
-                .tables
-                .textures
-                .get(*texture as usize)
-                .and_then(Option::as_ref)
-            {
-                Some(made) => Resolved::View(made.view.clone()),
-                None => Resolved::Missing,
-            },
+            Bound::Texture(texture) => {
+                let dimension = view_dimension(ty);
+                match self
+                    .tables
+                    .textures
+                    .get_mut(*texture as usize)
+                    .and_then(Option::as_mut)
+                {
+                    Some(made) => Resolved::View(made.viewed(dimension).clone()),
+                    None => Resolved::Missing,
+                }
+            }
+            Bound::TextureMip(texture, mip) => {
+                let dimension = view_dimension(ty);
+                match self
+                    .tables
+                    .textures
+                    .get_mut(*texture as usize)
+                    .and_then(Option::as_mut)
+                    .and_then(|made| made.viewed_mip(dimension, *mip))
+                {
+                    Some(view) => Resolved::View(view.clone()),
+                    None => Resolved::Missing,
+                }
+            }
             Bound::Sampler(sampler) => match self.bindings.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),
                 None => self.reported_stand_in(part, ty, place),
@@ -337,7 +353,7 @@ impl Run {
                 usage,
                 samples,
             };
-            Allocated::new(&device, &made, size)
+            Allocated::new(&device, &made, size, 1)
         };
         let shared: Vec<Allocated> = (self.machine.declared.targets.iter())
             .map(|shared| {

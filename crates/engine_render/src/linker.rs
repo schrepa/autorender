@@ -211,7 +211,20 @@ impl Shaders {
         match self.declared(var).map(|declared| declared.ty) {
             Some(Ty::Uniform) => wgpu::BufferUsages::UNIFORM,
             Some(Ty::Storage { .. }) => wgpu::BufferUsages::STORAGE,
-            Some(_) | None => wgpu::BufferUsages::empty(),
+            Some(
+                Ty::Texture { .. } | Ty::StorageTexture { .. } | Ty::Sampler | Ty::Comparison,
+            )
+            | None => wgpu::BufferUsages::empty(),
+        }
+    }
+
+    pub(crate) fn texture_usage(&self, var: Var) -> wgpu::TextureUsages {
+        match self.declared(var).map(|declared| declared.ty) {
+            Some(Ty::Texture { .. }) => wgpu::TextureUsages::TEXTURE_BINDING,
+            Some(Ty::StorageTexture { .. }) => wgpu::TextureUsages::STORAGE_BINDING,
+            Some(Ty::Uniform | Ty::Storage { .. } | Ty::Sampler | Ty::Comparison) | None => {
+                wgpu::TextureUsages::empty()
+            }
         }
     }
 

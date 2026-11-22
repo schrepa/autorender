@@ -155,18 +155,26 @@ fn mark_span(
 
 impl Renderer {
     pub(super) fn collect(&mut self) {
+        crate::platform::poll(&self.core.device);
         #[cfg(not(target_arch = "wasm32"))]
         crate::platform::run_arrived_maps();
         let Some(run) = self.run.as_mut() else {
             return;
         };
         let (display, profiler) = (&mut self.core.display, &mut self.core.profiler);
+        let declared = &run.machine.declared.readbacks;
+        let arrived = &mut run.reading.arrived;
         run.reading
             .list
             .take(|reader, written, arrival| match reader {
                 Reader::FrameTimer => display.timed(written, arrival),
                 Reader::Profiler(slot) => profiler.arrived(slot, arrival),
                 Reader::Work => run.pipelines.work_landed(written, arrival),
+                Reader::Part(part, id) => {
+                    if let crate::readback::Arrival::Read(bytes) = arrival {
+                        crate::encode::Reading::land_into(arrived, declared, (part, id), written, bytes);
+                    }
+                }
             });
     }
 
@@ -433,6 +441,12 @@ impl Renderer {
         run.canvas.view = shown.as_ref().map(|(view, _)| view.clone());
         run.canvas.texture = shown.as_ref().map(|(_, texture)| texture.clone());
         run.canvas.format = run.canvas.surface;
+        let canvas_size = shown
+            .as_ref()
+            .map_or((display.x, display.y), |(_, texture)| {
+                (texture.width(), texture.height())
+            });
+        run.canvas.size = (canvas_size.0.max(1), canvas_size.1.max(1));
         run.uniforms.camera_slot = 0;
         let profile_writes = engine_profile::span("render", "queue_writes");
         run.start_runs();

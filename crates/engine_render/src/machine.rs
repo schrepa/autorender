@@ -133,6 +133,7 @@ fn unknown_targets(declared: &Declared) -> Vec<Error> {
 
 pub(crate) struct Ids {
     pub(crate) buffers: Vec<ResourceId>,
+    pub(crate) textures: Vec<ResourceId>,
     pub(crate) targets: Vec<ResourceId>,
     pub(crate) canvas: Option<ResourceId>,
 }
@@ -321,7 +322,7 @@ fn owned_by(declared: &Declared, bound: &Bound, part: u32) -> bool {
             .buffers
             .get(*buffer as usize)
             .is_some_and(|buffer| buffer.part == part),
-        Bound::Texture(texture) => declared
+        Bound::Texture(texture) | Bound::TextureMip(texture, _) => declared
             .textures
             .get(*texture as usize)
             .is_some_and(|texture| texture.part == part),
@@ -369,7 +370,23 @@ fn reads_depth_direct(direct: &[bool], pass: usize) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Handle {
     Buffer(u32),
+    Texture(u32, Option<u32>),
     Target(Target),
+}
+
+impl Handle {
+    fn overlaps(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Texture(a, ma), Self::Texture(b, mb)) => {
+                a == b && (ma.is_none() || mb.is_none() || ma == mb)
+            }
+            (Self::Buffer(a), Self::Buffer(b)) => a == b,
+            (Self::Target(a), Self::Target(b)) => a == b,
+            (Self::Buffer(_), Self::Texture(..) | Self::Target(_))
+            | (Self::Texture(..), Self::Buffer(_) | Self::Target(_))
+            | (Self::Target(_), Self::Buffer(_) | Self::Texture(..)) => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -381,8 +398,10 @@ enum Usage {
 fn handle_of(declared: &Declared, bound: &Bound) -> Option<Handle> {
     match bound {
         Bound::Buffer(buffer) => Some(Handle::Buffer(*buffer)),
+        Bound::Texture(texture) => Some(Handle::Texture(*texture, None)),
+        Bound::TextureMip(texture, mip) => Some(Handle::Texture(*texture, Some(*mip))),
         Bound::Target(name) => declared.target_of(*name).map(Handle::Target),
-        Bound::Texture(_) | Bound::Sampler(_) | Bound::Asset => None,
+        Bound::Sampler(_) | Bound::Asset => None,
     }
 }
 
@@ -518,7 +537,7 @@ impl Machine {
             };
             writes.get(pipeline as usize).is_some_and(|written| {
                 written.iter().any(|(known, usage)| {
-                    known == handle && !(*usage == Usage::Stored && ty.writes())
+                    known.overlaps(*handle) && !(*usage == Usage::Stored && ty.writes())
                 })
             })
         };
@@ -840,11 +859,11 @@ fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
         Some(Bound::Target(name)) => declared
             .target_of(*name)
             .and_then(|target| declared.target_format(target)),
-        Some(Bound::Texture(texture)) => declared
+        Some(Bound::Texture(texture) | Bound::TextureMip(texture, _)) => declared
             .textures
             .get(*texture as usize)
             .map(|decl| decl.format),
-        Some(_) | None => None,
+        Some(Bound::Buffer(_) | Bound::Sampler(_) | Bound::Asset) | None => None,
     };
     format.is_none_or(|format| {
         format
@@ -864,14 +883,11 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
     }
 }
 
-fn graph_of(
-    declared: &Declared,
-    pipelines: &[BuiltPipeline],
-    direct: &[bool],
-) -> Result<(StaticGraph, Ids), Error> {
+fn graph_resources(declared: &Declared) -> (Vec<ResourceEntry>, Ids) {
     let mut resources = Vec::new();
     let mut ids = Ids {
         buffers: Vec::new(),
+        textures: Vec::new(),
         targets: Vec::new(),
         canvas: None,
     };
@@ -880,6 +896,14 @@ fn graph_of(
         resources.push(ResourceEntry {
             label: buffer.label,
             life: life(buffer.lifetime),
+            view: false,
+        });
+    }
+    for texture in &declared.textures {
+        ids.textures.push(ResourceId::new(resources.len()));
+        resources.push(ResourceEntry {
+            label: texture.label,
+            life: life(texture.lifetime),
             view: false,
         });
     }
@@ -897,6 +921,15 @@ fn graph_of(
         life: Life::Output,
         view: true,
     });
+    (resources, ids)
+}
+
+fn graph_of(
+    declared: &Declared,
+    pipelines: &[BuiltPipeline],
+    direct: &[bool],
+) -> Result<(StaticGraph, Ids), Error> {
+    let (resources, ids) = graph_resources(declared);
     let depth_target = declared.depth_target();
     let mut passes = Vec::with_capacity(declared.passes.len());
     for (index, pass) in declared.passes.iter().enumerate() {
@@ -921,8 +954,11 @@ fn graph_of(
         let bound_id = |bound: &Bound| -> Option<ResourceId> {
             match bound {
                 Bound::Buffer(buffer) => ids.buffers.get(*buffer as usize).copied(),
+                Bound::Texture(texture) | Bound::TextureMip(texture, _) => {
+                    ids.textures.get(*texture as usize).copied()
+                }
                 Bound::Target(name) => declared.target_of(*name).and_then(|target| ids.target(target)),
-                Bound::Texture(_) | Bound::Sampler(_) | Bound::Asset => None,
+                Bound::Sampler(_) | Bound::Asset => None,
             }
         };
         let mut current = Vec::new();
