@@ -371,6 +371,13 @@ impl NaniteStreaming {
                 self.enqueue_fetch(mesh_id as u32, mesh, local, global, u32::MAX);
             }
         }
+        for (mesh_id, mesh) in world.meshes.iter().enumerate() {
+            let warm_end = mesh.page_count.min(mesh.root_page_count.saturating_add(24));
+            for local in mesh.root_page_count..warm_end {
+                let global = mesh.page_offset + local;
+                self.enqueue_fetch(mesh_id as u32, mesh, local, global, u32::MAX - 1);
+            }
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.pump_native_io(world.meshes.len().saturating_mul(2).max(16));
     }
