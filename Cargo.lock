@@ -540,6 +540,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "brick_nanite"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_math",
+ "engine_meshlet",
+ "engine_render",
+ "engine_sources",
+ "glam 0.30.9",
+]
+
+[[package]]
 name = "brick_post"
 version = "0.1.0"
 dependencies = [
@@ -2220,6 +2235,34 @@ checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "monolith"
+version = "0.1.0"
+dependencies = [
+ "brick_hiz",
+ "brick_nanite",
+ "brick_present",
+ "brick_touch",
+ "bytemuck",
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_math",
+ "engine_meshlet",
+ "engine_native",
+ "engine_render",
+ "engine_sources",
+ "engine_touch",
+ "glam 0.30.9",
+ "js-sys",
+ "schemars",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

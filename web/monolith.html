@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#140f0b" />
+    <title>MONOLITH</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #0d0a08; color: #f3ece0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; }
+      body:not([data-dev]) .engine-hud { display: none !important; }
+      .message { display: none !important; }
+      .stage { position: fixed; inset: 0; background: #000; }
+      #scene { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+      .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; padding: 24px; background: radial-gradient(circle at 50% 42%, #291d14, #0d0a08 72%); }
+      .overlay[hidden] { display: none; }
+      #loading { transition: opacity 280ms ease-out; }
+      #loading.gone { opacity: 0; pointer-events: none; }
+      .loader { width: min(340px, 100%); display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+      .loader h1 { margin: 0; font: 600 22px/1.2 inherit; letter-spacing: 0.28em; text-transform: uppercase; color: #f4c678; }
+      .track { position: relative; width: 100%; height: 6px; border-radius: 999px; overflow: hidden; background: #ffffff18; }
+      #loading-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: #f2b75c; width: calc(100% * var(--done, 0)); transition: width 160ms ease-out; }
+      .track[data-unknown] #loading-bar { width: 32%; transition: none; animation: sweep 1.4s ease-in-out infinite alternate; }
+      @keyframes sweep { from { transform: translateX(0); } to { transform: translateX(212%); } }
+      .meta { display: flex; justify-content: space-between; width: 100%; font: 500 12px/1.4 inherit; color: #c7bba9; }
+      .card { width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px; padding: 24px; border-radius: 16px; background: #1a1410; border: 1px solid #ffffff1c; }
+      .card h2 { margin: 0; font: 600 20px/1.3 inherit; }
+      .card p { margin: 0; font: 400 14px/1.5 inherit; color: #c7bba9; }
+      .card pre { margin: 0; max-height: 200px; overflow: auto; padding: 12px; border-radius: 8px; background: #0f0b09; color: #fda4af; font: 500 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
+      #failure-reload { align-self: flex-end; height: 36px; padding: 0 18px; border: 0; border-radius: 8px; cursor: pointer; background: #f2b75c; color: #161008; font: 600 13px/1 inherit; }
+    </style>
+  </head>
+  <body class="engine-page">
+    <main class="stage">
+      <canvas id="scene" tabindex="0" aria-label="Monolith" style="visibility: hidden"></canvas>
+      <section id="loading" class="overlay" aria-live="polite">
+        <div class="loader">
+          <h1>Monolith</h1>
+          <div class="track" id="loading-track" data-unknown><div id="loading-bar"></div></div>
+          <div class="meta"><span id="loading-stage">Opening</span><span id="loading-detail"></span></div>
+        </div>
+      </section>
+      <section id="gpu" class="overlay" hidden>
+        <div class="card">
+          <h2>WebGPU required</h2>
+          <p id="gpu-reason"></p>
+        </div>
+      </section>
+      <section id="failure" class="overlay" hidden role="alert">
+        <div class="card">
+          <h2 id="failure-title">Monolith stopped</h2>
+          <p id="failure-summary"></p>
+          <pre id="failure-detail"></pre>
+          <button id="failure-reload" type="button">Reload</button>
+        </div>
+      </section>
+    </main>
+    <div class="engine-hud"><span id="status" role="status"><i></i>Initializing</span><strong id="fps">—</strong>
+      <span>simulation <span id="simulation">—</span></span><span>extraction <span id="extraction">—</span></span>
+      <span>draws <span id="draws">—</span></span><span id="uploads"></span><span id="render-time"></span>
+      <button id="pause" type="button">Pause</button><button id="reset" type="button">Reset view</button></div>
+    <div id="message" class="message" role="status">Loading…</div>
+    <script type="module" src="/src/monolith/main.ts"></script>
+  </body>
+</html>
