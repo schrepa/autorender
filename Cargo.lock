@@ -710,6 +710,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cook_meshlet"
+version = "0.1.0"
+dependencies = [
+ "cook",
+ "engine_codec",
+ "engine_math",
+ "engine_meshlet",
+ "glam 0.30.9",
+ "gltf",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cook_model"
 version = "0.1.0"
 dependencies = [
@@ -1166,6 +1180,17 @@ version = "0.1.0"
 dependencies = [
  "foldhash",
  "libm",
+]
+
+[[package]]
+name = "engine_meshlet"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine_codec",
+ "engine_math",
+ "glam 0.30.9",
+ "serde",
 ]
 
 [[package]]
