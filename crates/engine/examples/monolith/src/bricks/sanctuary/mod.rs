@@ -80,21 +80,30 @@ mod web_loader {
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
-    use brick_nanite::{NaniteStreaming, NaniteWorld};
+    use brick_nanite::{NaniteStreaming, NaniteWorld, PageFetchRequest};
     use engine::prelude::*;
-    use engine_meshlet::{MeshletManifest, page_bytes_as_words};
+    use engine_meshlet::{MeshletManifest, PAGE_SIZE_BYTES, page_bytes_as_words};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     use crate::layout::{HERO_ASSETS, populate_sanctuary};
     use crate::state::MonolithState;
 
+    const MAX_IN_FLIGHT_REQUESTS: usize = 24;
+    const MAX_RUN_PAGES: usize = 8;
+
     #[derive(Default)]
     struct WebState {
         manifests_started: bool,
         manifests: [Option<MeshletManifest>; 5],
-        in_flight_pages: usize,
+        in_flight_requests: usize,
         completed_pages: VecDeque<(u32, Option<Vec<u32>>)>,
+    }
+
+    struct PageRun {
+        mesh_name: String,
+        byte_offset: u64,
+        page_ids: Vec<u32>,
     }
 
     thread_local! {
@@ -145,18 +154,56 @@ mod web_loader {
         }
     }
 
-    fn start_page_fetch(mesh_name: String, global_page_id: u32, offset: u64, len: u64) {
-        let url = format!("/monolith/{mesh_name}.mlp");
-        let end = offset.saturating_add(len).saturating_sub(1);
+    fn coalesce_runs(mut reqs: Vec<PageFetchRequest>) -> Vec<PageRun> {
+        reqs.sort_unstable_by(|a, b| {
+            a.mesh_name
+                .cmp(&b.mesh_name)
+                .then_with(|| a.byte_offset.cmp(&b.byte_offset))
+        });
+        let page_bytes = PAGE_SIZE_BYTES as u64;
+        let mut runs: Vec<PageRun> = Vec::new();
+        for req in reqs {
+            if let Some(last) = runs.last_mut() {
+                let expected = last.byte_offset + (last.page_ids.len() as u64) * page_bytes;
+                if last.mesh_name == req.mesh_name
+                    && req.byte_offset == expected
+                    && last.page_ids.len() < MAX_RUN_PAGES
+                {
+                    last.page_ids.push(req.global_page_id);
+                    continue;
+                }
+            }
+            runs.push(PageRun {
+                mesh_name: req.mesh_name,
+                byte_offset: req.byte_offset,
+                page_ids: vec![req.global_page_id],
+            });
+        }
+        runs
+    }
+
+    fn start_run_fetch(run: PageRun) {
+        let url = format!("/monolith/{}.mlp", run.mesh_name);
+        let total_len = (run.page_ids.len() as u64) * (PAGE_SIZE_BYTES as u64);
+        let end = run.byte_offset.saturating_add(total_len).saturating_sub(1);
         wasm_bindgen_futures::spawn_local(async move {
-            let words = fetch_bytes(&url, Some((offset, end)))
-                .await
-                .ok()
-                .and_then(|bytes| page_bytes_as_words(&bytes).ok());
+            let fetched = fetch_bytes(&url, Some((run.byte_offset, end))).await.ok();
+            let valid_bytes = fetched.filter(|b| b.len() == total_len as usize);
             WEB_STATE.with(|cell| {
                 let mut st = cell.borrow_mut();
-                st.in_flight_pages = st.in_flight_pages.saturating_sub(1);
-                st.completed_pages.push_back((global_page_id, words));
+                st.in_flight_requests = st.in_flight_requests.saturating_sub(1);
+                if let Some(bytes) = valid_bytes {
+                    for (page_id, chunk) in
+                        run.page_ids.into_iter().zip(bytes.as_chunks::<PAGE_SIZE_BYTES>().0)
+                    {
+                        st.completed_pages
+                            .push_back((page_id, page_bytes_as_words(chunk).ok()));
+                    }
+                } else {
+                    for page_id in run.page_ids {
+                        st.completed_pages.push_back((page_id, None));
+                    }
+                }
             });
         });
     }
@@ -206,16 +253,18 @@ mod web_loader {
             }
         }
 
-        let capacity = WEB_STATE.with(|cell| 12_usize.saturating_sub(cell.borrow().in_flight_pages));
-        if capacity > 0 {
-            let reqs = streaming.take_fetch_requests(capacity);
-            let count = reqs.len();
-            if count > 0 {
+        let req_slots = WEB_STATE
+            .with(|cell| MAX_IN_FLIGHT_REQUESTS.saturating_sub(cell.borrow().in_flight_requests));
+        if req_slots > 0 {
+            let reqs = streaming.take_fetch_requests((req_slots * 4).min(64));
+            if !reqs.is_empty() {
+                let runs = coalesce_runs(reqs);
+                let run_count = runs.len();
                 WEB_STATE.with(|cell| {
-                    cell.borrow_mut().in_flight_pages += count;
+                    cell.borrow_mut().in_flight_requests += run_count;
                 });
-                for req in reqs {
-                    start_page_fetch(req.mesh_name, req.global_page_id, req.byte_offset, req.byte_len);
+                for run in runs {
+                    start_run_fetch(run);
                 }
             }
         }

@@ -290,7 +290,7 @@ impl Default for NaniteConfig {
             freeze_culling: false,
             hw_only: false,
             sw_max_px: 4.5,
-            max_pages_per_frame: 24,
+            max_pages_per_frame: 48,
             shadows_enabled: true,
         }
     }

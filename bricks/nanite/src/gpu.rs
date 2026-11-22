@@ -879,7 +879,7 @@ impl GpuPart for NaniteGpu {
         let geom_changed = self.shadow.last_geom_rev != world.geometry_revision
             || self.shadow.last_inst_rev != world.instance_revision;
         let c0_moved = (c0_center - self.shadow.last_c0_center).length_squared() > 36.0;
-        let shadow_target = u64::from(world.total_pages.min(48));
+        let shadow_target = u64::from(world.total_pages.min(96));
         let c0_res_changed = self.shadow.last_c0_res == u64::MAX
             || (self.residency_ver != self.shadow.last_c0_res
                 && self.shadow.last_c0_res < shadow_target
