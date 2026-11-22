@@ -512,6 +512,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "brick_hiz"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_render",
+ "engine_sources",
+]
+
+[[package]]
 name = "brick_interface"
 version = "0.1.0"
 dependencies = [
