@@ -9,6 +9,7 @@ publish.workspace = true
 bytemuck.workspace = true
 engine_codec.workspace = true
 engine_math.workspace = true
+flate2.workspace = true
 glam.workspace = true
 serde.workspace = true
 

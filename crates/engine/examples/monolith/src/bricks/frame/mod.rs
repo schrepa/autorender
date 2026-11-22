@@ -373,7 +373,7 @@ impl GpuPart for PostProcess {
         let pixel_ratio = views.map_or(1.0, |v| v.frame().pixel_ratio);
         self.direct = !needs_intermediate(presents.iter().next().copied(), scale, pixel_ratio);
         let (cw, ch) = cx.canvas_size();
-        let max_bloom_px: u32 = 144_000;
+        let max_bloom_px: u32 = 72_000;
         let bloom_raw =
             (f64::from(max_bloom_px) / (f64::from(cw.max(1)) * f64::from(ch.max(1)))).sqrt() as f32;
         let bloom_frac = engine::math::clamp(bloom_raw, 0.25, 0.5);

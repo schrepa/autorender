@@ -9,7 +9,7 @@
         "mobility": "moving"
       },
       "present": {
-        "antialias": true,
+        "antialias": false,
         "antialias_max_pixel_ratio": 1.5
       },
       "view": {

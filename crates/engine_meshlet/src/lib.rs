@@ -20,14 +20,15 @@ pub use bounds::{
 };
 pub use dag::build;
 pub use encode::{
-    decode_cluster_words, decode_octahedral, dequantize_position, encode_cluster_words,
+    compress_page_words, decode_cluster_words, decode_compressed_pages, decode_octahedral,
+    decompress_page_words, dequantize_position, encode_cluster_words, encode_compressed_pages,
     encode_octahedral, page_bytes_as_words, words_to_le_bytes,
 };
 pub use format::{
     BVH_BRANCHING, BuildStats, BuiltMeshlet, BvhNode, CLUSTER_TRI_WORDS, CLUSTER_VERTEX_WORDS,
-    ClusterHeader, ClusterVertex, DecodedCluster, FLAG_IN_ROOT_PAGE, FLAG_ROOT_CLUSTER,
-    MANIFEST_MAGIC, MANIFEST_VERSION, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS, MeshletManifest,
-    NO_BVH_CHILD, NO_FALLBACK_CLUSTER, PAGE_SIZE_BYTES, PAGE_WORDS, ROOT_PARENT_ERROR, SourceMesh,
-    VerifyReport,
+    ClusterHeader, ClusterVertex, DecodedCluster, FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE,
+    FLAG_ROOT_CLUSTER, MANIFEST_MAGIC, MANIFEST_VERSION, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS,
+    MeshletManifest, NO_BVH_CHILD, NO_FALLBACK_CLUSTER, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan,
+    ROOT_PARENT_ERROR, SourceMesh, VerifyReport,
 };
 pub use verify::verify;

@@ -69,10 +69,6 @@ fn cluster_tri_count(c: GpuClusterHeader) -> u32 {
     return (c.cone_and_meta.y >> 8u) & 0xFFu;
 }
 
-fn cluster_lod(c: GpuClusterHeader) -> u32 {
-    return (c.cone_and_meta.y >> 16u) & 0xFFu;
-}
-
 fn cluster_mat(c: GpuClusterHeader) -> u32 {
     return (c.cone_and_meta.y >> 24u) & 0xFFu;
 }

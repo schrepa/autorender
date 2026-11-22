@@ -1,10 +1,15 @@
+use std::io::{Read as _, Write as _};
+
 use engine_codec::{Error, ErrorCode, Expected};
 use engine_math::{clamp, max};
+use flate2::Compression;
+use flate2::read::DeflateDecoder;
+use flate2::write::DeflateEncoder;
 use glam::{Vec2, Vec3};
 
 use crate::format::{
     CLUSTER_TRI_WORDS, CLUSTER_VERTEX_WORDS, ClusterHeader, ClusterVertex, DecodedCluster,
-    MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS, PAGE_SIZE_BYTES, PAGE_WORDS,
+    MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan,
 };
 
 fn invalid(path: impl Into<String>) -> Error {
@@ -229,4 +234,73 @@ pub fn page_bytes_as_words(bytes: &[u8]) -> Result<Vec<u32>, Error> {
         words.push(u32::from_le_bytes(chunk));
     }
     Ok(words)
+}
+
+pub fn compress_page_words(words: &[u32]) -> Result<Vec<u8>, Error> {
+    if words.len() != PAGE_WORDS {
+        return Err(invalid("$.page.words")
+            .expected(Expected::Matching)
+            .got(words.len()));
+    }
+    let raw = words_to_le_bytes(words);
+    let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(&raw)
+        .map_err(|_| invalid("$.page.compress").expected(Expected::Supported))?;
+    enc.finish()
+        .map_err(|_| invalid("$.page.compress").expected(Expected::Supported))
+}
+
+pub fn decompress_page_words(bytes: &[u8]) -> Result<Vec<u32>, Error> {
+    let mut dec = DeflateDecoder::new(bytes);
+    let mut raw = Vec::with_capacity(PAGE_SIZE_BYTES);
+    dec.read_to_end(&mut raw)
+        .map_err(|_| invalid("$.page.decompress").expected(Expected::Supported))?;
+    if raw.len() != PAGE_SIZE_BYTES {
+        return Err(invalid("$.page.size")
+            .expected(Expected::Matching)
+            .got(raw.len()));
+    }
+    page_bytes_as_words(&raw)
+}
+
+pub fn encode_compressed_pages(
+    page_words: &[u32],
+    page_count: u32,
+) -> Result<(Vec<u8>, Vec<PageSpan>), Error> {
+    let count = page_count as usize;
+    if page_words.len() != count * PAGE_WORDS {
+        return Err(invalid("$.pages.len")
+            .expected(Expected::Matching)
+            .got(page_words.len()));
+    }
+    let mut blob = Vec::with_capacity(count * (PAGE_SIZE_BYTES / 2));
+    let mut spans = Vec::with_capacity(count);
+    for pid in 0..count {
+        let slice = &page_words[pid * PAGE_WORDS..(pid + 1) * PAGE_WORDS];
+        let comp = compress_page_words(slice)?;
+        let byte_offset = blob.len() as u64;
+        let byte_len = comp.len() as u32;
+        blob.extend_from_slice(&comp);
+        spans.push(PageSpan {
+            byte_offset,
+            byte_len,
+        });
+    }
+    Ok((blob, spans))
+}
+
+pub fn decode_compressed_pages(bytes: &[u8], spans: &[PageSpan]) -> Result<Vec<u32>, Error> {
+    let mut out = Vec::with_capacity(spans.len() * PAGE_WORDS);
+    for (idx, span) in spans.iter().enumerate() {
+        let start = span.byte_offset as usize;
+        let end = start
+            .checked_add(span.byte_len as usize)
+            .ok_or_else(|| invalid(format!("$.page_spans[{idx}]")).expected(Expected::Present))?;
+        let slice = bytes
+            .get(start..end)
+            .ok_or_else(|| invalid(format!("$.page_spans[{idx}]")).expected(Expected::Present))?;
+        let words = decompress_page_words(slice)?;
+        out.extend_from_slice(&words);
+    }
+    Ok(out)
 }

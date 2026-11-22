@@ -1226,6 +1226,7 @@ dependencies = [
  "bytemuck",
  "engine_codec",
  "engine_math",
+ "flate2",
  "glam 0.30.9",
  "serde",
 ]

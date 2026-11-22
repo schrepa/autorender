@@ -14,9 +14,16 @@ pub const ROOT_PARENT_ERROR: f32 = 1.0e30;
 pub const NO_FALLBACK_CLUSTER: u32 = u32::MAX;
 pub const NO_BVH_CHILD: u32 = u32::MAX;
 pub const MANIFEST_MAGIC: [u8; 4] = *b"MLM1";
-pub const MANIFEST_VERSION: u32 = 1;
+pub const MANIFEST_VERSION: u32 = 2;
 pub const FLAG_ROOT_CLUSTER: u32 = 1;
 pub const FLAG_IN_ROOT_PAGE: u32 = 2;
+pub const FLAG_PINNED_COARSE: u32 = 4;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PageSpan {
+    pub byte_offset: u64,
+    pub byte_len: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -88,6 +95,10 @@ impl ClusterHeader {
         self.streaming_meta[1]
     }
 
+    pub fn fallback_cluster_b(&self) -> u32 {
+        self.streaming_meta[3]
+    }
+
     pub fn flags(&self) -> u32 {
         self.streaming_meta[2]
     }
@@ -98,6 +109,10 @@ impl ClusterHeader {
 
     pub fn is_in_root_page(&self) -> bool {
         (self.streaming_meta[2] & FLAG_IN_ROOT_PAGE) != 0
+    }
+
+    pub fn is_pinned_coarse(&self) -> bool {
+        (self.streaming_meta[2] & FLAG_PINNED_COARSE) != 0
     }
 
     pub fn aabb_min_vec3(&self) -> Vec3 {
@@ -199,12 +214,14 @@ pub struct MeshletManifest {
     pub bounds_max: [f32; 3],
     pub clusters: Vec<ClusterHeader>,
     pub bvh: Vec<BvhNode>,
+    pub page_spans: Vec<PageSpan>,
 }
 
 #[derive(Clone, Debug)]
 pub struct BuiltMeshlet {
     pub manifest: MeshletManifest,
     pub page_words: Vec<u32>,
+    pub compressed_pages: Vec<u8>,
     pub stats: BuildStats,
 }
 
@@ -216,7 +233,7 @@ impl BuiltMeshlet {
     }
 
     pub fn pages_to_bytes(&self) -> Vec<u8> {
-        crate::encode::words_to_le_bytes(&self.page_words)
+        self.compressed_pages.clone()
     }
 }
 

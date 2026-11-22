@@ -117,6 +117,7 @@ struct CornerAttr {
 struct SimpTri {
     v: [u32; 3],
     attrs: [CornerAttr; 3],
+    ref_n: DVec3,
     alive: bool,
 }
 
@@ -240,7 +241,7 @@ fn build_quadrics_and_locks(
                 if bn_len > 1.0e-16 {
                     let b_unit = bn / bn_len;
                     let bd = -b_unit.dot(positions[u as usize]);
-                    let bq = Quadric::from_plane(b_unit, bd, 4.0 * edge.length_squared());
+                    let bq = Quadric::from_plane(b_unit, bd, 12.0 * edge.length_squared());
                     boundary_q[u as usize].add(&bq);
                     boundary_q[v as usize].add(&bq);
                 }
@@ -299,9 +300,20 @@ fn init_state(
                     ao: v.ao,
                 }
             };
+            let pa = positions[a as usize];
+            let pb = positions[b as usize];
+            let pc = positions[c as usize];
+            let cross = (pb - pa).cross(pc - pa);
+            let clen = cross.length();
+            let ref_n = if clen > 1.0e-14 {
+                cross / clen
+            } else {
+                DVec3::Y
+            };
             tris.push(SimpTri {
                 v: [a, b, c],
                 attrs: [attr(i0), attr(i1), attr(i2)],
+                ref_n,
                 alive: true,
             });
         }
@@ -399,7 +411,55 @@ fn push_all_edges(state: &SimplifierState, heap: &mut BinaryHeap<CollapseEntry>)
     }
 }
 
-fn collapse_is_valid(state: &SimplifierState, keep: u32, remove: u32, target: DVec3) -> bool {
+fn link_condition_ok(state: &SimplifierState, keep: u32, remove: u32) -> bool {
+    let mut adj_k: Vec<u32> = Vec::new();
+    let mut shared_opp: Vec<u32> = Vec::new();
+    for &ti in &state.vert_tris[keep as usize] {
+        let tri = &state.tris[ti];
+        if !tri.alive {
+            continue;
+        }
+        let has_r = tri.v.contains(&remove);
+        for &v in &tri.v {
+            if v == keep || v == remove {
+                continue;
+            }
+            if !adj_k.contains(&v) {
+                adj_k.push(v);
+            }
+            if has_r && !shared_opp.contains(&v) {
+                shared_opp.push(v);
+            }
+        }
+    }
+    if shared_opp.is_empty() || shared_opp.len() > 2 {
+        return false;
+    }
+    for &ti in &state.vert_tris[remove as usize] {
+        let tri = &state.tris[ti];
+        if !tri.alive || tri.v.contains(&keep) {
+            continue;
+        }
+        for &v in &tri.v {
+            if v != remove && adj_k.contains(&v) && !shared_opp.contains(&v) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn collapse_is_valid(
+    state: &SimplifierState,
+    keep: u32,
+    remove: u32,
+    target: DVec3,
+    min_dot: f64,
+    check_link: bool,
+) -> bool {
+    if check_link && !link_condition_ok(state, keep, remove) {
+        return false;
+    }
     let mut has_shared = false;
     let mut surviving_faces: Vec<[u32; 3]> = Vec::new();
     for &vert in &[keep, remove] {
@@ -443,7 +503,15 @@ fn collapse_is_valid(state: &SimplifierState, keep: u32, remove: u32, target: DV
             if new_len <= 1.0e-14 {
                 return false;
             }
-            if old_len > 1.0e-14 && n_old.dot(n_new) < 0.25 * old_len * new_len {
+            if old_len > 1.0e-14 && n_old.dot(n_new) < min_dot * old_len * new_len {
+                return false;
+            }
+            if tri.ref_n.dot(n_new) < min_dot * new_len {
+                return false;
+            }
+            let vn = (tri.attrs[0].normal + tri.attrs[1].normal + tri.attrs[2].normal).as_dvec3();
+            let vn_len = vn.length();
+            if vn_len > 1.0e-6 && vn.dot(n_new) < (min_dot * 0.75) * vn_len * new_len {
                 return false;
             }
             let mut key = [
@@ -596,7 +664,13 @@ fn apply_collapse(
     }
 }
 
-fn run_collapse_pass(state: &mut SimplifierState, target_tris: usize, target_verts: usize) {
+fn run_collapse_pass(
+    state: &mut SimplifierState,
+    target_tris: usize,
+    target_verts: usize,
+    min_dot: f64,
+    check_link: bool,
+) {
     let mut heap = BinaryHeap::new();
     push_all_edges(state, &mut heap);
     while (state.live_tris > target_tris || state.live_verts > target_verts) && state.live_tris > 1
@@ -611,7 +685,14 @@ fn run_collapse_pass(state: &mut SimplifierState, target_tris: usize, target_ver
         {
             continue;
         }
-        if !collapse_is_valid(state, entry.keep, entry.remove, entry.target_pos) {
+        if !collapse_is_valid(
+            state,
+            entry.keep,
+            entry.remove,
+            entry.target_pos,
+            min_dot,
+            check_link,
+        ) {
             continue;
         }
         apply_collapse(state, entry, &mut heap);
@@ -696,12 +777,13 @@ pub fn simplify_group(
     let initial_tris = state.live_tris;
     let clamped_tris = target_tris.max(1);
     let clamped_verts = target_verts.max(3);
-    run_collapse_pass(&mut state, clamped_tris, clamped_verts);
+    run_collapse_pass(&mut state, clamped_tris, clamped_verts, 0.40, true);
+    if state.live_tris > clamped_tris || state.live_verts > clamped_verts {
+        run_collapse_pass(&mut state, clamped_tris, clamped_verts, 0.20, false);
+    }
     let needs_more = state.live_tris > clamped_tris || state.live_verts > clamped_verts;
     let stalled = needs_more
-        && (state.live_tris * 4 > initial_tris * 3
-            || state.live_verts > clamped_verts
-            || hard_locked_pos.is_empty());
+        && (state.live_tris * 5 > initial_tris * 4 || hard_locked_pos.is_empty());
     if allow_open_edge_fallback && stalled {
         let mut unlocked_any = false;
         for i in 0..state.locked.len() {
@@ -711,8 +793,228 @@ pub fn simplify_group(
             }
         }
         if unlocked_any {
-            run_collapse_pass(&mut state, clamped_tris, clamped_verts);
+            run_collapse_pass(&mut state, clamped_tris, clamped_verts, 0.15, false);
+        }
+        if (state.live_tris > clamped_tris || state.live_verts > clamped_verts)
+            && hard_locked_pos.is_empty()
+        {
+            run_collapse_pass(&mut state, clamped_tris, clamped_verts, 0.08, false);
         }
     }
     export_simplified(&state)
+}
+
+#[derive(Default)]
+struct WeldCell {
+    q: Quadric,
+    pos_sum: DVec3,
+    norm_sum: Vec3,
+    uv_sum: Vec2,
+    col_sum: [f32; 3],
+    ao_sum: f32,
+    weight_sum: f64,
+    pos_id: u32,
+}
+
+fn finalize_welded(
+    cells: &[WeldCell],
+    raw_tris: Vec<([u32; 3], Vec3)>,
+    cell: f32,
+) -> (Vec<ClusterVertex>, Vec<u32>, Vec<[u32; 3]>, f32) {
+    let mut vertices = Vec::with_capacity(cells.len());
+    let mut pos_ids = Vec::with_capacity(cells.len());
+    let mut max_err = 0.0_f64;
+    for c in cells {
+        let w = c.weight_sum.max(1.0e-12);
+        let avg = c.pos_sum / w;
+        let p = match c.q.solve_optimal() {
+            Some(opt) if (opt - avg).length() <= f64::from(cell) * 1.25 => opt,
+            _ => avg,
+        };
+        if c.q.weight > 1.0e-12 {
+            let err = (c.q.eval(p) / c.q.weight).sqrt();
+            if err > max_err {
+                max_err = err;
+            }
+        }
+        let wf = w as f32;
+        let normal = if c.norm_sum.length_squared() > 1.0e-12 {
+            c.norm_sum.normalize()
+        } else {
+            Vec3::Y
+        };
+        vertices.push(ClusterVertex {
+            position: Vec3::new(p.x as f32, p.y as f32, p.z as f32),
+            normal,
+            uv: c.uv_sum / wf,
+            color: [
+                clamp(c.col_sum[0] / wf, 0.0, 1.0),
+                clamp(c.col_sum[1] / wf, 0.0, 1.0),
+                clamp(c.col_sum[2] / wf, 0.0, 1.0),
+            ],
+            ao: clamp(c.ao_sum / wf, 0.0, 1.0),
+        });
+        pos_ids.push(c.pos_id);
+    }
+    let mut seen: HashSet<[u32; 3]> =
+        HashSet::with_capacity_and_hasher(raw_tris.len(), FixedState::default());
+    let mut triangles = Vec::with_capacity(raw_tris.len());
+    let mut smooth_n = vec![Vec3::ZERO; vertices.len()];
+    for (mut tri, orig_n) in raw_tris {
+        let mut key = tri;
+        key.sort_unstable();
+        if !seen.insert(key) {
+            continue;
+        }
+        let p0 = vertices[tri[0] as usize].position;
+        let p1 = vertices[tri[1] as usize].position;
+        let p2 = vertices[tri[2] as usize].position;
+        let mut n_new = (p1 - p0).cross(p2 - p0);
+        if n_new.length_squared() <= 1.0e-14 {
+            continue;
+        }
+        if n_new.dot(orig_n) < 0.0 {
+            tri.swap(1, 2);
+            n_new = -n_new;
+        }
+        smooth_n[tri[0] as usize] += n_new;
+        smooth_n[tri[1] as usize] += n_new;
+        smooth_n[tri[2] as usize] += n_new;
+        triangles.push(tri);
+    }
+    for (v, sn) in vertices.iter_mut().zip(smooth_n) {
+        if sn.length_squared() > 1.0e-14 {
+            v.normal = sn.normalize();
+        }
+    }
+    (vertices, pos_ids, triangles, max(max_err as f32, cell * 0.5))
+}
+
+fn build_welded_at_cell(
+    group_clusters: &[&MeshletData],
+    hard_locked: &HashSet<u32>,
+    bmin: Vec3,
+    cell: f32,
+) -> (Vec<ClusterVertex>, Vec<u32>, Vec<[u32; 3]>, f32) {
+    let inv = 1.0 / max(cell, 1.0e-5);
+    let mut cell_map: HashMap<[i64; 3], u32> = HashMap::with_hasher(FixedState::default());
+    let mut locked_map: HashMap<u32, u32> = HashMap::with_hasher(FixedState::default());
+    let mut cells: Vec<WeldCell> = Vec::new();
+    let mut raw_tris: Vec<([u32; 3], Vec3)> = Vec::new();
+    for m in group_clusters {
+        let mut local_to_cell = Vec::with_capacity(m.vertices.len());
+        for (vi, v) in m.vertices.iter().enumerate() {
+            let gp = m.pos_ids[vi];
+            let cid = if hard_locked.contains(&gp) {
+                *locked_map.entry(gp).or_insert_with(|| {
+                    let id = cells.len() as u32;
+                    cells.push(WeldCell {
+                        pos_id: gp,
+                        ..WeldCell::default()
+                    });
+                    id
+                })
+            } else {
+                let rel = (v.position - bmin) * inv;
+                let key = [
+                    rel.x.floor() as i64,
+                    rel.y.floor() as i64,
+                    rel.z.floor() as i64,
+                ];
+                *cell_map.entry(key).or_insert_with(|| {
+                    let id = cells.len() as u32;
+                    cells.push(WeldCell {
+                        pos_id: gp,
+                        ..WeldCell::default()
+                    });
+                    id
+                })
+            };
+            local_to_cell.push(cid);
+        }
+        for &[i0, i1, i2] in &m.triangles {
+            let v0 = m.vertices[usize::from(i0)];
+            let v1 = m.vertices[usize::from(i1)];
+            let v2 = m.vertices[usize::from(i2)];
+            let p0 = DVec3::new(f64::from(v0.position.x), f64::from(v0.position.y), f64::from(v0.position.z));
+            let p1 = DVec3::new(f64::from(v1.position.x), f64::from(v1.position.y), f64::from(v1.position.z));
+            let p2 = DVec3::new(f64::from(v2.position.x), f64::from(v2.position.y), f64::from(v2.position.z));
+            let cross = (p1 - p0).cross(p2 - p0);
+            let clen = cross.length();
+            let area = (clen * 0.5).max(1.0e-8);
+            let q = if clen > 1.0e-14 {
+                let n = cross / clen;
+                Quadric::from_plane(n, -n.dot(p0), area)
+            } else {
+                Quadric::default()
+            };
+            for (li, pv) in [(i0, p0), (i1, p1), (i2, p2)] {
+                let vert = m.vertices[usize::from(li)];
+                let c = &mut cells[local_to_cell[usize::from(li)] as usize];
+                c.q.add(&q);
+                c.pos_sum += pv * area;
+                let af = area as f32;
+                c.norm_sum += vert.normal * af;
+                c.uv_sum += vert.uv * af;
+                c.col_sum[0] += vert.color[0] * af;
+                c.col_sum[1] += vert.color[1] * af;
+                c.col_sum[2] += vert.color[2] * af;
+                c.ao_sum += vert.ao * af;
+                c.weight_sum += area;
+            }
+            let (c0, c1, c2) = (
+                local_to_cell[usize::from(i0)],
+                local_to_cell[usize::from(i1)],
+                local_to_cell[usize::from(i2)],
+            );
+            if c0 != c1 && c1 != c2 && c2 != c0 {
+                let orig_n = Vec3::new(cross.x as f32, cross.y as f32, cross.z as f32);
+                raw_tris.push(([c0, c1, c2], orig_n));
+            }
+        }
+    }
+    finalize_welded(&cells, raw_tris, cell)
+}
+
+pub fn cluster_weld_group(
+    group_clusters: &[&MeshletData],
+    hard_locked: &HashSet<u32>,
+    target_tris: usize,
+    target_verts: usize,
+) -> SimplifiedGroup {
+    let mut bmin = Vec3::splat(f32::INFINITY);
+    let mut bmax = Vec3::splat(f32::NEG_INFINITY);
+    for m in group_clusters {
+        for v in &m.vertices {
+            bmin = bmin.min(v.position);
+            bmax = bmax.max(v.position);
+        }
+    }
+    let diag = max((bmax - bmin).length(), 1.0e-4);
+    let mut cell = diag / 36.0;
+    let mut best = SimplifiedGroup {
+        vertices: Vec::new(),
+        pos_ids: Vec::new(),
+        triangles: Vec::new(),
+        error: 0.0,
+    };
+    for _ in 0..18 {
+        let (verts, pids, tris, err) =
+            build_welded_at_cell(group_clusters, hard_locked, bmin, cell);
+        if tris.is_empty() {
+            break;
+        }
+        let ok = tris.len() <= target_tris && verts.len() <= target_verts;
+        best = SimplifiedGroup {
+            vertices: verts,
+            pos_ids: pids,
+            triangles: tris,
+            error: err,
+        };
+        if ok {
+            break;
+        }
+        cell *= 1.35;
+    }
+    best
 }

@@ -26,7 +26,7 @@ settings! {
         pub view_mode: String = "lit".to_owned() => any,
         pub freeze_culling: bool = false => any,
         pub hw_only: bool = false => any,
-        pub heap_mb: u32 = 32 => any,
+        pub heap_mb: u32 = 64 => any,
         pub lod_px: u32 = 2 => any,
         pub hud_hidden: bool = false => any,
         pub shadows: bool = true => any,
@@ -546,6 +546,21 @@ fn update_control(
 
     let frame = input.views.frame();
     let logical = frame.logical_size();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let phys_px = (logical.x * frame.pixel_ratio) * (logical.y * frame.pixel_ratio);
+        let max_px = 950_000.0_f32;
+        state.render_scale = if phys_px > max_px {
+            math::clamp((max_px / phys_px).sqrt(), 0.5, 1.0)
+        } else {
+            1.0
+        };
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        state.render_scale = 1.0;
+    }
+    cfg.render_scale = state.render_scale;
     let eff_fov = if logical.x > 0.0 && logical.x < logical.y {
         math::min(fov_deg + 14.0, 78.0)
     } else {

@@ -11,14 +11,10 @@ import package::nanite::common::PAGE_WORDS;
 import package::nanite::common::SHADOW_C0_DIM;
 import package::nanite::common::SHADOW_C1_DIM;
 import package::nanite::common::quat_rotate;
-import package::nanite::common::inst_to_world;
 import package::nanite::common::decode_pos;
 import package::nanite::common::decode_color_ao;
 import package::nanite::common::decode_octahedral;
 import package::nanite::common::decode_uv;
-import package::nanite::common::cluster_vert_count;
-import package::nanite::common::cluster_lod;
-import package::nanite::common::cluster_mat;
 
 @group(2) @binding(0) var vis_hw_tex: texture_2d<u32>;
 @group(2) @binding(1) var hw_depth_tex: texture_depth_2d;
@@ -140,6 +136,7 @@ fn sample_cascade_pcf(
     depth_bias: f32,
     rot_angle: f32,
     radius_px: f32,
+    taps: i32,
 ) -> vec2<f32> {
     let p = world_pos + n * normal_bias;
     let clip = vp * vec4<f32>(p, 1.0);
@@ -154,18 +151,18 @@ fn sample_cascade_pcf(
     let ca = cos(rot_angle);
     let sa = sin(rot_angle);
     let cmp_z = clip.z + depth_bias;
-    var lit = 0.0;
-    for (var i = 0; i < 4; i = i + 1) {
-        let r = sqrt((f32(i) + 0.5) * 0.25) * radius_px;
-        let a = f32(i) * 2.3999632;
-        let ox = cos(a) * r;
-        let oy = sin(a) * r;
-        let rx = ox * ca - oy * sa;
-        let ry = ox * sa + oy * ca;
-        lit += sample_shadow_bilinear(sx + rx, sy + ry, cmp_z, dim_u, dim_i, base_off);
-    }
     let coverage = smoothstep(0.98, 0.78, margin);
-    return vec2<f32>(lit * 0.25, coverage);
+    if taps <= 1 {
+        let jx = ca * radius_px * 0.45;
+        let jy = sa * radius_px * 0.45;
+        let lit = sample_shadow_bilinear(sx + jx, sy + jy, cmp_z, dim_u, dim_i, base_off);
+        return vec2<f32>(lit, coverage);
+    }
+    let dx = ca * radius_px;
+    let dy = sa * radius_px;
+    let s0 = sample_shadow_bilinear(sx + dx, sy + dy, cmp_z, dim_u, dim_i, base_off);
+    let s1 = sample_shadow_bilinear(sx - dx, sy - dy, cmp_z, dim_u, dim_i, base_off);
+    return vec2<f32>((s0 + s1) * 0.5, coverage);
 }
 
 fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
@@ -182,7 +179,8 @@ fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
         0.06 + slope * 0.10,
         0.00030 + slope * 0.00045,
         angle,
-        1.35,
+        0.65,
+        1,
     );
     if c0.y >= 0.99 {
         return c0.x;
@@ -196,7 +194,8 @@ fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
         0.14 + slope * 0.22,
         0.00035 + slope * 0.00055,
         angle,
-        1.25,
+        0.75,
+        1,
     );
     let far_val = mix(1.0, c1.x, c1.y);
     return mix(far_val, c0.x, c0.y);
@@ -298,9 +297,10 @@ fn shade_pbr(
 
     rough = sqrt(clamp(rough * rough + normal_var * 0.50, 0.04, 0.96));
 
-    let ndl = max(dot(n, l), 0.0);
+    let raw_ndl = dot(n, l);
+    let ndl = max(raw_ndl, 0.0);
     var sh = 0.0;
-    if ndl > 0.001 || wrap_amt > 0.0 || backlit_amt > 0.0 || mat_id == 2u {
+    if raw_ndl > -0.18 || backlit_amt > 0.0 || mat_id == 2u {
         sh = eval_shadow(world_pos, n, frag_xy);
     }
     let ndv = max(dot(n, v), 0.001);
@@ -513,10 +513,13 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let vis_slot = (vis_id >> 6u) - 1u;
     let tri_id = vis_id & 63u;
     let vc = nanite_frame_vis_clusters[vis_slot];
-    let c = nanite_frame_clusters[vc.cluster_id];
-    let inst = nanite_frame_instances[vc.instance_id];
-    let vert_count = cluster_vert_count(c);
-    let page_base = vc.heap_slot * PAGE_WORDS + c.cone_and_meta.w;
+    let c_meta = nanite_frame_clusters[vc.cluster_id].cone_and_meta;
+    let c_min = nanite_frame_clusters[vc.cluster_id].aabb_min.xyz;
+    let c_ext = nanite_frame_clusters[vc.cluster_id].aabb_extent.xyz;
+    let inst_ps = nanite_frame_instances[vc.instance_id].pos_scale;
+    let inst_rq = nanite_frame_instances[vc.instance_id].rot_quat;
+    let vert_count = c_meta.y & 0xFFu;
+    let page_base = vc.heap_slot * PAGE_WORDS + c_meta.w;
     let tri_word = nanite_frame_page_heap[page_base + vert_count * 4u + tri_id];
     let i0 = tri_word & 0xFFu;
     let i1 = (tri_word >> 8u) & 0xFFu;
@@ -533,9 +536,9 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let w0_2 = nanite_frame_page_heap[b2];
     let w1_2 = nanite_frame_page_heap[b2 + 1u];
 
-    let p0 = inst_to_world(inst, decode_pos(w0_0, w1_0, c.aabb_min.xyz, c.aabb_extent.xyz));
-    let p1 = inst_to_world(inst, decode_pos(w0_1, w1_1, c.aabb_min.xyz, c.aabb_extent.xyz));
-    let p2 = inst_to_world(inst, decode_pos(w0_2, w1_2, c.aabb_min.xyz, c.aabb_extent.xyz));
+    let p0 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_0, w1_0, c_min, c_ext) * inst_ps.w);
+    let p1 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_1, w1_1, c_min, c_ext) * inst_ps.w);
+    let p2 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_2, w1_2, c_min, c_ext) * inst_ps.w);
 
     let rvp = nanite_frame_uniforms.render_view_proj;
     let c0 = rvp * vec4<f32>(p0, 1.0);
@@ -552,17 +555,8 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
     let det = (s1.x - s0.x) * (s2.y - s0.y) - (s2.x - s0.x) * (s1.y - s0.y);
     var bary = vec3<f32>(0.3333333, 0.3333333, 0.3333334);
-    var db_dx = vec3<f32>(0.0);
-    var db_dy = vec3<f32>(0.0);
     if abs(det) > 1.0e-12 {
         let inv_det = 1.0 / det;
-        let d_l0_dx = (s1.y - s2.y) * inv_det;
-        let d_l0_dy = (s2.x - s1.x) * inv_det;
-        let d_l1_dx = (s2.y - s0.y) * inv_det;
-        let d_l1_dy = (s0.x - s2.x) * inv_det;
-        let d_l2_dx = -d_l0_dx - d_l1_dx;
-        let d_l2_dy = -d_l0_dy - d_l1_dy;
-
         let l0 = ((s1.y - s2.y) * (ndc_p.x - s2.x) + (s2.x - s1.x) * (ndc_p.y - s2.y)) * inv_det;
         let l1 = ((s2.y - s0.y) * (ndc_p.x - s2.x) + (s0.x - s2.x) * (ndc_p.y - s2.y)) * inv_det;
         let l2 = 1.0 - l0 - l1;
@@ -570,12 +564,6 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let sum_pw = pw.x + pw.y + pw.z;
         if abs(sum_pw) > 1.0e-12 {
             bary = pw / sum_pw;
-            let px_x = 2.0 / max(vp.x, 1.0);
-            let px_y = -2.0 / max(vp.y, 1.0);
-            let dpw_dx = vec3<f32>(d_l0_dx, d_l1_dx, d_l2_dx) * inv_w * px_x;
-            let dpw_dy = vec3<f32>(d_l0_dy, d_l1_dy, d_l2_dy) * inv_w * px_y;
-            db_dx = (dpw_dx - bary * (dpw_dx.x + dpw_dx.y + dpw_dx.z)) / sum_pw;
-            db_dy = (dpw_dy - bary * (dpw_dy.x + dpw_dy.y + dpw_dy.z)) / sum_pw;
         }
     }
 
@@ -584,7 +572,8 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let n1 = decode_octahedral(nanite_frame_page_heap[b1 + 2u]);
     let n2 = decode_octahedral(nanite_frame_page_heap[b2 + 2u]);
     let local_n = n0 * bary.x + n1 * bary.y + n2 * bary.z;
-    let world_n_raw = quat_rotate(inst.rot_quat, local_n);
+    let ln_l2 = dot(local_n, local_n);
+    let world_n_raw = quat_rotate(inst_rq, local_n);
     let wn_l2 = dot(world_n_raw, world_n_raw);
     let world_n = select(vec3<f32>(0.0, 1.0, 0.0), world_n_raw * inverseSqrt(wn_l2), wn_l2 > 1.0e-8);
 
@@ -599,7 +588,7 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             return vec4<f32>(col * ndl, 1.0);
         }
         if view_mode == 3u {
-            let col = lod_heat_color(cluster_lod(c));
+            let col = lod_heat_color((c_meta.y >> 16u) & 0xFFu);
             return vec4<f32>(col * ndl, 1.0);
         }
         if view_mode == 4u {
@@ -607,8 +596,8 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             let sw_col = vec3<f32>(0.98, 0.52, 0.08);
             return vec4<f32>(select(hw_col, sw_col, use_sw) * ndl, 1.0);
         }
-        let page_id = c.cone_and_meta.z;
-        let is_root = (c.streaming_meta.z & 1u) != 0u;
+        let page_id = c_meta.z;
+        let is_root = (nanite_frame_clusters[vc.cluster_id].streaming_meta.z & 1u) != 0u;
         let pcol = select(hash_color(page_id + 17u), vec3<f32>(0.98, 0.25, 0.72), is_root);
         return vec4<f32>(pcol * ndl, 1.0);
     }
@@ -622,15 +611,11 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let uv1 = decode_uv(nanite_frame_page_heap[b1 + 3u]);
     let uv2 = decode_uv(nanite_frame_page_heap[b2 + 3u]);
     let uv_interp = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
-    let duv_dx = uv0 * db_dx.x + uv1 * db_dx.y + uv2 * db_dx.z;
-    let duv_dy = uv0 * db_dy.x + uv1 * db_dy.y + uv2 * db_dy.z;
-    let uv_filter = length(duv_dx) + length(duv_dy);
+    let cam_dist = length(nanite_frame_uniforms.render_pos_time.xyz - world_pos);
+    let uv_filter = cam_dist / max(nanite_frame_uniforms.shadow_info.z, 1.0);
+    let normal_var = clamp(1.0 - ln_l2, 0.0, 0.35);
 
-    let dn_dx = quat_rotate(inst.rot_quat, n0 * db_dx.x + n1 * db_dx.y + n2 * db_dx.z);
-    let dn_dy = quat_rotate(inst.rot_quat, n0 * db_dy.x + n1 * db_dy.y + n2 * db_dy.z);
-    let normal_var = min(dot(dn_dx, dn_dx) + dot(dn_dy, dn_dy), 0.35);
-
-    let mat_id = cluster_mat(c);
+    let mat_id = (c_meta.y >> 24u) & 0xFFu;
     let lit = shade_pbr(
         world_pos,
         world_n,

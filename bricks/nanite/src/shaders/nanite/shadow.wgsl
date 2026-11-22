@@ -12,6 +12,7 @@ import package::nanite::common::inst_to_world;
 import package::nanite::common::decode_pos;
 import package::nanite::common::cluster_vert_count;
 import package::nanite::common::cluster_tri_count;
+import package::nanite::common::cluster_mat;
 import package::nanite::common::edge_yup;
 
 @group(1) @binding(0) var<uniform> sh_uniforms: NaniteUniforms;
@@ -45,38 +46,56 @@ fn shadow_collect(inst_id: u32, cascade: u32) {
     }
     let mesh_id = inst.info.w;
     let range = sh_ranges[mesh_id * 2u + cascade];
-    var last_emitted: u32 = 0xFFFFFFFFu;
+    var last0: u32 = 0xFFFFFFFFu;
+    var last1: u32 = 0xFFFFFFFFu;
     for (var i = 0u; i < range.y; i = i + 1u) {
         let cid = sh_cuts[range.x + i];
-        var draw_cid = cid;
-        var slot = sh_page_table[sh_clusters[cid].cone_and_meta.z];
-        if slot == UNMAPPED_PAGE {
-            var cur = sh_clusters[cid].streaming_meta.y;
-            var found = false;
-            for (var s = 0u; s < 32u; s = s + 1u) {
-                if cur == NO_FALLBACK {
-                    break;
-                }
-                let fs = sh_page_table[sh_clusters[cur].cone_and_meta.z];
-                if fs != UNMAPPED_PAGE {
-                    draw_cid = cur;
-                    slot = fs;
-                    found = true;
-                    break;
-                }
-                cur = sh_clusters[cur].streaming_meta.y;
+        let c0 = sh_clusters[cid];
+        let slot = sh_page_table[c0.cone_and_meta.z];
+        if slot != UNMAPPED_PAGE {
+            let out_idx = atomicAdd(&sh_indirect[4u], 1u);
+            if out_idx < SHADOW_LIST_CAP {
+                sh_list[out_idx] = VisibleCluster(inst_id, cid, slot, cascade);
             }
-            if !found {
-                continue;
-            }
-        }
-        if draw_cid == last_emitted {
             continue;
         }
-        last_emitted = draw_cid;
-        let out_idx = atomicAdd(&sh_indirect[4u], 1u);
-        if out_idx < SHADOW_LIST_CAP {
-            sh_list[out_idx] = VisibleCluster(inst_id, draw_cid, slot, cascade);
+        var fb_stack: array<u32, 16>;
+        var sp: u32 = 0u;
+        if c0.streaming_meta.w != NO_FALLBACK {
+            fb_stack[sp] = c0.streaming_meta.w;
+            sp = sp + 1u;
+        }
+        if c0.streaming_meta.y != NO_FALLBACK {
+            fb_stack[sp] = c0.streaming_meta.y;
+            sp = sp + 1u;
+        }
+        for (var s = 0u; s < 32u; s = s + 1u) {
+            if sp == 0u {
+                break;
+            }
+            sp = sp - 1u;
+            let cur = fb_stack[sp];
+            let fc = sh_clusters[cur];
+            let fs = sh_page_table[fc.cone_and_meta.z];
+            if fs != UNMAPPED_PAGE {
+                if cur != last0 && cur != last1 {
+                    last1 = last0;
+                    last0 = cur;
+                    let out_idx = atomicAdd(&sh_indirect[4u], 1u);
+                    if out_idx < SHADOW_LIST_CAP {
+                        sh_list[out_idx] = VisibleCluster(inst_id, cur, fs, cascade);
+                    }
+                }
+            } else {
+                if fc.streaming_meta.w != NO_FALLBACK && sp < 16u {
+                    fb_stack[sp] = fc.streaming_meta.w;
+                    sp = sp + 1u;
+                }
+                if fc.streaming_meta.y != NO_FALLBACK && sp < 16u {
+                    fb_stack[sp] = fc.streaming_meta.y;
+                    sp = sp + 1u;
+                }
+            }
         }
     }
 }
@@ -134,6 +153,10 @@ fn shadow_raster(wid_x: u32, lid: u32, cascade: u32) {
     let p1 = sh_v[(tri_word >> 8u) & 0xFFu];
     let p2 = sh_v[(tri_word >> 16u) & 0xFFu];
     let area = edge_yup(p0.xy, p1.xy, p2.xy);
+    let mat_id = cluster_mat(c);
+    if mat_id != 4u && area <= 1.0e-5 {
+        return;
+    }
     if abs(area) <= 1.0e-5 {
         return;
     }

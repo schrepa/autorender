@@ -7,12 +7,12 @@ use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::PathBuf;
 
 use engine::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use engine_meshlet::decompress_page_words;
 use engine_meshlet::{
     BvhNode, ClusterHeader, MeshletManifest, NO_BVH_CHILD, NO_FALLBACK_CLUSTER, PAGE_SIZE_BYTES,
-    PAGE_WORDS,
+    PAGE_WORDS, PageSpan,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use engine_meshlet::page_bytes_as_words;
 
 use crate::types::{
     GpuBvhNode, GpuClusterHeader, MAX_HEAP_PAGES, NaniteInstance, UNMAPPED_PAGE,
@@ -28,6 +28,7 @@ pub struct MeshEntry {
     pub page_offset: u32,
     pub page_count: u32,
     pub root_page_count: u32,
+    pub page_spans: Vec<PageSpan>,
     pub bound_sphere: [f32; 4],
     pub shadow_c0_range: [u32; 2],
     pub shadow_c1_range: [u32; 2],
@@ -95,6 +96,9 @@ fn rebase_cluster(
     let mut streaming_meta = src.streaming_meta;
     if streaming_meta[1] != NO_FALLBACK_CLUSTER {
         streaming_meta[1] = streaming_meta[1].saturating_add(cluster_offset);
+    }
+    if streaming_meta[3] != NO_FALLBACK_CLUSTER {
+        streaming_meta[3] = streaming_meta[3].saturating_add(cluster_offset);
     }
     GpuClusterHeader {
         bound_sphere: src.bound_sphere,
@@ -177,15 +181,31 @@ fn fill_bvh_min_self_error(
 fn extract_shadow_cut(
     clusters: &[ClusterHeader],
     cluster_offset: u32,
-    world_err_thresh: f32,
+    max_clusters: usize,
     out: &mut Vec<u32>,
 ) -> [u32; 2] {
     let start = out.len() as u32;
-    for (idx, c) in clusters.iter().enumerate() {
-        let pe = c.parent_error();
-        let se = c.self_error();
-        if pe > world_err_thresh && se <= world_err_thresh {
-            out.push(cluster_offset + idx as u32);
+    let thresholds = [
+        0.12_f32, 0.20, 0.32, 0.50, 0.75, 1.15, 1.75, 2.6, 3.8, 5.5, 8.0, 12.0, 18.0, 28.0, 48.0,
+    ];
+    let mut chosen: Option<f32> = None;
+    for &thresh in &thresholds {
+        let mut cnt = 0_usize;
+        for c in clusters {
+            if c.parent_error() > thresh && c.self_error() <= thresh {
+                cnt += 1;
+            }
+        }
+        if cnt > 0 && cnt <= max_clusters {
+            chosen = Some(thresh);
+            break;
+        }
+    }
+    if let Some(thresh) = chosen {
+        for (idx, c) in clusters.iter().enumerate() {
+            if c.parent_error() > thresh && c.self_error() <= thresh {
+                out.push(cluster_offset + idx as u32);
+            }
         }
     }
     if out.len() as u32 == start {
@@ -237,9 +257,9 @@ impl NaniteWorld {
         fill_bvh_min_self_error(manifest, &mut self.bvh[bvh_start..], bvh_offset);
 
         let shadow_c0_range =
-            extract_shadow_cut(&manifest.clusters, cluster_offset, 0.85, &mut self.shadow_cut_clusters);
+            extract_shadow_cut(&manifest.clusters, cluster_offset, 96, &mut self.shadow_cut_clusters);
         let shadow_c1_range =
-            extract_shadow_cut(&manifest.clusters, cluster_offset, 1.85, &mut self.shadow_cut_clusters);
+            extract_shadow_cut(&manifest.clusters, cluster_offset, 32, &mut self.shadow_cut_clusters);
         self.shadow_mesh_ranges.push(shadow_c0_range);
         self.shadow_mesh_ranges.push(shadow_c1_range);
 
@@ -254,6 +274,7 @@ impl NaniteWorld {
             page_offset,
             page_count: manifest.page_count,
             root_page_count: manifest.root_page_count,
+            page_spans: manifest.page_spans.clone(),
             bound_sphere,
             shadow_c0_range,
             shadow_c1_range,
@@ -324,7 +345,7 @@ impl Default for NaniteStreaming {
             slots: vec![None; MAX_HEAP_PAGES as usize],
             in_flight: Vec::new(),
             pinned_mask: Vec::new(),
-            budget_pages: 512,
+            budget_pages: MAX_HEAP_PAGES,
             frame_tick: 0,
             pending_requests: VecDeque::new(),
             ready_pages: VecDeque::new(),
@@ -372,7 +393,7 @@ impl NaniteStreaming {
             }
         }
         for (mesh_id, mesh) in world.meshes.iter().enumerate() {
-            let warm_end = mesh.page_count.min(mesh.root_page_count.saturating_add(24));
+            let warm_end = mesh.page_count.min(mesh.root_page_count.saturating_add(6));
             for local in mesh.root_page_count..warm_end {
                 let global = mesh.page_offset + local;
                 self.enqueue_fetch(mesh_id as u32, mesh, local, global, u32::MAX - 1);
@@ -464,11 +485,12 @@ impl NaniteStreaming {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn pump_native_io(&mut self, max_pages: usize) {
-        let mut raw = vec![0_u8; PAGE_SIZE_BYTES];
+        let mut raw = Vec::new();
         for _ in 0..max_pages {
             let Some(req) = self.pending_requests.pop_front() else {
                 break;
             };
+            raw.resize(req.byte_len as usize, 0);
             let loaded = self
                 .open_files
                 .get_mut(req.mesh_id as usize)
@@ -476,7 +498,7 @@ impl NaniteStreaming {
                 .and_then(|file| {
                     file.seek(SeekFrom::Start(req.byte_offset)).ok()?;
                     file.read_exact(&mut raw).ok()?;
-                    page_bytes_as_words(&raw).ok()
+                    decompress_page_words(&raw).ok()
                 });
             match loaded {
                 Some(words) => self.deliver_page(req.global_page_id, words),
@@ -560,14 +582,20 @@ impl NaniteStreaming {
             }
             *flag = true;
         }
-        let byte_offset = u64::from(local_page_id) * (PAGE_SIZE_BYTES as u64);
+        let (byte_offset, byte_len) = match mesh.page_spans.get(local_page_id as usize) {
+            Some(span) => (span.byte_offset, u64::from(span.byte_len)),
+            None => (
+                u64::from(local_page_id) * (PAGE_SIZE_BYTES as u64),
+                PAGE_SIZE_BYTES as u64,
+            ),
+        };
         self.pending_requests.push_back(PageFetchRequest {
             mesh_id,
             mesh_name: mesh.name.clone(),
             local_page_id,
             global_page_id,
             byte_offset,
-            byte_len: PAGE_SIZE_BYTES as u64,
+            byte_len,
             priority,
         });
     }

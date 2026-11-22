@@ -56,15 +56,15 @@ fn radial_godrays(uv: vec2<f32>, frag_xy: vec2<f32>) -> vec3<f32> {
         return vec3<f32>(0.0);
     }
     let density = 0.88;
-    let delta = (uv - sun_uv) * (density / 16.0);
+    let delta = (uv - sun_uv) * (density / 10.0);
     let ign = fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
     var sample_uv = uv - delta * ign;
     var illum_decay = 1.0;
     var accum = vec3<f32>(0.0);
-    for (var i = 0; i < 16; i = i + 1) {
+    for (var i = 0; i < 10; i = i + 1) {
         sample_uv -= delta;
         if sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0 {
-            illum_decay *= 0.8675;
+            illum_decay *= 0.80;
             continue;
         }
         let s = textureSampleLevel(scene_tex, bloom_sampler, sample_uv, 0.0);
@@ -73,9 +73,9 @@ fn radial_godrays(uv: vec2<f32>, frag_xy: vec2<f32>) -> vec3<f32> {
             let tint = mix(frame_params.sun_color_shaft.rgb, min(s.rgb, vec3<f32>(3.0)), 0.32);
             accum += tint * (illum_decay * 0.44 * sky_w);
         }
-        illum_decay *= 0.8675;
+        illum_decay *= 0.80;
     }
-    return accum * (exposure * radial_falloff * vis * (1.0 / 7.95));
+    return accum * (exposure * radial_falloff * vis * (1.0 / 5.0));
 }
 
 fn upsample_tent(uv: vec2<f32>) -> vec3<f32> {

@@ -78,11 +78,15 @@ fn verify_cluster_header(
         if parent_err != ROOT_PARENT_ERROR || pid >= manifest.root_page_count {
             return Err(invalid(format!("{path}.root_invariant")).got([parent_err, pid as f32]));
         }
-        if header.fallback_cluster() != NO_FALLBACK_CLUSTER {
+        if header.fallback_cluster() != NO_FALLBACK_CLUSTER
+            || header.fallback_cluster_b() != NO_FALLBACK_CLUSTER
+        {
             return Err(invalid(format!("{path}.root_fallback")).got(header.fallback_cluster()));
         }
     } else if pid < manifest.root_page_count {
-        if header.fallback_cluster() != NO_FALLBACK_CLUSTER {
+        if header.fallback_cluster() != NO_FALLBACK_CLUSTER
+            || header.fallback_cluster_b() != NO_FALLBACK_CLUSTER
+        {
             return Err(
                 invalid(format!("{path}.root_page_fallback")).got(header.fallback_cluster())
             );
@@ -95,6 +99,16 @@ fn verify_cluster_header(
         if manifest.clusters[fb as usize].page_id() >= pid {
             return Err(invalid(format!("{path}.fallback_page_order"))
                 .got([manifest.clusters[fb as usize].page_id(), pid]));
+        }
+        let fb2 = header.fallback_cluster_b();
+        if fb2 != NO_FALLBACK_CLUSTER {
+            if (fb2 as usize) >= manifest.clusters.len() {
+                return Err(invalid(format!("{path}.fallback_cluster_b")).got(fb2));
+            }
+            if manifest.clusters[fb2 as usize].page_id() >= pid {
+                return Err(invalid(format!("{path}.fallback_b_page_order"))
+                    .got([manifest.clusters[fb2 as usize].page_id(), pid]));
+            }
         }
     }
     Ok(())
@@ -328,6 +342,7 @@ pub fn verify(manifest: &MeshletManifest, page_words: &[u32]) -> Result<VerifyRe
     if manifest.page_count == 0
         || manifest.root_page_count == 0
         || manifest.root_page_count > manifest.page_count
+        || manifest.page_spans.len() != manifest.page_count as usize
     {
         return Err(invalid("$.pages").got([manifest.root_page_count, manifest.page_count]));
     }

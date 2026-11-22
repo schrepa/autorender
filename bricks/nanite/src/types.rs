@@ -65,8 +65,8 @@ impl ViewMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum HeapBudget {
     Mb16,
-    #[default]
     Mb32,
+    #[default]
     Mb64,
 }
 
@@ -134,7 +134,7 @@ impl LodPreset {
             Self::Px4 => {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    6.0
+                    6.5
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -288,19 +288,24 @@ pub struct NaniteConfig {
     pub sw_max_px: f32,
     pub max_pages_per_frame: usize,
     pub shadows_enabled: bool,
+    pub render_scale: f32,
 }
 
 impl Default for NaniteConfig {
     fn default() -> Self {
         Self {
             view_mode: ViewMode::Lit,
-            heap_budget: HeapBudget::Mb32,
+            heap_budget: HeapBudget::Mb64,
             lod_preset: LodPreset::Px2,
             freeze_culling: false,
             hw_only: false,
-            sw_max_px: 2.2,
+            #[cfg(target_arch = "wasm32")]
+            sw_max_px: 2.4,
+            #[cfg(not(target_arch = "wasm32"))]
+            sw_max_px: 2.0,
             max_pages_per_frame: 48,
             shadows_enabled: true,
+            render_scale: 1.0,
         }
     }
 }

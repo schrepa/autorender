@@ -213,10 +213,13 @@ pub fn build_bvh_and_order(
         return Vec::new();
     }
     let mut roots = Vec::new();
+    let mut pinned = Vec::new();
     let mut by_lod: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
     for (idx, header) in headers.iter().enumerate() {
         if header.is_root() {
             roots.push(idx);
+        } else if header.is_pinned_coarse() {
+            pinned.push(idx);
         } else {
             by_lod.entry(header.lod_level()).or_default().push(idx);
         }
@@ -225,6 +228,9 @@ pub fn build_bvh_and_order(
     let mut tier_trees = Vec::new();
     if !roots.is_empty() {
         tier_trees.push(build_tier_tree(&mut roots, headers, &mut ordered));
+    }
+    if !pinned.is_empty() {
+        tier_trees.push(build_tier_tree(&mut pinned, headers, &mut ordered));
     }
     for (_lod, mut bucket) in by_lod.into_iter().rev() {
         if !bucket.is_empty() {
@@ -247,6 +253,10 @@ pub fn build_bvh_and_order(
         let fb = header.streaming_meta[1];
         if fb != NO_FALLBACK_CLUSTER {
             header.streaming_meta[1] = old_to_new[fb as usize];
+        }
+        let fb2 = header.streaming_meta[3];
+        if fb2 != NO_FALLBACK_CLUSTER {
+            header.streaming_meta[3] = old_to_new[fb2 as usize];
         }
         new_headers.push(header);
         new_payloads.push(payload_slots[old_idx].take().unwrap_or_default());

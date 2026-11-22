@@ -7,15 +7,15 @@ use glam::{Vec2, Vec3};
 
 use crate::bounds::{aabb_of_points, bounding_sphere_points, compute_normal_cone, merge_spheres};
 use crate::bvh::build_bvh_and_order;
-use crate::encode::{decode_cluster_words, encode_cluster_words};
+use crate::encode::{decode_cluster_words, encode_cluster_words, encode_compressed_pages};
 use crate::format::{
-    BuildStats, BuiltMeshlet, ClusterHeader, ClusterVertex, FLAG_IN_ROOT_PAGE, FLAG_ROOT_CLUSTER,
-    MAX_CLUSTER_TRIS, MeshletManifest, NO_FALLBACK_CLUSTER, PAGE_SIZE_BYTES, PAGE_WORDS,
+    BuildStats, BuiltMeshlet, ClusterHeader, ClusterVertex, FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE,
+    FLAG_ROOT_CLUSTER, MAX_CLUSTER_TRIS, MeshletManifest, NO_FALLBACK_CLUSTER, PAGE_WORDS,
     ROOT_PARENT_ERROR, SourceMesh,
 };
 use crate::group::{GroupInput, group_clusters};
 use crate::partition::{MeshletData, partition_meshlets, weld_positions};
-use crate::simplify::simplify_group;
+use crate::simplify::{cluster_weld_group, simplify_group};
 
 fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidMesh, path)
@@ -252,7 +252,7 @@ fn make_dag_node(
         ],
         parent_lod_sphere: [0.0; 4],
         cone_and_meta: [0, meta, 0, 0],
-        streaming_meta: [0, NO_FALLBACK_CLUSTER, FLAG_ROOT_CLUSTER, 0],
+        streaming_meta: [0, NO_FALLBACK_CLUSTER, FLAG_ROOT_CLUSTER, NO_FALLBACK_CLUSTER],
     };
     let decoded = decode_cluster_words(&temp_header, &payload)?;
     let decoded_positions: Vec<Vec3> = decoded.vertices.iter().map(|v| v.position).collect();
@@ -273,7 +273,7 @@ fn make_dag_node(
         ],
         parent_lod_sphere: bound_sphere,
         cone_and_meta: [cone, meta, 0, 0],
-        streaming_meta: [0, NO_FALLBACK_CLUSTER, FLAG_ROOT_CLUSTER, 0],
+        streaming_meta: [0, NO_FALLBACK_CLUSTER, FLAG_ROOT_CLUSTER, NO_FALLBACK_CLUSTER],
     };
     Ok(DagNode {
         meshlet,
@@ -282,94 +282,93 @@ fn make_dag_node(
     })
 }
 
-fn nearest_parent(child_center: Vec3, parent_ids: &[usize], nodes: &[DagNode]) -> usize {
-    let mut best = parent_ids[0];
-    let mut best_d2 = f32::INFINITY;
-    for &pid in parent_ids {
-        let s = nodes[pid].header.bound_sphere;
-        let pc = Vec3::new(s[0], s[1], s[2]);
-        let d2 = (pc - child_center).length_squared();
-        if d2 < best_d2 {
-            best_d2 = d2;
-            best = pid;
-        }
+fn two_nearest_parents(
+    child_center: Vec3,
+    parent_ids: &[usize],
+    nodes: &[DagNode],
+) -> (u32, u32) {
+    if parent_ids.len() <= 2 {
+        return (
+            parent_ids[0] as u32,
+            parent_ids
+                .get(1)
+                .map_or(NO_FALLBACK_CLUSTER, |&p| p as u32),
+        );
     }
-    best
-}
-
-fn coarse_decimate_group(
-    child_meshlets: &[&MeshletData],
-    target_tris: usize,
-    target_verts: usize,
-) -> (Vec<MeshletData>, f32) {
-    let mut ranked: Vec<(f32, usize, [u8; 3])> = Vec::new();
-    let mut all_pts: Vec<Vec3> = Vec::new();
-    for (mi, meshlet) in child_meshlets.iter().enumerate() {
-        for v in &meshlet.vertices {
-            all_pts.push(v.position);
-        }
-        for &tri in &meshlet.triangles {
-            let p0 = meshlet.vertices[usize::from(tri[0])].position;
-            let p1 = meshlet.vertices[usize::from(tri[1])].position;
-            let p2 = meshlet.vertices[usize::from(tri[2])].position;
-            let area = (p1 - p0).cross(p2 - p0).length() * 0.5;
-            if area.is_finite() && area > 1.0e-12 {
-                ranked.push((area, mi, tri));
-            }
-        }
-    }
-    if ranked.is_empty() {
-        return (Vec::new(), 0.0);
-    }
-    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut vertices: Vec<ClusterVertex> = Vec::new();
-    let mut pos_ids: Vec<u32> = Vec::new();
-    let mut triangles: Vec<[u32; 3]> = Vec::new();
-    let mut remap: HashMap<(usize, u8), u32> = HashMap::with_hasher(FixedState::default());
-    let mut dropped_edge = 0.0_f32;
-    for &(_, mi, tri) in &ranked {
-        let mut needed_new = 0_usize;
-        for local in tri {
-            if !remap.contains_key(&(mi, local)) {
-                needed_new += 1;
-            }
-        }
-        let within_budget = triangles.is_empty()
-            || (triangles.len() < target_tris && vertices.len() + needed_new <= target_verts);
-        if within_budget {
-            let meshlet = child_meshlets[mi];
-            let mut out_tri = [0_u32; 3];
-            for (slot, local) in tri.into_iter().enumerate() {
-                let vid = *remap.entry((mi, local)).or_insert_with(|| {
-                    let id = vertices.len() as u32;
-                    let idx = usize::from(local);
-                    vertices.push(meshlet.vertices[idx]);
-                    pos_ids.push(meshlet.pos_ids[idx]);
-                    id
-                });
-                out_tri[slot] = vid;
-            }
-            triangles.push(out_tri);
-        } else {
-            let meshlet = child_meshlets[mi];
-            let p0 = meshlet.vertices[usize::from(tri[0])].position;
-            let p1 = meshlet.vertices[usize::from(tri[1])].position;
-            let p2 = meshlet.vertices[usize::from(tri[2])].position;
-            let e = max((p1 - p0).length(), max((p2 - p1).length(), (p0 - p2).length()));
-            dropped_edge = max(dropped_edge, e);
-        }
-    }
-    let (_, ext) = aabb_of_points(&all_pts);
-    let error = max(dropped_edge * 0.5, ext.length() * 0.06);
-    let parts = partition_meshlets(&vertices, &pos_ids, &triangles);
-    (parts, error)
+    let mut ranked: Vec<(f32, usize)> = parent_ids
+        .iter()
+        .map(|&pid| {
+            let s = nodes[pid].header.bound_sphere;
+            let pc = Vec3::new(s[0], s[1], s[2]);
+            ((pc - child_center).length_squared(), pid)
+        })
+        .collect();
+    ranked.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    (ranked[0].1 as u32, ranked[1].1 as u32)
 }
 
 struct ReduceEnv<'a> {
     material_id: u8,
     material_seams: &'a HashSet<u32>,
     quant: QuantBounds,
-    allow_coarse_fallback: bool,
+    allow_weld: bool,
+    relax_mat_seams: bool,
+    max_parents: usize,
+    mark_pinned: bool,
+}
+
+fn simplify_for_group(
+    env: &ReduceEnv<'_>,
+    child_meshlets: &[&MeshletData],
+    hard_locked: &HashSet<u32>,
+    child_count: usize,
+) -> (Vec<MeshletData>, f32) {
+    let in_tris: usize = child_meshlets.iter().map(|m| m.triangles.len()).sum();
+    let base_parents = (child_count / 2).max(1);
+    let target_parents = if env.max_parents > 0 {
+        base_parents.min(env.max_parents)
+    } else {
+        base_parents
+    };
+    let target_tris = (in_tris / 2)
+        .min(target_parents * (MAX_CLUSTER_TRIS - 6))
+        .max(1);
+    let target_verts = (target_parents * 50).max(3);
+    let mut simplified =
+        simplify_group(child_meshlets, hard_locked, target_tris, target_verts, true);
+    let mut parts = partition_meshlets(
+        &simplified.vertices,
+        &simplified.pos_ids,
+        &simplified.triangles,
+    );
+    let mut err = simplified.error;
+    let over_cap = |len: usize| {
+        len == 0 || len >= child_count || (env.max_parents > 0 && len > env.max_parents)
+    };
+    if over_cap(parts.len()) && simplified.triangles.len() > 2 {
+        let retry = simplify_group(
+            child_meshlets,
+            hard_locked,
+            (target_tris * 3 / 4).max(1),
+            (target_verts * 4 / 5).max(3),
+            true,
+        );
+        let retry_parts = partition_meshlets(&retry.vertices, &retry.pos_ids, &retry.triangles);
+        if !retry_parts.is_empty() && retry_parts.len() < parts.len() {
+            simplified = retry;
+            err = simplified.error;
+            parts = retry_parts;
+        }
+    }
+    if over_cap(parts.len()) && env.allow_weld {
+        let welded = cluster_weld_group(child_meshlets, hard_locked, target_tris, target_verts);
+        let weld_parts = partition_meshlets(&welded.vertices, &welded.pos_ids, &welded.triangles);
+        if !over_cap(weld_parts.len()) {
+            parts = weld_parts;
+            err = max(err, welded.error);
+        }
+    }
+    (parts, err)
 }
 
 fn reduce_single_group(
@@ -394,54 +393,18 @@ fn reduce_single_group(
     let mut hard_locked: HashSet<u32> = HashSet::with_hasher(FixedState::default());
     for (&p, &g_cnt) in &group_pos_count {
         let total_cnt = level_pos_count.get(&p).copied().unwrap_or(0);
-        if total_cnt > g_cnt || env.material_seams.contains(&p) {
+        if total_cnt > g_cnt || (!env.relax_mat_seams && env.material_seams.contains(&p)) {
             hard_locked.insert(p);
         }
     }
     let child_meshlets: Vec<&MeshletData> =
         child_ids.iter().map(|&ci| &nodes[ci].meshlet).collect();
-    let in_tris: usize = child_meshlets.iter().map(|m| m.triangles.len()).sum();
-    let target_parents = (child_ids.len() / 2).max(1);
-    let target_tris = (in_tris / 2).min(target_parents * (MAX_CLUSTER_TRIS - 4)).max(1);
-    let target_verts = (target_parents * 54).max(3);
-    let mut simplified =
-        simplify_group(&child_meshlets, &hard_locked, target_tris, target_verts, true);
-    let mut parent_meshlets = partition_meshlets(
-        &simplified.vertices,
-        &simplified.pos_ids,
-        &simplified.triangles,
-    );
-    let mut simplify_error = simplified.error;
-    if parent_meshlets.len() >= child_ids.len() && simplified.triangles.len() > 2 {
-        let tighter_tris = (target_tris * 2 / 3).max(1);
-        let tighter_verts = (target_verts * 3 / 4).max(3);
-        let retry = simplify_group(
-            &child_meshlets,
-            &hard_locked,
-            tighter_tris,
-            tighter_verts,
-            true,
-        );
-        let retry_parts = partition_meshlets(&retry.vertices, &retry.pos_ids, &retry.triangles);
-        if !retry_parts.is_empty() && retry_parts.len() < parent_meshlets.len() {
-            simplified = retry;
-            simplify_error = simplified.error;
-            parent_meshlets = retry_parts;
-        }
-    }
-    if (parent_meshlets.is_empty() || parent_meshlets.len() >= child_ids.len())
-        && env.allow_coarse_fallback
+    let (parent_meshlets, simplify_error) =
+        simplify_for_group(env, &child_meshlets, &hard_locked, child_ids.len());
+    if parent_meshlets.is_empty()
+        || parent_meshlets.len() >= child_ids.len()
+        || (env.max_parents > 0 && parent_meshlets.len() > env.max_parents)
     {
-        let fallback_tris = (target_parents * 48).min(in_tris / 2).max(1);
-        let fallback_verts = (target_parents * 48).max(3);
-        let (fb_parts, fb_err) =
-            coarse_decimate_group(&child_meshlets, fallback_tris, fallback_verts);
-        if !fb_parts.is_empty() && fb_parts.len() < child_ids.len() {
-            parent_meshlets = fb_parts;
-            simplify_error = max(simplify_error, fb_err);
-        }
-    }
-    if parent_meshlets.is_empty() || parent_meshlets.len() >= child_ids.len() {
         return Ok(None);
     }
     let mut parent_lod = 0_u32;
@@ -452,7 +415,7 @@ fn reduce_single_group(
     }
     let parent_lod = parent_lod.min(255);
     let group_error = max(
-        max_child_err + simplify_error,
+        max_child_err.hypot(simplify_error),
         max_child_err * 1.001 + 1.0e-5,
     );
     let mut parent_ids = Vec::with_capacity(parent_meshlets.len());
@@ -471,23 +434,46 @@ fn reduce_single_group(
     let group_lod_sphere = merge_spheres(&sphere_list);
     let gid = *next_group_id;
     *next_group_id += 1;
+    let p_flag = FLAG_ROOT_CLUSTER | if env.mark_pinned { FLAG_PINNED_COARSE } else { 0 };
     for &pi in &parent_ids {
         let h = &mut nodes[pi].header;
         h.lod_sphere = group_lod_sphere;
         h.parent_lod_sphere = group_lod_sphere;
         h.aabb_min[3] = group_error;
         h.aabb_extent[3] = ROOT_PARENT_ERROR;
-        h.streaming_meta[2] = FLAG_ROOT_CLUSTER;
+        h.streaming_meta[2] = p_flag;
+        h.streaming_meta[3] = NO_FALLBACK_CLUSTER;
     }
+    let mut parent_hits = vec![0_u32; parent_ids.len()];
+    let mut assigned: Vec<(u32, u32)> = Vec::with_capacity(child_ids.len());
     for &ci in child_ids {
         let cs = nodes[ci].header.bound_sphere;
-        let fb = nearest_parent(Vec3::new(cs[0], cs[1], cs[2]), &parent_ids, nodes) as u32;
+        let (fb0, fb1) = two_nearest_parents(Vec3::new(cs[0], cs[1], cs[2]), &parent_ids, nodes);
+        if let Some(pos) = parent_ids.iter().position(|&p| p as u32 == fb0) {
+            parent_hits[pos] += 1;
+        }
+        if fb1 != NO_FALLBACK_CLUSTER
+            && let Some(pos) = parent_ids.iter().position(|&p| p as u32 == fb1)
+        {
+            parent_hits[pos] += 1;
+        }
+        assigned.push((fb0, fb1));
+    }
+    for (p_idx, &hits) in parent_hits.iter().enumerate() {
+        if hits == 0 && !assigned.is_empty() {
+            let pid = parent_ids[p_idx] as u32;
+            let slot = p_idx % assigned.len();
+            assigned[slot].1 = pid;
+        }
+    }
+    for (&ci, (fb0, fb1)) in child_ids.iter().zip(assigned) {
         let h = &mut nodes[ci].header;
         h.aabb_extent[3] = group_error;
         h.parent_lod_sphere = group_lod_sphere;
         h.streaming_meta[0] = gid;
-        h.streaming_meta[1] = fb;
-        h.streaming_meta[2] = 0;
+        h.streaming_meta[1] = fb0;
+        h.streaming_meta[2] = if env.mark_pinned { FLAG_PINNED_COARSE } else { 0 };
+        h.streaming_meta[3] = fb1;
     }
     Ok(Some(parent_ids))
 }
@@ -501,8 +487,22 @@ fn reduce_material_dag(
     next_group_id: &mut u32,
 ) -> Result<(), Error> {
     let mut pass = 0_u32;
-    let mut allow_coarse_fallback = false;
-    while active.len() > 1 && pass < 240 {
+    let mut stall_streak = 0_u32;
+    let min_root_clusters = if active.len() > 64 { 24 } else { 1 };
+    while active.len() > min_root_clusters && pass < 160 {
+        let unified = active.len() <= 48;
+        let (group_max, max_parents) = if unified {
+            (active.len(), 0)
+        } else if stall_streak >= 3 {
+            (8, 0)
+        } else if stall_streak == 2 {
+            (8, 4)
+        } else if stall_streak == 1 {
+            (6, 3)
+        } else {
+            (4, 2)
+        };
+        let allow_weld = !unified && stall_streak >= 4;
         let mut level_pos_count: HashMap<u32, u32> =
             HashMap::with_capacity_and_hasher(active.len() * 32, FixedState::default());
         for &ci in &active {
@@ -524,14 +524,17 @@ fn reduce_material_dag(
                 }
             })
             .collect();
-        let groups = group_clusters(&inputs);
+        let groups = group_clusters(&inputs, group_max, pass);
         let mut next_active = Vec::with_capacity(active.len().div_ceil(2));
         let mut reduced_any = false;
         let env = ReduceEnv {
             material_id,
             material_seams,
             quant,
-            allow_coarse_fallback,
+            allow_weld,
+            relax_mat_seams: unified || stall_streak >= 1,
+            max_parents,
+            mark_pinned: unified,
         };
         for group in groups {
             let child_ids: Vec<usize> = group.iter().map(|&li| active[li]).collect();
@@ -550,11 +553,17 @@ fn reduce_material_dag(
             }
         }
         if !reduced_any {
-            if !allow_coarse_fallback && active.len() > 2 {
-                allow_coarse_fallback = true;
-                continue;
+            stall_streak += 1;
+            pass += 1;
+            if stall_streak >= 6 {
+                break;
             }
-            break;
+            continue;
+        }
+        if next_active.len() * 100 > active.len() * 92 {
+            stall_streak += 1;
+        } else {
+            stall_streak = 0;
         }
         active = next_active;
         pass += 1;
@@ -565,11 +574,32 @@ fn reduce_material_dag(
         let h = &mut nodes[ri].header;
         h.streaming_meta[0] = gid;
         h.streaming_meta[1] = NO_FALLBACK_CLUSTER;
-        h.streaming_meta[2] = FLAG_ROOT_CLUSTER;
+        h.streaming_meta[2] = FLAG_ROOT_CLUSTER | FLAG_PINNED_COARSE;
+        h.streaming_meta[3] = NO_FALLBACK_CLUSTER;
         h.aabb_extent[3] = ROOT_PARENT_ERROR;
         h.parent_lod_sphere = h.lod_sphere;
     }
     Ok(())
+}
+
+fn resolve_fallback_target(
+    start: u32,
+    my_page: u32,
+    mat: u8,
+    headers: &[ClusterHeader],
+    raw_fb0: &[u32],
+    mat_root: &HashMap<u8, u32>,
+) -> u32 {
+    let mut cur = start;
+    let mut steps = 0_usize;
+    while cur != NO_FALLBACK_CLUSTER && steps < headers.len() {
+        if headers[cur as usize].page_id() < my_page {
+            return cur;
+        }
+        cur = raw_fb0[cur as usize];
+        steps += 1;
+    }
+    mat_root.get(&mat).copied().unwrap_or(0)
 }
 
 fn pack_pages_and_fallbacks(
@@ -595,33 +625,42 @@ fn pack_pages_and_fallbacks(
     }
     let page_count = page_id + 1;
     let mut max_root_page = 0_u32;
-    for header in headers.iter() {
-        if header.is_root() {
+    let mut mat_root: HashMap<u8, u32> = HashMap::with_hasher(FixedState::default());
+    for (idx, header) in headers.iter().enumerate() {
+        if header.is_root() || header.is_pinned_coarse() {
             max_root_page = max_root_page.max(header.page_id());
+        }
+        if header.is_root() {
+            mat_root.entry(header.material_id()).or_insert(idx as u32);
         }
     }
     let root_page_count = max_root_page + 1;
-    let raw_parents: Vec<u32> = headers.iter().map(|h| h.streaming_meta[1]).collect();
+    let raw_fb0: Vec<u32> = headers.iter().map(|h| h.streaming_meta[1]).collect();
+    let raw_fb1: Vec<u32> = headers.iter().map(|h| h.streaming_meta[3]).collect();
     for idx in 0..headers.len() {
         let my_page = headers[idx].page_id();
         if my_page < root_page_count {
             headers[idx].streaming_meta[2] |= FLAG_IN_ROOT_PAGE;
             headers[idx].streaming_meta[1] = NO_FALLBACK_CLUSTER;
+            headers[idx].streaming_meta[3] = NO_FALLBACK_CLUSTER;
         } else {
-            let mut cur = raw_parents[idx];
-            let mut steps = 0_usize;
-            while cur != NO_FALLBACK_CLUSTER && steps < headers.len() {
-                let target_page = headers[cur as usize].page_id();
-                if target_page < my_page {
-                    break;
-                }
-                cur = raw_parents[cur as usize];
-                steps += 1;
-            }
-            if cur == NO_FALLBACK_CLUSTER || headers[cur as usize].page_id() >= my_page {
-                cur = 0;
-            }
-            headers[idx].streaming_meta[1] = cur;
+            let mat = headers[idx].material_id();
+            let fb0 = resolve_fallback_target(raw_fb0[idx], my_page, mat, headers, &raw_fb0, &mat_root);
+            let fb1 = if raw_fb1[idx] != NO_FALLBACK_CLUSTER {
+                let r1 = resolve_fallback_target(
+                    raw_fb1[idx],
+                    my_page,
+                    mat,
+                    headers,
+                    &raw_fb0,
+                    &mat_root,
+                );
+                if r1 == fb0 { NO_FALLBACK_CLUSTER } else { r1 }
+            } else {
+                NO_FALLBACK_CLUSTER
+            };
+            headers[idx].streaming_meta[1] = fb0;
+            headers[idx].streaming_meta[3] = fb1;
         }
     }
     (page_words, page_count, root_page_count)
@@ -657,6 +696,7 @@ pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
     let mut payloads: Vec<Vec<u32>> = nodes.into_iter().map(|n| n.payload).collect();
     let bvh = build_bvh_and_order(&mut headers, &mut payloads);
     let (page_words, page_count, root_page_count) = pack_pages_and_fallbacks(&mut headers, &payloads);
+    let (compressed_pages, page_spans) = encode_compressed_pages(&page_words, page_count)?;
     let mut max_lod = 0_u32;
     let mut leaf_tris = 0_u32;
     let mut total_tris = 0_u32;
@@ -689,9 +729,10 @@ pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
         bounds_max: prepared.bounds_max,
         clusters: headers,
         bvh,
+        page_spans,
     };
     let manifest_bytes = manifest.byte_len() as u64;
-    let page_blob_bytes = u64::from(page_count) * (PAGE_SIZE_BYTES as u64);
+    let page_blob_bytes = compressed_pages.len() as u64;
     let geometry_bytes = geom_words * 4;
     let bytes_per_cluster_tri = (geometry_bytes as f64) / f64::from(total_tris.max(1));
     let bytes_per_source_tri =
@@ -717,6 +758,7 @@ pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
     Ok(BuiltMeshlet {
         manifest,
         page_words,
+        compressed_pages,
         stats,
     })
 }

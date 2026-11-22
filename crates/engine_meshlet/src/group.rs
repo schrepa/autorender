@@ -156,6 +156,7 @@ fn absorb_orphans(
     groups: &mut Vec<Vec<usize>>,
     inputs: &[GroupInput<'_>],
     graph: &ClusterAdjacency,
+    max_group: usize,
 ) {
     let mut group_of = vec![0_usize; inputs.len()];
     for (gi, g) in groups.iter().enumerate() {
@@ -177,7 +178,11 @@ fn absorb_orphans(
             if tg == idx || groups[tg].is_empty() {
                 continue;
             }
-            let size_bonus = if groups[tg].len() < 4 { 100.0 } else { 0.0 };
+            let size_bonus = if groups[tg].len() < max_group {
+                100.0
+            } else {
+                0.0
+            };
             let score = size_bonus + (w as f32);
             if score > best_score {
                 best_score = score;
@@ -193,7 +198,7 @@ fn absorb_orphans(
                 }
                 let center = inputs[g[0]].center;
                 let d2 = (center - inputs[orphan].center).length_squared();
-                let biased = if g.len() < 4 { d2 * 0.25 } else { d2 };
+                let biased = if g.len() < max_group { d2 * 0.25 } else { d2 };
                 if biased < near_d2 {
                     near_d2 = biased;
                     near_tg = tg;
@@ -205,8 +210,9 @@ fn absorb_orphans(
             groups[idx].clear();
             groups[target].push(orphan);
             group_of[orphan] = target;
-            if groups[target].len() == 5 {
-                let split_off = groups[target].split_off(3);
+            if groups[target].len() > max_group {
+                let split_at = (groups[target].len() / 2).max(2);
+                let split_off = groups[target].split_off(split_at);
                 let new_gi = groups.len();
                 for &c in &split_off {
                     group_of[c] = new_gi;
@@ -219,31 +225,35 @@ fn absorb_orphans(
     groups.retain(|g| !g.is_empty());
 }
 
-pub fn group_clusters(inputs: &[GroupInput<'_>]) -> Vec<Vec<usize>> {
+pub fn group_clusters(inputs: &[GroupInput<'_>], max_group: usize, pass: u32) -> Vec<Vec<usize>> {
     let n = inputs.len();
+    let limit = max_group.max(2);
     if n == 0 {
         return Vec::new();
     }
-    if n <= 4 {
+    if n <= limit {
         return vec![(0..n).collect()];
     }
     let graph = build_adjacency(inputs);
+    let mix = (pass.wrapping_mul(2_654_435_761)) as usize;
     let mut seed_order: Vec<usize> = (0..n).collect();
     seed_order.sort_unstable_by(|&a, &b| {
+        let ra = graph.morton_rank[a].wrapping_add(mix) ^ mix;
+        let rb = graph.morton_rank[b].wrapping_add(mix) ^ mix;
         graph.adj[a]
             .len()
             .cmp(&graph.adj[b].len())
-            .then_with(|| graph.morton_rank[a].cmp(&graph.morton_rank[b]))
+            .then_with(|| ra.cmp(&rb))
     });
     let mut assigned = vec![false; n];
-    let mut groups: Vec<Vec<usize>> = Vec::with_capacity(n.div_ceil(4));
+    let mut groups: Vec<Vec<usize>> = Vec::with_capacity(n.div_ceil(limit));
     for seed in seed_order {
         if assigned[seed] {
             continue;
         }
         assigned[seed] = true;
         let mut group = vec![seed];
-        while group.len() < 4 {
+        while group.len() < limit {
             let next = pick_neighbor_for_group(&group, inputs, &graph, &assigned).or_else(|| {
                 let mut sum = Vec3::ZERO;
                 for &c in &group {
@@ -260,6 +270,6 @@ pub fn group_clusters(inputs: &[GroupInput<'_>]) -> Vec<Vec<usize>> {
         }
         groups.push(group);
     }
-    absorb_orphans(&mut groups, inputs, &graph);
+    absorb_orphans(&mut groups, inputs, &graph, limit);
     groups
 }

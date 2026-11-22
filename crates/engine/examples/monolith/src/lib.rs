@@ -36,6 +36,8 @@ impl Game for Monolith {
         let start = Start::default();
         Start {
             catch_up_seconds: 2.0 / f64::from(start.ticks_per_second),
+            #[cfg(target_arch = "wasm32")]
+            max_pixel_ratio: Some(1.25),
             ..start
         }
     }

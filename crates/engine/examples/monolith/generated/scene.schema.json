@@ -191,7 +191,7 @@
           "type": "boolean"
         },
         "heap_mb": {
-          "default": 32,
+          "default": 64,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"

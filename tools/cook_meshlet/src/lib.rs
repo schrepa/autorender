@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use cook::Refusal;
 use engine_meshlet::{
-    BuildStats, MeshletManifest, VerifyReport, build, page_bytes_as_words, verify,
+    BuildStats, MeshletManifest, VerifyReport, build, decode_compressed_pages, verify,
 };
 use serde::Serialize;
 
@@ -128,7 +128,7 @@ pub fn verify_manifest_file(manifest_path: &Path) -> Result<VerifyOutput, Refusa
     let mlp_str = mlp_path.display().to_string();
     let mlp_bytes = std::fs::read(&mlp_path)
         .map_err(|error| Refusal::new("FileUnreadable", &mlp_str, format!("{error}")))?;
-    let page_words = page_bytes_as_words(&mlp_bytes)
+    let page_words = decode_compressed_pages(&mlp_bytes, &manifest.page_spans)
         .map_err(|error| Refusal::new("PagesInvalid", &mlp_str, format!("{error}")))?;
     let report = verify(&manifest, &page_words)
         .map_err(|error| Refusal::new("VerifyFailed", &mlm_str, format!("{error}")))?;
@@ -162,7 +162,7 @@ fn check_synthetic(
         ));
     }
     let mlp_bytes = built.pages_to_bytes();
-    let decoded_words = page_bytes_as_words(&mlp_bytes)
+    let decoded_words = decode_compressed_pages(&mlp_bytes, &decoded_manifest.page_spans)
         .map_err(|error| Refusal::new("PagesRoundtrip", name, format!("{error}")))?;
     let report = verify(&decoded_manifest, &decoded_words)
         .map_err(|error| Refusal::new("VerifyFailed", name, format!("{error}")))?;

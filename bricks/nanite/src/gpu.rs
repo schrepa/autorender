@@ -521,15 +521,7 @@ fn shadow_res_tier(residency_ver: u64, total_pages: u32) -> u64 {
     let cap = u64::from(total_pages.max(1));
     if residency_ver == 0 {
         0
-    } else if residency_ver >= cap.min(480) {
-        6
-    } else if residency_ver >= cap.min(240) {
-        5
-    } else if residency_ver >= cap.min(110) {
-        4
-    } else if residency_ver >= cap.min(40) {
-        3
-    } else if residency_ver >= cap.min(12) {
+    } else if residency_ver >= cap.min(48) {
         2
     } else {
         1
@@ -786,6 +778,64 @@ impl NaniteGpu {
         cx.dispatch_indirect(&self.cull.occ_clus_p2, self.buf.indirect_p1, 96);
         cx.dispatch(&self.cull.prep_draws_p2, [1, 1, 1]);
     }
+
+    fn update_shadow_track(
+        &mut self,
+        world: &NaniteWorld,
+        cam: &NaniteCamera,
+        cfg: &NaniteConfig,
+    ) -> (Mat4, Mat4, [f32; 4], [f32; 4]) {
+        let c0_half = 58.0_f32;
+        let c1_half = 340.0_f32;
+        let vm = cam.render_view.to_cols_array_2d();
+        let fwd_xz = Vec3::new(-vm[0][2], 0.0, -vm[2][2]).normalize_or_zero();
+        let desired_c0 = Vec3::new(
+            cam.render_pos.x + fwd_xz.x * 38.0,
+            engine::math::clamp(cam.render_pos.y, -2.0, 26.0),
+            cam.render_pos.z + fwd_xz.z * 38.0,
+        );
+        let c1_center = Vec3::new(30.0, 8.0, -75.0);
+
+        let geom_changed = self.shadow.last_geom_rev != world.geometry_revision
+            || self.shadow.last_inst_rev != world.instance_revision;
+        if geom_changed {
+            self.shadow.last_geom_rev = world.geometry_revision;
+            self.shadow.last_inst_rev = world.instance_revision;
+            self.shadow.last_c0_res = u64::MAX;
+            self.shadow.last_c1_res = u64::MAX;
+        }
+        let c0_moved = (desired_c0 - self.shadow.last_c0_center).length_squared() > 256.0;
+        let tier = shadow_res_tier(self.residency_ver, world.total_pages);
+        let c0_res_changed = self.shadow.last_c0_res == u64::MAX
+            || (tier > 0 && tier != self.shadow.last_c0_res);
+        let c1_res_changed = self.shadow.last_c1_res == u64::MAX
+            || (tier > 0 && tier != self.shadow.last_c1_res);
+        self.shadow.enabled = cfg.shadows_enabled && self.instance_count > 0;
+        let want_c0 = self.shadow.enabled && (c0_moved || c0_res_changed);
+        let want_c1 = self.shadow.enabled && c1_res_changed;
+        self.shadow.dirty_c1 = want_c1;
+        self.shadow.dirty_c0 = want_c0 && !want_c1;
+        if self.shadow.dirty_c0 {
+            self.shadow.last_c0_center = desired_c0;
+            self.shadow.last_c0_res = tier;
+        }
+        if self.shadow.dirty_c1 {
+            self.shadow.last_c1_res = tier;
+        }
+        let c0_center = if self.shadow.last_c0_center.length_squared() < 1.0e14 {
+            self.shadow.last_c0_center
+        } else {
+            desired_c0
+        };
+        let sh_vp0 = ortho_shadow_vp(c0_center, c0_half, 130.0, cam.sun_dir, SHADOW_C0_DIM);
+        let sh_vp1 = ortho_shadow_vp(c1_center, c1_half, 320.0, cam.sun_dir, SHADOW_C1_DIM);
+        (
+            sh_vp0,
+            sh_vp1,
+            [c0_center.x, c0_center.y, c0_center.z, c0_half],
+            [c1_center.x, c1_center.y, c1_center.z, c1_half],
+        )
+    }
 }
 
 impl GpuPart for NaniteGpu {
@@ -840,7 +890,12 @@ impl GpuPart for NaniteGpu {
         self.alloc_static_and_scratch(&world, cx);
         self.sync_bridge(&bridge, cx);
 
-        let (cw, ch) = cx.canvas_size();
+        let render_scale = engine::math::clamp(cfg.render_scale, 0.25, 1.0);
+        let scale_side = |p: u32| ((f64::from(p) * f64::from(render_scale)).round() as u32).max(1);
+        let (raw_w, raw_h) = cx.canvas_size();
+        let (cw, ch) = (scale_side(raw_w), scale_side(raw_h));
+        cx.scale_target(NANITE_VIS_HW, render_scale);
+        cx.scale_target(NANITE_DEPTH, render_scale);
         self.canvas = (cw, ch);
         let px_bytes = u64::from(cw) * u64::from(ch) * 4;
         let _ = cx.allocate_buffer(self.buf.sw_depth, px_bytes.max(16));
@@ -875,46 +930,8 @@ impl GpuPart for NaniteGpu {
         self.freeze = cfg.freeze_culling;
         self.frame_gen = self.frame_gen.wrapping_add(1).max(1);
 
-        let c0_half = 52.0_f32;
-        let c1_half = 340.0_f32;
-        let vm = cam.render_view.to_cols_array_2d();
-        let fwd_xz = Vec3::new(-vm[0][2], 0.0, -vm[2][2]).normalize_or_zero();
-        let desired_c0 = Vec3::new(
-            cam.render_pos.x + fwd_xz.x * 36.0,
-            engine::math::clamp(cam.render_pos.y, -2.0, 26.0),
-            cam.render_pos.z + fwd_xz.z * 36.0,
-        );
-        let c1_center = Vec3::new(30.0, 8.0, -75.0);
-
-        let geom_changed = self.shadow.last_geom_rev != world.geometry_revision
-            || self.shadow.last_inst_rev != world.instance_revision;
-        let c0_moved = (desired_c0 - self.shadow.last_c0_center).length_squared() > 100.0;
-        let tier = shadow_res_tier(self.residency_ver, world.total_pages);
-        let c0_res_changed = self.shadow.last_c0_res == u64::MAX
-            || (tier > 0 && tier != self.shadow.last_c0_res);
-        let c1_res_changed = self.shadow.last_c1_res == u64::MAX
-            || (tier > 0 && tier != self.shadow.last_c1_res);
-        self.shadow.enabled = cfg.shadows_enabled && self.instance_count > 0;
-        self.shadow.dirty_c0 = self.shadow.enabled && (geom_changed || c0_moved || c0_res_changed);
-        self.shadow.dirty_c1 = self.shadow.enabled && (geom_changed || c1_res_changed);
-        if self.shadow.dirty_c0 {
-            self.shadow.last_c0_center = desired_c0;
-            self.shadow.last_c0_res = tier;
-        }
-        if self.shadow.dirty_c1 {
-            self.shadow.last_c1_res = tier;
-        }
-        if geom_changed {
-            self.shadow.last_geom_rev = world.geometry_revision;
-            self.shadow.last_inst_rev = world.instance_revision;
-        }
-        let c0_center = if self.shadow.last_c0_center.length_squared() < 1.0e14 {
-            self.shadow.last_c0_center
-        } else {
-            desired_c0
-        };
-        let sh_vp0 = ortho_shadow_vp(c0_center, c0_half, 130.0, cam.sun_dir, SHADOW_C0_DIM);
-        let sh_vp1 = ortho_shadow_vp(c1_center, c1_half, 320.0, cam.sun_dir, SHADOW_C1_DIM);
+        let (sh_vp0, sh_vp1, shadow_center0, shadow_center1) =
+            self.update_shadow_track(&world, &cam, &cfg);
 
         let render_vp = cam.render_proj * cam.render_view;
         let cull_vp = cam.cull_proj * cam.cull_view;
@@ -948,8 +965,8 @@ impl GpuPart for NaniteGpu {
             shadow_vp0: sh_vp0.to_cols_array_2d(),
             shadow_vp1: sh_vp1.to_cols_array_2d(),
             shadow_info: [SHADOW_C0_DIM as f32, SHADOW_C1_DIM as f32, render_lod_scale, 0.0],
-            shadow_center0: [c0_center.x, c0_center.y, c0_center.z, c0_half],
-            shadow_center1: [c1_center.x, c1_center.y, c1_center.z, c1_half],
+            shadow_center0,
+            shadow_center1,
         };
         cx.write(self.buf.uniforms, 0, &[u]);
 

@@ -82,7 +82,7 @@ mod web_loader {
 
     use brick_nanite::{NaniteStreaming, NaniteWorld, PageFetchRequest};
     use engine::prelude::*;
-    use engine_meshlet::{MeshletManifest, PAGE_SIZE_BYTES, page_bytes_as_words};
+    use engine_meshlet::{MeshletManifest, PageSpan, decompress_page_words};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
@@ -90,20 +90,32 @@ mod web_loader {
     use crate::state::MonolithState;
 
     const MAX_IN_FLIGHT_REQUESTS: usize = 24;
-    const MAX_RUN_PAGES: usize = 8;
+    const MAX_RUN_PAGES: usize = 16;
+    const MAX_RUN_BYTES: u64 = 256 * 1024;
+    const PREFETCH_EXTRA_PAGES: u32 = 4;
 
     #[derive(Default)]
     struct WebState {
         manifests_started: bool,
         manifests: [Option<MeshletManifest>; 5],
+        prefetched: [Vec<(u32, Vec<u32>)>; 5],
+        mesh_page_offsets: [u32; 5],
+        world_synced: bool,
         in_flight_requests: usize,
         completed_pages: VecDeque<(u32, Option<Vec<u32>>)>,
+    }
+
+    struct PageRunItem {
+        global_page_id: u32,
+        rel_offset: usize,
+        byte_len: usize,
     }
 
     struct PageRun {
         mesh_name: String,
         byte_offset: u64,
-        page_ids: Vec<u32>,
+        total_bytes: u64,
+        items: Vec<PageRunItem>,
     }
 
     thread_local! {
@@ -139,16 +151,67 @@ mod web_loader {
         Ok(js_sys::Uint8Array::new(&ab).to_vec())
     }
 
+    fn prefetch_base_pages(mesh_idx: usize, stem: &'static str, spans: Vec<PageSpan>) {
+        if spans.is_empty() {
+            return;
+        }
+        let start = spans[0].byte_offset;
+        let last = spans[spans.len() - 1];
+        let total = last
+            .byte_offset
+            .saturating_add(u64::from(last.byte_len))
+            .saturating_sub(start);
+        if total == 0 {
+            return;
+        }
+        let end = start.saturating_add(total).saturating_sub(1);
+        let url = format!("/monolith/{stem}.mlp");
+        wasm_bindgen_futures::spawn_local(async move {
+            let Ok(bytes) = fetch_bytes(&url, Some((start, end))).await else {
+                return;
+            };
+            if bytes.len() != total as usize {
+                return;
+            }
+            let mut decoded = Vec::with_capacity(spans.len());
+            for (local_id, span) in spans.iter().enumerate() {
+                let rel = span.byte_offset.saturating_sub(start) as usize;
+                let len = span.byte_len as usize;
+                if let Some(slice) = bytes.get(rel..rel + len)
+                    && let Ok(words) = decompress_page_words(slice)
+                {
+                    decoded.push((local_id as u32, words));
+                }
+            }
+            WEB_STATE.with(|cell| {
+                let mut st = cell.borrow_mut();
+                if st.world_synced {
+                    let base = st.mesh_page_offsets[mesh_idx];
+                    for (local_id, words) in decoded {
+                        st.completed_pages.push_back((base + local_id, Some(words)));
+                    }
+                } else {
+                    st.prefetched[mesh_idx] = decoded;
+                }
+            });
+        });
+    }
+
     fn start_manifests() {
-        for (idx, stem) in HERO_ASSETS.iter().enumerate() {
+        for (idx, &stem) in HERO_ASSETS.iter().enumerate() {
             let url = format!("/monolith/{stem}.mlm");
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(bytes) = fetch_bytes(&url, None).await
                     && let Ok(manifest) = MeshletManifest::from_bytes(&bytes)
                 {
+                    let count = (manifest.root_page_count.saturating_add(PREFETCH_EXTRA_PAGES)
+                        as usize)
+                        .min(manifest.page_spans.len());
+                    let base_spans = manifest.page_spans[..count].to_vec();
                     WEB_STATE.with(|cell| {
                         cell.borrow_mut().manifests[idx] = Some(manifest);
                     });
+                    prefetch_base_pages(idx, stem, base_spans);
                 }
             });
         }
@@ -160,23 +223,34 @@ mod web_loader {
                 .cmp(&b.mesh_name)
                 .then_with(|| a.byte_offset.cmp(&b.byte_offset))
         });
-        let page_bytes = PAGE_SIZE_BYTES as u64;
         let mut runs: Vec<PageRun> = Vec::new();
         for req in reqs {
             if let Some(last) = runs.last_mut() {
-                let expected = last.byte_offset + (last.page_ids.len() as u64) * page_bytes;
+                let expected = last.byte_offset.saturating_add(last.total_bytes);
+                let next_total = last.total_bytes.saturating_add(req.byte_len);
                 if last.mesh_name == req.mesh_name
                     && req.byte_offset == expected
-                    && last.page_ids.len() < MAX_RUN_PAGES
+                    && last.items.len() < MAX_RUN_PAGES
+                    && next_total <= MAX_RUN_BYTES
                 {
-                    last.page_ids.push(req.global_page_id);
+                    last.items.push(PageRunItem {
+                        global_page_id: req.global_page_id,
+                        rel_offset: last.total_bytes as usize,
+                        byte_len: req.byte_len as usize,
+                    });
+                    last.total_bytes = next_total;
                     continue;
                 }
             }
             runs.push(PageRun {
                 mesh_name: req.mesh_name,
                 byte_offset: req.byte_offset,
-                page_ids: vec![req.global_page_id],
+                total_bytes: req.byte_len,
+                items: vec![PageRunItem {
+                    global_page_id: req.global_page_id,
+                    rel_offset: 0,
+                    byte_len: req.byte_len as usize,
+                }],
             });
         }
         runs
@@ -184,7 +258,7 @@ mod web_loader {
 
     fn start_run_fetch(run: PageRun) {
         let url = format!("/monolith/{}.mlp", run.mesh_name);
-        let total_len = (run.page_ids.len() as u64) * (PAGE_SIZE_BYTES as u64);
+        let total_len = run.total_bytes;
         let end = run.byte_offset.saturating_add(total_len).saturating_sub(1);
         wasm_bindgen_futures::spawn_local(async move {
             let fetched = fetch_bytes(&url, Some((run.byte_offset, end))).await.ok();
@@ -193,15 +267,15 @@ mod web_loader {
                 let mut st = cell.borrow_mut();
                 st.in_flight_requests = st.in_flight_requests.saturating_sub(1);
                 if let Some(bytes) = valid_bytes {
-                    for (page_id, chunk) in
-                        run.page_ids.into_iter().zip(bytes.as_chunks::<PAGE_SIZE_BYTES>().0)
-                    {
-                        st.completed_pages
-                            .push_back((page_id, page_bytes_as_words(chunk).ok()));
+                    for item in run.items {
+                        let words = bytes
+                            .get(item.rel_offset..item.rel_offset + item.byte_len)
+                            .and_then(|slice| decompress_page_words(slice).ok());
+                        st.completed_pages.push_back((item.global_page_id, words));
                     }
                 } else {
-                    for page_id in run.page_ids {
-                        st.completed_pages.push_back((page_id, None));
+                    for item in run.items {
+                        st.completed_pages.push_back((item.global_page_id, None));
                     }
                 }
             });
@@ -234,10 +308,29 @@ mod web_loader {
             });
             if let Some(manifests) = ready_manifests {
                 world.clear();
-                for (stem, manifest) in HERO_ASSETS.iter().zip(manifests.iter()) {
+                let mut offsets = [0_u32; 5];
+                for (idx, (stem, manifest)) in HERO_ASSETS.iter().zip(manifests.iter()).enumerate() {
+                    offsets[idx] = world.total_pages;
                     world.add_mesh(*stem, manifest);
                 }
                 populate_sanctuary(&mut world);
+                streaming.sync_world(&world);
+                let pre = WEB_STATE.with(|cell| {
+                    let mut st = cell.borrow_mut();
+                    st.mesh_page_offsets = offsets;
+                    st.world_synced = true;
+                    let mut out = Vec::new();
+                    for (idx, slot) in st.prefetched.iter_mut().enumerate() {
+                        let base = offsets[idx];
+                        for (local_id, words) in slot.drain(..) {
+                            out.push((base + local_id, words));
+                        }
+                    }
+                    out
+                });
+                for (global_id, words) in pre {
+                    streaming.deliver_page(global_id, words);
+                }
                 state.assets_loaded = true;
             }
             return;
