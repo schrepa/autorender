@@ -202,17 +202,27 @@ pub fn compute_normal_cone(positions: &[Vec3], triangles: &[[u8; 3]]) -> u32 {
         let cross = (p1 - p0).cross(p2 - p0);
         let len_sq = cross.length_squared();
         if !len_sq.is_finite() || len_sq <= 1.0e-18 {
-            return degenerate;
+            continue;
         }
         let n = cross / len_sq.sqrt();
         normals.push(n);
         sum += n;
     }
-    let sum_len_sq = sum.length_squared();
-    if !sum_len_sq.is_finite() || sum_len_sq <= 1.0e-12 {
+    if normals.is_empty() {
         return degenerate;
     }
-    let axis = sum / sum_len_sq.sqrt();
+    let ns = bounding_sphere_points(&normals);
+    let sphere_axis = Vec3::new(ns[0], ns[1], ns[2]);
+    let raw_axis = if sphere_axis.length_squared() > 1.0e-8 {
+        sphere_axis
+    } else {
+        sum
+    };
+    let axis_len_sq = raw_axis.length_squared();
+    if !axis_len_sq.is_finite() || axis_len_sq <= 1.0e-12 {
+        return degenerate;
+    }
+    let axis = raw_axis / axis_len_sq.sqrt();
     let ax = (clamp(axis.x, -1.0, 1.0) * 127.0).round() as i8;
     let ay = (clamp(axis.y, -1.0, 1.0) * 127.0).round() as i8;
     let az = (clamp(axis.z, -1.0, 1.0) * 127.0).round() as i8;

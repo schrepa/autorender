@@ -7,8 +7,11 @@ import package::nanite::frame::nanite_frame_page_heap;
 import package::nanite::frame::nanite_frame_vis_clusters;
 import package::nanite::frame::nanite_frame_sw_depth;
 import package::nanite::frame::nanite_frame_sw_vis;
-import package::nanite::frame::nanite_frame_shadow_depth;
+import package::nanite::frame::nanite_frame_depth;
+import package::nanite::frame::nanite_frame_shadow_c0;
+import package::nanite::frame::nanite_frame_shadow_c1;
 import package::nanite::common::PAGE_WORDS;
+import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::SHADOW_C0_DIM;
 import package::nanite::common::SHADOW_C1_DIM;
 import package::nanite::common::quat_rotate;
@@ -16,15 +19,24 @@ import package::nanite::common::decode_pos;
 import package::nanite::common::decode_color_ao;
 import package::nanite::common::decode_octahedral;
 import package::nanite::common::decode_uv;
+import package::nanite::common::cluster_vert_count;
+import package::nanite::common::cluster_lod;
+import package::nanite::common::cluster_mat;
+import package::nanite::common::cluster_page_id;
+import package::nanite::common::cluster_word_offset;
 
 @group(2) @binding(0) var vis_hw_tex: texture_2d<u32>;
-@group(2) @binding(1) var hw_depth_tex: texture_depth_2d;
-@group(2) @binding(2) var<uniform> frame_params: FrameUniforms;
-@group(2) @binding(3) var<storage, read> mat_params: array<GpuMaterialParams>;
-@group(2) @binding(4) var mat_albedo: texture_2d_array<f32>;
-@group(2) @binding(5) var mat_normal: texture_2d_array<f32>;
-@group(2) @binding(6) var mat_orm: texture_2d_array<f32>;
-@group(2) @binding(7) var pbr_sampler: sampler;
+@group(2) @binding(1) var<uniform> frame_params: FrameUniforms;
+@group(2) @binding(2) var<storage, read> mat_params: array<GpuMaterialParams>;
+@group(2) @binding(3) var mat_albedo: texture_2d_array<f32>;
+@group(2) @binding(4) var mat_normal: texture_2d_array<f32>;
+@group(2) @binding(5) var mat_orm: texture_2d_array<f32>;
+@group(2) @binding(6) var pbr_sampler: sampler;
+@group(2) @binding(7) var shadow_sampler: sampler_comparison;
+@group(2) @binding(8) var gi_sh_r: texture_3d<f32>;
+@group(2) @binding(9) var gi_sh_g: texture_3d<f32>;
+@group(2) @binding(10) var gi_sh_b: texture_3d<f32>;
+@group(2) @binding(11) var gi_sampler: sampler;
 
 const PI: f32 = 3.14159265;
 const NO_TEX_LAYER: u32 = 0xFFFFFFFFu;
@@ -54,7 +66,7 @@ fn hash_color(id: u32) -> vec3<f32> {
 }
 
 fn lod_heat_color(lod: u32) -> vec3<f32> {
-    let t = clamp(f32(lod) * 0.08, 0.0, 1.0);
+    let t = clamp(f32(lod) * 0.06, 0.0, 1.0);
     let c0 = vec3<f32>(0.06, 0.34, 0.92);
     let c1 = vec3<f32>(0.05, 0.78, 0.62);
     let c2 = vec3<f32>(0.96, 0.78, 0.12);
@@ -65,6 +77,12 @@ fn lod_heat_color(lod: u32) -> vec3<f32> {
         return mix(c1, c2, (t - 0.33) * 3.0);
     }
     return mix(c2, c3, (t - 0.66) * 3.0);
+}
+
+fn temporal_ign(frag_xy: vec2<f32>) -> f32 {
+    let f = frame_params.taa_params.w;
+    let p = frag_xy + vec2<f32>(5.588238 * f, 13.73219 * f);
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
 fn eval_sky(dir: vec3<f32>, include_sun: bool) -> vec3<f32> {
@@ -103,88 +121,154 @@ fn eval_sky(dir: vec3<f32>, include_sun: bool) -> vec3<f32> {
     return col;
 }
 
-fn shadow_texel(tx: i32, ty: i32, cmp_z: f32, dim_u: u32, dim_i: i32, base_off: u32) -> f32 {
-    let cx = clamp(tx, 0, dim_i - 1);
-    let cy = clamp(ty, 0, dim_i - 1);
-    let bits = nanite_frame_shadow_depth[base_off + u32(cy) * dim_u + u32(cx)];
-    return select(0.0, 1.0, bits == 0u || cmp_z >= bitcast<f32>(bits));
-}
-
-fn sample_shadow_bilinear(sx: f32, sy: f32, cmp_z: f32, dim_u: u32, dim_i: i32, base_off: u32) -> f32 {
-    let gx = sx - 0.5;
-    let gy = sy - 0.5;
-    let x0 = i32(floor(gx));
-    let y0 = i32(floor(gy));
-    let fx = gx - f32(x0);
-    let fy = gy - f32(y0);
-    let s00 = shadow_texel(x0, y0, cmp_z, dim_u, dim_i, base_off);
-    let s10 = shadow_texel(x0 + 1, y0, cmp_z, dim_u, dim_i, base_off);
-    let s01 = shadow_texel(x0, y0 + 1, cmp_z, dim_u, dim_i, base_off);
-    let s11 = shadow_texel(x0 + 1, y0 + 1, cmp_z, dim_u, dim_i, base_off);
-    return mix(mix(s00, s10, fx), mix(s01, s11, fx), fy);
-}
-
-fn sample_cascade_pcf(
+fn sample_cascade_c0(
     world_pos: vec3<f32>,
     n: vec3<f32>,
-    vp: mat4x4<f32>,
-    dim_u: u32,
-    base_off: u32,
     normal_bias: f32,
     depth_bias: f32,
     rot_angle: f32,
-    radius_px: f32,
 ) -> vec2<f32> {
     let p = world_pos + n * normal_bias;
-    let clip = vp * vec4<f32>(p, 1.0);
+    let clip = nanite_frame_uniforms.shadow_vp0 * vec4<f32>(p, 1.0);
     let margin = max(abs(clip.x), abs(clip.y));
-    if margin >= 0.98 || clip.z <= 0.001 || clip.z >= 0.999 {
+    if margin >= 0.98 || clip.z <= 0.0005 || clip.z >= 0.9995 {
         return vec2<f32>(1.0, 0.0);
     }
-    let dim_f = f32(dim_u);
-    let dim_i = i32(dim_u);
-    let sx = (clip.x * 0.5 + 0.5) * dim_f;
-    let sy = (0.5 - clip.y * 0.5) * dim_f;
-    let jx = cos(rot_angle) * radius_px * 0.55;
-    let jy = sin(rot_angle) * radius_px * 0.55;
-    let cmp_z = clip.z + depth_bias;
-    let coverage = smoothstep(0.98, 0.80, margin);
-    let lit = sample_shadow_bilinear(sx + jx, sy + jy, cmp_z, dim_u, dim_i, base_off);
-    return vec2<f32>(lit, coverage);
+    let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    let cmp_z = clamp(clip.z + depth_bias, 0.0, 1.0);
+    let radius = 1.65 / f32(SHADOW_C0_DIM);
+    var acc = 0.0;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let r = sqrt((f32(i) + 0.5) * 0.25) * radius;
+        let ang = f32(i) * 2.3999632 + rot_angle;
+        let off = vec2<f32>(cos(ang), sin(ang)) * r;
+        acc += textureSampleCompareLevel(nanite_frame_shadow_c0, shadow_sampler, uv + off, cmp_z);
+    }
+    let coverage = smoothstep(0.98, 0.84, margin);
+    return vec2<f32>(acc * 0.25, coverage);
+}
+
+fn sample_cascade_c1(
+    world_pos: vec3<f32>,
+    n: vec3<f32>,
+    normal_bias: f32,
+    depth_bias: f32,
+    rot_angle: f32,
+) -> vec2<f32> {
+    let p = world_pos + n * normal_bias;
+    let clip = nanite_frame_uniforms.shadow_vp1 * vec4<f32>(p, 1.0);
+    let margin = max(abs(clip.x), abs(clip.y));
+    if margin >= 0.98 || clip.z <= 0.0005 || clip.z >= 0.9995 {
+        return vec2<f32>(1.0, 0.0);
+    }
+    let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    let cmp_z = clamp(clip.z + depth_bias, 0.0, 1.0);
+    let radius = 1.85 / f32(SHADOW_C1_DIM);
+    var acc = 0.0;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let r = sqrt((f32(i) + 0.5) * 0.25) * radius;
+        let ang = f32(i) * 2.3999632 + rot_angle;
+        let off = vec2<f32>(cos(ang), sin(ang)) * r;
+        acc += textureSampleCompareLevel(nanite_frame_shadow_c1, shadow_sampler, uv + off, cmp_z);
+    }
+    let coverage = smoothstep(0.98, 0.84, margin);
+    return vec2<f32>(acc * 0.25, coverage);
 }
 
 fn eval_shadow(world_pos: vec3<f32>, geom_n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
-    let ign = fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
-    let angle = ign * 6.2831853;
+    if frame_params.gi_max_pad.w < 0.5 {
+        return 1.0;
+    }
+    let rot = temporal_ign(frag_xy) * 6.2831853;
     let ndl = max(dot(geom_n, frame_params.sun_dir_illum.xyz), 0.0);
     let slope = clamp(1.0 - ndl, 0.0, 1.0);
-    let c0 = sample_cascade_pcf(
+    let c0 = sample_cascade_c0(
         world_pos,
         geom_n,
-        nanite_frame_uniforms.shadow_vp0,
-        SHADOW_C0_DIM,
-        0u,
-        0.022 + slope * 0.038,
-        0.00055 + slope * 0.00080,
-        angle,
-        0.85,
+        0.014 + slope * 0.022,
+        0.00022 + slope * 0.00032,
+        rot,
     );
     if c0.y >= 0.99 {
         return c0.x;
     }
-    let c1 = sample_cascade_pcf(
+    let c1 = sample_cascade_c1(
         world_pos,
         geom_n,
-        nanite_frame_uniforms.shadow_vp1,
-        SHADOW_C1_DIM,
-        SHADOW_C0_DIM * SHADOW_C0_DIM,
-        0.028 + slope * 0.048,
-        0.00060 + slope * 0.00085,
-        angle,
-        0.95,
+        0.028 + slope * 0.042,
+        0.00036 + slope * 0.00050,
+        rot,
     );
     let far_val = mix(1.0, c1.x, c1.y);
     return mix(far_val, c0.x, c0.y);
+}
+
+fn eval_geomerics_sh(sh: vec4<f32>, dir: vec3<f32>) -> f32 {
+    let r0 = max(sh.x, 1.0e-5);
+    let l1 = sh.yzw;
+    let l1_len = length(l1);
+    let r = clamp(l1_len / r0, 0.0, 1.0);
+    let q = 0.5 * (1.0 + dot(dir, l1 / max(l1_len, 1.0e-5)));
+    let p = 1.0 + 2.0 * r;
+    let a = (1.0 - r) / (1.0 + r);
+    return r0 * (a + (1.0 - a) * (p + 1.0) * pow(clamp(q, 0.0, 1.0), p));
+}
+
+struct GiProbeSample {
+    r: vec4<f32>,
+    g: vec4<f32>,
+    b: vec4<f32>,
+    valid: bool,
+}
+
+fn fetch_gi_probe(world_pos: vec3<f32>, geom_n: vec3<f32>) -> GiProbeSample {
+    var out: GiProbeSample;
+    if frame_params.gi_min_pad.w < 0.5 {
+        out.r = vec4<f32>(0.0);
+        out.g = vec4<f32>(0.0);
+        out.b = vec4<f32>(0.0);
+        out.valid = false;
+        return out;
+    }
+    let gmin = frame_params.gi_min_pad.xyz;
+    let gmax = frame_params.gi_max_pad.xyz;
+    let biased = world_pos + geom_n * 0.30;
+    let uvw_raw = (biased - gmin) / max(gmax - gmin, vec3<f32>(1.0e-3));
+    let dims = vec3<f32>(textureDimensions(gi_sh_r));
+    let half_tex = vec3<f32>(0.5) / max(dims, vec3<f32>(1.0));
+    let uvw = clamp(uvw_raw, half_tex, vec3<f32>(1.0) - half_tex);
+    out.r = textureSampleLevel(gi_sh_r, gi_sampler, uvw, 0.0);
+    out.g = textureSampleLevel(gi_sh_g, gi_sampler, uvw, 0.0);
+    out.b = textureSampleLevel(gi_sh_b, gi_sampler, uvw, 0.0);
+    out.valid = true;
+    return out;
+}
+
+fn eval_gi_dir(probe: GiProbeSample, dir: vec3<f32>) -> vec3<f32> {
+    if !probe.valid {
+        let up = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+        return mix(vec3<f32>(0.24, 0.19, 0.14), vec3<f32>(0.36, 0.44, 0.58), up);
+    }
+    return max(
+        vec3<f32>(
+            eval_geomerics_sh(probe.r, dir),
+            eval_geomerics_sh(probe.g, dir),
+            eval_geomerics_sh(probe.b, dir),
+        ),
+        vec3<f32>(0.0),
+    );
+}
+
+fn load_scene_depth(px: vec2<i32>, size_x: u32) -> f32 {
+    var d = textureLoad(nanite_frame_depth, px, 0);
+    if nanite_frame_uniforms.flags.y == 0u {
+        let idx = u32(px.y) * size_x + u32(px.x);
+        let sw_d = bitcast<f32>(nanite_frame_sw_depth[idx]);
+        if sw_d > d {
+            d = sw_d;
+        }
+    }
+    return d;
 }
 
 fn eval_contact_ao(px_i: vec2<i32>, size: vec2<u32>, center_d: f32, frag_xy: vec2<f32>) -> f32 {
@@ -193,24 +277,26 @@ fn eval_contact_ao(px_i: vec2<i32>, size: vec2<u32>, center_d: f32, frag_xy: vec
     }
     let near_z = nanite_frame_uniforms.cull_pos_near.w;
     let center_z = near_z / center_d;
-    let radius = clamp(16.0 / max(center_z, 1.5), 3.0, 11.0);
+    let max_rad = clamp(20.0 / max(center_z, 1.2), 3.5, 14.0);
     let max_px = vec2<i32>(size) - vec2<i32>(1);
-    let ign = fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
+    let ign = temporal_ign(frag_xy);
     let a0 = ign * 6.2831853;
     var occ = 0.0;
-    for (var k = 0; k < 3; k = k + 1) {
-        let ang = a0 + f32(k) * 2.0943951;
-        let off = vec2<i32>(round(vec2<f32>(cos(ang), sin(ang)) * radius));
+    for (var k = 0u; k < 4u; k = k + 1u) {
+        let ang = a0 + f32(k) * 1.5707963;
+        let ring = select(0.48, 0.96, (k & 1u) != 0u);
+        let rad = max_rad * (ring + 0.14 * fract(ign * 7.31 + f32(k) * 0.37));
+        let off = vec2<i32>(round(vec2<f32>(cos(ang), sin(ang)) * rad));
         let c = clamp(px_i + off, vec2<i32>(0), max_px);
-        let sd = textureLoad(hw_depth_tex, c, 0);
+        let sd = load_scene_depth(c, size.x);
         if sd > 1.0e-5 {
             let sz = near_z / sd;
             let dz = center_z - sz;
-            let hit = smoothstep(0.025, 0.14, dz) * (1.0 - smoothstep(0.32, 0.85, dz));
+            let hit = smoothstep(0.02, 0.16, dz) * (1.0 - smoothstep(0.38, 1.15, dz));
             occ += hit;
         }
     }
-    return clamp(1.0 - occ * 0.21, 0.42, 1.0);
+    return clamp(1.0 - occ * 0.17, 0.42, 1.0);
 }
 
 fn distribution_ggx(ndh: f32, rough: f32) -> f32 {
@@ -234,7 +320,7 @@ fn fresnel_schlick(cos_t: f32, f0: vec3<f32>) -> vec3<f32> {
 }
 
 fn eval_lantern_glow(world_pos: vec3<f32>, n: vec3<f32>, albedo: vec3<f32>, metallic: f32) -> vec3<f32> {
-    let lantern_col = vec3<f32>(1.0, 0.64, 0.28) * 2.25;
+    let lantern_col = vec3<f32>(1.0, 0.64, 0.28) * 2.1;
     var accum = vec3<f32>(0.0);
     let xs = array<f32, 5>(-13.8, -1.8, -1.8, 6.2, 6.2);
     let ys = array<f32, 5>(3.6, 4.1, 4.1, 4.1, 4.1);
@@ -266,10 +352,10 @@ fn apply_aerial_fog(
     let falloff = frame_params.fog_params.y;
     let avg_h = max(0.5 * (cam_pos.y + world_pos.y), 0.0);
     let optical = density * dist * exp(-falloff * avg_h);
-    let fog_amt = 1.0 - exp(-min(optical, 0.35));
+    let fog_amt = 1.0 - exp(-min(optical, 0.30));
     let sun_dot = clamp(dot(view_dir, frame_params.sun_dir_illum.xyz), 0.0, 1.0);
     let fog_col = mix(frame_params.fog_color.rgb, frame_params.sky_horiz_sun.rgb, sun_dot * 0.45);
-    return mix(color, fog_col, clamp(fog_amt, 0.0, 0.25));
+    return mix(color, fog_col, clamp(fog_amt, 0.0, 0.22));
 }
 
 fn perturb_normal(
@@ -280,7 +366,7 @@ fn perturb_normal(
     uv1: vec2<f32>,
     uv2: vec2<f32>,
     n: vec3<f32>,
-    nm_sample: vec3<f32>,
+    nm_sample: vec2<f32>,
 ) -> vec3<f32> {
     let e1 = p1 - p0;
     let e2 = p2 - p0;
@@ -301,7 +387,7 @@ fn perturb_normal(
     let t = t_ortho * inverseSqrt(t_l2);
     let sign_b = select(-1.0, 1.0, dot(cross(n, t), b_raw) >= 0.0);
     let b = cross(n, t) * sign_b;
-    let tn_xy = nm_sample.xy * 2.0 - vec2<f32>(1.0);
+    let tn_xy = nm_sample * 2.0 - vec2<f32>(1.0);
     let tn_z = sqrt(max(1.0 - dot(tn_xy, tn_xy), 0.01));
     let world_nm = t * tn_xy.x + b * tn_xy.y + n * tn_z;
     let l2 = dot(world_nm, world_nm);
@@ -372,26 +458,21 @@ fn shade_sponza_pbr(
         direct += sss_col * sun_rad * (trans * 0.42 * (1.0 / PI));
     }
 
-    let open_z = 1.0 - smoothstep(2.8, 7.6, abs(world_pos.z));
-    let open_x = 1.0 - smoothstep(9.5, 16.5, abs(world_pos.x - 1.0));
-    let sky_vis = clamp(0.28 + 0.72 * open_z * open_x + smoothstep(6.0, 14.0, world_pos.y) * 0.25, 0.24, 1.0);
-
-    let sky_col = mix(vec3<f32>(0.58, 0.68, 0.84), vec3<f32>(0.34, 0.54, 0.88), clamp(n.y * 0.5 + 0.5, 0.0, 1.0)) * (1.02 * sky_vis);
-    let floor_bounce = vec3<f32>(0.88, 0.72, 0.52) * (0.76 * (0.55 + 0.45 * open_z));
-    let wall_bounce = vec3<f32>(0.76, 0.63, 0.48) * (0.44 * (1.0 - abs(n.y)));
-    let sun_opp_bounce = vec3<f32>(0.94, 0.78, 0.56) * (clamp(dot(n, -l), 0.0, 1.0) * 0.28 * open_z);
-    let hemi = mix(floor_bounce, sky_col, n.y * 0.5 + 0.5) + wall_bounce * 0.48 + sun_opp_bounce;
-
+    let gi_probe = fetch_gi_probe(world_pos, geom_n);
+    let gi_diff = eval_gi_dir(gi_probe, n) * 1.55;
     let ao_spec = clamp(pow(ndv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
     let refl = reflect(-v, n);
+    let gi_refl = eval_gi_dir(gi_probe, refl);
     let sky_refl = eval_sky(refl, false);
-    let interior_refl = mix(vec3<f32>(0.32, 0.27, 0.22), vec3<f32>(0.58, 0.52, 0.44), clamp(refl.y * 0.5 + 0.5, 0.0, 1.0));
-    let env_col = mix(interior_refl, sky_refl * 0.65, clamp(sky_vis * smoothstep(-0.15, 0.55, refl.y), 0.0, 1.0));
+    let open_z = 1.0 - smoothstep(2.8, 7.6, abs(world_pos.z));
+    let open_x = 1.0 - smoothstep(9.5, 16.5, abs(world_pos.x - 1.0));
+    let sky_vis = clamp(open_z * open_x * smoothstep(-0.1, 0.55, refl.y), 0.0, 1.0);
+    let env_col = mix(gi_refl, sky_refl * 0.72, sky_vis * (1.0 - rough * 0.7));
     let f_env = fresnel_schlick(ndv, f0);
-    let spec_boost = select(0.55 + 0.85 * metallic, 1.35, is_glass);
-    let env_spec = env_col * f_env * (1.0 - rough * 0.72) * ao_spec * spec_boost;
+    let spec_boost = select(0.65 + 0.85 * metallic, 1.40, is_glass);
+    let env_spec = env_col * f_env * (1.0 - rough * 0.70) * ao_spec * spec_boost;
 
-    let indirect = hemi * albedo * (1.0 - metallic * 0.78) * ao + env_spec;
+    let indirect = gi_diff * albedo * (1.0 - metallic * 0.82) * ao + env_spec;
     let lanterns = eval_lantern_glow(world_pos, n, albedo, metallic);
 
     let lit = direct + indirect + lanterns + emissive;
@@ -422,19 +503,23 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let size = max(vec2<u32>(vp), vec2<u32>(1u));
     let px = min(vec2<u32>(pos.xy), size - vec2<u32>(1u));
     let px_i = vec2<i32>(px);
-    let idx = px.y * size.x + px.x;
     let uv = pos.xy / max(vp, vec2<f32>(1.0));
     let ndc_p = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let view_mode = nanite_frame_uniforms.flags.z;
 
-    let hw_d = textureLoad(hw_depth_tex, px_i, 0);
+    let hw_d = textureLoad(nanite_frame_depth, px_i, 0);
     let hw_v = textureLoad(vis_hw_tex, px_i, 0).r;
-    let sw_d_bits = nanite_frame_sw_depth[idx];
-    let sw_d = bitcast<f32>(sw_d_bits);
-    let sw_v = nanite_frame_sw_vis[idx];
-    let use_sw = (sw_v != 0u) && (sw_d > hw_d || hw_v == 0u);
-    let vis_id = select(hw_v, sw_v, use_sw);
-    let win_depth = select(hw_d, sw_d, use_sw);
+    var vis_id = hw_v;
+    var win_depth = hw_d;
+    var use_sw = false;
+    if nanite_frame_uniforms.flags.y == 0u {
+        let idx = px.y * size.x + px.x;
+        let sw_d = bitcast<f32>(nanite_frame_sw_depth[idx]);
+        let sw_v = nanite_frame_sw_vis[idx];
+        use_sw = (sw_v != 0u) && (sw_d > hw_d || hw_v == 0u);
+        vis_id = select(hw_v, sw_v, use_sw);
+        win_depth = select(hw_d, sw_d, use_sw);
+    }
 
     if vis_id == 0u {
         if view_mode != 0u {
@@ -448,24 +533,29 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(eval_sky(ray_d, true), 0.0);
     }
 
-    let vis_slot = (vis_id >> 6u) - 1u;
-    let tri_id = vis_id & 63u;
+    let vis_slot = (vis_id >> 7u) - 1u;
+    let tri_id = vis_id & 0x7Fu;
     let vc = nanite_frame_vis_clusters[vis_slot];
-    let c_meta = nanite_frame_clusters[vc.cluster_id].cone_and_meta;
-    let c_min = nanite_frame_clusters[vc.cluster_id].aabb_min.xyz;
-    let c_ext = nanite_frame_clusters[vc.cluster_id].aabb_extent.xyz;
+    let c = nanite_frame_clusters[vc.cluster_id];
     let inst_ps = nanite_frame_instances[vc.instance_id].pos_scale;
     let inst_rq = nanite_frame_instances[vc.instance_id].rot_quat;
-    let vert_count = c_meta.y & 0xFFu;
-    let page_base = vc.heap_slot * PAGE_WORDS + c_meta.w;
-    let tri_word = nanite_frame_page_heap[page_base + vert_count * 4u + tri_id];
+    let vert_count = cluster_vert_count(c);
+    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let origin = vec3<f32>(
+        bitcast<f32>(nanite_frame_page_heap[page_base]),
+        bitcast<f32>(nanite_frame_page_heap[page_base + 1u]),
+        bitcast<f32>(nanite_frame_page_heap[page_base + 2u]),
+    );
+    let step = bitcast<f32>(nanite_frame_page_heap[page_base + 3u]);
+    let verts_base = page_base + CLUSTER_HEADER_WORDS;
+    let tri_word = nanite_frame_page_heap[verts_base + vert_count * 4u + tri_id];
     let i0 = tri_word & 0xFFu;
     let i1 = (tri_word >> 8u) & 0xFFu;
     let i2 = (tri_word >> 16u) & 0xFFu;
 
-    let b0 = page_base + i0 * 4u;
-    let b1 = page_base + i1 * 4u;
-    let b2 = page_base + i2 * 4u;
+    let b0 = verts_base + i0 * 4u;
+    let b1 = verts_base + i1 * 4u;
+    let b2 = verts_base + i2 * 4u;
 
     let w0_0 = nanite_frame_page_heap[b0];
     let w1_0 = nanite_frame_page_heap[b0 + 1u];
@@ -474,9 +564,9 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let w0_2 = nanite_frame_page_heap[b2];
     let w1_2 = nanite_frame_page_heap[b2 + 1u];
 
-    let p0 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_0, w1_0, c_min, c_ext) * inst_ps.w);
-    let p1 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_1, w1_1, c_min, c_ext) * inst_ps.w);
-    let p2 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_2, w1_2, c_min, c_ext) * inst_ps.w);
+    let p0 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_0, w1_0, origin, step) * inst_ps.w);
+    let p1 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_1, w1_1, origin, step) * inst_ps.w);
+    let p2 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_2, w1_2, origin, step) * inst_ps.w);
 
     let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
     let inv_vp = nanite_frame_uniforms.inv_render_vp;
@@ -510,11 +600,11 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             return vec4<f32>(col * ndl, 1.0);
         }
         if view_mode == 2u {
-            let col = hash_color((vc.cluster_id * 64u + tri_id) ^ (vc.instance_id * 2246822519u));
+            let col = hash_color((vc.cluster_id * 128u + tri_id) ^ (vc.instance_id * 2246822519u));
             return vec4<f32>(col * ndl, 1.0);
         }
         if view_mode == 3u {
-            let col = lod_heat_color((c_meta.y >> 16u) & 0xFFu);
+            let col = lod_heat_color(cluster_lod(c));
             return vec4<f32>(col * ndl, 1.0);
         }
         if view_mode == 4u {
@@ -522,8 +612,8 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             let sw_col = vec3<f32>(0.98, 0.52, 0.08);
             return vec4<f32>(select(hw_col, sw_col, use_sw) * ndl, 1.0);
         }
-        let page_id = c_meta.z;
-        let is_root = (nanite_frame_clusters[vc.cluster_id].streaming_meta.z & 1u) != 0u;
+        let page_id = cluster_page_id(c);
+        let is_root = ((c.page_and_fallback.y >> 16u) & 1u) != 0u;
         let pcol = select(hash_color(page_id + 17u), vec3<f32>(0.98, 0.25, 0.72), is_root);
         return vec4<f32>(pcol * ndl, 1.0);
     }
@@ -551,10 +641,11 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let v_dir = normalize(cam_pos - world_pos);
     let geom_n = select(world_n, -world_n, dot(world_n, v_dir) < 0.0);
 
-    let mat_id = min((c_meta.y >> 24u) & 0xFFu, 31u);
+    let mat_id = min(cluster_mat(c), 31u);
     let mp = mat_params[mat_id];
     let tex_layer = mp.layer_flags.x;
     let mat_flags = mp.layer_flags.y;
+    let min_mip = mp.layer_flags.z;
 
     var albedo = mp.base_color_rough.rgb;
     var rough = mp.base_color_rough.w;
@@ -563,12 +654,31 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
     if tex_layer != NO_TEX_LAYER {
         let li = i32(tex_layer);
-        albedo = textureSampleGrad(mat_albedo, pbr_sampler, uv_interp, li, duv_dx, duv_dy).rgb;
-        let nm_raw = textureSampleGrad(mat_normal, pbr_sampler, uv_interp, li, duv_dx, duv_dy).rgb;
-        let orm = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, duv_dx, duv_dy).rgb;
+        let grad_x = duv_dx * 0.70710678;
+        let grad_y = duv_dy * 0.70710678;
+        let max_g = max(length(grad_x), length(grad_y));
+        var nm_xy = vec2<f32>(0.5, 0.5);
+        if min_mip == 0u {
+            albedo = textureSampleGrad(mat_albedo, pbr_sampler, uv_interp, li, grad_x, grad_y).rgb;
+            nm_xy = textureSampleGrad(mat_normal, pbr_sampler, uv_interp, li, grad_x, grad_y).rg;
+        } else {
+            let dim_f = f32(textureDimensions(mat_albedo).x);
+            let lod = max(log2(max(max_g * dim_f, 1.0)), f32(min_mip));
+            albedo = textureSampleLevel(mat_albedo, pbr_sampler, uv_interp, li, lod).rgb;
+            nm_xy = textureSampleLevel(mat_normal, pbr_sampler, uv_interp, li, lod).rg;
+        }
+        let orm_min = select(0u, min_mip - 1u, min_mip > 0u);
+        var orm = vec3<f32>(1.0, 0.8, 0.0);
+        if orm_min == 0u {
+            orm = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, grad_x, grad_y).rgb;
+        } else {
+            let orm_dim = f32(textureDimensions(mat_orm).x);
+            let orm_lod = max(log2(max(max_g * orm_dim, 1.0)), f32(orm_min));
+            orm = textureSampleLevel(mat_orm, pbr_sampler, uv_interp, li, orm_lod).rgb;
+        }
         rough = clamp(orm.g * mp.base_color_rough.w, 0.04, 0.98);
         metallic = clamp(orm.b * mp.emissive_metal.w, 0.0, 1.0);
-        shaded_n = perturb_normal(p0, p1, p2, uv0, uv1, uv2, geom_n, nm_raw);
+        shaded_n = perturb_normal(p0, p1, p2, uv0, uv1, uv2, geom_n, nm_xy);
     }
 
     let vert_ao = clamp(0.45 + 0.55 * color_ao.a, 0.35, 1.0);

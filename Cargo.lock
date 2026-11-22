@@ -751,9 +751,11 @@ name = "cook_meshlet"
 version = "0.1.0"
 dependencies = [
  "cook",
+ "cook_texture",
  "engine_codec",
  "engine_math",
  "engine_meshlet",
+ "flate2",
  "glam 0.30.9",
  "gltf",
  "serde",
@@ -2256,6 +2258,7 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "engine_touch",
+ "flate2",
  "glam 0.30.9",
  "js-sys",
  "schemars",
@@ -2264,7 +2267,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "zune-jpeg",
 ]
 
 [[package]]

@@ -1,4 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
 use brick_nanite::NaniteWorld;
+#[cfg(not(target_arch = "wasm32"))]
 use engine::prelude::*;
 
 pub const HERO_ASSETS: [&str; 8] = [
@@ -12,6 +14,7 @@ pub const HERO_ASSETS: [&str; 8] = [
     "sponza_ivy_high",
 ];
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn populate_sanctuary(world: &mut NaniteWorld) {
     world.instances.clear();
     world.total_virtual_tris = 0;

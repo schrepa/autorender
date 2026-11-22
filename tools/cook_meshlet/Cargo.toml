@@ -7,9 +7,11 @@ publish.workspace = true
 
 [dependencies]
 cook.workspace = true
+cook_texture.workspace = true
 engine_codec.workspace = true
 engine_math.workspace = true
 engine_meshlet.workspace = true
+flate2.workspace = true
 glam.workspace = true
 gltf.workspace = true
 serde.workspace = true

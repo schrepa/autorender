@@ -25,7 +25,7 @@ settings! {
         pub bookmark: String = "atrium".to_owned() => any,
         pub view_mode: String = "lit".to_owned() => any,
         pub freeze_culling: bool = false => any,
-        pub hw_only: bool = false => any,
+        pub hw_only: bool = true => any,
         pub heap_mb: u32 = 64 => any,
         pub lod_px: u32 = 2 => any,
         pub hud_hidden: bool = false => any,
@@ -86,6 +86,7 @@ pub struct CameraRig {
     pub end_fov: f32,
     pub dragging: bool,
     pub dolly_time: f32,
+    pub last_view_mode: ViewMode,
     pub last_dev: Option<MonolithDevControl>,
 }
 
@@ -130,6 +131,7 @@ impl Default for CameraRig {
             end_fov: fov,
             dragging: false,
             dolly_time: 0.0,
+            last_view_mode: ViewMode::Lit,
             last_dev: None,
         }
     }
@@ -242,12 +244,14 @@ fn apply_dev_control(
     {
         state.bookmark = bm;
         state.requested_bookmark = None;
+        state.taa_reset = true;
         rig.snap_bookmark(bm);
     }
     if dev.view_mode != prev.view_mode
         && let Some(vm) = parse_view_mode(&dev.view_mode)
     {
         cfg.view_mode = vm;
+        state.taa_reset = true;
     }
     if dev.freeze_culling != prev.freeze_culling {
         cfg.freeze_culling = dev.freeze_culling;
@@ -494,6 +498,101 @@ struct ControlInput<'w> {
     dev: DevSetting<'w, MonolithDevControl>,
 }
 
+fn halton(mut idx: u32, base: u32) -> f32 {
+    let mut f = 1.0_f32;
+    let mut r = 0.0_f32;
+    let b = base as f32;
+    while idx > 0 {
+        f /= b;
+        r += f * (idx % base) as f32;
+        idx /= base;
+    }
+    r
+}
+
+struct CameraFrame {
+    eye: Vec3,
+    rot: Quat,
+    eff_fov: f32,
+    aspect: f32,
+    display: [u32; 2],
+}
+
+fn apply_camera_matrices(
+    cf: CameraFrame,
+    state: &mut MonolithState,
+    cfg: &NaniteConfig,
+    nanite_cam: &mut NaniteCamera,
+) -> Mat4 {
+    let CameraFrame {
+        eye,
+        rot,
+        eff_fov,
+        aspect,
+        display,
+    } = cf;
+    let forward = (rot * Vec3::NEG_Z).normalize_or_zero();
+    let right = (rot * Vec3::X).normalize_or_zero();
+    let up = (rot * Vec3::Y).normalize_or_zero();
+    let view = Mat4::look_to_rh(eye, forward, up);
+    let proj = reverse_z_infinite_proj(eff_fov.to_radians(), aspect, NEAR_Z);
+    let vp = proj * view;
+    let inv_vp = vp.inverse();
+
+    let (jx, jy) = if cfg.view_mode == ViewMode::Lit {
+        let idx = ((state.frame_count % 16) as u32) + 1;
+        (halton(idx, 2) - 0.5, halton(idx, 3) - 0.5)
+    } else {
+        (0.0, 0.0)
+    };
+    let rw = math::max((display[0] as f32 * state.render_scale).round(), 1.0);
+    let rh = math::max((display[1] as f32 * state.render_scale).round(), 1.0);
+    let jitter_mat = Mat4::from_translation(Vec3::new(jx * 2.0 / rw, -jy * 2.0 / rh, 0.0));
+    let render_proj = jitter_mat * proj;
+
+    state.prev_unjittered_vp = if state.frame_count <= 1 {
+        vp
+    } else {
+        state.view_projection
+    };
+    state.jitter_px = [jx, jy];
+    state.camera_eye = eye;
+    state.camera_forward = forward;
+    state.camera_right = right;
+    state.camera_up = up;
+    state.fov_deg = eff_fov;
+    state.view_projection = vp;
+    state.inv_view_projection = inv_vp;
+
+    if cfg.freeze_culling {
+        if !state.was_frozen {
+            state.frozen_cull_pos = eye;
+            state.frozen_cull_view = view;
+            state.frozen_cull_proj = proj;
+            state.was_frozen = true;
+        }
+    } else {
+        state.was_frozen = false;
+    }
+
+    nanite_cam.render_pos = eye;
+    nanite_cam.render_view = view;
+    nanite_cam.render_proj = render_proj;
+    nanite_cam.near_z = NEAR_Z;
+    nanite_cam.sim_time = state.sim_time;
+    nanite_cam.sun_dir = Vec3::from_array(SUN_DIR).normalize();
+    if cfg.freeze_culling {
+        nanite_cam.cull_pos = state.frozen_cull_pos;
+        nanite_cam.cull_view = state.frozen_cull_view;
+        nanite_cam.cull_proj = state.frozen_cull_proj;
+    } else {
+        nanite_cam.cull_pos = eye;
+        nanite_cam.cull_view = view;
+        nanite_cam.cull_proj = proj;
+    }
+    proj
+}
+
 fn update_control(
     mut input: ControlInput<'_>,
     mut state: ResMut<MonolithState>,
@@ -511,6 +610,8 @@ fn update_control(
     let inst_fps = math::clamp(1.0 / math::max(raw_dt, 0.001), 1.0, 480.0);
     state.fps_smoothed += (inst_fps - state.fps_smoothed) * math::clamp(dt * 4.5, 0.02, 0.25);
 
+    state.taa_reset = state.frame_count <= 2;
+
     if let Some(dev) = input.dev.get()
         && rig.last_dev.as_ref() != Some(dev)
     {
@@ -518,6 +619,10 @@ fn update_control(
     }
 
     handle_shortcuts(&input.devices, &mut state, &mut cfg);
+    if cfg.view_mode != rig.last_view_mode {
+        state.taa_reset = true;
+        rig.last_view_mode = cfg.view_mode;
+    }
 
     if let Some(layout) = input.touch_layout.as_deref_mut() {
         sync_touch_layout(&state, input.profile.as_deref().copied(), layout);
@@ -549,12 +654,12 @@ fn update_control(
         state.render_scale = 1.0;
     }
     cfg.render_scale = state.render_scale;
-    cfg.shadow_c0_half = 11.0;
-    cfg.shadow_c0_forward = 6.5;
-    cfg.shadow_c0_depth = 32.0;
-    cfg.shadow_c1_half = 24.0;
-    cfg.shadow_c1_center = Vec3::new(1.5, 6.0, 0.0);
-    cfg.shadow_c1_depth = 45.0;
+    cfg.shadow_c0_half = 14.0;
+    cfg.shadow_c0_forward = 6.0;
+    cfg.shadow_c0_depth = 48.0;
+    cfg.shadow_c1_half = 32.0;
+    cfg.shadow_c1_center = Vec3::new(1.0, 6.0, 0.0);
+    cfg.shadow_c1_depth = 64.0;
     cfg.double_sided_materials = DOUBLE_SIDED_MASK;
     let eff_fov = if logical.x > 0.0 && logical.x < logical.y {
         math::min(fov_deg + 14.0, 78.0)
@@ -562,48 +667,18 @@ fn update_control(
         fov_deg
     };
     let aspect = input.views.main().map_or(16.0 / 9.0, ViewFacts::aspect);
-    let forward = (rot * Vec3::NEG_Z).normalize_or_zero();
-    let right = (rot * Vec3::X).normalize_or_zero();
-    let up = (rot * Vec3::Y).normalize_or_zero();
-    let view = Mat4::look_to_rh(eye, forward, up);
-    let proj = reverse_z_infinite_proj(eff_fov.to_radians(), aspect, NEAR_Z);
-    let vp = proj * view;
-    let inv_vp = vp.inverse();
-
-    state.camera_eye = eye;
-    state.camera_forward = forward;
-    state.camera_right = right;
-    state.camera_up = up;
-    state.fov_deg = eff_fov;
-    state.view_projection = vp;
-    state.inv_view_projection = inv_vp;
-
-    if cfg.freeze_culling {
-        if !state.was_frozen {
-            state.frozen_cull_pos = eye;
-            state.frozen_cull_view = view;
-            state.frozen_cull_proj = proj;
-            state.was_frozen = true;
-        }
-    } else {
-        state.was_frozen = false;
-    }
-
-    nanite_cam.render_pos = eye;
-    nanite_cam.render_view = view;
-    nanite_cam.render_proj = proj;
-    nanite_cam.near_z = NEAR_Z;
-    nanite_cam.sim_time = state.sim_time;
-    nanite_cam.sun_dir = Vec3::from_array(SUN_DIR).normalize();
-    if cfg.freeze_culling {
-        nanite_cam.cull_pos = state.frozen_cull_pos;
-        nanite_cam.cull_view = state.frozen_cull_view;
-        nanite_cam.cull_proj = state.frozen_cull_proj;
-    } else {
-        nanite_cam.cull_pos = eye;
-        nanite_cam.cull_view = view;
-        nanite_cam.cull_proj = proj;
-    }
+    let proj = apply_camera_matrices(
+        CameraFrame {
+            eye,
+            rot,
+            eff_fov,
+            aspect,
+            display: [frame.display_size.x, frame.display_size.y],
+        },
+        &mut state,
+        &cfg,
+        &mut nanite_cam,
+    );
 
     let lens = lens_of(proj);
     for (entity, mut camera) in &mut eyes {

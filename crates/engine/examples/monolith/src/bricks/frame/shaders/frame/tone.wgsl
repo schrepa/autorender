@@ -36,20 +36,45 @@ fn agx_tonemap(val_in: vec3<f32>) -> vec3<f32> {
     return saturate(pow(v, vec3<f32>(2.2)));
 }
 
+fn rcas_luma(c: vec3<f32>) -> f32 {
+    return c.g * 0.5 + (c.r + c.b) * 0.25;
+}
+
+fn sample_rcas_hdr(pixel: vec2<i32>, max_px: vec2<i32>) -> vec3<f32> {
+    let e = max(textureLoad(scene_color, pixel, 0).rgb, vec3<f32>(0.0));
+    let b = max(textureLoad(scene_color, clamp(pixel + vec2<i32>(0, -1), vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0));
+    let d = max(textureLoad(scene_color, clamp(pixel + vec2<i32>(-1, 0), vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0));
+    let f = max(textureLoad(scene_color, clamp(pixel + vec2<i32>(1, 0), vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0));
+    let h = max(textureLoad(scene_color, clamp(pixel + vec2<i32>(0, 1), vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0));
+
+    let eb = rcas_luma(b);
+    let ed = rcas_luma(d);
+    let ee = rcas_luma(e);
+    let ef = rcas_luma(f);
+    let eh = rcas_luma(h);
+
+    let mn = min(ee, min(min(eb, eh), min(ed, ef)));
+    let mx = max(ee, max(max(eb, eh), max(ed, ef)));
+    let amp = sqrt(clamp(mn / max(mx, 1.0e-4), 0.0, 1.0)) * (1.0 / (1.0 + mx * 0.35));
+    let w = -amp * 0.14;
+    let sharp = (e + (b + d + f + h) * w) / max(1.0 + 4.0 * w, 0.1);
+    return max(sharp, vec3<f32>(0.0));
+}
+
 @fragment
 fn fs_tone(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(scene_color));
-    let pixel = min(vec2<i32>(pos.xy), size - 1);
+    let max_px = size - vec2<i32>(1);
+    let pixel = clamp(vec2<i32>(pos.xy), vec2<i32>(0), max_px);
     let uv = pos.xy / vec2<f32>(size);
 
-    let raw = textureLoad(scene_color, pixel, 0).rgb;
     if frame_params.fog_params.w > 0.5 {
-        let srgb = encode_srgb(saturate(raw));
-        let luma_aa = dot(srgb, vec3<f32>(0.299, 0.587, 0.114));
-        return vec4<f32>(srgb, luma_aa);
+        let raw = textureLoad(scene_color, pixel, 0).rgb;
+        return vec4<f32>(encode_srgb(saturate(raw)), 1.0);
     }
 
-    var hdr = raw + textureSampleLevel(scene_bloom, tone_sampler, uv, 0.0).rgb;
+    let sharp = sample_rcas_hdr(pixel, max_px);
+    var hdr = sharp + textureSampleLevel(scene_bloom, tone_sampler, uv, 0.0).rgb;
     let centered = uv * 2.0 - 1.0;
     let vig = 1.0 - dot(centered * vec2<f32>(0.76, 0.90), centered * vec2<f32>(0.76, 0.90)) * frame_params.grade.w;
     hdr *= frame_params.grade.x * clamp(vig, 0.72, 1.0);
@@ -57,7 +82,5 @@ fn fs_tone(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var mapped = agx_tonemap(hdr);
     let luma = dot(mapped, vec3<f32>(0.2126, 0.7152, 0.0722));
     mapped = saturate(mix(vec3<f32>(luma), mapped, frame_params.grade.z));
-    let srgb = encode_srgb(mapped);
-    let luma_aa = dot(srgb, vec3<f32>(0.299, 0.587, 0.114));
-    return vec4<f32>(srgb, luma_aa);
+    return vec4<f32>(encode_srgb(mapped), 1.0);
 }

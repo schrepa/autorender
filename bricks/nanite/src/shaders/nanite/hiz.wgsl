@@ -4,6 +4,7 @@ import package::generated::nanite::HizBuildInfo;
 @group(1) @binding(1) var<storage, read> sw_depth_ro: array<u32>;
 @group(1) @binding(2) var hiz_src: texture_2d<f32>;
 @group(1) @binding(3) var hiz_dst: texture_storage_2d<r32float, write>;
+@group(1) @binding(4) var hw_depth_tex: texture_depth_2d;
 
 fn footprint(coord: u32, dst_dim: u32, src_dim: u32) -> vec2<u32> {
     let raw_start = (coord * src_dim) / dst_dim;
@@ -11,6 +12,29 @@ fn footprint(coord: u32, dst_dim: u32, src_dim: u32) -> vec2<u32> {
     let start = min(raw_start, src_dim - 1u);
     let end = min(max(raw_end, start + 1u), src_dim);
     return vec2<u32>(start, end);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_hiz_from_hw(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let dst_size = textureDimensions(hiz_dst);
+    if gid.x >= dst_size.x || gid.y >= dst_size.y {
+        return;
+    }
+    let src_size = textureDimensions(hw_depth_tex, 0);
+    if src_size.x == 0u || src_size.y == 0u {
+        textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(0.0));
+        return;
+    }
+    let rx = footprint(gid.x, dst_size.x, src_size.x);
+    let ry = footprint(gid.y, dst_size.y, src_size.y);
+    var min_z: f32 = 1.0;
+    for (var py = ry.x; py < ry.y; py = py + 1u) {
+        for (var px = rx.x; px < rx.y; px = px + 1u) {
+            let d = textureLoad(hw_depth_tex, vec2<i32>(i32(px), i32(py)), 0);
+            min_z = min(min_z, d);
+        }
+    }
+    textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(min_z, 0.0, 0.0, 0.0));
 }
 
 @compute @workgroup_size(8, 8, 1)

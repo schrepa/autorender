@@ -212,6 +212,21 @@ fn quality(texels: Texels, source: &[u8], pixels: &[u8]) -> Value {
     }
 }
 
+pub fn encode_level(encoding: Encoding, image: &Image, exact_alpha: bool) -> Vec<u8> {
+    match encoding {
+        Encoding::Rgba8 | Encoding::Rgba8Srgb => image.pixels.clone(),
+        Encoding::Bc5 => blocks(image, bc5::encode_block),
+        Encoding::Bc7 | Encoding::Bc7Srgb if exact_alpha => {
+            blocks(image, bc7::encode_block_exact_alpha)
+        }
+        Encoding::Bc7 | Encoding::Bc7Srgb => blocks(image, bc7::encode_block),
+        Encoding::Astc4x4 | Encoding::Astc4x4Srgb if exact_alpha => {
+            blocks(image, astc::encode_block_exact_alpha)
+        }
+        Encoding::Astc4x4 | Encoding::Astc4x4Srgb => blocks(image, astc::encode_block),
+    }
+}
+
 pub fn encode(
     texels: Texels,
     encoding: Encoding,

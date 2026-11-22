@@ -3,97 +3,118 @@ import package::generated::nanite::NaniteInstance;
 import package::generated::nanite::GpuClusterHeader;
 import package::generated::nanite::VisibleCluster;
 import package::nanite::common::PAGE_WORDS;
+import package::nanite::common::CLUSTER_HEADER_WORDS;
+import package::nanite::common::CLUSTER_DRAW_VERTS;
+import package::nanite::common::DEDUP_MASK;
 import package::nanite::common::UNMAPPED_PAGE;
-import package::nanite::common::NO_FALLBACK;
-import package::nanite::common::SHADOW_C0_DIM;
-import package::nanite::common::SHADOW_C1_DIM;
 import package::nanite::common::SHADOW_LIST_CAP;
 import package::nanite::common::inst_to_world;
 import package::nanite::common::decode_pos;
 import package::nanite::common::cluster_vert_count;
 import package::nanite::common::cluster_tri_count;
-import package::nanite::common::edge_yup;
+import package::nanite::common::cluster_page_id;
+import package::nanite::common::cluster_word_offset;
+import package::nanite::common::cluster_fb_start;
+import package::nanite::common::cluster_fb_count;
+
+const SH_DEDUP_BASE: u32 = 528416u;
 
 @group(1) @binding(0) var<uniform> sh_uniforms: NaniteUniforms;
 @group(1) @binding(1) var<storage, read> sh_instances: array<NaniteInstance>;
 @group(1) @binding(2) var<storage, read> sh_clusters: array<GpuClusterHeader>;
 @group(1) @binding(3) var<storage, read> sh_page_table: array<u32>;
 @group(1) @binding(4) var<storage, read> sh_page_heap: array<u32>;
-@group(1) @binding(5) var<storage, read> sh_cuts: array<u32>;
-@group(1) @binding(6) var<storage, read> sh_ranges: array<vec2<u32>>;
+@group(1) @binding(5) var<storage, read> sh_jobs: array<vec2<u32>>;
+@group(1) @binding(6) var<storage, read_write> sh_dedup: array<atomic<u32>>;
 @group(1) @binding(7) var<storage, read_write> sh_list: array<VisibleCluster>;
 @group(1) @binding(8) var<storage, read_write> sh_indirect: array<atomic<u32>>;
-@group(1) @binding(9) var<storage, read_write> sh_depth: array<atomic<u32>>;
+@group(1) @binding(9) var<storage, read> sh_list_ro: array<VisibleCluster>;
 
-var<workgroup> sh_v: array<vec3<f32>, 64>;
+fn try_claim_sh_dedup(inst_id: u32, cluster_id: u32) -> bool {
+    let key = ((inst_id + 1u) << 21u) | (cluster_id & 0x1FFFFFu);
+    var h = (inst_id * 2654435761u) ^ (cluster_id * 2246822519u);
+    h = (h ^ (h >> 16u)) * 0x45D9F3Bu;
+    var slot = h & DEDUP_MASK;
+    for (var probe = 0u; probe < 32u; probe = probe + 1u) {
+        let res = atomicCompareExchangeWeak(&sh_dedup[SH_DEDUP_BASE + slot], 0u, key);
+        if res.exchanged {
+            return true;
+        }
+        if res.old_value == key {
+            return false;
+        }
+        slot = (slot + 1u) & DEDUP_MASK;
+    }
+    return false;
+}
 
-fn shadow_collect(inst_id: u32, cascade: u32) {
-    if inst_id >= sh_uniforms.counts.x {
+fn shadow_collect(job_idx: u32, cascade: u32) {
+    let c0_cnt = sh_uniforms.extra.y;
+    let c1_cnt = sh_uniforms.extra.z;
+    let count = select(c0_cnt, c1_cnt, cascade != 0u);
+    if job_idx >= count {
         return;
     }
+    let job_base = select(0u, c0_cnt, cascade != 0u);
+    let job = sh_jobs[job_base + job_idx];
+    let inst_id = job.x;
+    let cid = job.y;
     let inst = sh_instances[inst_id];
-    let bs = inst.bound_sphere;
+    let c0 = sh_clusters[cid];
     var vp = sh_uniforms.shadow_vp0;
     if cascade != 0u {
         vp = sh_uniforms.shadow_vp1;
     }
     let half_ext = select(sh_uniforms.shadow_center0.w, sh_uniforms.shadow_center1.w, cascade != 0u);
-    let clip_c = vp * vec4<f32>(bs.xyz, 1.0);
-    let r_ndc = bs.w / max(half_ext, 1.0);
+    let world_c = inst_to_world(inst, c0.bound_sphere.xyz);
+    let world_r = c0.bound_sphere.w * inst.pos_scale.w;
+    let clip_c = vp * vec4<f32>(world_c, 1.0);
+    let r_ndc = world_r / max(half_ext, 1.0);
     if abs(clip_c.x) > 1.0 + r_ndc || abs(clip_c.y) > 1.0 + r_ndc {
         return;
     }
-    let mesh_id = inst.info.w;
-    let range = sh_ranges[mesh_id * 2u + cascade];
-    var last0: u32 = 0xFFFFFFFFu;
-    var last1: u32 = 0xFFFFFFFFu;
-    for (var i = 0u; i < range.y; i = i + 1u) {
-        let cid = sh_cuts[range.x + i];
-        let c0 = sh_clusters[cid];
-        let slot = sh_page_table[c0.cone_and_meta.z];
-        if slot != UNMAPPED_PAGE {
-            let out_idx = atomicAdd(&sh_indirect[4u], 1u);
+    let list_base = select(0u, SHADOW_LIST_CAP, cascade != 0u);
+    let counter_idx = select(8u, 9u, cascade != 0u);
+    let slot = sh_page_table[cluster_page_id(c0)];
+    if slot != UNMAPPED_PAGE {
+        if try_claim_sh_dedup(inst_id, cid) {
+            let out_idx = atomicAdd(&sh_indirect[counter_idx], 1u);
             if out_idx < SHADOW_LIST_CAP {
-                sh_list[out_idx] = VisibleCluster(inst_id, cid, slot, cascade);
+                sh_list[list_base + out_idx] = VisibleCluster(inst_id, cid, slot, cascade);
             }
+        }
+        return;
+    }
+    var fb_stack: array<u32, 128>;
+    var sp: u32 = 0u;
+    let fb_s = cluster_fb_start(c0);
+    let fb_c = cluster_fb_count(c0);
+    for (var fi = 0u; fi < fb_c && sp < 128u; fi = fi + 1u) {
+        fb_stack[sp] = fb_s + fi;
+        sp = sp + 1u;
+    }
+    for (var s = 0u; s < 1024u; s = s + 1u) {
+        if sp == 0u {
+            break;
+        }
+        sp = sp - 1u;
+        let cur = fb_stack[sp];
+        if !try_claim_sh_dedup(inst_id, cur) {
             continue;
         }
-        var fb_stack: array<u32, 16>;
-        var sp: u32 = 0u;
-        if c0.streaming_meta.w != NO_FALLBACK {
-            fb_stack[sp] = c0.streaming_meta.w;
-            sp = sp + 1u;
-        }
-        if c0.streaming_meta.y != NO_FALLBACK {
-            fb_stack[sp] = c0.streaming_meta.y;
-            sp = sp + 1u;
-        }
-        for (var s = 0u; s < 32u; s = s + 1u) {
-            if sp == 0u {
-                break;
+        let fc = sh_clusters[cur];
+        let fs = sh_page_table[cluster_page_id(fc)];
+        if fs != UNMAPPED_PAGE {
+            let out_idx = atomicAdd(&sh_indirect[counter_idx], 1u);
+            if out_idx < SHADOW_LIST_CAP {
+                sh_list[list_base + out_idx] = VisibleCluster(inst_id, cur, fs, cascade);
             }
-            sp = sp - 1u;
-            let cur = fb_stack[sp];
-            let fc = sh_clusters[cur];
-            let fs = sh_page_table[fc.cone_and_meta.z];
-            if fs != UNMAPPED_PAGE {
-                if cur != last0 && cur != last1 {
-                    last1 = last0;
-                    last0 = cur;
-                    let out_idx = atomicAdd(&sh_indirect[4u], 1u);
-                    if out_idx < SHADOW_LIST_CAP {
-                        sh_list[out_idx] = VisibleCluster(inst_id, cur, fs, cascade);
-                    }
-                }
-            } else {
-                if fc.streaming_meta.w != NO_FALLBACK && sp < 16u {
-                    fb_stack[sp] = fc.streaming_meta.w;
-                    sp = sp + 1u;
-                }
-                if fc.streaming_meta.y != NO_FALLBACK && sp < 16u {
-                    fb_stack[sp] = fc.streaming_meta.y;
-                    sp = sp + 1u;
-                }
+        } else {
+            let ps = cluster_fb_start(fc);
+            let pc = cluster_fb_count(fc);
+            for (var fi = 0u; fi < pc && sp < 128u; fi = fi + 1u) {
+                fb_stack[sp] = ps + fi;
+                sp = sp + 1u;
             }
         }
     }
@@ -111,112 +132,63 @@ fn cs_shadow_collect_c1(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(1)
 fn cs_shadow_prep() {
-    let cnt = min(atomicLoad(&sh_indirect[4u]), SHADOW_LIST_CAP);
-    atomicStore(&sh_indirect[0u], cnt);
-    atomicStore(&sh_indirect[1u], 1u);
-    atomicStore(&sh_indirect[2u], 1u);
+    let c0_cnt = min(atomicLoad(&sh_indirect[8u]), SHADOW_LIST_CAP);
+    let c1_cnt = min(atomicLoad(&sh_indirect[9u]), SHADOW_LIST_CAP);
+    atomicStore(&sh_indirect[0u], CLUSTER_DRAW_VERTS);
+    atomicStore(&sh_indirect[1u], c0_cnt);
+    atomicStore(&sh_indirect[2u], 0u);
+    atomicStore(&sh_indirect[3u], 0u);
+    atomicStore(&sh_indirect[4u], CLUSTER_DRAW_VERTS);
+    atomicStore(&sh_indirect[5u], c1_cnt);
+    atomicStore(&sh_indirect[6u], 0u);
+    atomicStore(&sh_indirect[7u], 0u);
 }
 
-fn shadow_raster(wid_x: u32, lid: u32, cascade: u32) {
-    let vc = sh_list[wid_x];
+fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
+    let vc = sh_list_ro[list_idx];
     let c = sh_clusters[vc.cluster_id];
+    let tri_id = vid / 3u;
+    let tri_count = cluster_tri_count(c);
+    if tri_id >= tri_count {
+        return vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    }
+    let corner = vid - tri_id * 3u;
     let vert_count = cluster_vert_count(c);
-    let dim_u = select(SHADOW_C0_DIM, SHADOW_C1_DIM, cascade != 0u);
-    let dim_f = f32(dim_u);
+    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let origin = vec3<f32>(
+        bitcast<f32>(sh_page_heap[page_base]),
+        bitcast<f32>(sh_page_heap[page_base + 1u]),
+        bitcast<f32>(sh_page_heap[page_base + 2u]),
+    );
+    let step = bitcast<f32>(sh_page_heap[page_base + 3u]);
+    let verts_base = page_base + CLUSTER_HEADER_WORDS;
+    let tri_word = sh_page_heap[verts_base + vert_count * 4u + tri_id];
+    let local_vi = (tri_word >> (corner * 8u)) & 0xFFu;
+    let v_base = verts_base + local_vi * 4u;
+    let w0 = sh_page_heap[v_base];
+    let w1 = sh_page_heap[v_base + 1u];
+    let local_pos = decode_pos(w0, w1, origin, step);
+    let inst = sh_instances[vc.instance_id];
+    let world_pos = inst_to_world(inst, local_pos);
     var vp = sh_uniforms.shadow_vp0;
     if cascade != 0u {
         vp = sh_uniforms.shadow_vp1;
     }
-    let page_base = vc.heap_slot * PAGE_WORDS + c.cone_and_meta.w;
-
-    if lid < vert_count {
-        let v_base = page_base + lid * 4u;
-        let w0 = sh_page_heap[v_base];
-        let w1 = sh_page_heap[v_base + 1u];
-        let local_pos = decode_pos(w0, w1, c.aabb_min.xyz, c.aabb_extent.xyz);
-        let inst = sh_instances[vc.instance_id];
-        let world_pos = inst_to_world(inst, local_pos);
-        let clip = vp * vec4<f32>(world_pos, 1.0);
-        let sx = (clip.x * 0.5 + 0.5) * dim_f;
-        let sy = (0.5 - clip.y * 0.5) * dim_f;
-        sh_v[lid] = vec3<f32>(sx, sy, clip.z);
-    }
-    workgroupBarrier();
-
-    let tri_count = cluster_tri_count(c);
-    if lid >= tri_count {
-        return;
-    }
-    let tri_word = sh_page_heap[page_base + vert_count * 4u + lid];
-    let p0 = sh_v[tri_word & 0xFFu];
-    let p1 = sh_v[(tri_word >> 8u) & 0xFFu];
-    let p2 = sh_v[(tri_word >> 16u) & 0xFFu];
-    let area = edge_yup(p0.xy, p1.xy, p2.xy);
-    if abs(area) <= 1.0e-5 {
-        return;
-    }
-    let sign_a = select(-1.0, 1.0, area > 0.0);
-    let inv_area = 1.0 / abs(area);
-    let dim_i = i32(dim_u);
-    let min_x = max(i32(floor(min(p0.x, min(p1.x, p2.x)))), 0);
-    let max_x = min(i32(floor(max(p0.x, max(p1.x, p2.x)))), dim_i - 1);
-    let min_y = max(i32(floor(min(p0.y, min(p1.y, p2.y)))), 0);
-    let max_y = min(i32(floor(max(p0.y, max(p1.y, p2.y)))), dim_i - 1);
-    if min_x > max_x || min_y > max_y || (max_x - min_x) > 512 || (max_y - min_y) > 512 {
-        return;
-    }
-    let p_start = vec2<f32>(f32(min_x) + 0.5, f32(min_y) + 0.5);
-    var e0_row = edge_yup(p1.xy, p2.xy, p_start) * sign_a;
-    var e1_row = edge_yup(p2.xy, p0.xy, p_start) * sign_a;
-    var e2_row = edge_yup(p0.xy, p1.xy, p_start) * sign_a;
-    let de0_dx = (p2.y - p1.y) * sign_a;
-    let de1_dx = (p0.y - p2.y) * sign_a;
-    let de2_dx = (p1.y - p0.y) * sign_a;
-    let de0_dy = (p1.x - p2.x) * sign_a;
-    let de1_dy = (p2.x - p0.x) * sign_a;
-    let de2_dy = (p0.x - p1.x) * sign_a;
-    var z_row = (e0_row * p0.z + e1_row * p1.z + e2_row * p2.z) * inv_area;
-    let dz_dx = (de0_dx * p0.z + de1_dx * p1.z + de2_dx * p2.z) * inv_area;
-    let dz_dy = (de0_dy * p0.z + de1_dy * p1.z + de2_dy * p2.z) * inv_area;
-    let base_off = select(0u, SHADOW_C0_DIM * SHADOW_C0_DIM, cascade != 0u);
-    for (var y = min_y; y <= max_y; y = y + 1) {
-        let row = base_off + u32(y) * dim_u;
-        var e0 = e0_row;
-        var e1 = e1_row;
-        var e2 = e2_row;
-        var z = z_row;
-        for (var x = min_x; x <= max_x; x = x + 1) {
-            if e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0 && z > 0.0 && z <= 1.0 {
-                let zb = bitcast<u32>(z);
-                let idx = row + u32(x);
-                if zb > atomicLoad(&sh_depth[idx]) {
-                    atomicMax(&sh_depth[idx], zb);
-                }
-            }
-            e0 += de0_dx;
-            e1 += de1_dx;
-            e2 += de2_dx;
-            z += dz_dx;
-        }
-        e0_row += de0_dy;
-        e1_row += de1_dy;
-        e2_row += de2_dy;
-        z_row += dz_dy;
-    }
+    return vp * vec4<f32>(world_pos, 1.0);
 }
 
-@compute @workgroup_size(64)
-fn cs_shadow_raster_c0(
-    @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_index) lid: u32,
-) {
-    shadow_raster(wid.x, lid, 0u);
+@vertex
+fn vs_shadow_c0(
+    @builtin(vertex_index) vid: u32,
+    @builtin(instance_index) iid: u32,
+) -> @builtin(position) vec4<f32> {
+    return shadow_vertex(vid, iid, 0u);
 }
 
-@compute @workgroup_size(64)
-fn cs_shadow_raster_c1(
-    @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_index) lid: u32,
-) {
-    shadow_raster(wid.x, lid, 1u);
+@vertex
+fn vs_shadow_c1(
+    @builtin(vertex_index) vid: u32,
+    @builtin(instance_index) iid: u32,
+) -> @builtin(position) vec4<f32> {
+    return shadow_vertex(vid, SHADOW_LIST_CAP + iid, 1u);
 }

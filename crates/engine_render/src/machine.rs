@@ -81,6 +81,10 @@ impl Declared {
         TARGET_KEY | kind << 32 | index
     }
 
+    pub(crate) fn texture_key(&self, texture: u32) -> u64 {
+        TARGET_KEY | (3 << 32) | u64::from(texture)
+    }
+
     pub(crate) fn pass_set(&self, pass: &PassDecl) -> Vec<SetFormat> {
         let Some(scene) = pass.scene.as_ref().filter(|scene| scene.core) else {
             return Vec::new();
@@ -126,6 +130,15 @@ fn unknown_targets(declared: &Declared) -> Vec<Error> {
                 let path = format!("$.passes.{}.targets.{}", pass.name, name.name());
                 problems.push(Error::new(ErrorCode::PassMismatch, path).got(name.name()));
             }
+        }
+        if let Some((texture, ..)) = pass.depth_texture
+            && declared
+                .textures
+                .get(texture as usize)
+                .is_none_or(|decl| !decl.format.is_depth_stencil_format())
+        {
+            let path = format!("$.passes.{}.depth_texture", pass.name);
+            problems.push(Error::new(ErrorCode::PassMismatch, path).got(texture));
         }
     }
     problems
@@ -433,6 +446,9 @@ fn attachments(declared: &Declared, pass: &PassDecl) -> Vec<Handle> {
     for &(name, _) in &pass.targets {
         found.extend(declared.target_of(name).map(Handle::Target));
     }
+    if let Some((texture, ..)) = pass.depth_texture {
+        found.push(Handle::Texture(texture, None));
+    }
     found
 }
 
@@ -470,6 +486,7 @@ impl Machine {
             staged,
         } = composing;
         resolve_target_formats(&mut declared, device.features());
+        resolve_texture_formats(&mut declared, device.features());
         let limits = Limits::of(device);
         let mut unknown = unknown_targets(&declared);
         for pass in &declared.passes {
@@ -847,6 +864,28 @@ fn resolve_target_formats(declared: &mut Declared, features: wgpu::Features) {
     }
 }
 
+fn texture_format_supported(format: wgpu::TextureFormat, features: wgpu::Features) -> bool {
+    features.contains(format.required_features())
+        && format
+            .guaranteed_format_features(features)
+            .allowed_usages
+            .contains(wgpu::TextureUsages::TEXTURE_BINDING)
+}
+
+fn resolve_texture_formats(declared: &mut Declared, features: wgpu::Features) {
+    for (texture, fallback) in declared
+        .textures
+        .iter_mut()
+        .zip(&declared.texture_fallbacks)
+    {
+        if let Some(fallback) = *fallback
+            && !texture_format_supported(texture.format, features)
+        {
+            texture.format = fallback;
+        }
+    }
+}
+
 fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
     if let Some(Bound::Sampler(sampler)) = bound {
         return declared.samplers.get(*sampler as usize).is_none_or(|desc| {
@@ -973,6 +1012,19 @@ fn graph_of(
                     let path = format!("$.passes.{}.reads.{}", pass.name, name.name());
                     return Err(Error::new(ErrorCode::PassMismatch, path).got(name.name()));
                 }
+                if let (
+                    Bound::Texture(texture) | Bound::TextureMip(texture, _),
+                    Some((depth_tex, ..)),
+                ) = (bound, pass.depth_texture)
+                    && *texture == depth_tex
+                {
+                    let label = declared
+                        .textures
+                        .get(*texture as usize)
+                        .map_or("depth_texture", |decl| decl.label);
+                    let path = format!("$.passes.{}.reads.{label}", pass.name);
+                    return Err(Error::new(ErrorCode::PassMismatch, path).got(label));
+                }
             }
             reads.extend(pipeline.reads.iter().filter_map(&bound_id));
             writes.extend(pipeline.writes.iter().filter_map(&bound_id));
@@ -1003,6 +1055,11 @@ fn graph_of(
             if let Some(id) = declared.target_of(name).and_then(|target| ids.target(target)) {
                 colors.push((id, graph_access(access, Clear::Color(BLACK))));
             }
+        }
+        if let Some((texture, access, clear)) = pass.depth_texture
+            && let Some(id) = ids.textures.get(texture as usize).copied()
+        {
+            depth = Some((id, graph_access(access, Clear::Depth(clear))));
         }
         passes.push(GraphPass {
             entry,
@@ -1049,5 +1106,40 @@ mod tests {
         };
         resolve_target_formats(&mut with, wgpu::Features::RG11B10UFLOAT_RENDERABLE);
         assert_eq!(with.targets[0].format, wgpu::TextureFormat::Rg11b10Ufloat);
+    }
+
+    #[test]
+    fn texture_fallback_resolves_bc_against_device_features() {
+        let decl = crate::install::TextureDecl {
+            label: "albedo",
+            format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+            dimension: wgpu::TextureDimension::D2,
+            lifetime: Lifetime::Kept,
+            part: 0,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        };
+        let mut without = Declared {
+            textures: vec![decl.clone()],
+            texture_fallbacks: vec![Some(wgpu::TextureFormat::Rgba8UnormSrgb)],
+            ..Declared::default()
+        };
+        resolve_texture_formats(&mut without, wgpu::Features::empty());
+        assert_eq!(
+            without.textures[0].format,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            "BC7 must fall back to RGBA8 without TEXTURE_COMPRESSION_BC"
+        );
+
+        let mut with = Declared {
+            textures: vec![decl],
+            texture_fallbacks: vec![Some(wgpu::TextureFormat::Rgba8UnormSrgb)],
+            ..Declared::default()
+        };
+        resolve_texture_formats(&mut with, wgpu::Features::TEXTURE_COMPRESSION_BC);
+        assert_eq!(
+            with.textures[0].format,
+            wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+            "BC7 must remain BC7 when TEXTURE_COMPRESSION_BC is supported"
+        );
     }
 }

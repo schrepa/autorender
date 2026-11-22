@@ -10,4 +10,6 @@ import package::generated::nanite::VisibleCluster;
 @group(0) @binding(14) var<storage, read> nanite_frame_vis_clusters: array<VisibleCluster>;
 @group(0) @binding(15) var<storage, read> nanite_frame_sw_depth: array<u32>;
 @group(0) @binding(16) var<storage, read> nanite_frame_sw_vis: array<u32>;
-@group(0) @binding(17) var<storage, read> nanite_frame_shadow_depth: array<u32>;
+@group(0) @binding(17) var nanite_frame_depth: texture_depth_2d;
+@group(0) @binding(18) var nanite_frame_shadow_c0: texture_depth_2d;
+@group(0) @binding(19) var nanite_frame_shadow_c1: texture_depth_2d;

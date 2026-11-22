@@ -3,18 +3,18 @@ use std::mem::size_of;
 use glam::{Vec2, Vec3};
 use serde::Serialize;
 
-pub const MAX_CLUSTER_VERTS: usize = 64;
-pub const MAX_CLUSTER_TRIS: usize = 64;
+pub const MAX_CLUSTER_VERTS: usize = 128;
+pub const MAX_CLUSTER_TRIS: usize = 128;
 pub const PAGE_SIZE_BYTES: usize = 65_536;
 pub const PAGE_WORDS: usize = PAGE_SIZE_BYTES / 4;
 pub const BVH_BRANCHING: usize = 4;
+pub const CLUSTER_HEADER_WORDS: usize = 4;
 pub const CLUSTER_VERTEX_WORDS: usize = 4;
 pub const CLUSTER_TRI_WORDS: usize = 1;
 pub const ROOT_PARENT_ERROR: f32 = 1.0e30;
-pub const NO_FALLBACK_CLUSTER: u32 = u32::MAX;
 pub const NO_BVH_CHILD: u32 = u32::MAX;
 pub const MANIFEST_MAGIC: [u8; 4] = *b"MLM1";
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 pub const FLAG_ROOT_CLUSTER: u32 = 1;
 pub const FLAG_IN_ROOT_PAGE: u32 = 2;
 pub const FLAG_PINNED_COARSE: u32 = 4;
@@ -30,16 +30,14 @@ pub struct PageSpan {
 pub struct ClusterHeader {
     pub bound_sphere: [f32; 4],
     pub lod_sphere: [f32; 4],
-    pub aabb_min: [f32; 4],
-    pub aabb_extent: [f32; 4],
     pub parent_lod_sphere: [f32; 4],
-    pub cone_and_meta: [u32; 4],
-    pub streaming_meta: [u32; 4],
+    pub errors_and_cone: [u32; 4],
+    pub page_and_fallback: [u32; 4],
 }
 
 const _: () = assert!(
-    size_of::<ClusterHeader>() == 112,
-    "ClusterHeader must be 112 bytes"
+    size_of::<ClusterHeader>() == 80,
+    "ClusterHeader must be 80 bytes"
 );
 
 impl ClusterHeader {
@@ -50,85 +48,109 @@ impl ClusterHeader {
             | (u32::from(material_id) << 24)
     }
 
+    pub fn pack_offset_flags(word_offset: u32, flags: u32) -> u32 {
+        (word_offset & 0xFFFF) | ((flags & 0xFFFF) << 16)
+    }
+
+    pub fn pack_fallback(start: u32, count: u32) -> u32 {
+        (start & 0x00FF_FFFF) | ((count & 0xFF) << 24)
+    }
+
     pub fn vert_count(&self) -> u32 {
-        self.cone_and_meta[1] & 0xFF
+        self.errors_and_cone[3] & 0xFF
     }
 
     pub fn tri_count(&self) -> u32 {
-        (self.cone_and_meta[1] >> 8) & 0xFF
+        (self.errors_and_cone[3] >> 8) & 0xFF
     }
 
     pub fn lod_level(&self) -> u32 {
-        (self.cone_and_meta[1] >> 16) & 0xFF
+        (self.errors_and_cone[3] >> 16) & 0xFF
     }
 
     pub fn material_id(&self) -> u8 {
-        ((self.cone_and_meta[1] >> 24) & 0xFF) as u8
-    }
-
-    pub fn page_id(&self) -> u32 {
-        self.cone_and_meta[2]
-    }
-
-    pub fn page_word_offset(&self) -> u32 {
-        self.cone_and_meta[3]
-    }
-
-    pub fn word_count(&self) -> u32 {
-        self.vert_count() * (CLUSTER_VERTEX_WORDS as u32)
-            + self.tri_count() * (CLUSTER_TRI_WORDS as u32)
+        ((self.errors_and_cone[3] >> 24) & 0xFF) as u8
     }
 
     pub fn self_error(&self) -> f32 {
-        self.aabb_min[3]
+        f32::from_bits(self.errors_and_cone[0])
+    }
+
+    pub fn set_self_error(&mut self, error: f32) {
+        self.errors_and_cone[0] = error.to_bits();
     }
 
     pub fn parent_error(&self) -> f32 {
-        self.aabb_extent[3]
+        f32::from_bits(self.errors_and_cone[1])
     }
 
-    pub fn group_id(&self) -> u32 {
-        self.streaming_meta[0]
+    pub fn set_parent_error(&mut self, error: f32) {
+        self.errors_and_cone[1] = error.to_bits();
     }
 
-    pub fn fallback_cluster(&self) -> u32 {
-        self.streaming_meta[1]
+    pub fn page_id(&self) -> u32 {
+        self.page_and_fallback[0]
     }
 
-    pub fn fallback_cluster_b(&self) -> u32 {
-        self.streaming_meta[3]
+    pub fn set_page_location(&mut self, page_id: u32, word_offset: u32) {
+        self.page_and_fallback[0] = page_id;
+        let flags = self.flags();
+        self.page_and_fallback[1] = Self::pack_offset_flags(word_offset, flags);
+    }
+
+    pub fn page_word_offset(&self) -> u32 {
+        self.page_and_fallback[1] & 0xFFFF
     }
 
     pub fn flags(&self) -> u32 {
-        self.streaming_meta[2]
+        (self.page_and_fallback[1] >> 16) & 0xFFFF
+    }
+
+    pub fn set_flags(&mut self, flags: u32) {
+        let offset = self.page_word_offset();
+        self.page_and_fallback[1] = Self::pack_offset_flags(offset, flags);
+    }
+
+    pub fn fallback_start(&self) -> u32 {
+        self.page_and_fallback[2] & 0x00FF_FFFF
+    }
+
+    pub fn fallback_count(&self) -> u32 {
+        self.page_and_fallback[2] >> 24
+    }
+
+    pub fn set_fallback(&mut self, start: u32, count: u32) {
+        self.page_and_fallback[2] = Self::pack_fallback(start, count);
+    }
+
+    pub fn group_id(&self) -> u32 {
+        self.page_and_fallback[3]
+    }
+
+    pub fn set_group_id(&mut self, group_id: u32) {
+        self.page_and_fallback[3] = group_id;
+    }
+
+    pub fn word_count(&self) -> u32 {
+        (CLUSTER_HEADER_WORDS as u32)
+            + self.vert_count() * (CLUSTER_VERTEX_WORDS as u32)
+            + self.tri_count() * (CLUSTER_TRI_WORDS as u32)
     }
 
     pub fn is_root(&self) -> bool {
-        (self.streaming_meta[2] & FLAG_ROOT_CLUSTER) != 0
+        (self.flags() & FLAG_ROOT_CLUSTER) != 0
     }
 
     pub fn is_in_root_page(&self) -> bool {
-        (self.streaming_meta[2] & FLAG_IN_ROOT_PAGE) != 0
+        (self.flags() & FLAG_IN_ROOT_PAGE) != 0
     }
 
     pub fn is_pinned_coarse(&self) -> bool {
-        (self.streaming_meta[2] & FLAG_PINNED_COARSE) != 0
-    }
-
-    pub fn aabb_min_vec3(&self) -> Vec3 {
-        Vec3::new(self.aabb_min[0], self.aabb_min[1], self.aabb_min[2])
-    }
-
-    pub fn aabb_extent_vec3(&self) -> Vec3 {
-        Vec3::new(
-            self.aabb_extent[0],
-            self.aabb_extent[1],
-            self.aabb_extent[2],
-        )
+        (self.flags() & FLAG_PINNED_COARSE) != 0
     }
 
     pub fn normal_cone(&self) -> ([i8; 3], i8) {
-        let word = self.cone_and_meta[0];
+        let word = self.errors_and_cone[2];
         let ax = (word & 0xFF) as u8 as i8;
         let ay = ((word >> 8) & 0xFF) as u8 as i8;
         let az = ((word >> 16) & 0xFF) as u8 as i8;
@@ -200,6 +222,8 @@ impl Default for ClusterVertex {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DecodedCluster {
+    pub origin: Vec3,
+    pub step: f32,
     pub vertices: Vec<ClusterVertex>,
     pub triangles: Vec<[u8; 3]>,
 }

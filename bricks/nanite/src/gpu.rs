@@ -1,11 +1,11 @@
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
-use engine_core::{Entry, Error, PassBit, Var, ViewFacts};
+use engine_core::{Entry, Error, PassViews, Var, ViewFacts};
 use engine_meshlet::PAGE_SIZE_BYTES;
 use engine_render::{
-    Allocation, Bind, Buffer, ComputePipeline, DepthUse, Encode, GpuPart, Install, Lifetime,
-    Pass, PerBatch, Pipeline, Prepare, Readback, RenderPipeline, Scene, SharedTarget, TargetClear,
-    Texture, wgpu,
+    Access, Allocation, Bind, Buffer, ComputePipeline, DepthUse, Encode, GpuPart, Install,
+    Lifetime, Own, Pass, PerBatch, Pipeline, Prepare, Readback, RenderPipeline, SharedTarget,
+    TargetClear, Texture, wgpu,
 };
 
 use crate::bridge::NaniteBridgeHandle;
@@ -18,15 +18,13 @@ use crate::types::{
     mip_extent,
 };
 use crate::world::NaniteWorld;
-use crate::{NANITE_DEPTH, NANITE_P1_PASS, NANITE_P2_PASS, NANITE_VIS_HW};
+use crate::NANITE_VIS_HW;
 
 const HIZ_WG: u32 = 8;
 const DEDUP_BASE_WORDS: u64 = 32 + MAX_OCC_INSTANCES as u64 + (MAX_OCC_CLUSTERS as u64) * 2;
 const CULL_STATE_WORDS: u64 = DEDUP_BASE_WORDS + DEDUP_SLOTS as u64;
 const BVH_SCRATCH_WORDS: u64 = (BVH_QUEUE_CAP as u64) * 4 + (CAND_CAP as u64) * 2;
 const INDIRECT_BYTES: u64 = 256;
-const SHADOW_TEXELS: u64 = (SHADOW_C0_DIM as u64) * (SHADOW_C0_DIM as u64)
-    + (SHADOW_C1_DIM as u64) * (SHADOW_C1_DIM as u64);
 
 struct NaniteBuffers {
     uniforms: Buffer<NaniteGpu>,
@@ -46,11 +44,12 @@ struct NaniteBuffers {
     indirect_p2: Buffer<NaniteGpu>,
     sw_depth: Buffer<NaniteGpu>,
     sw_vis: Buffer<NaniteGpu>,
-    shadow_depth: Buffer<NaniteGpu>,
     shadow_list: Buffer<NaniteGpu>,
     shadow_indirect: Buffer<NaniteGpu>,
-    shadow_cuts: Buffer<NaniteGpu>,
-    shadow_ranges: Buffer<NaniteGpu>,
+    shadow_jobs: Buffer<NaniteGpu>,
+    depth_tex: Texture<NaniteGpu>,
+    shadow_c0: Texture<NaniteGpu>,
+    shadow_c1: Texture<NaniteGpu>,
     hiz_tex: Texture<NaniteGpu>,
     stats_rb: Readback<NaniteGpu>,
     req_rb: Readback<NaniteGpu>,
@@ -80,35 +79,42 @@ struct CullPipes {
 }
 
 struct RasterPipes {
-    hw_p1: Pipeline<NaniteGpu, Scene>,
-    hw_p2: Pipeline<NaniteGpu, Scene>,
+    hw_p1: Pipeline<NaniteGpu, Own>,
+    hw_ds_p1: Pipeline<NaniteGpu, Own>,
+    hw_p2: Pipeline<NaniteGpu, Own>,
+    hw_ds_p2: Pipeline<NaniteGpu, Own>,
     sw_seed_p1: ComputePipeline<NaniteGpu>,
     sw_merge_p2: ComputePipeline<NaniteGpu>,
     sw_depth_p1: ComputePipeline<NaniteGpu>,
     sw_vis_p1: ComputePipeline<NaniteGpu>,
     sw_depth_p2: ComputePipeline<NaniteGpu>,
     sw_vis_p2: ComputePipeline<NaniteGpu>,
-    hiz_p1_mip0: ComputePipeline<NaniteGpu>,
+    hiz_p1_hw_mip0: ComputePipeline<NaniteGpu>,
+    hiz_p1_sw_mip0: ComputePipeline<NaniteGpu>,
     hiz_p1_down: Vec<ComputePipeline<NaniteGpu>>,
-    hiz_final_mip0: ComputePipeline<NaniteGpu>,
+    hiz_final_hw_mip0: ComputePipeline<NaniteGpu>,
+    hiz_final_sw_mip0: ComputePipeline<NaniteGpu>,
     hiz_final_clear: ComputePipeline<NaniteGpu>,
     hiz_final_down: Vec<ComputePipeline<NaniteGpu>>,
     shadow_collect_c0: ComputePipeline<NaniteGpu>,
     shadow_collect_c1: ComputePipeline<NaniteGpu>,
     shadow_prep: ComputePipeline<NaniteGpu>,
-    shadow_raster_c0: ComputePipeline<NaniteGpu>,
-    shadow_raster_c1: ComputePipeline<NaniteGpu>,
+    shadow_draw_c0: Pipeline<NaniteGpu, Own>,
+    shadow_draw_c1: Pipeline<NaniteGpu, Own>,
 }
 
 struct NanitePasses {
-    shadow: Pass<NaniteGpu>,
+    shadow_cull: Pass<NaniteGpu>,
+    shadow_c0: Pass<NaniteGpu>,
+    shadow_c1: Pass<NaniteGpu>,
     cull_p1: Pass<NaniteGpu>,
+    hw_p1: Pass<NaniteGpu>,
     sw_p1: Pass<NaniteGpu>,
     hiz_p1: Pass<NaniteGpu>,
     cull_p2: Pass<NaniteGpu>,
+    hw_p2: Pass<NaniteGpu>,
     sw_p2: Pass<NaniteGpu>,
     hiz_final: Pass<NaniteGpu>,
-    p1_bit: Option<PassBit>,
 }
 
 struct ShadowTrack {
@@ -119,6 +125,7 @@ struct ShadowTrack {
     last_inst_rev: u64,
     dirty_c0: bool,
     dirty_c1: bool,
+    fresh_tex: bool,
     enabled: bool,
 }
 
@@ -133,11 +140,22 @@ pub(crate) struct NaniteGpu {
     page_count: u32,
     instance_count: u32,
     cluster_count: u32,
+    shadow_c0_count: u32,
+    shadow_c1_count: u32,
+    last_page_table: Vec<u32>,
     canvas: (u32, u32),
     hiz_dims: (u32, u32, u32),
     frame_gen: u32,
     hiz_ready: bool,
     freeze: bool,
+    hw_only: bool,
+    skip_p2: bool,
+    static_frames: u32,
+    last_cull_vp: [[f32; 4]; 4],
+    last_lod_bits: u32,
+    last_hw_only: bool,
+    last_freeze: bool,
+    last_residency_ver: u64,
     residency_ver: u64,
 }
 
@@ -171,11 +189,24 @@ fn alloc_buffers(cx: &mut Install<'_, NaniteGpu>) -> NaniteBuffers {
         indirect_p2: cx.indirect_buffer("nanite_indirect_p2", Lifetime::Kept),
         sw_depth: cx.buffer("nanite_sw_depth", Lifetime::Kept),
         sw_vis: cx.buffer("nanite_sw_vis", Lifetime::Kept),
-        shadow_depth: cx.buffer("nanite_shadow_depth", Lifetime::Kept),
         shadow_list: cx.buffer("nanite_shadow_list", Lifetime::Kept),
         shadow_indirect: cx.indirect_buffer("nanite_shadow_indirect", Lifetime::Kept),
-        shadow_cuts: cx.buffer("nanite_shadow_cuts", Lifetime::Kept),
-        shadow_ranges: cx.buffer("nanite_shadow_ranges", Lifetime::Kept),
+        shadow_jobs: cx.buffer("nanite_shadow_jobs", Lifetime::Kept),
+        depth_tex: cx.texture(
+            "nanite_depth_tex",
+            wgpu::TextureFormat::Depth32Float,
+            Lifetime::Kept,
+        ),
+        shadow_c0: cx.texture(
+            "nanite_shadow_c0",
+            wgpu::TextureFormat::Depth32Float,
+            Lifetime::Kept,
+        ),
+        shadow_c1: cx.texture(
+            "nanite_shadow_c1",
+            wgpu::TextureFormat::Depth32Float,
+            Lifetime::Kept,
+        ),
         hiz_tex: cx.texture("nanite_hiz", wgpu::TextureFormat::R32Float, Lifetime::Kept),
         stats_rb: cx.readback("nanite_stats_rb"),
         req_rb: cx.readback("nanite_req_rb"),
@@ -186,12 +217,6 @@ fn declare_targets_and_frame(
     cx: &mut Install<'_, NaniteGpu>,
     buf: &NaniteBuffers,
 ) -> Result<(), Error> {
-    cx.shared_target(SharedTarget {
-        name: NANITE_DEPTH,
-        format: wgpu::TextureFormat::Depth32Float,
-        samples: 1,
-        clear: TargetClear::Depth(0.0),
-    });
     cx.shared_target(SharedTarget {
         name: NANITE_VIS_HW,
         format: wgpu::TextureFormat::R32Uint,
@@ -205,38 +230,103 @@ fn declare_targets_and_frame(
     cx.frame(frame::NANITE_FRAME_VIS_CLUSTERS, Bind::Buffer(buf.vis_clusters))?;
     cx.frame(frame::NANITE_FRAME_SW_DEPTH, Bind::Buffer(buf.sw_depth))?;
     cx.frame(frame::NANITE_FRAME_SW_VIS, Bind::Buffer(buf.sw_vis))?;
-    cx.frame(frame::NANITE_FRAME_SHADOW_DEPTH, Bind::Buffer(buf.shadow_depth))?;
+    cx.frame(frame::NANITE_FRAME_DEPTH, Bind::Texture(buf.depth_tex))?;
+    cx.frame(frame::NANITE_FRAME_SHADOW_C0, Bind::Texture(buf.shadow_c0))?;
+    cx.frame(frame::NANITE_FRAME_SHADOW_C1, Bind::Texture(buf.shadow_c1))?;
     Ok(())
 }
 
-fn install_passes(cx: &mut Install<'_, NaniteGpu>) -> NanitePasses {
-    let shadow = cx.pass("nanite_shadow").label("nanite/shadow").span("nanite_shadow").id();
-    let cull_p1 = cx.pass("nanite_cull_p1").label("nanite/cull_p1").span("nanite_cull_p1").id();
-    let sw_p1 = cx.pass("nanite_sw_p1").label("nanite/sw_p1").span("nanite_sw_p1").id();
-    let hiz_p1 = cx.pass("nanite_hiz_p1").label("nanite/hiz_p1").span("nanite_hiz_p1").id();
-    let cull_p2 = cx.pass("nanite_cull_p2").label("nanite/cull_p2").span("nanite_cull_p2").id();
-    let sw_p2 = cx.pass("nanite_sw_p2").label("nanite/sw_p2").span("nanite_sw_p2").id();
+fn install_passes(cx: &mut Install<'_, NaniteGpu>, buf: &NaniteBuffers) -> NanitePasses {
+    let shadow_cull = cx
+        .pass("nanite_shadow_cull")
+        .label("nanite/shadow_cull")
+        .span("nanite_shadow")
+        .id();
+    let shadow_c0 = cx
+        .pass("nanite_shadow_c0")
+        .label("nanite/shadow_c0")
+        .span("nanite_shadow")
+        .depth_texture(buf.shadow_c0, Access::Clear, 0.0)
+        .id();
+    let shadow_c1 = cx
+        .pass("nanite_shadow_c1")
+        .label("nanite/shadow_c1")
+        .span("nanite_shadow")
+        .depth_texture(buf.shadow_c1, Access::Clear, 0.0)
+        .id();
+    let cull_p1 = cx
+        .pass("nanite_cull_p1")
+        .label("nanite/cull_p1")
+        .span("nanite_cull_p1")
+        .id();
+    let hw_p1 = cx
+        .pass("nanite_hw_p1")
+        .label("nanite/hw_p1")
+        .span("nanite_hw_p1")
+        .views(PassViews::Main)
+        .target(NANITE_VIS_HW, Access::Clear)
+        .depth_texture(buf.depth_tex, Access::Clear, 0.0)
+        .id();
+    let sw_p1 = cx
+        .pass("nanite_sw_p1")
+        .label("nanite/sw_p1")
+        .span("nanite_sw_p1")
+        .id();
+    let hiz_p1 = cx
+        .pass("nanite_hiz_p1")
+        .label("nanite/hiz_p1")
+        .span("nanite_hiz_p1")
+        .id();
+    let cull_p2 = cx
+        .pass("nanite_cull_p2")
+        .label("nanite/cull_p2")
+        .span("nanite_cull_p2")
+        .id();
+    let hw_p2 = cx
+        .pass("nanite_hw_p2")
+        .label("nanite/hw_p2")
+        .span("nanite_hw_p2")
+        .views(PassViews::Main)
+        .target(NANITE_VIS_HW, Access::Load)
+        .depth_texture(buf.depth_tex, Access::Load, 0.0)
+        .id();
+    let sw_p2 = cx
+        .pass("nanite_sw_p2")
+        .label("nanite/sw_p2")
+        .span("nanite_sw_p2")
+        .id();
     let hiz_final = cx
         .pass("nanite_hiz_final")
         .label("nanite/hiz_final")
         .span("nanite_hiz_final")
         .id();
-    cx.after(cull_p1, shadow);
-    cx.after(sw_p1, cull_p1);
+
+    cx.after(shadow_c0, shadow_cull);
+    cx.after(shadow_c1, shadow_cull);
+    cx.after(cull_p1, shadow_c0);
+    cx.after(cull_p1, shadow_c1);
+    cx.after(hw_p1, cull_p1);
+    cx.after(sw_p1, hw_p1);
+    cx.after(hiz_p1, hw_p1);
     cx.after(hiz_p1, sw_p1);
     cx.after(cull_p2, hiz_p1);
-    cx.after(sw_p2, cull_p2);
+    cx.after(hw_p2, cull_p2);
+    cx.after(sw_p2, hw_p2);
+    cx.after(hiz_final, hw_p2);
     cx.after(hiz_final, sw_p2);
-    let p1_bit = cx.scene_bit(Scene::named(NANITE_P1_PASS));
+
     NanitePasses {
-        shadow,
+        shadow_cull,
+        shadow_c0,
+        shadow_c1,
         cull_p1,
+        hw_p1,
         sw_p1,
         hiz_p1,
         cull_p2,
+        hw_p2,
         sw_p2,
         hiz_final,
-        p1_bit,
     }
 }
 
@@ -324,13 +414,20 @@ fn install_hiz_downs(
     Ok(out)
 }
 
-type HwPipelines = (Pipeline<NaniteGpu, Scene>, Pipeline<NaniteGpu, Scene>);
+type HwPipelines = [Pipeline<NaniteGpu, Own>; 4];
 
 fn install_hw_pipes(
     cx: &mut Install<'_, NaniteGpu>,
+    passes: &NanitePasses,
     buf: &NaniteBuffers,
 ) -> Result<HwPipelines, Error> {
-    let prim = wgpu::PrimitiveState {
+    let prim_back = wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: Some(wgpu::Face::Back),
+        ..wgpu::PrimitiveState::default()
+    };
+    let prim_none = wgpu::PrimitiveState {
         topology: wgpu::PrimitiveTopology::TriangleList,
         front_face: wgpu::FrontFace::Ccw,
         cull_mode: None,
@@ -341,8 +438,7 @@ fn install_hw_pipes(
         write: true,
         bias: wgpu::DepthBiasState::default(),
     };
-    let p1_targets = [(None, wgpu::ColorWrites::ALL)];
-    let p2_targets = [(None, wgpu::ColorWrites::ALL)];
+    let targets = [(None, wgpu::ColorWrites::ALL)];
     let hw_p1_all = [
         (hw::HW_UNIFORMS, Bind::Buffer(buf.uniforms)),
         (hw::HW_INSTANCES, Bind::Buffer(buf.instances)),
@@ -350,23 +446,6 @@ fn install_hw_pipes(
         (hw::HW_PAGE_HEAP, Bind::Buffer(buf.page_heap)),
         (hw::HW_DRAW_LIST, Bind::Buffer(buf.p1_draw_lists)),
     ];
-    let b_hp1 = pick(cx, &[hw::VS_HW_P1, hw::FS_HW_P1], &hw_p1_all);
-    let hw_p1 = cx.render_pipeline(
-        Scene::named(NANITE_P1_PASS),
-        &RenderPipeline {
-            vertex: hw::VS_HW_P1,
-            fragment: Some(hw::FS_HW_P1),
-            vertices: &[],
-            primitive: prim,
-            depth,
-            stencil: wgpu::StencilState::default(),
-            samples: 1,
-            targets: &p1_targets,
-            constants: &[],
-            per_batch: PerBatch::NONE,
-        },
-        &b_hp1,
-    )?;
     let hw_p2_all = [
         (hw::HW_UNIFORMS, Bind::Buffer(buf.uniforms)),
         (hw::HW_INSTANCES, Bind::Buffer(buf.instances)),
@@ -374,54 +453,124 @@ fn install_hw_pipes(
         (hw::HW_PAGE_HEAP, Bind::Buffer(buf.page_heap)),
         (hw::HW_DRAW_LIST, Bind::Buffer(buf.p2_draw_lists)),
     ];
-    let b_hp2 = pick(cx, &[hw::VS_HW_P2, hw::FS_HW_P2], &hw_p2_all);
-    let hw_p2 = cx.render_pipeline(
-        Scene::named(NANITE_P2_PASS),
-        &RenderPipeline {
-            vertex: hw::VS_HW_P2,
-            fragment: Some(hw::FS_HW_P2),
-            vertices: &[],
-            primitive: prim,
-            depth,
-            stencil: wgpu::StencilState::default(),
-            samples: 1,
-            targets: &p2_targets,
-            constants: &[],
-            per_batch: PerBatch::NONE,
-        },
-        &b_hp2,
-    )?;
-    Ok((hw_p1, hw_p2))
+    let make = |cx: &mut Install<'_, NaniteGpu>,
+                pass: Pass<NaniteGpu>,
+                vs: Entry,
+                fs: Entry,
+                primitive: wgpu::PrimitiveState,
+                all: &[(Var, Bind<NaniteGpu>)]| {
+        let b = pick(cx, &[vs, fs], all);
+        cx.render_pipeline(
+            pass,
+            &RenderPipeline {
+                vertex: vs,
+                fragment: Some(fs),
+                vertices: &[],
+                primitive,
+                depth,
+                stencil: wgpu::StencilState::default(),
+                samples: 1,
+                targets: &targets,
+                constants: &[],
+                per_batch: PerBatch::NONE,
+            },
+            &b,
+        )
+    };
+    Ok([
+        make(cx, passes.hw_p1, hw::VS_HW_P1, hw::FS_HW_P1, prim_back, &hw_p1_all)?,
+        make(cx, passes.hw_p1, hw::VS_HW_DS_P1, hw::FS_HW_P1, prim_none, &hw_p1_all)?,
+        make(cx, passes.hw_p2, hw::VS_HW_P2, hw::FS_HW_P2, prim_back, &hw_p2_all)?,
+        make(cx, passes.hw_p2, hw::VS_HW_DS_P2, hw::FS_HW_P2, prim_none, &hw_p2_all)?,
+    ])
+}
+
+struct ShadowPipes {
+    collect_c0: ComputePipeline<NaniteGpu>,
+    collect_c1: ComputePipeline<NaniteGpu>,
+    prep: ComputePipeline<NaniteGpu>,
+    draw_c0: Pipeline<NaniteGpu, Own>,
+    draw_c1: Pipeline<NaniteGpu, Own>,
 }
 
 fn install_shadow_pipes(
     cx: &mut Install<'_, NaniteGpu>,
-    pass: Pass<NaniteGpu>,
+    passes: &NanitePasses,
     buf: &NaniteBuffers,
-) -> Result<[ComputePipeline<NaniteGpu>; 5], Error> {
+) -> Result<ShadowPipes, Error> {
     let sh_all = [
         (shadow::SH_UNIFORMS, Bind::Buffer(buf.uniforms)),
         (shadow::SH_INSTANCES, Bind::Buffer(buf.instances)),
         (shadow::SH_CLUSTERS, Bind::Buffer(buf.clusters)),
         (shadow::SH_PAGE_TABLE, Bind::Buffer(buf.page_table)),
         (shadow::SH_PAGE_HEAP, Bind::Buffer(buf.page_heap)),
-        (shadow::SH_CUTS, Bind::Buffer(buf.shadow_cuts)),
-        (shadow::SH_RANGES, Bind::Buffer(buf.shadow_ranges)),
+        (shadow::SH_JOBS, Bind::Buffer(buf.shadow_jobs)),
+        (shadow::SH_DEDUP, Bind::Buffer(buf.cull_state)),
         (shadow::SH_LIST, Bind::Buffer(buf.shadow_list)),
         (shadow::SH_INDIRECT, Bind::Buffer(buf.shadow_indirect)),
-        (shadow::SH_DEPTH, Bind::Buffer(buf.shadow_depth)),
+        (shadow::SH_LIST_RO, Bind::Buffer(buf.shadow_list)),
     ];
-    let make = |cx: &mut Install<'_, NaniteGpu>, entry: Entry| {
+    let make_cs = |cx: &mut Install<'_, NaniteGpu>, entry: Entry| {
         let b = pick(cx, &[entry], &sh_all);
-        cx.compute_pipeline(pass, entry, &[], &b)
+        cx.compute_pipeline(passes.shadow_cull, entry, &[], &b)
     };
-    Ok([
-        make(cx, shadow::CS_SHADOW_COLLECT_C0)?,
-        make(cx, shadow::CS_SHADOW_COLLECT_C1)?,
-        make(cx, shadow::CS_SHADOW_PREP)?,
-        make(cx, shadow::CS_SHADOW_RASTER_C0)?,
-        make(cx, shadow::CS_SHADOW_RASTER_C1)?,
-    ])
+    let prim = wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: None,
+        ..wgpu::PrimitiveState::default()
+    };
+    let make_vs = |cx: &mut Install<'_, NaniteGpu>,
+                   pass: Pass<NaniteGpu>,
+                   entry: Entry,
+                   bias: wgpu::DepthBiasState| {
+        let b = pick(cx, &[entry], &sh_all);
+        cx.render_pipeline(
+            pass,
+            &RenderPipeline {
+                vertex: entry,
+                fragment: None,
+                vertices: &[],
+                primitive: prim,
+                depth: DepthUse::Compare {
+                    compare: wgpu::CompareFunction::GreaterEqual,
+                    write: true,
+                    bias,
+                },
+                stencil: wgpu::StencilState::default(),
+                samples: 1,
+                targets: &[],
+                constants: &[],
+                per_batch: PerBatch::NONE,
+            },
+            &b,
+        )
+    };
+    Ok(ShadowPipes {
+        collect_c0: make_cs(cx, shadow::CS_SHADOW_COLLECT_C0)?,
+        collect_c1: make_cs(cx, shadow::CS_SHADOW_COLLECT_C1)?,
+        prep: make_cs(cx, shadow::CS_SHADOW_PREP)?,
+        draw_c0: make_vs(
+            cx,
+            passes.shadow_c0,
+            shadow::VS_SHADOW_C0,
+            wgpu::DepthBiasState {
+                constant: -2,
+                slope_scale: -2.0,
+                clamp: 0.0,
+            },
+        )?,
+        draw_c1: make_vs(
+            cx,
+            passes.shadow_c1,
+            shadow::VS_SHADOW_C1,
+            wgpu::DepthBiasState {
+                constant: -3,
+                slope_scale: -2.5,
+                clamp: 0.0,
+            },
+        )?,
+    })
 }
 
 fn install_raster_pipes(
@@ -429,14 +578,14 @@ fn install_raster_pipes(
     passes: &NanitePasses,
     buf: &NaniteBuffers,
 ) -> Result<RasterPipes, Error> {
-    let (hw_p1, hw_p2) = install_hw_pipes(cx, buf)?;
+    let [hw_p1, hw_ds_p1, hw_p2, hw_ds_p2] = install_hw_pipes(cx, passes, buf)?;
     let sw_p1_all = [
         (sw::SW_UNIFORMS, Bind::Buffer(buf.uniforms)),
         (sw::SW_INSTANCES, Bind::Buffer(buf.instances)),
         (sw::SW_CLUSTERS, Bind::Buffer(buf.clusters)),
         (sw::SW_PAGE_HEAP, Bind::Buffer(buf.page_heap)),
         (sw::SW_DRAW_LIST, Bind::Buffer(buf.p1_draw_lists)),
-        (sw::SW_HW_DEPTH_TEX, Bind::Target(NANITE_DEPTH)),
+        (sw::SW_HW_DEPTH_TEX, Bind::Texture(buf.depth_tex)),
         (sw::SW_DEPTH_RW, Bind::Buffer(buf.sw_depth)),
         (sw::SW_VIS_RW, Bind::Buffer(buf.sw_vis)),
     ];
@@ -446,24 +595,34 @@ fn install_raster_pipes(
         (sw::SW_CLUSTERS, Bind::Buffer(buf.clusters)),
         (sw::SW_PAGE_HEAP, Bind::Buffer(buf.page_heap)),
         (sw::SW_DRAW_LIST, Bind::Buffer(buf.p2_draw_lists)),
-        (sw::SW_HW_DEPTH_TEX, Bind::Target(NANITE_DEPTH)),
+        (sw::SW_HW_DEPTH_TEX, Bind::Texture(buf.depth_tex)),
         (sw::SW_DEPTH_RW, Bind::Buffer(buf.sw_depth)),
         (sw::SW_VIS_RW, Bind::Buffer(buf.sw_vis)),
     ];
-    let b_seed1 = pick(cx, &[sw::CS_SEED_SW_DEPTH_P1], &sw_p1_all);
-    let sw_seed_p1 = cx.compute_pipeline(passes.sw_p1, sw::CS_SEED_SW_DEPTH_P1, &[], &b_seed1)?;
-    let b_merge2 = pick(cx, &[sw::CS_MERGE_HW_DEPTH_P2], &sw_p2_all);
-    let sw_merge_p2 = cx.compute_pipeline(passes.sw_p2, sw::CS_MERGE_HW_DEPTH_P2, &[], &b_merge2)?;
-    let b_sdp1 = pick(cx, &[sw::CS_SW_DEPTH], &sw_p1_all);
-    let sw_depth_p1 = cx.compute_pipeline(passes.sw_p1, sw::CS_SW_DEPTH, &[], &b_sdp1)?;
-    let b_svp1 = pick(cx, &[sw::CS_SW_VIS], &sw_p1_all);
-    let sw_vis_p1 = cx.compute_pipeline(passes.sw_p1, sw::CS_SW_VIS, &[], &b_svp1)?;
-    let b_sdp2 = pick(cx, &[sw::CS_SW_DEPTH], &sw_p2_all);
-    let sw_depth_p2 = cx.compute_pipeline(passes.sw_p2, sw::CS_SW_DEPTH, &[], &b_sdp2)?;
-    let b_svp2 = pick(cx, &[sw::CS_SW_VIS], &sw_p2_all);
-    let sw_vis_p2 = cx.compute_pipeline(passes.sw_p2, sw::CS_SW_VIS, &[], &b_svp2)?;
+    let make_sw = |cx: &mut Install<'_, NaniteGpu>,
+                   pass: Pass<NaniteGpu>,
+                   entry: Entry,
+                   all: &[(Var, Bind<NaniteGpu>)]| {
+        let b = pick(cx, &[entry], all);
+        cx.compute_pipeline(pass, entry, &[], &b)
+    };
+    let sw_seed_p1 = make_sw(cx, passes.sw_p1, sw::CS_SEED_SW_DEPTH_P1, &sw_p1_all)?;
+    let sw_merge_p2 = make_sw(cx, passes.sw_p2, sw::CS_MERGE_HW_DEPTH_P2, &sw_p2_all)?;
+    let sw_depth_p1 = make_sw(cx, passes.sw_p1, sw::CS_SW_DEPTH, &sw_p1_all)?;
+    let sw_vis_p1 = make_sw(cx, passes.sw_p1, sw::CS_SW_VIS, &sw_p1_all)?;
+    let sw_depth_p2 = make_sw(cx, passes.sw_p2, sw::CS_SW_DEPTH, &sw_p2_all)?;
+    let sw_vis_p2 = make_sw(cx, passes.sw_p2, sw::CS_SW_VIS, &sw_p2_all)?;
 
-    let hiz_p1_mip0 = cx.compute_pipeline(
+    let hiz_p1_hw_mip0 = cx.compute_pipeline(
+        passes.hiz_p1,
+        hiz::CS_HIZ_FROM_HW,
+        &[],
+        &[
+            (hiz::HW_DEPTH_TEX, Bind::Texture(buf.depth_tex)),
+            (hiz::HIZ_DST, Bind::TextureMip(buf.hiz_tex, 0)),
+        ],
+    )?;
+    let hiz_p1_sw_mip0 = cx.compute_pipeline(
         passes.hiz_p1,
         hiz::CS_HIZ_FROM_SW,
         &[],
@@ -475,7 +634,16 @@ fn install_raster_pipes(
     )?;
     let hiz_p1_down = install_hiz_downs(cx, passes.hiz_p1, buf.hiz_tex)?;
 
-    let hiz_final_mip0 = cx.compute_pipeline(
+    let hiz_final_hw_mip0 = cx.compute_pipeline(
+        passes.hiz_final,
+        hiz::CS_HIZ_FROM_HW,
+        &[],
+        &[
+            (hiz::HW_DEPTH_TEX, Bind::Texture(buf.depth_tex)),
+            (hiz::HIZ_DST, Bind::TextureMip(buf.hiz_tex, 0)),
+        ],
+    )?;
+    let hiz_final_sw_mip0 = cx.compute_pipeline(
         passes.hiz_final,
         hiz::CS_HIZ_FROM_SW,
         &[],
@@ -492,28 +660,31 @@ fn install_raster_pipes(
         &[(hiz::HIZ_DST, Bind::TextureMip(buf.hiz_tex, 0))],
     )?;
     let hiz_final_down = install_hiz_downs(cx, passes.hiz_final, buf.hiz_tex)?;
-    let [shadow_collect_c0, shadow_collect_c1, shadow_prep, shadow_raster_c0, shadow_raster_c1] =
-        install_shadow_pipes(cx, passes.shadow, buf)?;
+    let sh = install_shadow_pipes(cx, passes, buf)?;
 
     Ok(RasterPipes {
         hw_p1,
+        hw_ds_p1,
         hw_p2,
+        hw_ds_p2,
         sw_seed_p1,
         sw_merge_p2,
         sw_depth_p1,
         sw_vis_p1,
         sw_depth_p2,
         sw_vis_p2,
-        hiz_p1_mip0,
+        hiz_p1_hw_mip0,
+        hiz_p1_sw_mip0,
         hiz_p1_down,
-        hiz_final_mip0,
+        hiz_final_hw_mip0,
+        hiz_final_sw_mip0,
         hiz_final_clear,
         hiz_final_down,
-        shadow_collect_c0,
-        shadow_collect_c1,
-        shadow_prep,
-        shadow_raster_c0,
-        shadow_raster_c1,
+        shadow_collect_c0: sh.collect_c0,
+        shadow_collect_c1: sh.collect_c1,
+        shadow_prep: sh.prep,
+        shadow_draw_c0: sh.draw_c0,
+        shadow_draw_c1: sh.draw_c1,
     })
 }
 
@@ -521,14 +692,12 @@ fn shadow_res_tier(residency_ver: u64, total_pages: u32) -> u64 {
     let cap = u64::from(total_pages.max(1));
     if residency_ver == 0 {
         0
-    } else if residency_ver >= cap.min(360) {
-        4
-    } else if residency_ver >= cap.min(160) {
-        3
-    } else if residency_ver >= cap.min(48) {
+    } else if residency_ver < cap.min(32) {
+        1
+    } else if residency_ver < cap.min(96) {
         2
     } else {
-        1
+        3 + (residency_ver / 128)
     }
 }
 
@@ -553,18 +722,53 @@ fn ortho_shadow_vp(center: Vec3, half_extent: f32, depth_half: f32, sun_dir: Vec
     ortho * shift * view
 }
 
-impl NaniteGpu {
-    pub(crate) fn draw_scene(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if self.instance_count == 0 || self.cluster_count == 0 {
-            return;
-        }
-        if draw.pass() == self.passes.p1_bit {
-            draw.draw_indirect(&self.raster.hw_p1, self.buf.indirect_p1, 0, None);
-        } else if !self.freeze {
-            draw.draw_indirect(&self.raster.hw_p2, self.buf.indirect_p2, 0, None);
+fn mat4_bits_eq(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> bool {
+    for col in 0..4 {
+        for row in 0..4 {
+            if a[col][row].to_bits() != b[col][row].to_bits() {
+                return false;
+            }
         }
     }
+    true
+}
 
+fn build_shadow_jobs(world: &NaniteWorld) -> (Vec<[u32; 2]>, u32, u32) {
+    let mut jobs = Vec::new();
+    for (inst_id, inst) in world.instances.iter().enumerate() {
+        let Some(mesh) = world.meshes.get(inst.info[3] as usize) else {
+            continue;
+        };
+        let [start, count] = mesh.shadow_c0_range;
+        for &cid in world
+            .shadow_cut_clusters
+            .iter()
+            .skip(start as usize)
+            .take(count as usize)
+        {
+            jobs.push([inst_id as u32, cid]);
+        }
+    }
+    let c0_count = jobs.len() as u32;
+    for (inst_id, inst) in world.instances.iter().enumerate() {
+        let Some(mesh) = world.meshes.get(inst.info[3] as usize) else {
+            continue;
+        };
+        let [start, count] = mesh.shadow_c1_range;
+        for &cid in world
+            .shadow_cut_clusters
+            .iter()
+            .skip(start as usize)
+            .take(count as usize)
+        {
+            jobs.push([inst_id as u32, cid]);
+        }
+    }
+    let c1_count = (jobs.len() as u32).saturating_sub(c0_count);
+    (jobs, c0_count, c1_count)
+}
+
+impl NaniteGpu {
     fn alloc_static_and_scratch(&mut self, world: &NaniteWorld, cx: &mut Prepare<'_, Self>) {
         let _ = cx.allocate_buffer(self.buf.uniforms, size_of::<NaniteUniforms>() as u64);
         let _ = cx.allocate_buffer(self.buf.hiz_info, size_of::<HizBuildInfo>() as u64);
@@ -577,7 +781,7 @@ impl NaniteGpu {
             u64::from(MAX_VIS_CLUSTERS) * size_of::<VisibleCluster>() as u64,
         );
         let phase_bytes =
-            (u64::from(MAX_PHASE_CLUSTERS) * 2 + 1) * size_of::<VisibleCluster>() as u64;
+            (u64::from(MAX_PHASE_CLUSTERS) * 3 + 1) * size_of::<VisibleCluster>() as u64;
         let _ = cx.allocate_buffer(self.buf.p1_draw_lists, phase_bytes);
         let _ = cx.allocate_buffer(self.buf.p2_draw_lists, phase_bytes);
         let _ = cx.allocate_buffer(self.buf.bvh_scratch, BVH_SCRATCH_WORDS * 4);
@@ -588,10 +792,27 @@ impl NaniteGpu {
         if cx.allocate_buffer(self.buf.indirect_p2, INDIRECT_BYTES) == Allocation::Fresh {
             cx.write(self.buf.indirect_p2, 0, &[0_u32; 64]);
         }
-        let _ = cx.allocate_buffer(self.buf.shadow_depth, SHADOW_TEXELS * 4);
+        let sh_c0_alloc = cx.allocate(
+            self.buf.shadow_c0,
+            wgpu::Extent3d {
+                width: SHADOW_C0_DIM,
+                height: SHADOW_C0_DIM,
+                depth_or_array_layers: 1,
+            },
+        );
+        let sh_c1_alloc = cx.allocate(
+            self.buf.shadow_c1,
+            wgpu::Extent3d {
+                width: SHADOW_C1_DIM,
+                height: SHADOW_C1_DIM,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.shadow.fresh_tex =
+            sh_c0_alloc == Allocation::Fresh || sh_c1_alloc == Allocation::Fresh;
         let _ = cx.allocate_buffer(
             self.buf.shadow_list,
-            u64::from(SHADOW_LIST_CAP) * size_of::<VisibleCluster>() as u64,
+            u64::from(SHADOW_LIST_CAP) * 2 * size_of::<VisibleCluster>() as u64,
         );
         if cx.allocate_buffer(self.buf.shadow_indirect, 64) == Allocation::Fresh {
             cx.write(self.buf.shadow_indirect, 0, &[0_u32; 16]);
@@ -602,42 +823,60 @@ impl NaniteGpu {
     fn upload_world_buffers(&mut self, world: &NaniteWorld, cx: &mut Prepare<'_, Self>) {
         let cl_bytes = (world.clusters.len().max(1) * size_of::<GpuClusterHeader>()) as u64;
         let bvh_bytes = (world.bvh.len().max(1) * size_of::<GpuBvhNode>()) as u64;
-        let sh_cut_bytes = (world.shadow_cut_clusters.len().max(1) * 4) as u64;
-        let sh_rng_bytes = (world.shadow_mesh_ranges.len().max(1) * 8) as u64;
         let fresh_cl = cx.allocate_buffer(self.buf.clusters, cl_bytes) == Allocation::Fresh;
         let fresh_bvh = cx.allocate_buffer(self.buf.bvh, bvh_bytes) == Allocation::Fresh;
-        let fresh_sc = cx.allocate_buffer(self.buf.shadow_cuts, sh_cut_bytes) == Allocation::Fresh;
-        let fresh_sr = cx.allocate_buffer(self.buf.shadow_ranges, sh_rng_bytes) == Allocation::Fresh;
-        if fresh_cl || fresh_bvh || fresh_sc || fresh_sr || self.geom_rev != world.geometry_revision {
+        let geom_dirty = fresh_cl || fresh_bvh || self.geom_rev != world.geometry_revision;
+        if geom_dirty {
             if !world.clusters.is_empty() {
                 cx.write(self.buf.clusters, 0, &world.clusters);
             }
             if !world.bvh.is_empty() {
                 cx.write(self.buf.bvh, 0, &world.bvh);
             }
-            if !world.shadow_cut_clusters.is_empty() {
-                cx.write(self.buf.shadow_cuts, 0, &world.shadow_cut_clusters);
-            }
-            if !world.shadow_mesh_ranges.is_empty() {
-                cx.write(self.buf.shadow_ranges, 0, &world.shadow_mesh_ranges);
-            }
             self.geom_rev = world.geometry_revision;
+            self.static_frames = 0;
         }
 
         let inst_bytes = (world.instances.len().max(1) * size_of::<NaniteInstance>()) as u64;
         let fresh_inst = cx.allocate_buffer(self.buf.instances, inst_bytes) == Allocation::Fresh;
-        if fresh_inst || self.inst_rev != world.instance_revision {
+        let inst_dirty = fresh_inst || self.inst_rev != world.instance_revision;
+        if inst_dirty {
             if !world.instances.is_empty() {
                 cx.write(self.buf.instances, 0, &world.instances);
             }
             self.inst_rev = world.instance_revision;
+            self.static_frames = 0;
+        }
+
+        let jobs_dirty = geom_dirty || inst_dirty;
+        let (jobs, c0_cnt, c1_cnt) = if jobs_dirty {
+            build_shadow_jobs(world)
+        } else {
+            (Vec::new(), self.shadow_c0_count, self.shadow_c1_count)
+        };
+        let total_jobs = (c0_cnt.saturating_add(c1_cnt) as usize).max(1);
+        let fresh_jobs = cx.allocate_buffer(self.buf.shadow_jobs, (total_jobs * 8) as u64)
+            == Allocation::Fresh;
+        if jobs_dirty || fresh_jobs {
+            let to_write = if jobs_dirty {
+                jobs
+            } else {
+                build_shadow_jobs(world).0
+            };
+            self.shadow_c0_count = c0_cnt;
+            self.shadow_c1_count = c1_cnt;
+            if !to_write.is_empty() {
+                cx.write(self.buf.shadow_jobs, 0, &to_write);
+            }
         }
 
         let page_words = world.total_pages.max(1) as u64;
         let fresh_pt = cx.allocate_buffer(self.buf.page_table, page_words * 4) == Allocation::Fresh;
         let _ = cx.allocate_buffer(self.buf.page_requests, page_words * 4);
         if fresh_pt {
-            let init = vec![crate::types::UNMAPPED_PAGE; page_words as usize];
+            let mut init = vec![crate::types::UNMAPPED_PAGE; page_words as usize];
+            let keep = self.last_page_table.len().min(init.len());
+            init[..keep].copy_from_slice(&self.last_page_table[..keep]);
             cx.write(self.buf.page_table, 0, &init);
         }
     }
@@ -677,6 +916,7 @@ impl NaniteGpu {
         if let Some(pt) = table
             && !pt.is_empty()
         {
+            self.last_page_table = pt.clone();
             cx.write(self.buf.page_table, 0, &pt);
         }
     }
@@ -704,18 +944,12 @@ impl NaniteGpu {
                 &self.cull.dfs_cut_p1,
             )
         };
-        cx.dispatch(prep_a, [1, 1, 1]);
-        cx.dispatch_indirect(trav_ab, indirect, 32);
-        cx.dispatch(prep_b, [1, 1, 1]);
-        cx.dispatch_indirect(trav_ba, indirect, 48);
-        cx.dispatch(prep_a, [1, 1, 1]);
-        cx.dispatch_indirect(trav_ab, indirect, 32);
-        cx.dispatch(prep_b, [1, 1, 1]);
-        cx.dispatch_indirect(trav_ba, indirect, 48);
-        cx.dispatch(prep_a, [1, 1, 1]);
-        cx.dispatch_indirect(trav_ab, indirect, 32);
-        cx.dispatch(prep_b, [1, 1, 1]);
-        cx.dispatch_indirect(trav_ba, indirect, 48);
+        for _ in 0..4 {
+            cx.dispatch(prep_a, [1, 1, 1]);
+            cx.dispatch_indirect(trav_ab, indirect, 32);
+            cx.dispatch(prep_b, [1, 1, 1]);
+            cx.dispatch_indirect(trav_ba, indirect, 48);
+        }
         cx.dispatch(prep_a, [1, 1, 1]);
         cx.dispatch_indirect(dfs_cut, indirect, 32);
     }
@@ -729,26 +963,27 @@ impl NaniteGpu {
         }
     }
 
-    fn encode_shadow(&self, cx: &mut Encode<'_, Self>) {
+    fn encode_shadow_cull(&self, cx: &mut Encode<'_, Self>) {
+        cx.clear_buffer(self.buf.shadow_indirect, 0..64);
         if self.instance_count == 0 || self.cluster_count == 0 {
             return;
         }
-        let c0_bytes = u64::from(SHADOW_C0_DIM) * u64::from(SHADOW_C0_DIM) * 4;
-        let c1_bytes = u64::from(SHADOW_C1_DIM) * u64::from(SHADOW_C1_DIM) * 4;
-        if self.shadow.dirty_c0 {
-            cx.clear_buffer(self.buf.shadow_depth, 0..c0_bytes);
-            cx.clear_buffer(self.buf.shadow_indirect, 0..64);
-            cx.dispatch(&self.raster.shadow_collect_c0, [self.instance_count.div_ceil(64), 1, 1]);
-            cx.dispatch(&self.raster.shadow_prep, [1, 1, 1]);
-            cx.dispatch_indirect(&self.raster.shadow_raster_c0, self.buf.shadow_indirect, 0);
+        let dedup_range = (DEDUP_BASE_WORDS * 4)..(CULL_STATE_WORDS * 4);
+        if self.shadow.dirty_c0 && self.shadow_c0_count > 0 {
+            cx.clear_buffer(self.buf.cull_state, dedup_range.clone());
+            cx.dispatch(
+                &self.raster.shadow_collect_c0,
+                [self.shadow_c0_count.div_ceil(64), 1, 1],
+            );
         }
-        if self.shadow.dirty_c1 {
-            cx.clear_buffer(self.buf.shadow_depth, c0_bytes..(c0_bytes + c1_bytes));
-            cx.clear_buffer(self.buf.shadow_indirect, 0..64);
-            cx.dispatch(&self.raster.shadow_collect_c1, [self.instance_count.div_ceil(64), 1, 1]);
-            cx.dispatch(&self.raster.shadow_prep, [1, 1, 1]);
-            cx.dispatch_indirect(&self.raster.shadow_raster_c1, self.buf.shadow_indirect, 0);
+        if self.shadow.dirty_c1 && self.shadow_c1_count > 0 {
+            cx.clear_buffer(self.buf.cull_state, dedup_range);
+            cx.dispatch(
+                &self.raster.shadow_collect_c1,
+                [self.shadow_c1_count.div_ceil(64), 1, 1],
+            );
         }
+        cx.dispatch(&self.raster.shadow_prep, [1, 1, 1]);
     }
 
     fn encode_cull_p1(&self, cx: &mut Encode<'_, Self>) {
@@ -771,7 +1006,7 @@ impl NaniteGpu {
     }
 
     fn encode_cull_p2(&self, cx: &mut Encode<'_, Self>) {
-        if self.instance_count == 0 || self.cluster_count == 0 || self.freeze {
+        if self.instance_count == 0 || self.cluster_count == 0 || self.freeze || self.skip_p2 {
             return;
         }
         cx.clear_buffer(self.buf.cull_state, 64..76);
@@ -802,7 +1037,7 @@ impl NaniteGpu {
 
         let geom_changed = self.shadow.last_geom_rev != world.geometry_revision
             || self.shadow.last_inst_rev != world.instance_revision;
-        if geom_changed {
+        if geom_changed || self.shadow.fresh_tex {
             self.shadow.last_geom_rev = world.geometry_revision;
             self.shadow.last_inst_rev = world.instance_revision;
             self.shadow.last_c0_res = u64::MAX;
@@ -817,15 +1052,15 @@ impl NaniteGpu {
         let c1_res_changed = self.shadow.last_c1_res == u64::MAX
             || (tier > 0 && tier != self.shadow.last_c1_res);
         self.shadow.enabled = cfg.shadows_enabled && self.instance_count > 0;
-        let want_c0 = self.shadow.enabled && (c0_moved || c0_res_changed);
-        let want_c1 = self.shadow.enabled && c1_res_changed;
+        let want_c0 = (self.shadow.enabled && (c0_moved || c0_res_changed)) || self.shadow.fresh_tex;
+        let want_c1 = (self.shadow.enabled && c1_res_changed) || self.shadow.fresh_tex;
+        self.shadow.dirty_c0 = want_c0;
         self.shadow.dirty_c1 = want_c1;
-        self.shadow.dirty_c0 = want_c0 && !want_c1;
-        if self.shadow.dirty_c0 {
+        if self.shadow.dirty_c0 && self.shadow.enabled {
             self.shadow.last_c0_center = desired_c0;
             self.shadow.last_c0_res = tier;
         }
-        if self.shadow.dirty_c1 {
+        if self.shadow.dirty_c1 && self.shadow.enabled {
             self.shadow.last_c1_res = tier;
         }
         let c0_center = if self.shadow.last_c0_center.length_squared() < 1.0e14 {
@@ -854,6 +1089,94 @@ impl NaniteGpu {
             [c1_center.x, c1_center.y, c1_center.z, c1_half],
         )
     }
+
+    fn prepare_screen_targets(
+        &mut self,
+        cfg: &NaniteConfig,
+        cx: &mut Prepare<'_, Self>,
+    ) -> (u32, u32, u32, u32, u32) {
+        let render_scale = engine::math::clamp(cfg.render_scale, 0.25, 1.0);
+        let scale_side = |p: u32| ((f64::from(p) * f64::from(render_scale)).round() as u32).max(1);
+        let (raw_w, raw_h) = cx.canvas_size();
+        let (cw, ch) = (scale_side(raw_w), scale_side(raw_h));
+        cx.scale_target(NANITE_VIS_HW, render_scale);
+        let depth_alloc = cx.allocate(
+            self.buf.depth_tex,
+            wgpu::Extent3d {
+                width: cw,
+                height: ch,
+                depth_or_array_layers: 1,
+            },
+        );
+        if depth_alloc == Allocation::Fresh || self.canvas != (cw, ch) {
+            self.hiz_ready = false;
+            self.static_frames = 0;
+        }
+        self.canvas = (cw, ch);
+        let sw_bytes = if cfg.hw_only {
+            16
+        } else {
+            (u64::from(cw) * u64::from(ch) * 4).max(16)
+        };
+        let _ = cx.allocate_buffer(self.buf.sw_depth, sw_bytes);
+        let _ = cx.allocate_buffer(self.buf.sw_vis, sw_bytes);
+        let (mw, mh, mips) = hiz_dimensions(cw, ch);
+        let hiz_alloc = cx.allocate_mips(
+            self.buf.hiz_tex,
+            wgpu::Extent3d {
+                width: mw,
+                height: mh,
+                depth_or_array_layers: 1,
+            },
+            mips,
+        );
+        if hiz_alloc == Allocation::Fresh {
+            self.hiz_ready = false;
+            self.static_frames = 0;
+        }
+        self.hiz_dims = (mw, mh, mips);
+        cx.write(
+            self.buf.hiz_info,
+            0,
+            &[HizBuildInfo {
+                src_size: [cw, ch],
+                mip0_size: [mw, mh],
+            }],
+        );
+        (cw, ch, mw, mh, mips)
+    }
+
+    fn encode_hiz_final(&mut self, cx: &mut Encode<'_, Self>) {
+        let (mw, mh, _) = self.hiz_dims;
+        if !self.freeze && !self.skip_p2 {
+            let _ = cx.recorded();
+            if self.instance_count > 0 && self.cluster_count > 0 {
+                let mip0 = if self.hw_only {
+                    &self.raster.hiz_final_hw_mip0
+                } else {
+                    &self.raster.hiz_final_sw_mip0
+                };
+                cx.dispatch(mip0, [mw.div_ceil(HIZ_WG), mh.div_ceil(HIZ_WG), 1]);
+            } else {
+                cx.dispatch(
+                    &self.raster.hiz_final_clear,
+                    [mw.div_ceil(HIZ_WG), mh.div_ceil(HIZ_WG), 1],
+                );
+            }
+            self.encode_hiz_down(cx, &self.raster.hiz_final_down);
+            if cx.recorded() == engine_render::Recorded::Exact {
+                self.hiz_ready = true;
+            }
+        }
+        cx.copy_to_readback(self.buf.stats_rb, self.buf.cull_state, 0..64);
+        if self.page_count > 0 {
+            cx.copy_to_readback(
+                self.buf.req_rb,
+                self.buf.page_requests,
+                0..(u64::from(self.page_count) * 4),
+            );
+        }
+    }
 }
 
 impl GpuPart for NaniteGpu {
@@ -868,7 +1191,7 @@ impl GpuPart for NaniteGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let buf = alloc_buffers(cx);
         declare_targets_and_frame(cx, &buf)?;
-        let passes = install_passes(cx);
+        let passes = install_passes(cx, &buf);
         let cull = install_cull_pipes(cx, &passes, &buf)?;
         let raster = install_raster_pipes(cx, &passes, &buf)?;
         Ok(Self {
@@ -884,6 +1207,7 @@ impl GpuPart for NaniteGpu {
                 last_inst_rev: u64::MAX,
                 dirty_c0: true,
                 dirty_c1: true,
+                fresh_tex: true,
                 enabled: true,
             },
             geom_rev: u64::MAX,
@@ -891,11 +1215,22 @@ impl GpuPart for NaniteGpu {
             page_count: 0,
             instance_count: 0,
             cluster_count: 0,
+            shadow_c0_count: 0,
+            shadow_c1_count: 0,
+            last_page_table: Vec::new(),
             canvas: (0, 0),
             hiz_dims: (1, 1, 1),
             frame_gen: 0,
             hiz_ready: false,
             freeze: false,
+            hw_only: true,
+            skip_p2: false,
+            static_frames: 0,
+            last_cull_vp: [[0.0; 4]; 4],
+            last_lod_bits: 0,
+            last_hw_only: true,
+            last_freeze: false,
+            last_residency_ver: u64::MAX,
             residency_ver: 0,
         })
     }
@@ -907,59 +1242,47 @@ impl GpuPart for NaniteGpu {
     ) {
         self.alloc_static_and_scratch(&world, cx);
         self.sync_bridge(&bridge, cx);
-
-        let render_scale = engine::math::clamp(cfg.render_scale, 0.25, 1.0);
-        let scale_side = |p: u32| ((f64::from(p) * f64::from(render_scale)).round() as u32).max(1);
-        let (raw_w, raw_h) = cx.canvas_size();
-        let (cw, ch) = (scale_side(raw_w), scale_side(raw_h));
-        cx.scale_target(NANITE_VIS_HW, render_scale);
-        cx.scale_target(NANITE_DEPTH, render_scale);
-        self.canvas = (cw, ch);
-        let px_bytes = u64::from(cw) * u64::from(ch) * 4;
-        let _ = cx.allocate_buffer(self.buf.sw_depth, px_bytes.max(16));
-        let _ = cx.allocate_buffer(self.buf.sw_vis, px_bytes.max(16));
-
-        let (mw, mh, mips) = hiz_dimensions(cw, ch);
-        let hiz_alloc = cx.allocate_mips(
-            self.buf.hiz_tex,
-            wgpu::Extent3d {
-                width: mw,
-                height: mh,
-                depth_or_array_layers: 1,
-            },
-            mips,
-        );
-        if hiz_alloc == Allocation::Fresh {
-            self.hiz_ready = false;
-        }
-        self.hiz_dims = (mw, mh, mips);
-        cx.write(
-            self.buf.hiz_info,
-            0,
-            &[HizBuildInfo {
-                src_size: [cw, ch],
-                mip0_size: [mw, mh],
-            }],
-        );
+        let (cw, ch, mw, mh, mips) = self.prepare_screen_targets(&cfg, cx);
 
         self.page_count = world.total_pages;
         self.instance_count = world.instances.len() as u32;
         self.cluster_count = world.clusters.len() as u32;
         self.freeze = cfg.freeze_culling;
+        self.hw_only = cfg.hw_only;
         self.frame_gen = self.frame_gen.wrapping_add(1).max(1);
+
+        let render_vp = cam.render_proj * cam.render_view;
+        let cull_vp = cam.cull_proj * cam.cull_view;
+        let cull_vp_cols = cull_vp.to_cols_array_2d();
+        let lod_bits = cfg.lod_preset.threshold_px().to_bits();
+        let camera_same = mat4_bits_eq(&cull_vp_cols, &self.last_cull_vp);
+        let state_same = lod_bits == self.last_lod_bits
+            && cfg.hw_only == self.last_hw_only
+            && cfg.freeze_culling == self.last_freeze;
+        let residency_same = self.residency_ver == self.last_residency_ver;
+        if camera_same && state_same && residency_same && self.hiz_ready && self.instance_count > 0
+        {
+            self.static_frames = self.static_frames.saturating_add(1);
+        } else {
+            self.static_frames = 0;
+            self.last_cull_vp = cull_vp_cols;
+            self.last_lod_bits = lod_bits;
+            self.last_hw_only = cfg.hw_only;
+            self.last_freeze = cfg.freeze_culling;
+            self.last_residency_ver = self.residency_ver;
+        }
+        self.skip_p2 = self.hw_only && self.hiz_ready && self.static_frames >= 2;
 
         let (sh_vp0, sh_vp1, shadow_center0, shadow_center1) =
             self.update_shadow_track(&world, &cam, &cfg);
 
-        let render_vp = cam.render_proj * cam.render_view;
-        let cull_vp = cam.cull_proj * cam.cull_view;
         let planes = extract_frustum_planes(cull_vp);
-        let eff_h = ch.min(960) as f32;
+        let eff_h = ch.min(1080) as f32;
         let lod_scale = (eff_h * 0.5) * cam.cull_proj.col(1).y.abs();
         let render_lod_scale = (ch as f32 * 0.5) * cam.render_proj.col(1).y.abs();
         let u = NaniteUniforms {
             render_view_proj: render_vp.to_cols_array_2d(),
-            cull_view_proj: cull_vp.to_cols_array_2d(),
+            cull_view_proj: cull_vp_cols,
             cull_view: cam.cull_view.to_cols_array_2d(),
             cull_proj: cam.cull_proj.to_cols_array_2d(),
             inv_render_vp: render_vp.inverse().to_cols_array_2d(),
@@ -985,29 +1308,66 @@ impl GpuPart for NaniteGpu {
             shadow_info: [SHADOW_C0_DIM as f32, SHADOW_C1_DIM as f32, render_lod_scale, 0.0],
             shadow_center0,
             shadow_center1,
-            extra: [cfg.double_sided_materials, 0, 0, 0],
+            extra: [
+                cfg.double_sided_materials,
+                self.shadow_c0_count,
+                self.shadow_c1_count,
+                0,
+            ],
         };
         cx.write(self.buf.uniforms, 0, &[u]);
 
         if self.shadow.dirty_c0 || self.shadow.dirty_c1 {
-            cx.run(self.passes.shadow);
+            cx.run(self.passes.shadow_cull);
+        }
+        if self.shadow.dirty_c0 {
+            cx.run(self.passes.shadow_c0);
+        }
+        if self.shadow.dirty_c1 {
+            cx.run(self.passes.shadow_c1);
         }
         cx.run(self.passes.cull_p1);
     }
 
     fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        cx.run(self.passes.sw_p1);
-        cx.run(self.passes.hiz_p1);
-        cx.run(self.passes.cull_p2);
-        cx.run(self.passes.sw_p2);
+        cx.run(self.passes.hw_p1);
+        if !self.hw_only {
+            cx.run(self.passes.sw_p1);
+        }
+        if !self.freeze && !self.skip_p2 {
+            cx.run(self.passes.hiz_p1);
+            cx.run(self.passes.cull_p2);
+            cx.run(self.passes.hw_p2);
+            if !self.hw_only {
+                cx.run(self.passes.sw_p2);
+            }
+        }
         cx.run(self.passes.hiz_final);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) {
-        if pass == self.passes.shadow {
-            self.encode_shadow(cx);
+        if pass == self.passes.shadow_cull {
+            self.encode_shadow_cull(cx);
+        } else if pass == self.passes.shadow_c0 {
+            cx.render().draw_indirect(
+                &self.raster.shadow_draw_c0,
+                self.buf.shadow_indirect,
+                0,
+                None,
+            );
+        } else if pass == self.passes.shadow_c1 {
+            cx.render().draw_indirect(
+                &self.raster.shadow_draw_c1,
+                self.buf.shadow_indirect,
+                16,
+                None,
+            );
         } else if pass == self.passes.cull_p1 {
             self.encode_cull_p1(cx);
+        } else if pass == self.passes.hw_p1 {
+            let mut render = cx.render();
+            render.draw_indirect(&self.raster.hw_p1, self.buf.indirect_p1, 0, None);
+            render.draw_indirect(&self.raster.hw_ds_p1, self.buf.indirect_p1, 112, None);
         } else if pass == self.passes.sw_p1 {
             let (cw, ch) = self.canvas;
             if cw > 0 && ch > 0 {
@@ -1018,18 +1378,26 @@ impl GpuPart for NaniteGpu {
                 cx.dispatch_indirect(&self.raster.sw_vis_p1, self.buf.indirect_p1, 16);
             }
         } else if pass == self.passes.hiz_p1 {
-            if !self.freeze {
+            if !self.freeze && !self.skip_p2 {
                 let (mw, mh, _) = self.hiz_dims;
-                cx.dispatch(
-                    &self.raster.hiz_p1_mip0,
-                    [mw.div_ceil(HIZ_WG), mh.div_ceil(HIZ_WG), 1],
-                );
+                let mip0 = if self.hw_only {
+                    &self.raster.hiz_p1_hw_mip0
+                } else {
+                    &self.raster.hiz_p1_sw_mip0
+                };
+                cx.dispatch(mip0, [mw.div_ceil(HIZ_WG), mh.div_ceil(HIZ_WG), 1]);
                 self.encode_hiz_down(cx, &self.raster.hiz_p1_down);
             }
         } else if pass == self.passes.cull_p2 {
             self.encode_cull_p2(cx);
+        } else if pass == self.passes.hw_p2 {
+            if self.instance_count > 0 && self.cluster_count > 0 && !self.freeze && !self.skip_p2 {
+                let mut render = cx.render();
+                render.draw_indirect(&self.raster.hw_p2, self.buf.indirect_p2, 0, None);
+                render.draw_indirect(&self.raster.hw_ds_p2, self.buf.indirect_p2, 112, None);
+            }
         } else if pass == self.passes.sw_p2 {
-            if self.instance_count > 0 && self.cluster_count > 0 && !self.freeze {
+            if self.instance_count > 0 && self.cluster_count > 0 && !self.freeze && !self.skip_p2 {
                 let (cw, ch) = self.canvas;
                 if cw > 0 && ch > 0 {
                     cx.dispatch(&self.raster.sw_merge_p2, [cw.div_ceil(8), ch.div_ceil(8), 1]);
@@ -1038,33 +1406,7 @@ impl GpuPart for NaniteGpu {
                 cx.dispatch_indirect(&self.raster.sw_vis_p2, self.buf.indirect_p2, 16);
             }
         } else if pass == self.passes.hiz_final {
-            let (mw, mh, _) = self.hiz_dims;
-            if !self.freeze {
-                let _ = cx.recorded();
-                if self.instance_count > 0 && self.cluster_count > 0 {
-                    cx.dispatch(
-                        &self.raster.hiz_final_mip0,
-                        [mw.div_ceil(HIZ_WG), mh.div_ceil(HIZ_WG), 1],
-                    );
-                } else {
-                    cx.dispatch(
-                        &self.raster.hiz_final_clear,
-                        [mw.div_ceil(HIZ_WG), mh.div_ceil(HIZ_WG), 1],
-                    );
-                }
-                self.encode_hiz_down(cx, &self.raster.hiz_final_down);
-                if cx.recorded() == engine_render::Recorded::Exact {
-                    self.hiz_ready = true;
-                }
-            }
-            cx.copy_to_readback(self.buf.stats_rb, self.buf.cull_state, 0..64);
-            if self.page_count > 0 {
-                cx.copy_to_readback(
-                    self.buf.req_rb,
-                    self.buf.page_requests,
-                    0..(u64::from(self.page_count) * 4),
-                );
-            }
+            self.encode_hiz_final(cx);
         }
     }
 }

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use cook::Refusal;
-use cook_meshlet::{cook_gltf, run_self_check, verify_manifest_file};
+use cook_meshlet::{bake_gi, cook_gltf, pack_pbr, run_self_check, verify_manifest_file};
 use serde::Serialize;
 use serde_json::json;
 
@@ -41,7 +41,7 @@ fn usage() -> ExitCode {
     emit_refusal(&Refusal::new(
         "Usage",
         "cook_meshlet",
-        "cook_meshlet cook <input.glb|.gltf> <output_dir> [--name <stem>] [--material <id>] | cook_meshlet verify <manifest.mlm> | cook_meshlet self-check",
+        "cook_meshlet cook <input.glb|.gltf> <output_dir> [--name <stem>] [--material <id>] | verify <manifest.mlm> | self-check | pack-pbr <intel_sponza_dir> <out_dir> | bake-gi <sponza_glbs_dir> <pbr_base.bin> <out_gi.bin>",
     ));
     ExitCode::from(2)
 }
@@ -98,6 +98,14 @@ fn main() -> ExitCode {
         ["cook", rest @ ..] => emit_result(run_cook(rest)),
         ["verify", manifest] => emit_result(verify_manifest_file(Path::new(manifest))),
         ["self-check"] => emit_result(run_self_check()),
+        ["pack-pbr", src_dir, out_dir] => {
+            emit_result(pack_pbr(Path::new(src_dir), Path::new(out_dir)))
+        }
+        ["bake-gi", glbs_dir, pbr_base, out_path] => emit_result(bake_gi(
+            Path::new(glbs_dir),
+            Path::new(pbr_base),
+            Path::new(out_path),
+        )),
         _ => usage(),
     }
 }

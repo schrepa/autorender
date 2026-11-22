@@ -1,4 +1,6 @@
+mod gi_bake;
 mod gltf_load;
+mod pbr_pack;
 mod synth;
 
 use std::path::{Path, PathBuf};
@@ -10,7 +12,9 @@ use engine_meshlet::{
 };
 use serde::Serialize;
 
+pub use gi_bake::{BakeGiOutput, bake_gi};
 pub use gltf_load::{compute_curvature_ao, load_gltf_mesh};
+pub use pbr_pack::{PackPbrOutput, pack_pbr};
 pub use synth::{build_multimaterial_foliage_mesh, build_terrain_column_mesh};
 
 #[derive(Clone, Debug, Serialize)]

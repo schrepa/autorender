@@ -49,7 +49,8 @@ pub fn pump_nanite_streaming(
     }
 
     if let Some(priorities) = reqs {
-        streaming.ingest_gpu_requests(&world, &priorities, config.max_pages_per_frame * 2);
+        let max_new = (config.max_pages_per_frame * 4).max(192);
+        streaming.ingest_gpu_requests(&world, &priorities, max_new);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -81,4 +82,6 @@ pub fn pump_nanite_streaming(
     telemetry.pinned_pages = streaming.pinned_count();
     telemetry.budget_pages = streaming.budget_pages();
     telemetry.pending_fetches = streaming.pending_fetch_count();
+    telemetry.pending_requests = streaming.pending_request_count();
+    telemetry.ready_pages = streaming.ready_page_count();
 }

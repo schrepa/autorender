@@ -153,11 +153,9 @@ impl MeshletManifest {
         for cluster in &self.clusters {
             push_f32x4(&mut out, cluster.bound_sphere);
             push_f32x4(&mut out, cluster.lod_sphere);
-            push_f32x4(&mut out, cluster.aabb_min);
-            push_f32x4(&mut out, cluster.aabb_extent);
             push_f32x4(&mut out, cluster.parent_lod_sphere);
-            push_u32x4(&mut out, cluster.cone_and_meta);
-            push_u32x4(&mut out, cluster.streaming_meta);
+            push_u32x4(&mut out, cluster.errors_and_cone);
+            push_u32x4(&mut out, cluster.page_and_fallback);
         }
         for node in &self.bvh {
             push_f32x4(&mut out, node.sphere);
@@ -203,18 +201,20 @@ impl MeshletManifest {
             clusters.push(ClusterHeader {
                 bound_sphere: read_f32x4(bytes, &mut offset, "$.manifest.clusters.bound_sphere")?,
                 lod_sphere: read_f32x4(bytes, &mut offset, "$.manifest.clusters.lod_sphere")?,
-                aabb_min: read_f32x4(bytes, &mut offset, "$.manifest.clusters.aabb_min")?,
-                aabb_extent: read_f32x4(bytes, &mut offset, "$.manifest.clusters.aabb_extent")?,
                 parent_lod_sphere: read_f32x4(
                     bytes,
                     &mut offset,
                     "$.manifest.clusters.parent_lod_sphere",
                 )?,
-                cone_and_meta: read_u32x4(bytes, &mut offset, "$.manifest.clusters.cone_and_meta")?,
-                streaming_meta: read_u32x4(
+                errors_and_cone: read_u32x4(
                     bytes,
                     &mut offset,
-                    "$.manifest.clusters.streaming_meta",
+                    "$.manifest.clusters.errors_and_cone",
+                )?,
+                page_and_fallback: read_u32x4(
+                    bytes,
+                    &mut offset,
+                    "$.manifest.clusters.page_and_fallback",
                 )?,
             });
         }

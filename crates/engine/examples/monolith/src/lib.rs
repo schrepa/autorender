@@ -10,6 +10,8 @@ use brick_touch::TouchBrick;
 use engine::Start;
 use engine::prelude::*;
 
+pub mod bc_decode;
+pub mod gi;
 pub mod layout;
 pub mod names;
 pub mod pbr;

@@ -3,6 +3,7 @@ import package::generated::nanite::NaniteInstance;
 import package::generated::nanite::GpuClusterHeader;
 import package::generated::nanite::VisibleCluster;
 import package::nanite::common::PAGE_WORDS;
+import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::MAX_PHASE_CLUSTERS;
 import package::nanite::common::SW_DISPATCH_STRIDE;
 import package::nanite::common::inst_to_world;
@@ -10,6 +11,7 @@ import package::nanite::common::decode_pos;
 import package::nanite::common::cluster_vert_count;
 import package::nanite::common::cluster_tri_count;
 import package::nanite::common::cluster_mat;
+import package::nanite::common::cluster_word_offset;
 import package::nanite::common::edge_yup_i32;
 import package::nanite::common::is_top_left_i32;
 
@@ -22,8 +24,8 @@ import package::nanite::common::is_top_left_i32;
 @group(1) @binding(6) var<storage, read_write> sw_depth_rw: array<atomic<u32>>;
 @group(1) @binding(7) var<storage, read_write> sw_vis_rw: array<u32>;
 
-var<workgroup> sh_screen: array<vec4<f32>, 64>;
-var<workgroup> sh_valid: array<u32, 64>;
+var<workgroup> sh_screen: array<vec4<f32>, 128>;
+var<workgroup> sh_valid: array<u32, 128>;
 
 struct TriSetup {
     valid: u32,
@@ -68,14 +70,14 @@ fn cs_merge_hw_depth_p2(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-fn load_cluster_verts(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) {
+fn load_cluster_vert(vc: VisibleCluster, c: GpuClusterHeader, vi: u32, origin: vec3<f32>, step: f32) {
     let vert_count = cluster_vert_count(c);
-    if lid < vert_count {
-        let page_base = vc.heap_slot * PAGE_WORDS + c.cone_and_meta.w;
-        let v_base = page_base + lid * 4u;
+    if vi < vert_count {
+        let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+        let v_base = page_base + CLUSTER_HEADER_WORDS + vi * 4u;
         let w0 = sw_page_heap[v_base];
         let w1 = sw_page_heap[v_base + 1u];
-        let local_pos = decode_pos(w0, w1, c.aabb_min.xyz, c.aabb_extent.xyz);
+        let local_pos = decode_pos(w0, w1, origin, step);
         let inst = sw_instances[vc.instance_id];
         let world_pos = inst_to_world(inst, local_pos);
         let clip = sw_uniforms.render_view_proj * vec4<f32>(world_pos, 1.0);
@@ -85,27 +87,27 @@ fn load_cluster_verts(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) {
             let vp = sw_uniforms.viewport_lod.xy;
             let sx = (ndc.x * 0.5 + 0.5) * vp.x;
             let sy = (0.5 - ndc.y * 0.5) * vp.y;
-            sh_screen[lid] = vec4<f32>(sx, sy, ndc.z, inv_w);
-            sh_valid[lid] = 1u;
+            sh_screen[vi] = vec4<f32>(sx, sy, ndc.z, inv_w);
+            sh_valid[vi] = 1u;
         } else {
-            sh_screen[lid] = vec4<f32>(0.0);
-            sh_valid[lid] = 0u;
+            sh_screen[vi] = vec4<f32>(0.0);
+            sh_valid[vi] = 0u;
         }
     } else {
-        sh_valid[lid] = 0u;
+        sh_valid[vi] = 0u;
     }
 }
 
-fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
+fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, tri_id: u32) -> TriSetup {
     var s: TriSetup;
     s.valid = 0u;
     let tri_count = cluster_tri_count(c);
-    if lid >= tri_count {
+    if tri_id >= tri_count {
         return s;
     }
     let vert_count = cluster_vert_count(c);
-    let page_base = vc.heap_slot * PAGE_WORDS + c.cone_and_meta.w;
-    let tri_word = sw_page_heap[page_base + vert_count * 4u + lid];
+    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let tri_word = sw_page_heap[page_base + CLUSTER_HEADER_WORDS + vert_count * 4u + tri_id];
     let i0 = tri_word & 0xFFu;
     let i1 = (tri_word >> 8u) & 0xFFu;
     let i2 = (tri_word >> 16u) & 0xFFu;
@@ -165,6 +167,7 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
     let e0_s = e0_0 + b0;
     let e1_s = e1_0 + b1;
     let e2_s = e2_0 + b2;
+    let vis_id = ((vc.vis_slot + 1u) << 7u) | (tri_id & 0x7Fu);
     if min_x == max_x && min_y == max_y {
         if (e0_s | e1_s | e2_s) < 0 {
             return s;
@@ -176,7 +179,7 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
         s.valid = 2u;
         s.z_start = z0;
         s.bbox = vec4<i32>(min_x, min_y, max_x, max_y);
-        s.vis_id = ((vc.vis_slot + 1u) << 6u) | lid;
+        s.vis_id = vis_id;
         return s;
     }
     let dx = vec3<i32>(
@@ -200,29 +203,14 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
     s.dz_dx = (f32(dx.x) * z0_v + f32(dx.y) * z1_v + f32(dx.z) * z2_v) * inv_area;
     s.dz_dy = (f32(dy.x) * z0_v + f32(dy.y) * z1_v + f32(dy.z) * z2_v) * inv_area;
     s.bbox = vec4<i32>(min_x, min_y, max_x, max_y);
-    s.vis_id = ((vc.vis_slot + 1u) << 6u) | lid;
+    s.vis_id = vis_id;
     return s;
 }
 
-@compute @workgroup_size(64)
-fn cs_sw_depth(
-    @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_index) lid: u32,
-) {
-    let sw_idx = wid.y * SW_DISPATCH_STRIDE + wid.x;
-    let sw_total = sw_draw_list[MAX_PHASE_CLUSTERS * 2u].cluster_id;
-    if sw_idx >= sw_total {
-        return;
-    }
-    let vc = sw_draw_list[MAX_PHASE_CLUSTERS + sw_idx];
-    let c = sw_clusters[vc.cluster_id];
-    load_cluster_verts(vc, c, lid);
-    workgroupBarrier();
-    let s = setup_tri(vc, c, lid);
+fn raster_depth_tri(s: TriSetup, stride: u32) {
     if s.valid == 0u {
         return;
     }
-    let stride = u32(sw_uniforms.viewport_lod.x);
     if s.valid == 2u {
         let zb = bitcast<u32>(s.z_start);
         let idx = u32(s.bbox.y) * stride + u32(s.bbox.x);
@@ -261,25 +249,10 @@ fn cs_sw_depth(
     }
 }
 
-@compute @workgroup_size(64)
-fn cs_sw_vis(
-    @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_index) lid: u32,
-) {
-    let sw_idx = wid.y * SW_DISPATCH_STRIDE + wid.x;
-    let sw_total = sw_draw_list[MAX_PHASE_CLUSTERS * 2u].cluster_id;
-    if sw_idx >= sw_total {
-        return;
-    }
-    let vc = sw_draw_list[MAX_PHASE_CLUSTERS + sw_idx];
-    let c = sw_clusters[vc.cluster_id];
-    load_cluster_verts(vc, c, lid);
-    workgroupBarrier();
-    let s = setup_tri(vc, c, lid);
+fn raster_vis_tri(s: TriSetup, stride: u32) {
     if s.valid == 0u {
         return;
     }
-    let stride = u32(sw_uniforms.viewport_lod.x);
     if s.valid == 2u {
         let zb = bitcast<u32>(s.z_start);
         let idx = u32(s.bbox.y) * stride + u32(s.bbox.x);
@@ -316,4 +289,58 @@ fn cs_sw_vis(
         e2_row += s.dy.z;
         z_row += s.dz_dy;
     }
+}
+
+@compute @workgroup_size(64)
+fn cs_sw_depth(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let sw_idx = wid.y * SW_DISPATCH_STRIDE + wid.x;
+    let sw_total = sw_draw_list[MAX_PHASE_CLUSTERS * 3u].heap_slot;
+    if sw_idx >= sw_total {
+        return;
+    }
+    let vc = sw_draw_list[MAX_PHASE_CLUSTERS * 2u + sw_idx];
+    let c = sw_clusters[vc.cluster_id];
+    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let origin = vec3<f32>(
+        bitcast<f32>(sw_page_heap[page_base]),
+        bitcast<f32>(sw_page_heap[page_base + 1u]),
+        bitcast<f32>(sw_page_heap[page_base + 2u]),
+    );
+    let step = bitcast<f32>(sw_page_heap[page_base + 3u]);
+    load_cluster_vert(vc, c, lid, origin, step);
+    load_cluster_vert(vc, c, lid + 64u, origin, step);
+    workgroupBarrier();
+    let stride = u32(sw_uniforms.viewport_lod.x);
+    raster_depth_tri(setup_tri(vc, c, lid), stride);
+    raster_depth_tri(setup_tri(vc, c, lid + 64u), stride);
+}
+
+@compute @workgroup_size(64)
+fn cs_sw_vis(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let sw_idx = wid.y * SW_DISPATCH_STRIDE + wid.x;
+    let sw_total = sw_draw_list[MAX_PHASE_CLUSTERS * 3u].heap_slot;
+    if sw_idx >= sw_total {
+        return;
+    }
+    let vc = sw_draw_list[MAX_PHASE_CLUSTERS * 2u + sw_idx];
+    let c = sw_clusters[vc.cluster_id];
+    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let origin = vec3<f32>(
+        bitcast<f32>(sw_page_heap[page_base]),
+        bitcast<f32>(sw_page_heap[page_base + 1u]),
+        bitcast<f32>(sw_page_heap[page_base + 2u]),
+    );
+    let step = bitcast<f32>(sw_page_heap[page_base + 3u]);
+    load_cluster_vert(vc, c, lid, origin, step);
+    load_cluster_vert(vc, c, lid + 64u, origin, step);
+    workgroupBarrier();
+    let stride = u32(sw_uniforms.viewport_lod.x);
+    raster_vis_tri(setup_tri(vc, c, lid), stride);
+    raster_vis_tri(setup_tri(vc, c, lid + 64u), stride);
 }

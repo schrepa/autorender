@@ -1,13 +1,14 @@
-use std::io::Cursor;
+use std::io::Read as _;
 use std::sync::{Arc, Mutex};
 
-use engine::math;
 use engine::prelude::*;
 use engine_core::gpu_struct;
-use zune_jpeg::JpegDecoder;
+use flate2::read::DeflateDecoder;
 
 pub const MAX_MATERIALS: usize = 32;
 pub const NO_TEX_LAYER: u32 = u32::MAX;
+pub const SPB2_MAGIC: [u8; 4] = *b"SPB2";
+pub const SPB2_VERSION: u32 = 2;
 
 gpu_struct! {
     pub struct GpuMaterialParams {
@@ -17,21 +18,63 @@ gpu_struct! {
     }
 }
 
+impl GpuMaterialParams {
+    #[must_use]
+    pub const fn fallback() -> Self {
+        Self {
+            base_color_rough: [0.24, 0.22, 0.20, 0.80],
+            emissive_metal: [0.0, 0.0, 0.0, 0.0],
+            layer_flags: [NO_TEX_LAYER, 0, 3, 0],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PbrChannel {
+    Albedo,
+    Normal,
+    Orm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PbrTier {
+    Mid,
+    Hi,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PbrHdRequest {
+    pub layer_idx: u32,
+    pub tier: PbrTier,
+    pub byte_offset: u64,
+    pub byte_len: u32,
+}
+
+pub struct PbrMipUpload {
+    pub channel: PbrChannel,
+    pub layer_idx: u32,
+    pub mip_level: u32,
+    pub dim: u32,
+    pub bc_bytes: Vec<u8>,
+}
+
 pub struct PbrUploadQueue {
     pub albedo_dim: u32,
-    pub detail_dim: u32,
+    pub normal_dim: u32,
+    pub orm_dim: u32,
     pub layer_count: u32,
-    pub pending_layers: Vec<DecodedLayer>,
+    pub pending_mips: Vec<PbrMipUpload>,
     pub dirty_materials: Option<Vec<GpuMaterialParams>>,
 }
 
 impl Default for PbrUploadQueue {
     fn default() -> Self {
         Self {
-            albedo_dim: 2,
-            detail_dim: 2,
+            albedo_dim: 4,
+            normal_dim: 4,
+            orm_dim: 4,
             layer_count: 2,
-            pending_layers: Vec::new(),
+            pending_mips: Vec::new(),
             dirty_materials: Some(vec![GpuMaterialParams::fallback(); MAX_MATERIALS]),
         }
     }
@@ -40,257 +83,79 @@ impl Default for PbrUploadQueue {
 #[derive(Resource, Clone, Default)]
 pub struct PbrUploadBridge(pub Arc<Mutex<PbrUploadQueue>>);
 
-impl GpuMaterialParams {
-    #[must_use]
-    pub const fn fallback() -> Self {
-        Self {
-            base_color_rough: [0.24, 0.22, 0.20, 0.80],
-            emissive_metal: [0.0, 0.0, 0.0, 0.0],
-            layer_flags: [NO_TEX_LAYER, 0, 0, 0],
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
-struct LayerBlobs {
+struct BaseLayerSpan {
     bc_off: usize,
     bc_len: usize,
     nm_off: usize,
     nm_len: usize,
-    mr_off: usize,
-    mr_len: usize,
+    orm_off: usize,
+    orm_len: usize,
 }
 
-pub struct DecodedMip {
-    pub dim: u32,
-    pub rgba: Vec<u8>,
-}
-
-pub struct DecodedLayer {
-    pub layer_idx: u32,
-    pub albedo_mips: Vec<DecodedMip>,
-    pub normal_mips: Vec<DecodedMip>,
-    pub orm_mips: Vec<DecodedMip>,
+#[derive(Clone, Copy)]
+struct HdLayerSpan {
+    mid_off: u64,
+    mid_len: u32,
+    hi_off: u64,
+    hi_len: u32,
 }
 
 #[derive(Resource)]
 pub struct PbrTexturePack {
-    raw_bytes: Option<Vec<u8>>,
+    base_bytes: Option<Vec<u8>>,
     pub materials: Vec<GpuMaterialParams>,
     target_layers: Vec<u32>,
-    layer_blobs: Vec<LayerBlobs>,
+    base_spans: Vec<BaseLayerSpan>,
+    hd_spans: Vec<HdLayerSpan>,
     pub albedo_dim: u32,
-    pub detail_dim: u32,
+    pub normal_dim: u32,
+    pub orm_dim: u32,
+    pub base_dim: u32,
     pub layer_count: u32,
-    next_layer: usize,
+    next_base_layer: usize,
+    hd_order: Vec<usize>,
+    next_mid_req: usize,
+    next_hi_req: usize,
+    retry_hd: Vec<PbrHdRequest>,
+    hd_failures: Vec<u8>,
+    pending_uploads: Vec<PbrMipUpload>,
     pub materials_dirty: bool,
     pub pack_loaded: bool,
-    pub uploaded_layers: u32,
+    pub base_done: bool,
+    pub uploaded_base_layers: u32,
+    pub uploaded_mid_layers: u32,
+    pub uploaded_hi_layers: u32,
 }
 
 impl Default for PbrTexturePack {
     fn default() -> Self {
         Self {
-            raw_bytes: None,
+            base_bytes: None,
             materials: vec![GpuMaterialParams::fallback(); MAX_MATERIALS],
             target_layers: vec![NO_TEX_LAYER; MAX_MATERIALS],
-            layer_blobs: Vec::new(),
-            albedo_dim: 2,
-            detail_dim: 2,
+            base_spans: Vec::new(),
+            hd_spans: Vec::new(),
+            albedo_dim: 4,
+            normal_dim: 4,
+            orm_dim: 4,
+            base_dim: 4,
             layer_count: 2,
-            next_layer: 0,
+            next_base_layer: 0,
+            hd_order: Vec::new(),
+            next_mid_req: 0,
+            next_hi_req: 0,
+            retry_hd: Vec::new(),
+            hd_failures: Vec::new(),
+            pending_uploads: Vec::new(),
             materials_dirty: true,
             pack_loaded: false,
-            uploaded_layers: 0,
+            base_done: false,
+            uploaded_base_layers: 0,
+            uploaded_mid_layers: 0,
+            uploaded_hi_layers: 0,
         }
     }
-}
-
-fn read_u32_le(bytes: &[u8], off: usize) -> Option<u32> {
-    let slice: [u8; 4] = bytes.get(off..off + 4)?.try_into().ok()?;
-    Some(u32::from_le_bytes(slice))
-}
-
-fn read_f32_le(bytes: &[u8], off: usize) -> Option<f32> {
-    Some(f32::from_bits(read_u32_le(bytes, off)?))
-}
-
-fn srgb_to_linear_u8(v: u8) -> f32 {
-    let x = f32::from(v) * (1.0 / 255.0);
-    if x <= 0.04045 {
-        x * (1.0 / 12.92)
-    } else {
-        ((x + 0.055) * (1.0 / 1.055)).powf(2.4)
-    }
-}
-
-fn linear_to_srgb_u8(x: f32) -> u8 {
-    let c = math::clamp(x, 0.0, 1.0);
-    let s = if c <= 0.003_130_8 {
-        c * 12.92
-    } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
-    };
-    (math::clamp(s, 0.0, 1.0) * 255.0 + 0.5) as u8
-}
-
-fn decode_jpeg_rgba(slice: &[u8], expected_dim: u32) -> Option<Vec<u8>> {
-    let mut decoder = JpegDecoder::new(Cursor::new(slice));
-    let rgb = decoder.decode().ok()?;
-    let info = decoder.info()?;
-    let w = u32::from(info.width);
-    let h = u32::from(info.height);
-    if w != expected_dim || h != expected_dim {
-        return None;
-    }
-    let px = (w as usize) * (h as usize);
-    let mut rgba = vec![255_u8; px * 4];
-    if rgb.len() == px * 3 {
-        for i in 0..px {
-            rgba[i * 4] = rgb[i * 3];
-            rgba[i * 4 + 1] = rgb[i * 3 + 1];
-            rgba[i * 4 + 2] = rgb[i * 3 + 2];
-        }
-    } else if rgb.len() == px {
-        for i in 0..px {
-            let v = rgb[i];
-            rgba[i * 4] = v;
-            rgba[i * 4 + 1] = v;
-            rgba[i * 4 + 2] = v;
-        }
-    } else if rgb.len() == px * 4 {
-        rgba.copy_from_slice(&rgb);
-    } else {
-        return None;
-    }
-    Some(rgba)
-}
-
-fn downsample_srgb(src: &[u8], src_dim: u32, lut: &[f32; 256]) -> Vec<u8> {
-    let dst_dim = (src_dim / 2).max(1) as usize;
-    let sw = src_dim as usize;
-    let mut dst = vec![255_u8; dst_dim * dst_dim * 4];
-    for y in 0..dst_dim {
-        let sy = (y * 2).min(sw - 1);
-        let sy1 = (sy + 1).min(sw - 1);
-        for x in 0..dst_dim {
-            let sx = (x * 2).min(sw - 1);
-            let sx1 = (sx + 1).min(sw - 1);
-            let i00 = (sy * sw + sx) * 4;
-            let i10 = (sy * sw + sx1) * 4;
-            let i01 = (sy1 * sw + sx) * 4;
-            let i11 = (sy1 * sw + sx1) * 4;
-            let o = (y * dst_dim + x) * 4;
-            for c in 0..3 {
-                let avg = 0.25
-                    * (lut[usize::from(src[i00 + c])]
-                        + lut[usize::from(src[i10 + c])]
-                        + lut[usize::from(src[i01 + c])]
-                        + lut[usize::from(src[i11 + c])]);
-                dst[o + c] = linear_to_srgb_u8(avg);
-            }
-        }
-    }
-    dst
-}
-
-fn downsample_normal(src: &[u8], src_dim: u32) -> Vec<u8> {
-    let dst_dim = (src_dim / 2).max(1) as usize;
-    let sw = src_dim as usize;
-    let mut dst = vec![255_u8; dst_dim * dst_dim * 4];
-    for y in 0..dst_dim {
-        let sy = (y * 2).min(sw - 1);
-        let sy1 = (sy + 1).min(sw - 1);
-        for x in 0..dst_dim {
-            let sx = (x * 2).min(sw - 1);
-            let sx1 = (sx + 1).min(sw - 1);
-            let idxs = [
-                (sy * sw + sx) * 4,
-                (sy * sw + sx1) * 4,
-                (sy1 * sw + sx) * 4,
-                (sy1 * sw + sx1) * 4,
-            ];
-            let mut nx = 0.0_f32;
-            let mut ny = 0.0_f32;
-            let mut nz = 0.0_f32;
-            for i in idxs {
-                nx += f32::from(src[i]) * (2.0 / 255.0) - 1.0;
-                ny += f32::from(src[i + 1]) * (2.0 / 255.0) - 1.0;
-                nz += f32::from(src[i + 2]) * (2.0 / 255.0) - 1.0;
-            }
-            let l2 = nx * nx + ny * ny + nz * nz;
-            let (ux, uy, uz) = if l2 > 1.0e-6 {
-                let inv = 1.0 / l2.sqrt();
-                (nx * inv, ny * inv, nz * inv)
-            } else {
-                (0.0, 0.0, 1.0)
-            };
-            let o = (y * dst_dim + x) * 4;
-            dst[o] = (math::clamp(ux * 0.5 + 0.5, 0.0, 1.0) * 255.0 + 0.5) as u8;
-            dst[o + 1] = (math::clamp(uy * 0.5 + 0.5, 0.0, 1.0) * 255.0 + 0.5) as u8;
-            dst[o + 2] = (math::clamp(uz * 0.5 + 0.5, 0.0, 1.0) * 255.0 + 0.5) as u8;
-        }
-    }
-    dst
-}
-
-fn downsample_linear(src: &[u8], src_dim: u32) -> Vec<u8> {
-    let dst_dim = (src_dim / 2).max(1) as usize;
-    let sw = src_dim as usize;
-    let mut dst = vec![255_u8; dst_dim * dst_dim * 4];
-    for y in 0..dst_dim {
-        let sy = (y * 2).min(sw - 1);
-        let sy1 = (sy + 1).min(sw - 1);
-        for x in 0..dst_dim {
-            let sx = (x * 2).min(sw - 1);
-            let sx1 = (sx + 1).min(sw - 1);
-            let i00 = (sy * sw + sx) * 4;
-            let i10 = (sy * sw + sx1) * 4;
-            let i01 = (sy1 * sw + sx) * 4;
-            let i11 = (sy1 * sw + sx1) * 4;
-            let o = (y * dst_dim + x) * 4;
-            for c in 0..3 {
-                let sum = u32::from(src[i00 + c])
-                    + u32::from(src[i10 + c])
-                    + u32::from(src[i01 + c])
-                    + u32::from(src[i11 + c]);
-                dst[o + c] = ((sum + 2) >> 2) as u8;
-            }
-        }
-    }
-    dst
-}
-
-fn build_mips(base: Vec<u8>, base_dim: u32, mode: u8) -> Vec<DecodedMip> {
-    let levels = mip_count_for(base_dim) as usize;
-    let mut out = Vec::with_capacity(levels);
-    let mut lut = [0.0_f32; 256];
-    if mode == 1 {
-        for (i, slot) in lut.iter_mut().enumerate() {
-            *slot = srgb_to_linear_u8(i as u8);
-        }
-    }
-    out.push(DecodedMip {
-        dim: base_dim,
-        rgba: base,
-    });
-    let mut cur_dim = base_dim;
-    while cur_dim > 1 {
-        let next = {
-            let prev = &out[out.len() - 1].rgba;
-            match mode {
-                1 => downsample_srgb(prev, cur_dim, &lut),
-                2 => downsample_normal(prev, cur_dim),
-                _ => downsample_linear(prev, cur_dim),
-            }
-        };
-        cur_dim = (cur_dim / 2).max(1);
-        out.push(DecodedMip {
-            dim: cur_dim,
-            rgba: next,
-        });
-    }
-    out
 }
 
 #[must_use]
@@ -302,163 +167,723 @@ pub fn mip_count_for(dim: u32) -> u32 {
     }
 }
 
+#[must_use]
+pub fn bc_level_bytes(dim: u32) -> usize {
+    let blocks = (dim.max(1) as usize).div_ceil(4);
+    blocks * blocks * 16
+}
+
+fn read_u32_le(bytes: &[u8], off: usize) -> Option<u32> {
+    let slice: [u8; 4] = bytes.get(off..off + 4)?.try_into().ok()?;
+    Some(u32::from_le_bytes(slice))
+}
+
+fn read_u64_le(bytes: &[u8], off: usize) -> Option<u64> {
+    let slice: [u8; 8] = bytes.get(off..off + 8)?.try_into().ok()?;
+    Some(u64::from_le_bytes(slice))
+}
+
+fn read_f32_le(bytes: &[u8], off: usize) -> Option<f32> {
+    Some(f32::from_bits(read_u32_le(bytes, off)?))
+}
+
+fn inflate_raw(slice: &[u8], expected_len: usize) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(expected_len);
+    let mut dec = DeflateDecoder::new(slice);
+    dec.read_to_end(&mut out).ok()?;
+    if out.len() != expected_len {
+        return None;
+    }
+    Some(out)
+}
+
+fn tail_total_bytes(base_dim: u32) -> usize {
+    let mut sum = 0_usize;
+    let mut d = base_dim.max(1);
+    loop {
+        sum += bc_level_bytes(d);
+        if d <= 1 {
+            break;
+        }
+        d /= 2;
+    }
+    sum
+}
+
+fn split_tail_mips(
+    raw: &[u8],
+    channel: PbrChannel,
+    layer_idx: u32,
+    full_dim: u32,
+    base_dim: u32,
+    out: &mut Vec<PbrMipUpload>,
+) -> bool {
+    let start_mip = mip_count_for(full_dim).saturating_sub(mip_count_for(base_dim));
+    let mut cursor = 0_usize;
+    let mut d = base_dim.max(1);
+    let mut mip = start_mip;
+    loop {
+        let len = bc_level_bytes(d);
+        let Some(slice) = raw.get(cursor..cursor + len) else {
+            return false;
+        };
+        out.push(PbrMipUpload {
+            channel,
+            layer_idx,
+            mip_level: mip,
+            dim: d,
+            bc_bytes: slice.to_vec(),
+        });
+        cursor += len;
+        if d <= 1 {
+            break;
+        }
+        d /= 2;
+        mip += 1;
+    }
+    cursor == raw.len()
+}
+
+fn parse_materials(
+    bytes: &[u8],
+    mat_count: usize,
+) -> Option<(Vec<GpuMaterialParams>, Vec<u32>)> {
+    let mut mats = vec![GpuMaterialParams::fallback(); MAX_MATERIALS];
+    let mut targets = vec![NO_TEX_LAYER; MAX_MATERIALS];
+    for i in 0..mat_count {
+        let off = 32 + i * 48;
+        let base_color_rough = [
+            read_f32_le(bytes, off)?,
+            read_f32_le(bytes, off + 4)?,
+            read_f32_le(bytes, off + 8)?,
+            read_f32_le(bytes, off + 12)?,
+        ];
+        let emissive_metal = [
+            read_f32_le(bytes, off + 16)?,
+            read_f32_le(bytes, off + 20)?,
+            read_f32_le(bytes, off + 24)?,
+            read_f32_le(bytes, off + 28)?,
+        ];
+        let layer = read_u32_le(bytes, off + 32)?;
+        let flags = read_u32_le(bytes, off + 36)?;
+        let min_mip = read_u32_le(bytes, off + 40)?;
+        targets[i] = layer;
+        mats[i] = GpuMaterialParams {
+            base_color_rough,
+            emissive_metal,
+            layer_flags: [NO_TEX_LAYER, flags, min_mip, 0],
+        };
+    }
+    Some((mats, targets))
+}
+
+fn build_hd_layer_order(
+    layer_count: usize,
+    materials: &[GpuMaterialParams],
+    targets: &[u32],
+) -> Vec<usize> {
+    let mut is_curtain = vec![false; layer_count];
+    let mut is_hero = vec![false; layer_count];
+    for (mat, &target) in materials.iter().zip(targets.iter()) {
+        let idx = target as usize;
+        if idx < layer_count {
+            let flags = mat.layer_flags[1];
+            if (flags & 2) != 0 {
+                is_curtain[idx] = true;
+            }
+            if (flags & 6) != 0 {
+                is_hero[idx] = true;
+            }
+        }
+    }
+    let mut order = Vec::with_capacity(layer_count);
+    for (idx, &curtain) in is_curtain.iter().enumerate() {
+        if curtain {
+            order.push(idx);
+        }
+    }
+    for idx in 0..layer_count {
+        if !is_curtain[idx] && (is_hero[idx] || idx >= 24) {
+            order.push(idx);
+        }
+    }
+    for idx in 0..layer_count {
+        if !is_curtain[idx] && !is_hero[idx] && idx < 24 {
+            order.push(idx);
+        }
+    }
+    order
+}
+
 impl PbrTexturePack {
-    pub fn load_bytes(&mut self, bytes: Vec<u8>) -> bool {
-        if bytes.len() < 24 || &bytes[0..4] != b"SPBR" {
+    pub fn load_base_bytes(&mut self, bytes: Vec<u8>) -> bool {
+        if bytes.len() < 32 || bytes[0..4] != SPB2_MAGIC {
             return false;
         }
-        let Some(version) = read_u32_le(&bytes, 4) else {
+        let (
+            Some(version),
+            Some(mat_count),
+            Some(layer_count),
+            Some(albedo_dim),
+            Some(normal_dim),
+            Some(orm_dim),
+            Some(base_dim),
+        ) = (
+            read_u32_le(&bytes, 4),
+            read_u32_le(&bytes, 8),
+            read_u32_le(&bytes, 12),
+            read_u32_le(&bytes, 16),
+            read_u32_le(&bytes, 20),
+            read_u32_le(&bytes, 24),
+            read_u32_le(&bytes, 28),
+        )
+        else {
             return false;
         };
-        let Some(mat_count) = read_u32_le(&bytes, 8) else {
-            return false;
-        };
-        let Some(layer_count) = read_u32_le(&bytes, 12) else {
-            return false;
-        };
-        let Some(albedo_dim) = read_u32_le(&bytes, 16) else {
-            return false;
-        };
-        let Some(detail_dim) = read_u32_le(&bytes, 20) else {
-            return false;
-        };
-        if version != 1 || mat_count == 0 || mat_count as usize > MAX_MATERIALS || layer_count == 0 {
+        if version != SPB2_VERSION
+            || mat_count == 0
+            || mat_count as usize > MAX_MATERIALS
+            || layer_count == 0
+            || base_dim == 0
+            || albedo_dim < base_dim
+            || normal_dim < base_dim
+            || orm_dim < base_dim
+        {
             return false;
         }
-        let mat_table_end = 24 + (mat_count as usize) * 48;
-        let layer_table_end = mat_table_end + (layer_count as usize) * 24;
-        if bytes.len() < layer_table_end {
+        let mat_table_end = 32 + (mat_count as usize) * 48;
+        let base_table_end = mat_table_end + (layer_count as usize) * 24;
+        let hd_table_end = base_table_end + (layer_count as usize) * 32;
+        if bytes.len() < hd_table_end {
             return false;
         }
-        let mut mats = vec![GpuMaterialParams::fallback(); MAX_MATERIALS];
-        let mut targets = vec![NO_TEX_LAYER; MAX_MATERIALS];
-        for i in 0..mat_count as usize {
-            let off = 24 + i * 48;
-            let (Some(r), Some(g), Some(b), Some(rough)) = (
-                read_f32_le(&bytes, off),
-                read_f32_le(&bytes, off + 4),
-                read_f32_le(&bytes, off + 8),
-                read_f32_le(&bytes, off + 12),
-            ) else {
-                return false;
-            };
-            let (Some(er), Some(eg), Some(eb), Some(metal)) = (
-                read_f32_le(&bytes, off + 16),
-                read_f32_le(&bytes, off + 20),
-                read_f32_le(&bytes, off + 24),
-                read_f32_le(&bytes, off + 28),
-            ) else {
-                return false;
-            };
-            let (Some(layer), Some(flags)) =
-                (read_u32_le(&bytes, off + 32), read_u32_le(&bytes, off + 36))
-            else {
-                return false;
-            };
-            targets[i] = layer;
-            mats[i] = GpuMaterialParams {
-                base_color_rough: [r, g, b, rough],
-                emissive_metal: [er, eg, eb, metal],
-                layer_flags: [NO_TEX_LAYER, flags, 0, 0],
-            };
-        }
-        let mut blobs = Vec::with_capacity(layer_count as usize);
+        let Some((mats, targets)) = parse_materials(&bytes, mat_count as usize) else {
+            return false;
+        };
+        let mut base_spans = Vec::with_capacity(layer_count as usize);
         for i in 0..layer_count as usize {
             let off = mat_table_end + i * 24;
-            let (Some(bc_off), Some(bc_len), Some(nm_off), Some(nm_len), Some(mr_off), Some(mr_len)) = (
+            let (
+                Some(bc_off),
+                Some(bc_len),
+                Some(nm_off),
+                Some(nm_len),
+                Some(orm_off),
+                Some(orm_len),
+            ) = (
                 read_u32_le(&bytes, off),
                 read_u32_le(&bytes, off + 4),
                 read_u32_le(&bytes, off + 8),
                 read_u32_le(&bytes, off + 12),
                 read_u32_le(&bytes, off + 16),
                 read_u32_le(&bytes, off + 20),
-            ) else {
+            )
+            else {
                 return false;
             };
-            blobs.push(LayerBlobs {
+            base_spans.push(BaseLayerSpan {
                 bc_off: bc_off as usize,
                 bc_len: bc_len as usize,
                 nm_off: nm_off as usize,
                 nm_len: nm_len as usize,
-                mr_off: mr_off as usize,
-                mr_len: mr_len as usize,
+                orm_off: orm_off as usize,
+                orm_len: orm_len as usize,
             });
         }
-        self.raw_bytes = Some(bytes);
+        let mut hd_spans = Vec::with_capacity(layer_count as usize);
+        for i in 0..layer_count as usize {
+            let off = base_table_end + i * 32;
+            let (Some(mid_off), Some(mid_len), Some(hi_off), Some(hi_len)) = (
+                read_u64_le(&bytes, off),
+                read_u32_le(&bytes, off + 8),
+                read_u64_le(&bytes, off + 16),
+                read_u32_le(&bytes, off + 24),
+            ) else {
+                return false;
+            };
+            hd_spans.push(HdLayerSpan {
+                mid_off,
+                mid_len,
+                hi_off,
+                hi_len,
+            });
+        }
+        let hd_order = build_hd_layer_order(layer_count as usize, &mats, &targets);
+        self.base_bytes = Some(bytes);
         self.materials = mats;
         self.target_layers = targets;
-        self.layer_blobs = blobs;
+        self.base_spans = base_spans;
+        self.hd_spans = hd_spans;
+        self.hd_order = hd_order;
         self.albedo_dim = albedo_dim;
-        self.detail_dim = detail_dim;
+        self.normal_dim = normal_dim;
+        self.orm_dim = orm_dim;
+        self.base_dim = base_dim;
         self.layer_count = layer_count.max(2);
-        self.next_layer = 0;
-        self.uploaded_layers = 0;
+        self.next_base_layer = 0;
+        self.next_mid_req = 0;
+        self.next_hi_req = 0;
+        self.retry_hd.clear();
+        self.hd_failures = vec![0; (layer_count as usize) * 2];
+        self.pending_uploads.clear();
+        self.uploaded_base_layers = 0;
+        self.uploaded_mid_layers = 0;
+        self.uploaded_hi_layers = 0;
         self.materials_dirty = true;
         self.pack_loaded = true;
+        self.base_done = false;
         true
     }
 
-    pub fn decode_next_layer(&mut self) -> Option<DecodedLayer> {
-        let idx = self.next_layer;
-        if idx >= self.layer_blobs.len() {
-            return None;
+    fn decode_next_base_layer(&mut self) -> bool {
+        let idx = self.next_base_layer;
+        if idx >= self.base_spans.len() {
+            self.base_done = true;
+            self.base_bytes = None;
+            return false;
         }
-        let blob = self.layer_blobs[idx];
-        let raw = self.raw_bytes.as_deref()?;
-        let bc_slice = raw.get(blob.bc_off..blob.bc_off + blob.bc_len)?;
-        let nm_slice = raw.get(blob.nm_off..blob.nm_off + blob.nm_len)?;
-        let mr_slice = raw.get(blob.mr_off..blob.mr_off + blob.mr_len)?;
-        let bc_rgba = decode_jpeg_rgba(bc_slice, self.albedo_dim)?;
-        let nm_rgba = decode_jpeg_rgba(nm_slice, self.detail_dim)?;
-        let mr_rgba = decode_jpeg_rgba(mr_slice, self.detail_dim)?;
-        let albedo_mips = build_mips(bc_rgba, self.albedo_dim, 1);
-        let normal_mips = build_mips(nm_rgba, self.detail_dim, 2);
-        let orm_mips = build_mips(mr_rgba, self.detail_dim, 0);
-
-        self.next_layer = idx + 1;
-        self.uploaded_layers = self.uploaded_layers.saturating_add(1);
+        let span = self.base_spans[idx];
+        let Some(raw) = self.base_bytes.as_deref() else {
+            return false;
+        };
+        let expected = tail_total_bytes(self.base_dim);
+        let (Some(bc_raw), Some(nm_raw), Some(orm_raw)) = (
+            raw.get(span.bc_off..span.bc_off + span.bc_len)
+                .and_then(|s| inflate_raw(s, expected)),
+            raw.get(span.nm_off..span.nm_off + span.nm_len)
+                .and_then(|s| inflate_raw(s, expected)),
+            raw.get(span.orm_off..span.orm_off + span.orm_len)
+                .and_then(|s| inflate_raw(s, expected)),
+        ) else {
+            self.next_base_layer = idx + 1;
+            return true;
+        };
         let layer_u32 = idx as u32;
-        for (mat, &target) in self.materials.iter_mut().zip(self.target_layers.iter()) {
-            if target == layer_u32 {
-                mat.layer_flags[0] = layer_u32;
-                self.materials_dirty = true;
+        let ok = split_tail_mips(
+            &bc_raw,
+            PbrChannel::Albedo,
+            layer_u32,
+            self.albedo_dim,
+            self.base_dim,
+            &mut self.pending_uploads,
+        ) && split_tail_mips(
+            &nm_raw,
+            PbrChannel::Normal,
+            layer_u32,
+            self.normal_dim,
+            self.base_dim,
+            &mut self.pending_uploads,
+        ) && split_tail_mips(
+            &orm_raw,
+            PbrChannel::Orm,
+            layer_u32,
+            self.orm_dim,
+            self.base_dim,
+            &mut self.pending_uploads,
+        );
+        self.next_base_layer = idx + 1;
+        if ok {
+            self.uploaded_base_layers = self.uploaded_base_layers.saturating_add(1);
+            let base_mip = mip_count_for(self.albedo_dim).saturating_sub(mip_count_for(self.base_dim));
+            for (mat, &target) in self.materials.iter_mut().zip(self.target_layers.iter()) {
+                if target == layer_u32 {
+                    mat.layer_flags[0] = layer_u32;
+                    mat.layer_flags[2] = mat.layer_flags[2].min(base_mip);
+                    self.materials_dirty = true;
+                }
             }
         }
-        if self.next_layer >= self.layer_blobs.len() {
-            self.raw_bytes = None;
+        if self.next_base_layer >= self.base_spans.len() {
+            self.base_done = true;
+            self.base_bytes = None;
         }
-        Some(DecodedLayer {
-            layer_idx: layer_u32,
-            albedo_mips,
-            normal_mips,
-            orm_mips,
-        })
+        true
     }
 
-    pub fn pump_uploads(&mut self, bridge: &PbrUploadBridge, max_layers: usize) {
+    pub fn fail_hd_request(&mut self, req: PbrHdRequest) {
+        let slot = (req.layer_idx as usize) * 2 + usize::from(req.tier == PbrTier::Hi);
+        if let Some(count) = self.hd_failures.get_mut(slot) {
+            *count = count.saturating_add(1);
+            if *count <= 3 {
+                self.retry_hd.push(req);
+            }
+        }
+    }
+
+    pub fn take_hd_requests(&mut self, max_count: usize) -> Vec<PbrHdRequest> {
+        if !self.pack_loaded || !self.base_done || max_count == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(max_count);
+        let take_retry = max_count.min(self.retry_hd.len());
+        out.extend(self.retry_hd.drain(..take_retry));
+        while out.len() < max_count && self.next_mid_req < self.hd_order.len() {
+            let idx = self.hd_order[self.next_mid_req];
+            self.next_mid_req += 1;
+            let span = self.hd_spans[idx];
+            if span.mid_len > 0 {
+                out.push(PbrHdRequest {
+                    layer_idx: idx as u32,
+                    tier: PbrTier::Mid,
+                    byte_offset: span.mid_off,
+                    byte_len: span.mid_len,
+                });
+            }
+        }
+        if self.next_mid_req >= self.hd_order.len() {
+            while out.len() < max_count && self.next_hi_req < self.hd_order.len() {
+                let idx = self.hd_order[self.next_hi_req];
+                self.next_hi_req += 1;
+                let span = self.hd_spans[idx];
+                if span.hi_len > 0 {
+                    out.push(PbrHdRequest {
+                        layer_idx: idx as u32,
+                        tier: PbrTier::Hi,
+                        byte_offset: span.hi_off,
+                        byte_len: span.hi_len,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    pub fn deliver_hd_blob(&mut self, req: PbrHdRequest, compressed: &[u8]) -> bool {
+        let d512 = self.albedo_dim / 2;
+        let d256 = self.albedo_dim / 4;
+        let s512 = bc_level_bytes(d512);
+        let s256 = bc_level_bytes(d256);
+        let s1024 = bc_level_bytes(self.albedo_dim);
+        match req.tier {
+            PbrTier::Mid => {
+                let expected = (s512 + s256) * 3;
+                let Some(raw) = inflate_raw(compressed, expected) else {
+                    return false;
+                };
+                let mut cur = 0_usize;
+                let specs = [
+                    (PbrChannel::Albedo, 1_u32, d512, s512),
+                    (PbrChannel::Albedo, 2_u32, d256, s256),
+                    (PbrChannel::Normal, 1_u32, d512, s512),
+                    (PbrChannel::Normal, 2_u32, d256, s256),
+                    (PbrChannel::Orm, 0_u32, self.orm_dim, s512),
+                    (PbrChannel::Orm, 1_u32, self.orm_dim / 2, s256),
+                ];
+                for (channel, mip_level, dim, len) in specs {
+                    self.pending_uploads.push(PbrMipUpload {
+                        channel,
+                        layer_idx: req.layer_idx,
+                        mip_level,
+                        dim,
+                        bc_bytes: raw[cur..cur + len].to_vec(),
+                    });
+                    cur += len;
+                }
+                self.uploaded_mid_layers = self.uploaded_mid_layers.saturating_add(1);
+                for (mat, &target) in self.materials.iter_mut().zip(self.target_layers.iter()) {
+                    if target == req.layer_idx {
+                        mat.layer_flags[2] = mat.layer_flags[2].min(1);
+                        self.materials_dirty = true;
+                    }
+                }
+                true
+            }
+            PbrTier::Hi => {
+                let expected = s1024 * 2;
+                let Some(raw) = inflate_raw(compressed, expected) else {
+                    return false;
+                };
+                self.pending_uploads.push(PbrMipUpload {
+                    channel: PbrChannel::Albedo,
+                    layer_idx: req.layer_idx,
+                    mip_level: 0,
+                    dim: self.albedo_dim,
+                    bc_bytes: raw[..s1024].to_vec(),
+                });
+                self.pending_uploads.push(PbrMipUpload {
+                    channel: PbrChannel::Normal,
+                    layer_idx: req.layer_idx,
+                    mip_level: 0,
+                    dim: self.normal_dim,
+                    bc_bytes: raw[s1024..s1024 * 2].to_vec(),
+                });
+                self.uploaded_hi_layers = self.uploaded_hi_layers.saturating_add(1);
+                for (mat, &target) in self.materials.iter_mut().zip(self.target_layers.iter()) {
+                    if target == req.layer_idx {
+                        mat.layer_flags[2] = 0;
+                        self.materials_dirty = true;
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    pub fn pump_uploads(&mut self, bridge: &PbrUploadBridge, max_base_layers: usize) {
         if !self.pack_loaded {
             return;
         }
-        let mut decoded = Vec::new();
-        for _ in 0..max_layers {
-            if let Some(layer) = self.decode_next_layer() {
-                decoded.push(layer);
-            } else {
+        for _ in 0..max_base_layers {
+            if !self.decode_next_base_layer() {
                 break;
             }
         }
-        if decoded.is_empty() && !self.materials_dirty {
+        if self.pending_uploads.is_empty() && !self.materials_dirty {
             return;
         }
         if let Ok(mut queue) = bridge.0.lock() {
             queue.albedo_dim = self.albedo_dim;
-            queue.detail_dim = self.detail_dim;
+            queue.normal_dim = self.normal_dim;
+            queue.orm_dim = self.orm_dim;
             queue.layer_count = self.layer_count;
-            queue.pending_layers.extend(decoded);
+            queue.pending_mips.append(&mut self.pending_uploads);
             if self.materials_dirty {
                 queue.dirty_materials = Some(self.materials.clone());
                 self.materials_dirty = false;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    use flate2::Compression;
+    use flate2::write::DeflateEncoder;
+
+    use super::*;
+
+    fn deflate(data: &[u8]) -> Vec<u8> {
+        let mut enc = DeflateEncoder::new(Vec::new(), Compression::fast());
+        let _ = enc.write_all(data);
+        enc.finish().unwrap_or_default()
+    }
+
+    fn build_dummy_spb2() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let base_tail = vec![0_u8; tail_total_bytes(4)];
+        let bc_b = deflate(&base_tail);
+        let nm_b = deflate(&base_tail);
+        let orm_b = deflate(&base_tail);
+        let mid_raw = vec![0_u8; (bc_level_bytes(16) + bc_level_bytes(8)) * 3];
+        let mid_blob = deflate(&mid_raw);
+        let hi_raw = vec![0_u8; bc_level_bytes(32) * 2];
+        let hi_blob = deflate(&hi_raw);
+
+        let payload_start = 32 + 48 + 24 + 32;
+        let mut base = Vec::new();
+        base.extend_from_slice(&SPB2_MAGIC);
+        for w in [SPB2_VERSION, 1_u32, 1, 32, 32, 16, 4] {
+            base.extend_from_slice(&w.to_le_bytes());
+        }
+        for f in [0.5_f32, 0.5, 0.5, 0.8, 0.0, 0.0, 0.0, 0.0] {
+            base.extend_from_slice(&f.to_le_bytes());
+        }
+        for u in [0_u32, 0, 3, 0] {
+            base.extend_from_slice(&u.to_le_bytes());
+        }
+        let bc_off = payload_start as u32;
+        let nm_off = bc_off + bc_b.len() as u32;
+        let orm_off = nm_off + nm_b.len() as u32;
+        for w in [
+            bc_off,
+            bc_b.len() as u32,
+            nm_off,
+            nm_b.len() as u32,
+            orm_off,
+            orm_b.len() as u32,
+        ] {
+            base.extend_from_slice(&w.to_le_bytes());
+        }
+        base.extend_from_slice(&0_u64.to_le_bytes());
+        base.extend_from_slice(&(mid_blob.len() as u32).to_le_bytes());
+        base.extend_from_slice(&0_u32.to_le_bytes());
+        base.extend_from_slice(&(mid_blob.len() as u64).to_le_bytes());
+        base.extend_from_slice(&(hi_blob.len() as u32).to_le_bytes());
+        base.extend_from_slice(&0_u32.to_le_bytes());
+        base.extend_from_slice(&bc_b);
+        base.extend_from_slice(&nm_b);
+        base.extend_from_slice(&orm_b);
+        (base, mid_blob, hi_blob)
+    }
+
+    #[test]
+    fn spb2_progressive_tiers_update_min_resident_mip() {
+        let mut pack = PbrTexturePack::default();
+        assert!(!pack.load_base_bytes(b"BAD".to_vec()), "bad magic must fail");
+        let (base, mid_blob, hi_blob) = build_dummy_spb2();
+        assert!(pack.load_base_bytes(base), "valid SPB2 base must load");
+        let bridge = PbrUploadBridge::default();
+        pack.pump_uploads(&bridge, 4);
+        assert!(pack.base_done, "single base layer must complete");
+        assert_eq!(pack.materials[0].layer_flags[0], 0, "layer must bind");
+        assert_eq!(pack.materials[0].layer_flags[2], 3, "base mip must be 3");
+
+        let reqs = pack.take_hd_requests(4);
+        assert_eq!(reqs.len(), 2, "must emit mid then hi request");
+        assert_eq!(reqs[0].tier, PbrTier::Mid, "mid tier must come first");
+        assert_eq!(reqs[1].tier, PbrTier::Hi, "hi tier must come second");
+        assert!(
+            pack.deliver_hd_blob(reqs[0], &mid_blob),
+            "mid blob must decode cleanly"
+        );
+        assert_eq!(pack.materials[0].layer_flags[2], 1, "mid mip must drop to 1");
+        assert!(
+            pack.deliver_hd_blob(reqs[1], &hi_blob),
+            "hi blob must decode cleanly"
+        );
+        assert_eq!(pack.materials[0].layer_flags[2], 0, "hi mip must drop to 0");
+    }
+
+    #[test]
+    fn failed_hd_request_retries_up_to_limit() {
+        let mut pack = PbrTexturePack::default();
+        let (base, mid_blob, _) = build_dummy_spb2();
+        assert!(pack.load_base_bytes(base));
+        let bridge = PbrUploadBridge::default();
+        pack.pump_uploads(&bridge, 4);
+
+        let reqs = pack.take_hd_requests(1);
+        assert_eq!(reqs.len(), 1);
+        let mid_req = reqs[0];
+        assert_eq!(mid_req.tier, PbrTier::Mid);
+
+        for attempt in 1..=3 {
+            pack.fail_hd_request(mid_req);
+            let retry = pack.take_hd_requests(1);
+            assert_eq!(retry.len(), 1, "attempt {attempt} must re-queue");
+            assert_eq!(retry[0].tier, PbrTier::Mid);
+        }
+        pack.fail_hd_request(mid_req);
+        let next = pack.take_hd_requests(2);
+        assert_eq!(next.len(), 1, "4th failure must stop retrying mid");
+        assert_eq!(next[0].tier, PbrTier::Hi);
+
+        assert!(pack.deliver_hd_blob(mid_req, &mid_blob), "mid blob retry delivery must succeed");
+    }
+
+    fn build_multi_layer_spb2(layer_count: usize) -> Vec<u8> {
+        let base_tail = vec![0_u8; tail_total_bytes(4)];
+        let bc_b = deflate(&base_tail);
+        let nm_b = deflate(&base_tail);
+        let orm_b = deflate(&base_tail);
+        let mat_count = layer_count;
+        let payload_start = 32 + mat_count * 48 + layer_count * 24 + layer_count * 32;
+        let mut base = Vec::new();
+        base.extend_from_slice(&SPB2_MAGIC);
+        for w in [
+            SPB2_VERSION,
+            mat_count as u32,
+            layer_count as u32,
+            32,
+            32,
+            16,
+            4,
+        ] {
+            base.extend_from_slice(&w.to_le_bytes());
+        }
+        for i in 0..mat_count {
+            for f in [0.5_f32, 0.5, 0.5, 0.8, 0.0, 0.0, 0.0, 0.0] {
+                base.extend_from_slice(&f.to_le_bytes());
+            }
+            let flags = if (24..=26).contains(&i) {
+                3_u32
+            } else if i == 27 {
+                5_u32
+            } else {
+                0_u32
+            };
+            for u in [i as u32, flags, 3, 0] {
+                base.extend_from_slice(&u.to_le_bytes());
+            }
+        }
+        for _ in 0..layer_count {
+            let bc_off = payload_start as u32;
+            let nm_off = bc_off + bc_b.len() as u32;
+            let orm_off = nm_off + nm_b.len() as u32;
+            for w in [
+                bc_off,
+                bc_b.len() as u32,
+                nm_off,
+                nm_b.len() as u32,
+                orm_off,
+                orm_b.len() as u32,
+            ] {
+                base.extend_from_slice(&w.to_le_bytes());
+            }
+        }
+        for i in 0..layer_count {
+            let mid_off = (i as u64) * 2048;
+            let hi_off = mid_off + 1024;
+            base.extend_from_slice(&mid_off.to_le_bytes());
+            base.extend_from_slice(&512_u32.to_le_bytes());
+            base.extend_from_slice(&0_u32.to_le_bytes());
+            base.extend_from_slice(&hi_off.to_le_bytes());
+            base.extend_from_slice(&1024_u32.to_le_bytes());
+            base.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        base.extend_from_slice(&bc_b);
+        base.extend_from_slice(&nm_b);
+        base.extend_from_slice(&orm_b);
+        base
+    }
+
+    #[test]
+    fn pbr_hd_requests_prioritize_curtain_layers_before_early_layers() {
+        let mut pack = PbrTexturePack::default();
+        assert!(
+            pack.load_base_bytes(build_multi_layer_spb2(28)),
+            "28-layer SPB2 base must load"
+        );
+        let bridge = PbrUploadBridge::default();
+        pack.pump_uploads(&bridge, 32);
+        assert!(pack.base_done, "all 28 base layers must complete");
+
+        let hero_mid = pack.take_hd_requests(4);
+        let hero_mid_layers: Vec<u32> = hero_mid.iter().map(|r| r.layer_idx).collect();
+        assert_eq!(
+            hero_mid_layers,
+            vec![24, 25, 26, 27],
+            "mid tier must fetch curtain layers 24..26 and ivy leaf 27 first"
+        );
+        assert!(
+            hero_mid.iter().all(|r| r.tier == PbrTier::Mid),
+            "first batch must all be Mid tier"
+        );
+
+        let rest_mid = pack.take_hd_requests(24);
+        let rest_mid_layers: Vec<u32> = rest_mid.iter().map(|r| r.layer_idx).collect();
+        let expected_early: Vec<u32> = (0..24).collect();
+        assert_eq!(
+            rest_mid_layers, expected_early,
+            "mid tier must fetch layers 0..24 after hero layers"
+        );
+        assert!(
+            rest_mid.iter().all(|r| r.tier == PbrTier::Mid),
+            "remaining mid batch must all be Mid tier"
+        );
+
+        let hero_hi = pack.take_hd_requests(4);
+        let hero_hi_layers: Vec<u32> = hero_hi.iter().map(|r| r.layer_idx).collect();
+        assert_eq!(
+            hero_hi_layers,
+            vec![24, 25, 26, 27],
+            "hi tier must also fetch curtain layers 24..26 and ivy leaf 27 first"
+        );
+        assert!(
+            hero_hi.iter().all(|r| r.tier == PbrTier::Hi),
+            "first hi batch must all be Hi tier"
+        );
+
+        let rest_hi = pack.take_hd_requests(24);
+        let rest_hi_layers: Vec<u32> = rest_hi.iter().map(|r| r.layer_idx).collect();
+        assert_eq!(
+            rest_hi_layers, expected_early,
+            "hi tier must fetch layers 0..24 after hero layers"
+        );
+        assert!(
+            pack.take_hd_requests(4).is_empty(),
+            "queue must be empty after all 28 mid and hi requests"
+        );
     }
 }

@@ -1,10 +1,11 @@
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use engine_math::max;
 use glam::Vec3;
 
 use crate::bounds::merge_spheres;
-use crate::format::{BVH_BRANCHING, BvhNode, ClusterHeader, NO_BVH_CHILD, NO_FALLBACK_CLUSTER};
+use crate::format::{BVH_BRANCHING, BvhNode, ClusterHeader, NO_BVH_CHILD};
 
 const MAX_LEAF_CLUSTERS: usize = 8;
 
@@ -41,12 +42,20 @@ impl BvhTree {
     }
 }
 
-fn longest_axis(indices: &[usize], headers: &[ClusterHeader]) -> usize {
+fn run_centroid(run: &[usize], headers: &[ClusterHeader]) -> Vec3 {
+    let mut sum = Vec3::ZERO;
+    for &idx in run {
+        let s = headers[idx].bound_sphere;
+        sum += Vec3::new(s[0], s[1], s[2]);
+    }
+    sum / (run.len().max(1) as f32)
+}
+
+fn longest_run_axis(run_ids: &[usize], centroids: &[Vec3]) -> usize {
     let mut min_c = Vec3::splat(f32::INFINITY);
     let mut max_c = Vec3::splat(f32::NEG_INFINITY);
-    for &idx in indices {
-        let s = headers[idx].bound_sphere;
-        let c = Vec3::new(s[0], s[1], s[2]);
+    for &rid in run_ids {
+        let c = centroids[rid];
         min_c = min_c.min(c);
         max_c = max_c.max(c);
     }
@@ -60,65 +69,75 @@ fn longest_axis(indices: &[usize], headers: &[ClusterHeader]) -> usize {
     }
 }
 
-fn split_half<'a>(
-    indices: &'a mut [usize],
-    headers: &[ClusterHeader],
+fn split_runs_half<'a>(
+    run_ids: &'a mut [usize],
+    centroids: &[Vec3],
 ) -> (&'a mut [usize], &'a mut [usize]) {
-    let axis = longest_axis(indices, headers);
-    indices.sort_unstable_by(|&a, &b| {
-        headers[a].bound_sphere[axis]
-            .total_cmp(&headers[b].bound_sphere[axis])
+    let axis = longest_run_axis(run_ids, centroids);
+    run_ids.sort_unstable_by(|&a, &b| {
+        centroids[a][axis]
+            .total_cmp(&centroids[b][axis])
             .then_with(|| a.cmp(&b))
     });
-    let mid = indices.len() / 2;
-    indices.split_at_mut(mid)
+    let mid = run_ids.len() / 2;
+    run_ids.split_at_mut(mid)
 }
 
-fn build_tier_tree(
-    indices: &mut [usize],
+fn build_tier_tree_runs(
+    run_ids: &mut [usize],
+    runs: &[Vec<usize>],
+    centroids: &[Vec3],
     headers: &[ClusterHeader],
     ordered: &mut Vec<usize>,
+    run_ranges: &mut [(u32, u32)],
 ) -> BvhTree {
-    if indices.len() <= MAX_LEAF_CLUSTERS {
-        let start = ordered.len() as u32;
-        let count = indices.len() as u32;
-        let mut spheres = Vec::with_capacity(indices.len());
+    let total_clusters: usize = run_ids.iter().map(|&rid| runs[rid].len()).sum();
+    if run_ids.len() <= 1 || total_clusters <= MAX_LEAF_CLUSTERS {
+        let leaf_start = ordered.len() as u32;
+        let mut spheres = Vec::with_capacity(total_clusters);
         let mut max_pe = 0.0_f32;
-        for &idx in indices.iter() {
-            ordered.push(idx);
-            spheres.push(headers[idx].parent_lod_sphere);
-            max_pe = max(max_pe, headers[idx].parent_error());
+        for &rid in run_ids.iter() {
+            let r_start = ordered.len() as u32;
+            for &idx in &runs[rid] {
+                ordered.push(idx);
+                spheres.push(headers[idx].parent_lod_sphere);
+                max_pe = max(max_pe, headers[idx].parent_error());
+            }
+            run_ranges[rid] = (r_start, runs[rid].len() as u32);
         }
         return BvhTree::Leaf {
-            start,
-            count,
+            start: leaf_start,
+            count: total_clusters as u32,
             sphere: merge_spheres(&spheres),
             max_parent_error: max_pe,
         };
     }
-    let (left, right) = split_half(indices, headers);
+    let (left, right) = split_runs_half(run_ids, centroids);
     let mut children = Vec::with_capacity(BVH_BRANCHING);
-    if left.len() + right.len() > MAX_LEAF_CLUSTERS * 2 {
-        let (ll, lr) = split_half(left, headers);
-        if !ll.is_empty() {
-            children.push(build_tier_tree(ll, headers, ordered));
+    if left.len() >= 2 && right.len() >= 2 && total_clusters > MAX_LEAF_CLUSTERS * 2 {
+        let (ll, lr) = split_runs_half(left, centroids);
+        for part in [ll, lr] {
+            if !part.is_empty() {
+                children.push(build_tier_tree_runs(
+                    part, runs, centroids, headers, ordered, run_ranges,
+                ));
+            }
         }
-        if !lr.is_empty() {
-            children.push(build_tier_tree(lr, headers, ordered));
-        }
-        let (rl, rr) = split_half(right, headers);
-        if !rl.is_empty() {
-            children.push(build_tier_tree(rl, headers, ordered));
-        }
-        if !rr.is_empty() {
-            children.push(build_tier_tree(rr, headers, ordered));
+        let (rl, rr) = split_runs_half(right, centroids);
+        for part in [rl, rr] {
+            if !part.is_empty() {
+                children.push(build_tier_tree_runs(
+                    part, runs, centroids, headers, ordered, run_ranges,
+                ));
+            }
         }
     } else {
-        if !left.is_empty() {
-            children.push(build_tier_tree(left, headers, ordered));
-        }
-        if !right.is_empty() {
-            children.push(build_tier_tree(right, headers, ordered));
+        for part in [left, right] {
+            if !part.is_empty() {
+                children.push(build_tier_tree_runs(
+                    part, runs, centroids, headers, ordered, run_ranges,
+                ));
+            }
         }
     }
     let child_spheres: Vec<[f32; 4]> = children.iter().map(BvhTree::sphere).collect();
@@ -205,63 +224,117 @@ fn emit_preorder(tree: &BvhTree, out: &mut Vec<BvhNode>) -> u32 {
     idx
 }
 
+fn compute_run_heights_and_root_closure(
+    runs: &[Vec<usize>],
+    headers: &[ClusterHeader],
+    parent_runs: &[Option<usize>],
+) -> (Vec<u32>, Vec<bool>) {
+    let n = runs.len();
+    let mut deps: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut root_closure = vec![false; n];
+    for (rid, run) in runs.iter().enumerate() {
+        for &ci in run {
+            if headers[ci].is_root() || headers[ci].is_pinned_coarse() {
+                root_closure[rid] = true;
+            }
+            if let Some(pr) = parent_runs[ci]
+                && pr != rid
+                && !deps[rid].contains(&pr)
+            {
+                deps[rid].push(pr);
+                children[pr].push(rid);
+            }
+        }
+    }
+    let mut stack: Vec<usize> = (0..n).filter(|&r| root_closure[r]).collect();
+    while let Some(r) = stack.pop() {
+        for &pr in &deps[r] {
+            if !root_closure[pr] {
+                root_closure[pr] = true;
+                stack.push(pr);
+            }
+        }
+    }
+    let mut height = vec![u32::MAX; n];
+    fn resolve(r: usize, children: &[Vec<usize>], height: &mut [u32]) -> u32 {
+        if height[r] != u32::MAX {
+            return height[r];
+        }
+        let mut h = 0_u32;
+        for &ch in &children[r] {
+            if ch != r {
+                h = h.max(resolve(ch, children, height) + 1);
+            }
+        }
+        height[r] = h;
+        h
+    }
+    for r in 0..n {
+        resolve(r, &children, &mut height);
+    }
+    (height, root_closure)
+}
+
 pub fn build_bvh_and_order(
     headers: &mut Vec<ClusterHeader>,
     payloads: &mut Vec<Vec<u32>>,
-) -> Vec<BvhNode> {
+    runs: &[Vec<usize>],
+    parent_runs: &[Option<usize>],
+) -> (Vec<BvhNode>, usize) {
     if headers.is_empty() {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
-    let mut roots = Vec::new();
-    let mut pinned = Vec::new();
-    let mut by_lod: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
-    for (idx, header) in headers.iter().enumerate() {
-        if header.is_root() {
-            roots.push(idx);
-        } else if header.is_pinned_coarse() {
-            pinned.push(idx);
-        } else {
-            by_lod.entry(header.lod_level()).or_default().push(idx);
+    let centroids: Vec<Vec3> = runs.iter().map(|r| run_centroid(r, headers)).collect();
+    let (heights, root_closure) = compute_run_heights_and_root_closure(runs, headers, parent_runs);
+    let mut buckets: BTreeMap<(u8, Reverse<u32>), Vec<usize>> = BTreeMap::new();
+    for rid in 0..runs.len() {
+        if runs[rid].is_empty() {
+            continue;
         }
+        let key = if root_closure[rid] {
+            (0_u8, Reverse(heights[rid]))
+        } else {
+            (1_u8, Reverse(heights[rid]))
+        };
+        buckets.entry(key).or_default().push(rid);
     }
     let mut ordered = Vec::with_capacity(headers.len());
-    let mut tier_trees = Vec::new();
-    if !roots.is_empty() {
-        tier_trees.push(build_tier_tree(&mut roots, headers, &mut ordered));
-    }
-    if !pinned.is_empty() {
-        tier_trees.push(build_tier_tree(&mut pinned, headers, &mut ordered));
-    }
-    for (_lod, mut bucket) in by_lod.into_iter().rev() {
-        if !bucket.is_empty() {
-            tier_trees.push(build_tier_tree(&mut bucket, headers, &mut ordered));
+    let mut run_ranges = vec![(0_u32, 0_u32); runs.len()];
+    let mut tier_trees = Vec::with_capacity(buckets.len());
+    let mut root_prefix_len = 0_usize;
+    for (key, mut bucket) in buckets {
+        tier_trees.push(build_tier_tree_runs(
+            &mut bucket,
+            runs,
+            &centroids,
+            headers,
+            &mut ordered,
+            &mut run_ranges,
+        ));
+        if key.0 == 0 {
+            root_prefix_len = ordered.len();
         }
     }
     let root_tree = combine_trees(tier_trees);
     let mut bvh = Vec::new();
     emit_preorder(&root_tree, &mut bvh);
-    let mut old_to_new = vec![0_u32; headers.len()];
-    for (new_idx, &old_idx) in ordered.iter().enumerate() {
-        old_to_new[old_idx] = new_idx as u32;
-    }
     let mut new_headers = Vec::with_capacity(headers.len());
     let mut new_payloads = Vec::with_capacity(payloads.len());
     let old_payloads = std::mem::take(payloads);
     let mut payload_slots: Vec<Option<Vec<u32>>> = old_payloads.into_iter().map(Some).collect();
     for &old_idx in &ordered {
         let mut header = headers[old_idx];
-        let fb = header.streaming_meta[1];
-        if fb != NO_FALLBACK_CLUSTER {
-            header.streaming_meta[1] = old_to_new[fb as usize];
-        }
-        let fb2 = header.streaming_meta[3];
-        if fb2 != NO_FALLBACK_CLUSTER {
-            header.streaming_meta[3] = old_to_new[fb2 as usize];
+        if let Some(pr) = parent_runs[old_idx] {
+            let (start, count) = run_ranges[pr];
+            header.set_fallback(start, count);
+        } else {
+            header.set_fallback(0, 0);
         }
         new_headers.push(header);
         new_payloads.push(payload_slots[old_idx].take().unwrap_or_default());
     }
     *headers = new_headers;
     *payloads = new_payloads;
-    bvh
+    (bvh, root_prefix_len)
 }

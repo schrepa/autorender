@@ -1,5 +1,7 @@
 use super::*;
 
+type DepthAttachment = (u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>);
+
 impl Run {
     fn can_merge_open(&self, pass: u32) -> bool {
         if !self.planning.merge {
@@ -115,6 +117,29 @@ impl Run {
             .pass_sets
             .get(pass as usize)
             .map_or_else(|| Arc::from(Vec::new()), Arc::clone)
+    }
+
+    fn depth_texture_attachment(
+        &self,
+        texture: u32,
+        planned_depth: Option<(crate::graph::ResourceId, Option<Ops>)>,
+    ) -> Option<Option<DepthAttachment>> {
+        let decl = self.machine.declared.textures.get(texture as usize)?;
+        let id = self.machine.ids.textures.get(texture as usize).copied();
+        let ops = planned_depth
+            .and_then(|(known, ops)| (Some(known) == id).then_some(ops))
+            .unwrap_or(Some(Ops {
+                load: Load::Load,
+                store: true,
+            }));
+        let attached = self.machine.declared.texture_key(texture) | u64::from(ops.is_none());
+        let view = self
+            .tables
+            .textures
+            .get(texture as usize)
+            .and_then(Option::as_ref)
+            .map(|made| made.view.clone());
+        Some(view.map(|view| (attached, view, decl.format, ops)))
     }
 
     #[expect(
@@ -233,6 +258,16 @@ impl Run {
                 colors.push((key(target), view, format, carried(target, ops)));
             }
         }
+        if let Some((texture, ..)) = pass.depth_texture {
+            let Some(found) = self.depth_texture_attachment(texture, planned.depth) else {
+                return self.mismatch(pass.name);
+            };
+            if let Some(entry) = found {
+                depth = Some(entry);
+            } else if !self.recording.collecting() {
+                return false;
+            }
+        }
         let mut attachments = std::mem::take(&mut self.spare.attachments);
         attachments.clear();
         attachments.extend(
@@ -242,9 +277,16 @@ impl Run {
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
         let collecting = self.recording.collecting();
+        let depth_fmt = depth
+            .as_ref()
+            .map(|(_, _, format, _)| *format)
+            .or_else(|| {
+                pass.depth_texture
+                    .and_then(|(tex, ..)| declared.textures.get(tex as usize).map(|d| d.format))
+            });
         let layout = self.machine.layout_id(pass_layout(
             &colors,
-            depth.as_ref().map(|(_, _, format, _)| *format),
+            depth_fmt,
             (plain, main),
             collecting.then(|| self.machine.declared.target_key(Target::Canvas)),
         ));

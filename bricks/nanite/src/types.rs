@@ -2,7 +2,7 @@ use engine::prelude::*;
 use engine_core::{GpuStruct, gpu_struct};
 
 pub const MAX_HEAP_PAGES: u32 = 1024;
-pub const MAX_PHASE_CLUSTERS: u32 = 262_144;
+pub const MAX_PHASE_CLUSTERS: u32 = 131_072;
 pub const MAX_VIS_CLUSTERS: u32 = 524_288;
 pub const MAX_OCC_INSTANCES: u32 = 4096;
 pub const MAX_OCC_CLUSTERS: u32 = 262_144;
@@ -11,7 +11,7 @@ pub const BVH_QUEUE_CAP: u32 = 262_144;
 pub const CAND_CAP: u32 = 524_288;
 pub const MAX_HIZ_MIPS: usize = 11;
 pub const MAX_HIZ_DIM: u32 = 512;
-pub const SHADOW_C0_DIM: u32 = 1024;
+pub const SHADOW_C0_DIM: u32 = 2048;
 pub const SHADOW_C1_DIM: u32 = 2048;
 pub const SHADOW_LIST_CAP: u32 = 131_072;
 pub const UNMAPPED_PAGE: u32 = u32::MAX;
@@ -124,7 +124,7 @@ impl LodPreset {
             Self::Px2 => {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    3.8
+                    3.0
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -134,7 +134,7 @@ impl LodPreset {
             Self::Px4 => {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    6.5
+                    5.0
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -204,11 +204,9 @@ gpu_struct! {
     pub struct GpuClusterHeader {
         pub bound_sphere: [f32; 4],
         pub lod_sphere: [f32; 4],
-        pub aabb_min: [f32; 4],
-        pub aabb_extent: [f32; 4],
         pub parent_lod_sphere: [f32; 4],
-        pub cone_and_meta: [u32; 4],
-        pub streaming_meta: [u32; 4],
+        pub errors_and_cone: [u32; 4],
+        pub page_and_fallback: [u32; 4],
     }
 }
 
@@ -274,7 +272,7 @@ impl Default for NaniteCamera {
             cull_proj: proj,
             near_z: 0.1,
             sim_time: 0.0,
-            sun_dir: Vec3::new(-0.42029, 0.24016, -0.87560),
+            sun_dir: Vec3::new(0.28, 0.86, 0.42).normalize(),
         }
     }
 }
@@ -306,20 +304,17 @@ impl Default for NaniteConfig {
             heap_budget: HeapBudget::Mb64,
             lod_preset: LodPreset::Px2,
             freeze_culling: false,
-            hw_only: false,
-            #[cfg(target_arch = "wasm32")]
-            sw_max_px: 2.4,
-            #[cfg(not(target_arch = "wasm32"))]
+            hw_only: true,
             sw_max_px: 2.0,
             max_pages_per_frame: 48,
             shadows_enabled: true,
             render_scale: 1.0,
-            shadow_c0_half: 58.0,
-            shadow_c0_forward: 38.0,
-            shadow_c0_depth: 130.0,
-            shadow_c1_half: 340.0,
-            shadow_c1_center: Vec3::new(30.0, 8.0, -75.0),
-            shadow_c1_depth: 320.0,
+            shadow_c0_half: 14.0,
+            shadow_c0_forward: 6.0,
+            shadow_c0_depth: 48.0,
+            shadow_c1_half: 32.0,
+            shadow_c1_center: Vec3::new(1.0, 6.0, 0.0),
+            shadow_c1_depth: 64.0,
             double_sided_materials: 0,
         }
     }
@@ -333,6 +328,8 @@ pub struct NaniteTelemetry {
     pub pinned_pages: u32,
     pub budget_pages: u32,
     pub pending_fetches: u32,
+    pub pending_requests: u32,
+    pub ready_pages: u32,
     pub inst_p1_vis: u32,
     pub inst_p1_occ: u32,
     pub inst_p2_vis: u32,

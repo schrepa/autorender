@@ -3,7 +3,9 @@ import package::generated::nanite::NaniteInstance;
 import package::generated::nanite::GpuClusterHeader;
 
 const PAGE_WORDS: u32 = 16384u;
-const MAX_PHASE_CLUSTERS: u32 = 262144u;
+const CLUSTER_HEADER_WORDS: u32 = 4u;
+const CLUSTER_DRAW_VERTS: u32 = 384u;
+const MAX_PHASE_CLUSTERS: u32 = 131072u;
 const MAX_VIS_CLUSTERS: u32 = 524288u;
 const MAX_OCC_INSTANCES: u32 = 4096u;
 const MAX_OCC_CLUSTERS: u32 = 262144u;
@@ -12,9 +14,8 @@ const BVH_QUEUE_CAP: u32 = 262144u;
 const CAND_CAP: u32 = 524288u;
 const SW_DISPATCH_STRIDE: u32 = 16384u;
 const UNMAPPED_PAGE: u32 = 0xFFFFFFFFu;
-const NO_FALLBACK: u32 = 0xFFFFFFFFu;
 const NO_CHILD: u32 = 0xFFFFFFFFu;
-const SHADOW_C0_DIM: u32 = 1024u;
+const SHADOW_C0_DIM: u32 = 2048u;
 const SHADOW_C1_DIM: u32 = 2048u;
 const SHADOW_LIST_CAP: u32 = 131072u;
 
@@ -27,18 +28,17 @@ fn inst_to_world(inst: NaniteInstance, p: vec3<f32>) -> vec3<f32> {
     return inst.pos_scale.xyz + quat_rotate(inst.rot_quat, p * inst.pos_scale.w);
 }
 
-fn decode_pos(w0: u32, w1: u32, aabb_min: vec3<f32>, aabb_extent: vec3<f32>) -> vec3<f32> {
-    let qx = f32(w0 & 0x3FFFu) * (1.0 / 16383.0);
-    let qy = f32((w0 >> 14u) & 0x3FFFu) * (1.0 / 16383.0);
-    let gz = ((w0 >> 28u) & 0xFu) | ((w1 & 0x3FFu) << 4u);
-    let qz = f32(gz) * (1.0 / 16383.0);
-    return aabb_min + vec3<f32>(qx, qy, qz) * aabb_extent;
+fn decode_pos(w0: u32, w1: u32, origin: vec3<f32>, step: f32) -> vec3<f32> {
+    let qx = f32(w0 & 0xFFFFu);
+    let qy = f32(w0 >> 16u);
+    let qz = f32(w1 & 0xFFFFu);
+    return origin + vec3<f32>(qx, qy, qz) * step;
 }
 
 fn decode_color_ao(w1: u32) -> vec4<f32> {
-    let r = f32((w1 >> 10u) & 0x3Fu) * (1.0 / 63.0);
-    let g = f32((w1 >> 16u) & 0x3Fu) * (1.0 / 63.0);
-    let b = f32((w1 >> 22u) & 0x1Fu) * (1.0 / 31.0);
+    let r = f32((w1 >> 16u) & 0xFu) * (1.0 / 15.0);
+    let g = f32((w1 >> 20u) & 0xFu) * (1.0 / 15.0);
+    let b = f32((w1 >> 24u) & 0x7u) * (1.0 / 7.0);
     let ao = f32((w1 >> 27u) & 0x1Fu) * (1.0 / 31.0);
     return vec4<f32>(r * r, g * g, b * b, ao);
 }
@@ -61,16 +61,44 @@ fn decode_uv(w3: u32) -> vec2<f32> {
     return vec2<f32>(f32(w3 & 0xFFFFu), f32(w3 >> 16u)) * (1.0 / 2048.0);
 }
 
+fn cluster_self_error(c: GpuClusterHeader) -> f32 {
+    return bitcast<f32>(c.errors_and_cone.x);
+}
+
+fn cluster_parent_error(c: GpuClusterHeader) -> f32 {
+    return bitcast<f32>(c.errors_and_cone.y);
+}
+
 fn cluster_vert_count(c: GpuClusterHeader) -> u32 {
-    return c.cone_and_meta.y & 0xFFu;
+    return c.errors_and_cone.w & 0xFFu;
 }
 
 fn cluster_tri_count(c: GpuClusterHeader) -> u32 {
-    return (c.cone_and_meta.y >> 8u) & 0xFFu;
+    return (c.errors_and_cone.w >> 8u) & 0xFFu;
+}
+
+fn cluster_lod(c: GpuClusterHeader) -> u32 {
+    return (c.errors_and_cone.w >> 16u) & 0xFFu;
 }
 
 fn cluster_mat(c: GpuClusterHeader) -> u32 {
-    return (c.cone_and_meta.y >> 24u) & 0xFFu;
+    return (c.errors_and_cone.w >> 24u) & 0xFFu;
+}
+
+fn cluster_page_id(c: GpuClusterHeader) -> u32 {
+    return c.page_and_fallback.x;
+}
+
+fn cluster_word_offset(c: GpuClusterHeader) -> u32 {
+    return c.page_and_fallback.y & 0xFFFFu;
+}
+
+fn cluster_fb_start(c: GpuClusterHeader) -> u32 {
+    return c.page_and_fallback.z & 0x00FFFFFFu;
+}
+
+fn cluster_fb_count(c: GpuClusterHeader) -> u32 {
+    return c.page_and_fallback.z >> 24u;
 }
 
 fn frustum_visible(u: NaniteUniforms, c: vec3<f32>, r: f32) -> bool {
@@ -121,7 +149,7 @@ fn cone_backface_culled(
     world_r: f32,
     cull_pos: vec3<f32>,
 ) -> bool {
-    let packed = c.cone_and_meta.x;
+    let packed = c.errors_and_cone.z;
     let cutoff = unpack_i8(packed, 24u);
     if cutoff >= 127 {
         return false;
@@ -144,10 +172,6 @@ fn cone_backface_culled(
     let world_axis = quat_rotate(inst.rot_quat, local_axis);
     let sin_cone = f32(cutoff) * (1.0 / 127.0);
     return dot(to_c, world_axis) >= sin_cone * dist + world_r;
-}
-
-fn edge_yup(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
-    return (b.x - a.x) * (a.y - c.y) - (a.y - b.y) * (c.x - a.x);
 }
 
 fn edge_yup_i32(a: vec2<i32>, b: vec2<i32>, c: vec2<i32>) -> i32 {

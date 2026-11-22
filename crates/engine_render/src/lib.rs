@@ -305,6 +305,19 @@ impl<P: GpuPart> Install<'_, P> {
         Texture(self.core.texture(label, format, lifetime), PhantomData)
     }
 
+    pub fn texture_or(
+        &mut self,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        fallback: wgpu::TextureFormat,
+        lifetime: Lifetime,
+    ) -> Texture<P> {
+        Texture(
+            self.core.texture_or(label, format, fallback, lifetime),
+            PhantomData,
+        )
+    }
+
     pub fn texture_3d(
         &mut self,
         label: &'static str,
@@ -501,6 +514,16 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
+    pub fn depth_texture(self, texture: Texture<P>, access: Access, clear: f32) -> Self {
+        if let Some(pass) = self.core.pass_mut(self.pass) {
+            pass.depth_texture = Some((texture.0, access, clear));
+        }
+        self.core
+            .use_texture(texture.0, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        self
+    }
+
     pub fn id(self) -> Pass<P> {
         Pass(self.pass, PhantomData)
     }
@@ -565,6 +588,15 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn texture_resident(&self, texture: Asset<engine_core::Texture>) -> bool {
         self.core.assets.textures.is_texture_resident(texture)
+    }
+
+    pub fn texture_format(&self, texture: Texture<P>) -> wgpu::TextureFormat {
+        self.core
+            .machine
+            .declared
+            .textures
+            .get(texture.0 as usize)
+            .map_or(wgpu::TextureFormat::Rgba8Unorm, |decl| decl.format)
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d) -> Allocation {

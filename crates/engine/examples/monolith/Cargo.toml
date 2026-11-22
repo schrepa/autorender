@@ -39,11 +39,11 @@ engine_math.workspace = true
 engine_meshlet.workspace = true
 engine_render.workspace = true
 engine_touch.workspace = true
+flate2.workspace = true
 glam.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-zune-jpeg.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true

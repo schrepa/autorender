@@ -1,5 +1,5 @@
 use engine_math::collections::{FixedState, HashMap};
-use engine_math::max;
+use engine_math::{clamp, max};
 use glam::Vec3;
 
 use crate::bounds::{aabb_of_points, morton_3d};
@@ -42,6 +42,7 @@ struct LocalGraph {
     tri_verts: Vec<[u32; 3]>,
     tri_pos: Vec<[u32; 3]>,
     tri_centers: Vec<Vec3>,
+    tri_normals: Vec<Vec3>,
     local_to_src_vert: Vec<u32>,
     pos_offsets: Vec<usize>,
     pos_tris: Vec<usize>,
@@ -49,6 +50,38 @@ struct LocalGraph {
     morton_order: Vec<usize>,
     norm_scale_sq: f32,
     disconnect_limit_sq: f32,
+}
+
+fn build_pos_adjacency(tri_pos: &[[u32; 3]], pos_count: usize) -> (Vec<u32>, Vec<usize>, Vec<usize>) {
+    let mut live_tris = vec![0_u32; pos_count];
+    for &[p0, p1, p2] in tri_pos {
+        live_tris[p0 as usize] += 1;
+        if p1 != p0 {
+            live_tris[p1 as usize] += 1;
+        }
+        if p2 != p0 && p2 != p1 {
+            live_tris[p2 as usize] += 1;
+        }
+    }
+    let mut pos_offsets = vec![0_usize; pos_count + 1];
+    for (p, &deg) in live_tris.iter().enumerate() {
+        pos_offsets[p + 1] = pos_offsets[p] + deg as usize;
+    }
+    let mut pos_tris = vec![0_usize; pos_offsets[pos_count]];
+    let mut write_cursor = pos_offsets[..pos_count].to_vec();
+    for (ti, &[p0, p1, p2]) in tri_pos.iter().enumerate() {
+        pos_tris[write_cursor[p0 as usize]] = ti;
+        write_cursor[p0 as usize] += 1;
+        if p1 != p0 {
+            pos_tris[write_cursor[p1 as usize]] = ti;
+            write_cursor[p1 as usize] += 1;
+        }
+        if p2 != p0 && p2 != p1 {
+            pos_tris[write_cursor[p2 as usize]] = ti;
+            write_cursor[p2 as usize] += 1;
+        }
+    }
+    (live_tris, pos_offsets, pos_tris)
 }
 
 fn build_local_graph(
@@ -64,6 +97,7 @@ fn build_local_graph(
     let mut tri_verts = Vec::with_capacity(triangles.len());
     let mut tri_pos = Vec::with_capacity(triangles.len());
     let mut tri_centers = Vec::with_capacity(triangles.len());
+    let mut tri_normals = Vec::with_capacity(triangles.len());
     let mut pos_count = 0_u32;
     let mut edge_sq_sum = 0.0_f64;
     for &[a, b, c] in triangles {
@@ -85,39 +119,20 @@ fn build_local_graph(
         let pa = vertices[a as usize].position;
         let pb = vertices[b as usize].position;
         let pc = vertices[c as usize].position;
+        let cross = (pb - pa).cross(pc - pa);
+        let len_sq = cross.length_squared();
+        let n = if len_sq.is_finite() && len_sq > 1.0e-18 {
+            cross / len_sq.sqrt()
+        } else {
+            Vec3::ZERO
+        };
         tri_verts.push(lv);
         tri_pos.push(lp);
         tri_centers.push((pa + pb + pc) * (1.0 / 3.0));
+        tri_normals.push(n);
         edge_sq_sum += f64::from((pb - pa).length_squared());
     }
-    let mut live_tris = vec![0_u32; pos_count as usize];
-    for &[p0, p1, p2] in &tri_pos {
-        live_tris[p0 as usize] += 1;
-        if p1 != p0 {
-            live_tris[p1 as usize] += 1;
-        }
-        if p2 != p0 && p2 != p1 {
-            live_tris[p2 as usize] += 1;
-        }
-    }
-    let mut pos_offsets = vec![0_usize; pos_count as usize + 1];
-    for (p, &deg) in live_tris.iter().enumerate() {
-        pos_offsets[p + 1] = pos_offsets[p] + deg as usize;
-    }
-    let mut pos_tris = vec![0_usize; pos_offsets[pos_count as usize]];
-    let mut write_cursor = pos_offsets[..pos_count as usize].to_vec();
-    for (ti, &[p0, p1, p2]) in tri_pos.iter().enumerate() {
-        pos_tris[write_cursor[p0 as usize]] = ti;
-        write_cursor[p0 as usize] += 1;
-        if p1 != p0 {
-            pos_tris[write_cursor[p1 as usize]] = ti;
-            write_cursor[p1 as usize] += 1;
-        }
-        if p2 != p0 && p2 != p1 {
-            pos_tris[write_cursor[p2 as usize]] = ti;
-            write_cursor[p2 as usize] += 1;
-        }
-    }
+    let (live_tris, pos_offsets, pos_tris) = build_pos_adjacency(&tri_pos, pos_count as usize);
     let (c_min, c_ext) = aabb_of_points(&tri_centers);
     let mut morton_pairs: Vec<(u32, usize)> = tri_centers
         .iter()
@@ -128,12 +143,13 @@ fn build_local_graph(
     let morton_order = morton_pairs.into_iter().map(|(_, ti)| ti).collect();
     let avg_edge_sq = (edge_sq_sum / (triangles.len().max(1) as f64)) as f32;
     let diag_sq = c_ext.length_squared();
-    let norm_scale_sq = max(max(avg_edge_sq * 16.0, diag_sq * 1.0e-6), 1.0e-8);
-    let disconnect_limit_sq = max(diag_sq * 0.04, avg_edge_sq * 64.0);
+    let norm_scale_sq = max(max(avg_edge_sq * 24.0, diag_sq * 1.0e-6), 1.0e-8);
+    let disconnect_limit_sq = max(diag_sq * 0.25, avg_edge_sq * 256.0);
     LocalGraph {
         tri_verts,
         tri_pos,
         tri_centers,
+        tri_normals,
         local_to_src_vert,
         pos_offsets,
         pos_tris,
@@ -230,11 +246,13 @@ fn add_triangle_to_cluster(
     graph: &mut LocalGraph,
     scratch: &mut PartitionScratch,
     center_sum: &mut Vec3,
+    normal_sum: &mut Vec3,
 ) {
     let stamp = scratch.stamp;
     scratch.used_tri[ti] = true;
     scratch.cluster_tris.push(ti);
     *center_sum += graph.tri_centers[ti];
+    *normal_sum += graph.tri_normals[ti];
     for &lv in &graph.tri_verts[ti] {
         let idx = lv as usize;
         if scratch.vert_stamp[idx] != stamp {
@@ -266,9 +284,12 @@ fn pick_best_candidate(
     graph: &LocalGraph,
     scratch: &PartitionScratch,
     cluster_center: Vec3,
+    cluster_normal: Vec3,
+    tight_cones: bool,
 ) -> Option<usize> {
     let stamp = scratch.stamp;
     let remaining_verts = MAX_CLUSTER_VERTS - scratch.cluster_verts.len();
+    let has_cn = cluster_normal.length_squared() > 1.0e-6;
     let mut best_tri = None;
     let mut best_score = f32::NEG_INFINITY;
     for &ti in &scratch.candidates {
@@ -308,7 +329,16 @@ fn pick_best_candidate(
         };
         let shared_verts = 3_usize.saturating_sub(new_verts) as f32;
         let dist_sq = (graph.tri_centers[ti] - cluster_center).length_squared();
-        let score = topo + shared_verts * 55.0 + (closing as f32) * 70.0
+        let tn = graph.tri_normals[ti];
+        let cone_bonus = if tight_cones && has_cn && tn.length_squared() > 1.0e-6 {
+            let d = clamp(cluster_normal.dot(tn), -1.0, 1.0);
+            if d < 0.0 { d * 240.0 } else { d * 95.0 }
+        } else if has_cn && tn.length_squared() > 1.0e-6 {
+            clamp(cluster_normal.dot(tn), -1.0, 1.0) * 30.0
+        } else {
+            0.0
+        };
+        let score = topo + shared_verts * 55.0 + (closing as f32) * 70.0 + cone_bonus
             - (dist_sq / graph.norm_scale_sq) * 45.0;
         if score > best_score {
             best_score = score;
@@ -322,8 +352,13 @@ fn pick_nearby_disconnected(
     graph: &LocalGraph,
     scratch: &mut PartitionScratch,
     cluster_center: Vec3,
+    cluster_normal: Vec3,
+    tight_cones: bool,
 ) -> Option<usize> {
-    if scratch.cluster_tris.len() >= 48 || scratch.cluster_verts.len() + 3 > MAX_CLUSTER_VERTS {
+    let max_disc_tris = if tight_cones { 96 } else { MAX_CLUSTER_TRIS };
+    if scratch.cluster_tris.len() >= max_disc_tris
+        || scratch.cluster_verts.len() + 3 > MAX_CLUSTER_VERTS
+    {
         return None;
     }
     while scratch.morton_cursor < graph.morton_order.len()
@@ -331,17 +366,30 @@ fn pick_nearby_disconnected(
     {
         scratch.morton_cursor += 1;
     }
+    let has_cn = cluster_normal.length_squared() > 1.0e-6;
+    let require_align = tight_cones && has_cn && scratch.cluster_tris.len() >= 12;
+    let limit_sq = if tight_cones {
+        graph.disconnect_limit_sq
+    } else {
+        f32::INFINITY
+    };
     let mut best_tri = None;
-    let mut best_d2 = graph.disconnect_limit_sq;
+    let mut best_d2 = limit_sq;
     let mut checked = 0_usize;
     let mut scan = scratch.morton_cursor;
-    while scan < graph.morton_order.len() && checked < 32 {
+    while scan < graph.morton_order.len() && checked < 128 {
         let ti = graph.morton_order[scan];
         scan += 1;
         if scratch.used_tri[ti] {
             continue;
         }
         checked += 1;
+        if require_align {
+            let tn = graph.tri_normals[ti];
+            if tn.length_squared() > 1.0e-6 && cluster_normal.dot(tn) < 0.25 {
+                continue;
+            }
+        }
         let d2 = (graph.tri_centers[ti] - cluster_center).length_squared();
         if d2 < best_d2 {
             best_d2 = d2;
@@ -351,10 +399,11 @@ fn pick_nearby_disconnected(
     best_tri
 }
 
-pub fn partition_meshlets(
+fn partition_meshlets_impl(
     vertices: &[ClusterVertex],
     pos_ids: &[u32],
     triangles: &[[u32; 3]],
+    tight_cones: bool,
 ) -> Vec<MeshletData> {
     if triangles.is_empty() {
         return Vec::new();
@@ -372,15 +421,34 @@ pub fn partition_meshlets(
         scratch.cluster_verts.clear();
         scratch.candidates.clear();
         let mut center_sum = Vec3::ZERO;
-        add_triangle_to_cluster(seed, &mut graph, &mut scratch, &mut center_sum);
+        let mut normal_sum = Vec3::ZERO;
+        add_triangle_to_cluster(
+            seed,
+            &mut graph,
+            &mut scratch,
+            &mut center_sum,
+            &mut normal_sum,
+        );
         while scratch.cluster_tris.len() < MAX_CLUSTER_TRIS {
             let center = center_sum / (scratch.cluster_tris.len() as f32);
-            let next = pick_best_candidate(&graph, &scratch, center)
-                .or_else(|| pick_nearby_disconnected(&graph, &mut scratch, center));
+            let n_len_sq = normal_sum.length_squared();
+            let avg_n = if n_len_sq > 1.0e-8 {
+                normal_sum / n_len_sq.sqrt()
+            } else {
+                Vec3::ZERO
+            };
+            let next = pick_best_candidate(&graph, &scratch, center, avg_n, tight_cones)
+                .or_else(|| pick_nearby_disconnected(&graph, &mut scratch, center, avg_n, tight_cones));
             let Some(chosen) = next else {
                 break;
             };
-            add_triangle_to_cluster(chosen, &mut graph, &mut scratch, &mut center_sum);
+            add_triangle_to_cluster(
+                chosen,
+                &mut graph,
+                &mut scratch,
+                &mut center_sum,
+                &mut normal_sum,
+            );
         }
         for &cand in &scratch.candidates {
             if !scratch.used_tri[cand] && scratch.frontier.len() < 64 {
@@ -410,4 +478,20 @@ pub fn partition_meshlets(
         });
     }
     out
+}
+
+pub fn partition_meshlets(
+    vertices: &[ClusterVertex],
+    pos_ids: &[u32],
+    triangles: &[[u32; 3]],
+) -> Vec<MeshletData> {
+    partition_meshlets_impl(vertices, pos_ids, triangles, true)
+}
+
+pub fn partition_meshlets_compact(
+    vertices: &[ClusterVertex],
+    pos_ids: &[u32],
+    triangles: &[[u32; 3]],
+) -> Vec<MeshletData> {
+    partition_meshlets_impl(vertices, pos_ids, triangles, false)
 }

@@ -201,7 +201,7 @@
           "type": "boolean"
         },
         "hw_only": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "lod_px": {

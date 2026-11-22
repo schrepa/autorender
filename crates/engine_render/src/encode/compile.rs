@@ -999,6 +999,9 @@ impl Run {
                 None => None,
             });
         }
+        if let Some((texture, ..)) = pass.depth_texture {
+            depth = declared.textures.get(texture as usize).map(|decl| decl.format);
+        }
         (formats, depth, shown)
     }
 

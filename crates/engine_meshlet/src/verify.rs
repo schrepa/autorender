@@ -1,12 +1,12 @@
 use engine_codec::{Error, ErrorCode, Expected};
-use engine_math::collections::{FixedState, HashMap};
+use engine_math::collections::{FixedState, HashMap, HashSet};
 use engine_math::max;
 use glam::Vec3;
 
 use crate::encode::decode_cluster_words;
 use crate::format::{
     BVH_BRANCHING, BvhNode, ClusterHeader, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS, MeshletManifest,
-    NO_BVH_CHILD, NO_FALLBACK_CLUSTER, PAGE_WORDS, ROOT_PARENT_ERROR, VerifyReport,
+    NO_BVH_CHILD, PAGE_WORDS, ROOT_PARENT_ERROR, VerifyReport,
 };
 
 fn invalid(path: impl Into<String>) -> Error {
@@ -39,17 +39,12 @@ fn verify_cluster_header(
     if !sphere_is_valid(header.bound_sphere)
         || !sphere_is_valid(header.lod_sphere)
         || !sphere_is_valid(header.parent_lod_sphere)
-        || !header.aabb_min.iter().all(|v| v.is_finite())
-        || !header.aabb_extent.iter().all(|v| v.is_finite())
     {
         return Err(invalid(path).expected(Expected::Finite));
     }
-    if header.aabb_extent[0] < 0.0 || header.aabb_extent[1] < 0.0 || header.aabb_extent[2] < 0.0 {
-        return Err(invalid(format!("{path}.aabb_extent")).expected(Expected::Above));
-    }
     let self_err = header.self_error();
     let parent_err = header.parent_error();
-    if self_err < 0.0 || parent_err <= self_err {
+    if !self_err.is_finite() || !parent_err.is_finite() || self_err < 0.0 || parent_err <= self_err {
         return Err(invalid(format!("{path}.monotonicity"))
             .expected(Expected::Above)
             .got([self_err, parent_err]));
@@ -74,40 +69,24 @@ fn verify_cluster_header(
             .at_most(u64::from(manifest.page_count.saturating_sub(1)))
             .got(pid));
     }
+    let fb_start = header.fallback_start() as usize;
+    let fb_count = header.fallback_count() as usize;
     if header.is_root() {
-        if parent_err != ROOT_PARENT_ERROR || pid >= manifest.root_page_count {
+        if parent_err != ROOT_PARENT_ERROR || pid >= manifest.root_page_count || fb_count != 0 {
             return Err(invalid(format!("{path}.root_invariant")).got([parent_err, pid as f32]));
         }
-        if header.fallback_cluster() != NO_FALLBACK_CLUSTER
-            || header.fallback_cluster_b() != NO_FALLBACK_CLUSTER
-        {
-            return Err(invalid(format!("{path}.root_fallback")).got(header.fallback_cluster()));
-        }
     } else if pid < manifest.root_page_count {
-        if header.fallback_cluster() != NO_FALLBACK_CLUSTER
-            || header.fallback_cluster_b() != NO_FALLBACK_CLUSTER
-        {
-            return Err(
-                invalid(format!("{path}.root_page_fallback")).got(header.fallback_cluster())
-            );
+        if !header.is_in_root_page() || fb_count != 0 {
+            return Err(invalid(format!("{path}.root_page_fallback")).got(fb_count));
         }
     } else {
-        let fb = header.fallback_cluster();
-        if (fb as usize) >= manifest.clusters.len() {
-            return Err(invalid(format!("{path}.fallback_cluster")).got(fb));
+        if fb_count == 0 || fb_start + fb_count > manifest.clusters.len() {
+            return Err(invalid(format!("{path}.fallback_range")).got([fb_start, fb_count]));
         }
-        if manifest.clusters[fb as usize].page_id() >= pid {
-            return Err(invalid(format!("{path}.fallback_page_order"))
-                .got([manifest.clusters[fb as usize].page_id(), pid]));
-        }
-        let fb2 = header.fallback_cluster_b();
-        if fb2 != NO_FALLBACK_CLUSTER {
-            if (fb2 as usize) >= manifest.clusters.len() {
-                return Err(invalid(format!("{path}.fallback_cluster_b")).got(fb2));
-            }
-            if manifest.clusters[fb2 as usize].page_id() >= pid {
-                return Err(invalid(format!("{path}.fallback_b_page_order"))
-                    .got([manifest.clusters[fb2 as usize].page_id(), pid]));
+        for p in fb_start..fb_start + fb_count {
+            if manifest.clusters[p].page_id() >= pid {
+                return Err(invalid(format!("{path}.fallback_page_order"))
+                    .got([manifest.clusters[p].page_id(), pid]));
             }
         }
     }
@@ -127,30 +106,17 @@ fn verify_cluster(
     let page_start = (header.page_id() as usize) * PAGE_WORDS;
     let page = &page_words[page_start..page_start + PAGE_WORDS];
     let decoded = decode_cluster_words(header, page)?;
-    let aabb_min = header.aabb_min_vec3();
-    let aabb_ext = header.aabb_extent_vec3();
-    let aabb_max = aabb_min + aabb_ext;
     let b_center = Vec3::new(
         header.bound_sphere[0],
         header.bound_sphere[1],
         header.bound_sphere[2],
     );
     let b_radius = header.bound_sphere[3];
-    let tol = max(b_radius, aabb_ext.length()) * 1.0e-3 + 1.0e-4;
-    let step_err = aabb_ext.max_element() / 16383.0;
-    *max_quant_err = max(*max_quant_err, step_err);
+    let tol = b_radius * 1.0e-3 + 1.0e-4;
+    *max_quant_err = max(*max_quant_err, decoded.step * 0.5);
     for (vi, v) in decoded.vertices.iter().enumerate() {
         if !v.position.is_finite() || !v.normal.is_finite() {
             return Err(invalid(format!("{path}.vertices[{vi}]")).expected(Expected::Finite));
-        }
-        if v.position.x < aabb_min.x - tol
-            || v.position.y < aabb_min.y - tol
-            || v.position.z < aabb_min.z - tol
-            || v.position.x > aabb_max.x + tol
-            || v.position.y > aabb_max.y + tol
-            || v.position.z > aabb_max.z + tol
-        {
-            return Err(invalid(format!("{path}.vertices[{vi}].aabb")));
         }
         if (v.position - b_center).length() > b_radius + tol {
             return Err(invalid(format!("{path}.vertices[{vi}].bound_sphere")));
@@ -277,6 +243,106 @@ fn verify_bvh(manifest: &MeshletManifest) -> Result<(), Error> {
     Ok(())
 }
 
+fn verify_partial_residency_cuts(manifest: &MeshletManifest) -> Result<u32, Error> {
+    let total_pages = manifest.page_count;
+    let root_pages = manifest.root_page_count;
+    let budgets = [
+        root_pages,
+        root_pages + (total_pages - root_pages) / 4,
+        root_pages + (total_pages - root_pages) / 2,
+        total_pages,
+    ];
+    let mut checks = 0_u32;
+    for resident_pages in budgets {
+        let mut emitted = 0_u32;
+        let mut seen: HashSet<usize> = HashSet::with_hasher(FixedState::default());
+        let mut stack: Vec<usize> = Vec::new();
+        for (ci, header) in manifest.clusters.iter().enumerate() {
+            if header.lod_level() != 0 {
+                continue;
+            }
+            if header.page_id() < resident_pages {
+                emitted += 1;
+                continue;
+            }
+            let fb_s = header.fallback_start() as usize;
+            let fb_c = header.fallback_count() as usize;
+            if fb_c == 0 {
+                return Err(invalid(format!("$.residency.no_fallback[{ci}]")));
+            }
+            stack.clear();
+            for p in fb_s..fb_s + fb_c {
+                stack.push(p);
+            }
+            let mut steps = 0_usize;
+            while let Some(cur) = stack.pop() {
+                steps += 1;
+                if steps > manifest.clusters.len().max(256) {
+                    return Err(invalid("$.residency.cycle").got(cur));
+                }
+                if !seen.insert(cur) {
+                    continue;
+                }
+                let ch = &manifest.clusters[cur];
+                if ch.page_id() < resident_pages {
+                    emitted += 1;
+                } else {
+                    let ps = ch.fallback_start() as usize;
+                    let pc = ch.fallback_count() as usize;
+                    if pc == 0 || ps + pc > manifest.clusters.len() {
+                        return Err(invalid("$.residency.dead_end").got(cur));
+                    }
+                    for p in ps..ps + pc {
+                        stack.push(p);
+                    }
+                }
+            }
+        }
+        if emitted == 0 {
+            return Err(invalid("$.residency.empty").got(resident_pages));
+        }
+        checks += 1;
+    }
+    let mut per_leaf_seen: HashSet<usize> = HashSet::with_hasher(FixedState::default());
+    let mut per_leaf_stack: Vec<usize> = Vec::new();
+    for (ci, header) in manifest.clusters.iter().enumerate() {
+        if header.lod_level() != 0 || header.page_id() < root_pages {
+            continue;
+        }
+        per_leaf_seen.clear();
+        per_leaf_stack.clear();
+        let fb_s = header.fallback_start() as usize;
+        let fb_c = header.fallback_count() as usize;
+        for p in fb_s..fb_s + fb_c {
+            per_leaf_stack.push(p);
+        }
+        let mut steps = 0_usize;
+        while let Some(cur) = per_leaf_stack.pop() {
+            steps += 1;
+            if steps > 1024 {
+                return Err(invalid(format!("$.residency.walk_limit[{ci}]")).got(steps));
+            }
+            if !per_leaf_seen.insert(cur) {
+                continue;
+            }
+            let ch = &manifest.clusters[cur];
+            if ch.page_id() >= root_pages {
+                let ps = ch.fallback_start() as usize;
+                let pc = ch.fallback_count() as usize;
+                for p in ps..ps + pc {
+                    per_leaf_stack.push(p);
+                }
+                if per_leaf_stack.len() > 128 {
+                    return Err(
+                        invalid(format!("$.residency.stack_limit[{ci}]")).got(per_leaf_stack.len())
+                    );
+                }
+            }
+        }
+    }
+    Ok(checks + 1)
+}
+
 fn verify_group_consistency_and_cuts(
     manifest: &MeshletManifest,
     leaf_count: u32,
@@ -332,6 +398,7 @@ fn verify_group_consistency_and_cuts(
             checks += 1;
         }
     }
+    checks += verify_partial_residency_cuts(manifest)?;
     Ok(checks)
 }
 

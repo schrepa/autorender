@@ -1,6 +1,8 @@
 engine::brick!(sanctuary);
 
 #[cfg(not(target_arch = "wasm32"))]
+use std::io::{Read as _, Seek as _, SeekFrom};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 use brick_nanite::NaniteWorld;
@@ -8,10 +10,19 @@ use engine::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_meshlet::MeshletManifest;
 
+use crate::gi::GiUploadBridge;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::gi::submit_gi_bytes;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::layout::{HERO_ASSETS, populate_sanctuary};
 use crate::pbr::{PbrTexturePack, PbrUploadBridge};
 use crate::state::MonolithState;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource, Default)]
+struct NativeHdSource {
+    path: Option<PathBuf>,
+}
 
 pub struct SanctuaryBrick;
 
@@ -22,7 +33,10 @@ impl Brick for SanctuaryBrick {
         bricks
             .resource::<PbrTexturePack>()
             .resource::<PbrUploadBridge>()
+            .resource::<GiUploadBridge>()
             .systems(Schedule::BeforeTicks, load_sanctuary_assets);
+        #[cfg(not(target_arch = "wasm32"))]
+        bricks.resource::<NativeHdSource>();
     }
 }
 
@@ -40,10 +54,33 @@ fn find_asset_dir() -> Option<PathBuf> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn pump_native_hd(pbr: &mut PbrTexturePack, hd_path: &PathBuf) {
+    let reqs = pbr.take_hd_requests(4);
+    if reqs.is_empty() {
+        return;
+    }
+    let Ok(mut file) = std::fs::File::open(hd_path) else {
+        return;
+    };
+    let mut buf = Vec::new();
+    for req in reqs {
+        if file.seek(SeekFrom::Start(req.byte_offset)).is_err() {
+            continue;
+        }
+        buf.resize(req.byte_len as usize, 0);
+        if file.read_exact(&mut buf).is_ok() {
+            let _ = pbr.deliver_hd_blob(req, &buf);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn load_sanctuary_assets(
     mut world: ResMut<NaniteWorld>,
     mut pbr: ResMut<PbrTexturePack>,
     pbr_bridge: Res<PbrUploadBridge>,
+    gi_bridge: Res<GiUploadBridge>,
+    mut hd_src: ResMut<NativeHdSource>,
     mut state: ResMut<MonolithState>,
 ) {
     if !state.assets_loaded {
@@ -63,14 +100,128 @@ fn load_sanctuary_assets(
             world.add_mesh(stem, &manifest, Some(mlp_path));
         }
         populate_sanctuary(&mut world);
+        if let Ok(gi_bytes) = std::fs::read(dir.join("sponza_gi.bin")) {
+            let _ = submit_gi_bytes(&gi_bridge, &gi_bytes);
+        }
         if !pbr.pack_loaded
-            && let Ok(pack_bytes) = std::fs::read(dir.join("sponza_pbr.bin"))
+            && let Ok(base_bytes) = std::fs::read(dir.join("sponza_pbr_base.bin"))
         {
-            let _ = pbr.load_bytes(pack_bytes);
+            let _ = pbr.load_base_bytes(base_bytes);
+        }
+        let hd_file = dir.join("sponza_pbr_hd.bin");
+        if hd_file.is_file() {
+            hd_src.path = Some(hd_file);
         }
         state.assets_loaded = true;
     }
-    pbr.pump_uploads(&pbr_bridge, 4);
+    pbr.pump_uploads(&pbr_bridge, 14);
+    if pbr.base_done
+        && let Some(hd_path) = hd_src.path.as_ref()
+    {
+        pump_native_hd(&mut pbr, hd_path);
+        pbr.pump_uploads(&pbr_bridge, 0);
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+const MAX_RUN_PAGES: usize = 16;
+#[cfg(any(target_arch = "wasm32", test))]
+const MAX_RUN_BYTES: u64 = 512 * 1024;
+#[cfg(any(target_arch = "wasm32", test))]
+const HD_IDLE_HYSTERESIS_FRAMES: u32 = 3;
+
+#[cfg(any(target_arch = "wasm32", test))]
+struct PageRunItem {
+    req: brick_nanite::PageFetchRequest,
+    rel_offset: usize,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+struct PageRun {
+    mesh_name: String,
+    byte_offset: u64,
+    total_bytes: u64,
+    max_priority: u32,
+    items: Vec<PageRunItem>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn coalesce_runs(mut reqs: Vec<brick_nanite::PageFetchRequest>) -> Vec<PageRun> {
+    reqs.sort_unstable_by(|a, b| {
+        a.mesh_name
+            .cmp(&b.mesh_name)
+            .then_with(|| a.byte_offset.cmp(&b.byte_offset))
+    });
+    let mut runs: Vec<PageRun> = Vec::new();
+    for req in reqs {
+        if let Some(last) = runs.last_mut() {
+            let expected = last.byte_offset.saturating_add(last.total_bytes);
+            let next_total = last.total_bytes.saturating_add(req.byte_len);
+            if last.mesh_name == req.mesh_name
+                && req.byte_offset == expected
+                && last.items.len() < MAX_RUN_PAGES
+                && next_total <= MAX_RUN_BYTES
+            {
+                let rel_offset = last.total_bytes as usize;
+                last.max_priority = last.max_priority.max(req.priority);
+                last.total_bytes = next_total;
+                last.items.push(PageRunItem { req, rel_offset });
+                continue;
+            }
+        }
+        let mesh_name = req.mesh_name.clone();
+        let byte_offset = req.byte_offset;
+        let total_bytes = req.byte_len;
+        let max_priority = req.priority;
+        runs.push(PageRun {
+            mesh_name,
+            byte_offset,
+            total_bytes,
+            max_priority,
+            items: vec![PageRunItem { req, rel_offset: 0 }],
+        });
+    }
+    runs.sort_unstable_by(|a, b| {
+        b.max_priority
+            .cmp(&a.max_priority)
+            .then_with(|| a.mesh_name.cmp(&b.mesh_name))
+            .then_with(|| a.byte_offset.cmp(&b.byte_offset))
+    });
+    runs
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn is_geometry_busy(
+    assets_loaded: bool,
+    page_faults: u32,
+    in_flight_requests: usize,
+    streaming_pending_work: bool,
+    has_evictable_slots: bool,
+) -> bool {
+    !assets_loaded
+        || in_flight_requests > 0
+        || streaming_pending_work
+        || (page_faults > 0 && has_evictable_slots)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn step_hd_idle_gate(hd_idle_frames: &mut u32, assets_loaded: bool, geom_busy: bool) -> bool {
+    if geom_busy {
+        *hd_idle_frames = 0;
+    } else {
+        *hd_idle_frames = hd_idle_frames.saturating_add(1);
+    }
+    assets_loaded && !geom_busy && *hd_idle_frames >= HD_IDLE_HYSTERESIS_FRAMES
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn all_assets_mounted(
+    mounted_manifests: usize,
+    total_manifests: usize,
+    gi_submitted: bool,
+    pbr_pack_loaded: bool,
+) -> bool {
+    mounted_manifests >= total_manifests && gi_submitted && pbr_pack_loaded
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -78,59 +229,37 @@ mod web_loader {
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
-    use brick_nanite::{NaniteStreaming, NaniteWorld, PageFetchRequest};
+    use brick_nanite::{NaniteStreaming, NaniteTelemetry, NaniteWorld};
     use engine::prelude::*;
-    use engine_meshlet::{MeshletManifest, PageSpan, decompress_page_words};
+    use engine_meshlet::{MeshletManifest, decompress_page_words};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
-    use crate::layout::{HERO_ASSETS, populate_sanctuary};
-    use crate::pbr::PbrTexturePack;
+    use super::{
+        PageRun, all_assets_mounted, coalesce_runs, is_geometry_busy, step_hd_idle_gate,
+    };
+    use crate::gi::{GiUploadBridge, submit_gi_bytes};
+    use crate::layout::HERO_ASSETS;
+    use crate::pbr::{PbrHdRequest, PbrTexturePack};
     use crate::state::MonolithState;
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
     const MAX_IN_FLIGHT_REQUESTS: usize = 24;
-    const MAX_RUN_PAGES: usize = 16;
-    const MAX_RUN_BYTES: u64 = 256 * 1024;
-    const PREFETCH_EXTRA_PAGES: u32 = 4;
+    const MAX_IN_FLIGHT_PBR: usize = 4;
 
+    #[derive(Default)]
     struct WebState {
-        manifests_started: bool,
-        manifests: [Option<MeshletManifest>; ASSET_COUNT],
-        prefetched: [Vec<(u32, Vec<u32>)>; ASSET_COUNT],
-        mesh_page_offsets: [u32; ASSET_COUNT],
-        pbr_bytes: Option<Vec<u8>>,
-        world_synced: bool,
+        fetches_started: bool,
+        ready_manifests: VecDeque<(usize, MeshletManifest)>,
+        total_mounted: usize,
+        pbr_base_bytes: Option<Vec<u8>>,
+        gi_bytes: Option<Vec<u8>>,
+        gi_submitted: bool,
         in_flight_requests: usize,
+        in_flight_pbr: usize,
+        hd_idle_frames: u32,
         completed_pages: VecDeque<(u32, Option<Vec<u32>>)>,
-    }
-
-    impl Default for WebState {
-        fn default() -> Self {
-            Self {
-                manifests_started: false,
-                manifests: std::array::from_fn(|_| None),
-                prefetched: std::array::from_fn(|_| Vec::new()),
-                mesh_page_offsets: [0; ASSET_COUNT],
-                pbr_bytes: None,
-                world_synced: false,
-                in_flight_requests: 0,
-                completed_pages: VecDeque::new(),
-            }
-        }
-    }
-
-    struct PageRunItem {
-        global_page_id: u32,
-        rel_offset: usize,
-        byte_len: usize,
-    }
-
-    struct PageRun {
-        mesh_name: String,
-        byte_offset: u64,
-        total_bytes: u64,
-        items: Vec<PageRunItem>,
+        completed_pbr: VecDeque<(PbrHdRequest, Option<Vec<u8>>)>,
     }
 
     thread_local! {
@@ -147,11 +276,6 @@ mod web_loader {
                 .set("Range", &format!("bytes={start}-{end}"))
                 .map_err(|_| ())?;
             init.set_headers(&headers);
-            let _ = js_sys::Reflect::set(
-                &init,
-                &wasm_bindgen::JsValue::from_str("cache"),
-                &wasm_bindgen::JsValue::from_str("no-store"),
-            );
         }
         let req = web_sys::Request::new_with_str_and_init(url, &init).map_err(|_| ())?;
         let resp_val = JsFuture::from(window.fetch_with_request(&req))
@@ -166,116 +290,37 @@ mod web_loader {
         Ok(js_sys::Uint8Array::new(&ab).to_vec())
     }
 
-    fn prefetch_base_pages(mesh_idx: usize, stem: &'static str, spans: Vec<PageSpan>) {
-        if spans.is_empty() {
-            return;
-        }
-        let start = spans[0].byte_offset;
-        let last = spans[spans.len() - 1];
-        let total = last
-            .byte_offset
-            .saturating_add(u64::from(last.byte_len))
-            .saturating_sub(start);
-        if total == 0 {
-            return;
-        }
-        let end = start.saturating_add(total).saturating_sub(1);
-        let url = format!("/monolith/{stem}.mlp");
-        wasm_bindgen_futures::spawn_local(async move {
-            let Ok(bytes) = fetch_bytes(&url, Some((start, end))).await else {
-                return;
-            };
-            if bytes.len() != total as usize {
-                return;
-            }
-            let mut decoded = Vec::with_capacity(spans.len());
-            for (local_id, span) in spans.iter().enumerate() {
-                let rel = span.byte_offset.saturating_sub(start) as usize;
-                let len = span.byte_len as usize;
-                if let Some(slice) = bytes.get(rel..rel + len)
-                    && let Ok(words) = decompress_page_words(slice)
-                {
-                    decoded.push((local_id as u32, words));
-                }
-            }
-            WEB_STATE.with(|cell| {
-                let mut st = cell.borrow_mut();
-                if st.world_synced {
-                    let base = st.mesh_page_offsets[mesh_idx];
-                    for (local_id, words) in decoded {
-                        st.completed_pages.push_back((base + local_id, Some(words)));
-                    }
-                } else {
-                    st.prefetched[mesh_idx] = decoded;
-                }
-            });
-        });
-    }
-
-    fn start_manifests() {
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(bytes) = fetch_bytes("/monolith/sponza_pbr.bin", None).await {
-                WEB_STATE.with(|cell| {
-                    cell.borrow_mut().pbr_bytes = Some(bytes);
-                });
-            }
-        });
-        for (idx, &stem) in HERO_ASSETS.iter().enumerate() {
+    fn spawn_manifest_range(start: usize, end: usize) {
+        for (idx, &stem) in HERO_ASSETS.iter().enumerate().take(end).skip(start) {
             let url = format!("/monolith/{stem}.mlm");
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(bytes) = fetch_bytes(&url, None).await
                     && let Ok(manifest) = MeshletManifest::from_bytes(&bytes)
                 {
-                    let count = (manifest.root_page_count.saturating_add(PREFETCH_EXTRA_PAGES)
-                        as usize)
-                        .min(manifest.page_spans.len());
-                    let base_spans = manifest.page_spans[..count].to_vec();
                     WEB_STATE.with(|cell| {
-                        cell.borrow_mut().manifests[idx] = Some(manifest);
+                        cell.borrow_mut().ready_manifests.push_back((idx, manifest));
                     });
-                    prefetch_base_pages(idx, stem, base_spans);
                 }
             });
         }
     }
 
-    fn coalesce_runs(mut reqs: Vec<PageFetchRequest>) -> Vec<PageRun> {
-        reqs.sort_unstable_by(|a, b| {
-            a.mesh_name
-                .cmp(&b.mesh_name)
-                .then_with(|| a.byte_offset.cmp(&b.byte_offset))
-        });
-        let mut runs: Vec<PageRun> = Vec::new();
-        for req in reqs {
-            if let Some(last) = runs.last_mut() {
-                let expected = last.byte_offset.saturating_add(last.total_bytes);
-                let next_total = last.total_bytes.saturating_add(req.byte_len);
-                if last.mesh_name == req.mesh_name
-                    && req.byte_offset == expected
-                    && last.items.len() < MAX_RUN_PAGES
-                    && next_total <= MAX_RUN_BYTES
-                {
-                    last.items.push(PageRunItem {
-                        global_page_id: req.global_page_id,
-                        rel_offset: last.total_bytes as usize,
-                        byte_len: req.byte_len as usize,
-                    });
-                    last.total_bytes = next_total;
-                    continue;
-                }
+    fn start_asset_fetches() {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(bytes) = fetch_bytes("/monolith/sponza_gi.bin", None).await {
+                WEB_STATE.with(|cell| {
+                    cell.borrow_mut().gi_bytes = Some(bytes);
+                });
             }
-            runs.push(PageRun {
-                mesh_name: req.mesh_name,
-                byte_offset: req.byte_offset,
-                total_bytes: req.byte_len,
-                items: vec![PageRunItem {
-                    global_page_id: req.global_page_id,
-                    rel_offset: 0,
-                    byte_len: req.byte_len as usize,
-                }],
-            });
-        }
-        runs
+        });
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(bytes) = fetch_bytes("/monolith/sponza_pbr_base.bin", None).await {
+                WEB_STATE.with(|cell| {
+                    cell.borrow_mut().pbr_base_bytes = Some(bytes);
+                });
+            }
+        });
+        spawn_manifest_range(0, ASSET_COUNT);
     }
 
     fn start_run_fetch(run: PageRun) {
@@ -290,79 +335,144 @@ mod web_loader {
                 st.in_flight_requests = st.in_flight_requests.saturating_sub(1);
                 if let Some(bytes) = valid_bytes {
                     for item in run.items {
+                        let blen = item.req.byte_len as usize;
                         let words = bytes
-                            .get(item.rel_offset..item.rel_offset + item.byte_len)
+                            .get(item.rel_offset..item.rel_offset + blen)
                             .and_then(|slice| decompress_page_words(slice).ok());
-                        st.completed_pages.push_back((item.global_page_id, words));
+                        st.completed_pages
+                            .push_back((item.req.global_page_id, words));
                     }
                 } else {
                     for item in run.items {
-                        st.completed_pages.push_back((item.global_page_id, None));
+                        st.completed_pages
+                            .push_back((item.req.global_page_id, None));
                     }
                 }
             });
         });
     }
 
+    fn start_pbr_hd_fetch(req: PbrHdRequest) {
+        let end = req
+            .byte_offset
+            .saturating_add(u64::from(req.byte_len))
+            .saturating_sub(1);
+        wasm_bindgen_futures::spawn_local(async move {
+            let fetched = fetch_bytes("/monolith/sponza_pbr_hd.bin", Some((req.byte_offset, end)))
+                .await
+                .ok()
+                .filter(|b| b.len() == req.byte_len as usize);
+            WEB_STATE.with(|cell| {
+                let mut st = cell.borrow_mut();
+                st.in_flight_pbr = st.in_flight_pbr.saturating_sub(1);
+                st.completed_pbr.push_back((req, fetched));
+            });
+        });
+    }
+
+    fn pump_pbr_hd(pbr: &mut PbrTexturePack, allow_hd: bool) {
+        let done: Vec<(PbrHdRequest, Option<Vec<u8>>)> = WEB_STATE.with(|cell| {
+            cell.borrow_mut().completed_pbr.drain(..).collect()
+        });
+        for (req, bytes) in done {
+            let ok = bytes.is_some_and(|data| pbr.deliver_hd_blob(req, &data));
+            if !ok {
+                pbr.fail_hd_request(req);
+            }
+        }
+        if !pbr.base_done || !allow_hd {
+            return;
+        }
+        let slots = WEB_STATE.with(|cell| {
+            let st = cell.borrow();
+            let cap = if st.in_flight_requests > 12 {
+                1
+            } else {
+                MAX_IN_FLIGHT_PBR
+            };
+            cap.saturating_sub(st.in_flight_pbr)
+        });
+        if slots == 0 {
+            return;
+        }
+        let reqs = pbr.take_hd_requests(slots);
+        if !reqs.is_empty() {
+            let count = reqs.len();
+            WEB_STATE.with(|cell| {
+                cell.borrow_mut().in_flight_pbr += count;
+            });
+            for req in reqs {
+                start_pbr_hd_fetch(req);
+            }
+        }
+    }
+
+    fn mount_ready_manifests(
+        world: &mut NaniteWorld,
+        streaming: &mut NaniteStreaming,
+        pbr_pack_loaded: bool,
+        state: &mut MonolithState,
+    ) -> usize {
+        let ready: Vec<(usize, MeshletManifest)> = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            if !st.fetches_started {
+                st.fetches_started = true;
+                start_asset_fetches();
+            }
+            st.ready_manifests.drain(..).collect()
+        });
+        if !ready.is_empty() {
+            for (idx, manifest) in ready {
+                let stem = HERO_ASSETS[idx];
+                let mesh_id = world.add_mesh(stem, &manifest);
+                world.add_instance(mesh_id, Vec3::ZERO, Quat::IDENTITY, 1.0);
+                WEB_STATE.with(|cell| {
+                    cell.borrow_mut().total_mounted += 1;
+                });
+            }
+            streaming.sync_world(world);
+        }
+        let (total_mounted, gi_submitted) = WEB_STATE.with(|cell| {
+            let st = cell.borrow();
+            (st.total_mounted, st.gi_submitted)
+        });
+        state.assets_loaded =
+            all_assets_mounted(total_mounted, ASSET_COUNT, gi_submitted, pbr_pack_loaded);
+        total_mounted
+    }
+
     pub(super) fn pump(
         mut world: ResMut<NaniteWorld>,
         mut streaming: ResMut<NaniteStreaming>,
+        tel: &NaniteTelemetry,
         pbr: &mut PbrTexturePack,
+        gi_bridge: &GiUploadBridge,
         mut state: ResMut<MonolithState>,
     ) {
+        let ready_gi = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            if !st.gi_submitted {
+                st.gi_bytes.take()
+            } else {
+                None
+            }
+        });
+        if let Some(bytes) = ready_gi
+            && submit_gi_bytes(gi_bridge, &bytes)
+        {
+            WEB_STATE.with(|cell| {
+                cell.borrow_mut().gi_submitted = true;
+            });
+        }
         if !pbr.pack_loaded {
-            let ready_pbr = WEB_STATE.with(|cell| cell.borrow_mut().pbr_bytes.take());
+            let ready_pbr = WEB_STATE.with(|cell| cell.borrow_mut().pbr_base_bytes.take());
             if let Some(bytes) = ready_pbr {
-                let _ = pbr.load_bytes(bytes);
+                let _ = pbr.load_base_bytes(bytes);
             }
         }
-        if !state.assets_loaded {
-            let ready_manifests = WEB_STATE.with(|cell| {
-                let mut st = cell.borrow_mut();
-                if !st.manifests_started {
-                    st.manifests_started = true;
-                    start_manifests();
-                }
-                if st.manifests.iter().all(Option::is_some) {
-                    let mut out = Vec::with_capacity(ASSET_COUNT);
-                    for slot in &mut st.manifests {
-                        if let Some(m) = slot.take() {
-                            out.push(m);
-                        }
-                    }
-                    Some(out)
-                } else {
-                    None
-                }
-            });
-            if let Some(manifests) = ready_manifests {
-                world.clear();
-                let mut offsets = [0_u32; ASSET_COUNT];
-                for (idx, (stem, manifest)) in HERO_ASSETS.iter().zip(manifests.iter()).enumerate()
-                {
-                    offsets[idx] = world.total_pages;
-                    world.add_mesh(*stem, manifest);
-                }
-                populate_sanctuary(&mut world);
-                streaming.sync_world(&world);
-                let pre = WEB_STATE.with(|cell| {
-                    let mut st = cell.borrow_mut();
-                    st.mesh_page_offsets = offsets;
-                    st.world_synced = true;
-                    let mut out = Vec::new();
-                    for (idx, slot) in st.prefetched.iter_mut().enumerate() {
-                        let base = offsets[idx];
-                        for (local_id, words) in slot.drain(..) {
-                            out.push((base + local_id, words));
-                        }
-                    }
-                    out
-                });
-                for (global_id, words) in pre {
-                    streaming.deliver_page(global_id, words);
-                }
-                state.assets_loaded = true;
-            }
+        let mounted =
+            mount_ready_manifests(&mut world, &mut streaming, pbr.pack_loaded, &mut state);
+        if mounted == 0 {
             return;
         }
 
@@ -376,12 +486,27 @@ mod web_loader {
             }
         }
 
+        let req_cap = if state.assets_loaded {
+            MAX_IN_FLIGHT_REQUESTS
+        } else {
+            12
+        };
         let req_slots = WEB_STATE
-            .with(|cell| MAX_IN_FLIGHT_REQUESTS.saturating_sub(cell.borrow().in_flight_requests));
+            .with(|cell| req_cap.saturating_sub(cell.borrow().in_flight_requests));
         if req_slots > 0 {
-            let reqs = streaming.take_fetch_requests((req_slots * 4).min(64));
+            let reqs = streaming.take_fetch_requests((req_slots * 8).min(192));
             if !reqs.is_empty() {
-                let runs = coalesce_runs(reqs);
+                let mut runs = coalesce_runs(reqs);
+                if runs.len() > req_slots {
+                    let excess = runs.split_off(req_slots);
+                    let mut back = Vec::new();
+                    for run in excess {
+                        for item in run.items {
+                            back.push(item.req);
+                        }
+                    }
+                    streaming.requeue_fetch_requests(back);
+                }
                 let run_count = runs.len();
                 WEB_STATE.with(|cell| {
                     cell.borrow_mut().in_flight_requests += run_count;
@@ -391,6 +516,19 @@ mod web_loader {
                 }
             }
         }
+        let in_flight_requests = WEB_STATE.with(|cell| cell.borrow().in_flight_requests);
+        let geom_busy = is_geometry_busy(
+            state.assets_loaded,
+            tel.page_faults,
+            in_flight_requests,
+            streaming.has_pending_work(),
+            streaming.has_evictable_slots(),
+        );
+        let allow_hd = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            step_hd_idle_gate(&mut st.hd_idle_frames, state.assets_loaded, geom_busy)
+        });
+        pump_pbr_hd(pbr, allow_hd);
     }
 }
 
@@ -398,10 +536,213 @@ mod web_loader {
 fn load_sanctuary_assets(
     world: ResMut<NaniteWorld>,
     streaming: ResMut<brick_nanite::NaniteStreaming>,
+    tel: Res<brick_nanite::NaniteTelemetry>,
     mut pbr: ResMut<PbrTexturePack>,
     pbr_bridge: Res<PbrUploadBridge>,
+    gi_bridge: Res<GiUploadBridge>,
     state: ResMut<MonolithState>,
 ) {
-    web_loader::pump(world, streaming, &mut pbr, state);
-    pbr.pump_uploads(&pbr_bridge, 1);
+    web_loader::pump(world, streaming, &tel, &mut pbr, &gi_bridge, state);
+    pbr.pump_uploads(&pbr_bridge, 7);
+}
+
+#[cfg(test)]
+mod tests {
+    use brick_nanite::PageFetchRequest;
+
+    use super::{
+        MAX_RUN_BYTES, all_assets_mounted, coalesce_runs, is_geometry_busy, step_hd_idle_gate,
+    };
+
+    fn dummy_req(mesh_name: &str, page_id: u32, byte_offset: u64, byte_len: u64, priority: u32) -> PageFetchRequest {
+        PageFetchRequest {
+            mesh_id: 0,
+            mesh_name: mesh_name.to_owned(),
+            local_page_id: page_id,
+            global_page_id: page_id,
+            byte_offset,
+            byte_len,
+            priority,
+        }
+    }
+
+    #[test]
+    fn hd_pbr_deferred_while_geometry_busy_and_requires_hysteresis() {
+        assert!(
+            is_geometry_busy(false, 0, 0, false, true),
+            "unloaded assets must mark geometry busy"
+        );
+        assert!(
+            is_geometry_busy(true, 1, 0, false, true),
+            "page faults with evictable slots must mark geometry busy"
+        );
+        assert!(
+            is_geometry_busy(true, 0, 1, false, false),
+            "in-flight HTTP page runs must mark geometry busy"
+        );
+        assert!(
+            is_geometry_busy(true, 0, 0, true, false),
+            "pending nanite streaming work must mark geometry busy"
+        );
+        assert!(
+            !is_geometry_busy(true, 0, 0, false, true),
+            "geometry must be idle when no faults and all queues empty"
+        );
+
+        let mut idle_frames = 0_u32;
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, false, true),
+            "HD PBR must stay deferred while assets are loading"
+        );
+        assert_eq!(idle_frames, 0, "busy frame must keep idle counter at zero");
+
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, false),
+            "1st quiet frame must defer HD PBR"
+        );
+        assert_eq!(idle_frames, 1, "1st quiet frame must increment counter");
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, false),
+            "2nd quiet frame must defer HD PBR"
+        );
+        assert_eq!(idle_frames, 2, "2nd quiet frame must increment counter");
+        assert!(
+            step_hd_idle_gate(&mut idle_frames, true, false),
+            "3rd consecutive quiet frame must allow HD PBR"
+        );
+        assert_eq!(idle_frames, 3, "3rd quiet frame must reach threshold");
+        assert!(
+            step_hd_idle_gate(&mut idle_frames, true, false),
+            "4th consecutive quiet frame must keep allowing HD PBR"
+        );
+
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, true),
+            "preset switch or heap eviction fault must immediately pause HD PBR"
+        );
+        assert_eq!(idle_frames, 0, "busy transition must reset hysteresis");
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, false),
+            "recovery after fault must restart 3-frame hysteresis"
+        );
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, false),
+            "2nd recovery quiet frame must still defer HD PBR"
+        );
+        assert!(
+            step_hd_idle_gate(&mut idle_frames, true, false),
+            "3rd recovery quiet frame must resume HD PBR"
+        );
+    }
+
+    #[test]
+    fn hd_pbr_allowed_on_saturated_heap_steady_state_after_hysteresis() {
+        assert!(
+            !is_geometry_busy(true, 740, 0, false, false),
+            "saturated heap steady-state faults must not mark geometry busy"
+        );
+        assert!(
+            is_geometry_busy(true, 740, 1, false, false),
+            "in-flight requests must still mark saturated heap busy"
+        );
+        assert!(
+            is_geometry_busy(true, 740, 0, true, false),
+            "pending streaming work must still mark saturated heap busy"
+        );
+
+        let mut idle_frames = 0_u32;
+        let saturated_busy = is_geometry_busy(true, 740, 0, false, false);
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, saturated_busy),
+            "1st saturated quiet frame must defer HD PBR"
+        );
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, saturated_busy),
+            "2nd saturated quiet frame must defer HD PBR"
+        );
+        assert!(
+            step_hd_idle_gate(&mut idle_frames, true, saturated_busy),
+            "3rd saturated quiet frame must allow sponza_pbr_hd.bin"
+        );
+        assert_eq!(idle_frames, 3);
+    }
+
+    #[test]
+    fn hd_pbr_pauses_immediately_when_camera_cut_creates_evictable_slots() {
+        let mut idle_frames = 0_u32;
+        for _ in 0..3 {
+            let busy = is_geometry_busy(true, 740, 0, false, false);
+            let _ = step_hd_idle_gate(&mut idle_frames, true, busy);
+        }
+        assert!(
+            step_hd_idle_gate(
+                &mut idle_frames,
+                true,
+                is_geometry_busy(true, 740, 0, false, false),
+            ),
+            "precondition: HD PBR must be active in saturated steady-state"
+        );
+
+        let cut_busy = is_geometry_busy(true, 492, 0, false, true);
+        assert!(cut_busy, "evictable slots with page faults must mark geometry busy");
+        assert!(
+            !step_hd_idle_gate(&mut idle_frames, true, cut_busy),
+            "camera cut with evictable heap must pause HD PBR immediately"
+        );
+        assert_eq!(idle_frames, 0, "camera cut must reset hysteresis counter");
+
+        let settled_busy = is_geometry_busy(true, 492, 0, false, false);
+        assert!(!settled_busy);
+        assert!(!step_hd_idle_gate(&mut idle_frames, true, settled_busy));
+        assert!(!step_hd_idle_gate(&mut idle_frames, true, settled_busy));
+        assert!(
+            step_hd_idle_gate(&mut idle_frames, true, settled_busy),
+            "HD PBR must resume after 3 quiet frames once new view saturates heap"
+        );
+    }
+
+    #[test]
+    fn concurrent_assets_loaded_requires_all_manifests_gi_and_pbr_base() {
+        assert!(
+            !all_assets_mounted(7, 8, true, true),
+            "missing manifest must keep assets_loaded false"
+        );
+        assert!(
+            !all_assets_mounted(8, 8, false, true),
+            "missing GI must keep assets_loaded false"
+        );
+        assert!(
+            !all_assets_mounted(8, 8, true, false),
+            "missing PBR base must keep assets_loaded false"
+        );
+        assert!(
+            all_assets_mounted(8, 8, true, true),
+            "all manifests + GI + PBR base must mark assets_loaded true"
+        );
+    }
+
+    #[test]
+    fn coalesce_runs_packs_up_to_512k_and_orders_by_priority() {
+        let reqs = vec![
+            dummy_req("sponza_curtains", 0, 0, 256 * 1024, 50),
+            dummy_req("sponza_curtains", 1, 256 * 1024, 256 * 1024, 200),
+            dummy_req("sponza_curtains", 2, 512 * 1024, 64 * 1024, 10),
+            dummy_req("sponza_lower_w", 3, 0, 128 * 1024, 300),
+        ];
+        let runs = coalesce_runs(reqs);
+        assert_eq!(runs.len(), 3, "512K contiguous pair must coalesce into one run");
+        assert_eq!(runs[0].mesh_name, "sponza_lower_w", "highest priority run first");
+        assert_eq!(runs[1].total_bytes, MAX_RUN_BYTES, "coalesced run must pack 512K");
+        assert_eq!(runs[1].items.len(), 2, "coalesced run must hold 2 pages");
+        assert_eq!(runs[1].items[0].req.local_page_id, 0, "first item must be page 0");
+        assert_eq!(runs[1].items[0].rel_offset, 0, "first item rel_offset must be 0");
+        assert_eq!(runs[1].items[1].req.local_page_id, 1, "second item must be page 1");
+        assert_eq!(
+            runs[1].items[1].rel_offset,
+            256 * 1024,
+            "second item rel_offset must be 256K"
+        );
+        assert_eq!(runs[1].max_priority, 200, "coalesced run must retain max priority");
+        assert_eq!(runs[2].total_bytes, 64 * 1024, "overflow page must split cleanly");
+    }
 }

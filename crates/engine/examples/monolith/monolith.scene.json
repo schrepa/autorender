@@ -20,15 +20,6 @@
           1.0
         ]
       }
-    },
-    {
-      "id": "sanctuary_nanite",
-      "node": {
-        "mobility": "static"
-      },
-      "drawn": {
-        "kind": "nanite_world"
-      }
     }
   ]
 }

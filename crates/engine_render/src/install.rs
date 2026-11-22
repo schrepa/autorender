@@ -65,6 +65,7 @@ pub(crate) struct PassDecl {
     pub(crate) views: PassViews,
     pub(crate) after: Vec<u32>,
     pub(crate) targets: Vec<(TargetName, Access)>,
+    pub(crate) depth_texture: Option<(u32, Access, f32)>,
     pub(crate) scene: Option<SceneOf>,
     pub(crate) members: Vec<u32>,
 }
@@ -138,6 +139,7 @@ pub(crate) struct PartInfo {
 pub(crate) struct Declared {
     pub(crate) parts: Vec<PartInfo>,
     pub(crate) textures: Vec<TextureDecl>,
+    pub(crate) texture_fallbacks: Vec<Option<wgpu::TextureFormat>>,
     pub(crate) buffers: Vec<BufferDecl>,
     pub(crate) readbacks: Vec<ReadbackDecl>,
     pub(crate) samplers: Vec<engine_core::Sampler>,
@@ -195,6 +197,7 @@ impl Declared {
         Self {
             parts: self.parts.clone(),
             textures: kept(&self.textures, counts.textures),
+            texture_fallbacks: kept(&self.texture_fallbacks, counts.textures),
             buffers: kept(&self.buffers, counts.buffers),
             readbacks: kept(&self.readbacks, counts.readbacks),
             samplers: self.samplers.clone(),
@@ -254,7 +257,23 @@ impl InstallCore {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> u32 {
-        self.texture_with(label, format, wgpu::TextureDimension::D2, lifetime)
+        self.texture_with(label, format, None, wgpu::TextureDimension::D2, lifetime)
+    }
+
+    pub(crate) fn texture_or(
+        &mut self,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        fallback: wgpu::TextureFormat,
+        lifetime: Lifetime,
+    ) -> u32 {
+        self.texture_with(
+            label,
+            format,
+            Some(fallback),
+            wgpu::TextureDimension::D2,
+            lifetime,
+        )
     }
 
     pub(crate) fn texture_3d(
@@ -263,13 +282,14 @@ impl InstallCore {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> u32 {
-        self.texture_with(label, format, wgpu::TextureDimension::D3, lifetime)
+        self.texture_with(label, format, None, wgpu::TextureDimension::D3, lifetime)
     }
 
     fn texture_with(
         &mut self,
         label: &'static str,
         format: wgpu::TextureFormat,
+        fallback: Option<wgpu::TextureFormat>,
         dimension: wgpu::TextureDimension,
         lifetime: Lifetime,
     ) -> u32 {
@@ -281,6 +301,7 @@ impl InstallCore {
             part: self.part,
             usage: wgpu::TextureUsages::empty(),
         });
+        self.declared.texture_fallbacks.push(fallback);
         (self.declared.textures.len() - 1) as u32
     }
 
@@ -381,6 +402,7 @@ impl InstallCore {
             views: PassViews::Every,
             after: Vec::new(),
             targets: Vec::new(),
+            depth_texture: None,
             scene: None,
             members: Vec::new(),
         });
