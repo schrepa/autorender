@@ -111,6 +111,11 @@ mod web_loader {
                 .set("Range", &format!("bytes={start}-{end}"))
                 .map_err(|_| ())?;
             init.set_headers(&headers);
+            let _ = js_sys::Reflect::set(
+                &init,
+                &wasm_bindgen::JsValue::from_str("cache"),
+                &wasm_bindgen::JsValue::from_str("no-store"),
+            );
         }
         let req = web_sys::Request::new_with_str_and_init(url, &init).map_err(|_| ())?;
         let resp_val = JsFuture::from(window.fetch_with_request(&req))

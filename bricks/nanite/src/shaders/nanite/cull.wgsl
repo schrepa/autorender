@@ -262,6 +262,9 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
     var stack: array<u32, 48>;
     var sp: u32 = 1u;
     stack[0] = root_node;
+    var local_tested: u32 = 0u;
+    var local_frustum: u32 = 0u;
+    var local_cone: u32 = 0u;
 
     while sp > 0u {
         sp = sp - 1u;
@@ -289,15 +292,15 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
                 if self_proj > lod_thresh {
                     continue;
                 }
-                atomicAdd(&cull_state[3u], 1u);
+                local_tested = local_tested + 1u;
                 let world_c = inst_to_world(inst, c.bound_sphere.xyz);
                 let world_r = c.bound_sphere.w * scale;
                 if !frustum_visible(cull_uniforms, world_c, world_r) {
-                    atomicAdd(&cull_state[13u], 1u);
+                    local_frustum = local_frustum + 1u;
                     continue;
                 }
                 if cone_backface_culled(c, inst, world_c, world_r, cull_pos) {
-                    atomicAdd(&cull_state[12u], 1u);
+                    local_cone = local_cone + 1u;
                     continue;
                 }
                 let slot = atomicAdd(&cull_state[18u], 1u);
@@ -341,6 +344,15 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
                 sp = sp + 1u;
             }
         }
+    }
+    if local_tested > 0u {
+        atomicAdd(&cull_state[3u], local_tested);
+    }
+    if local_frustum > 0u {
+        atomicAdd(&cull_state[13u], local_frustum);
+    }
+    if local_cone > 0u {
+        atomicAdd(&cull_state[12u], local_cone);
     }
 }
 
@@ -438,7 +450,7 @@ fn evaluate_cluster(inst_id: u32, cluster_id: u32, is_p2: bool) {
     let is_sw = !near_straddle
         && cull_uniforms.flags.y == 0u
         && tri_px <= cull_uniforms.hiz_params.w
-        && cluster_px <= 28.0;
+        && cluster_px <= 16.0;
 
     let vis_idx = atomicAdd(&cull_state[25u], 1u);
     if vis_idx >= MAX_VIS_CLUSTERS {

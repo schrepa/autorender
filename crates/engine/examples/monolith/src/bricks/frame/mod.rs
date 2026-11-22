@@ -88,6 +88,21 @@ fn fs_pipe(fragment: engine_core::Entry) -> RenderPipeline<'static> {
     }
 }
 
+fn bloom_pipe(fragment: engine_core::Entry) -> RenderPipeline<'static> {
+    RenderPipeline {
+        vertex: shaders::frame::bloom::VS_BLOOM,
+        fragment: Some(fragment),
+        vertices: &[],
+        primitive: wgpu::PrimitiveState::default(),
+        depth: DepthUse::None,
+        stencil: wgpu::StencilState::default(),
+        samples: 1,
+        targets: &[(None, wgpu::ColorWrites::ALL)],
+        constants: &[],
+        per_batch: PerBatch::NONE,
+    }
+}
+
 fn hdr_target(name: TargetName) -> SharedTarget {
     SharedTarget {
         name,
@@ -114,7 +129,7 @@ fn build_frame_uniforms(state: &MonolithState, cfg: &NaniteConfig) -> FrameUnifo
     };
     FrameUniforms {
         sun_dir_illum: [sun_dir.x, sun_dir.y, sun_dir.z, 6.8],
-        sun_color_shaft: [1.00, 0.72, 0.44, 0.54],
+        sun_color_shaft: [1.00, 0.72, 0.44, 0.64],
         sun_uv_vis: [uv_x, uv_y, vis, state.sim_time],
         grade: [0.58, 0.08, 1.08, 0.16],
         fog_params: [0.0020, 0.055, -4.0, cfg.view_mode.index() as f32],
@@ -152,7 +167,7 @@ fn install_bloom_chain(
         .id();
     let d1_pipe = cx.render_pipeline(
         d1_pass,
-        &fs_pipe(bloom::FS_EXTRACT),
+        &bloom_pipe(bloom::FS_EXTRACT),
         &[
             (bloom::SRC_TEX, Bind::Target(HDR_COLOR)),
             (bloom::BLOOM_SAMPLER, Bind::Sampler(sampler)),
@@ -168,7 +183,7 @@ fn install_bloom_chain(
         .id();
     let d2_pipe = cx.render_pipeline(
         d2_pass,
-        &fs_pipe(bloom::FS_DOWN),
+        &bloom_pipe(bloom::FS_DOWN),
         &[
             (bloom::SRC_TEX, Bind::Target(BLOOM_A)),
             (bloom::BLOOM_SAMPLER, Bind::Sampler(sampler)),
@@ -183,7 +198,7 @@ fn install_bloom_chain(
         .id();
     let d3_pipe = cx.render_pipeline(
         d3_pass,
-        &fs_pipe(bloom::FS_DOWN),
+        &bloom_pipe(bloom::FS_DOWN),
         &[
             (bloom::SRC_TEX, Bind::Target(BLOOM_B)),
             (bloom::BLOOM_SAMPLER, Bind::Sampler(sampler)),
@@ -198,7 +213,7 @@ fn install_bloom_chain(
         .id();
     let u1_pipe = cx.render_pipeline(
         u1_pass,
-        &fs_pipe(bloom::FS_UP),
+        &bloom_pipe(bloom::FS_UP),
         &[
             (bloom::SRC_TEX, Bind::Target(BLOOM_C)),
             (bloom::ADD_TEX, Bind::Target(BLOOM_B)),
@@ -214,7 +229,7 @@ fn install_bloom_chain(
         .id();
     let u2_pipe = cx.render_pipeline(
         u2_pass,
-        &fs_pipe(bloom::FS_UP_FINAL),
+        &bloom_pipe(bloom::FS_UP_FINAL),
         &[
             (bloom::SRC_TEX, Bind::Target(BLOOM_UP_B)),
             (bloom::ADD_TEX, Bind::Target(BLOOM_A)),
@@ -334,12 +349,18 @@ impl GpuPart for PostProcess {
         let scale = state.render_scale;
         let pixel_ratio = views.map_or(1.0, |v| v.frame().pixel_ratio);
         self.direct = !needs_intermediate(presents.iter().next().copied(), scale, pixel_ratio);
+        let (cw, ch) = cx.canvas_size();
+        let max_bloom_px: u32 = 144_000;
+        let bloom_raw =
+            (f64::from(max_bloom_px) / (f64::from(cw.max(1)) * f64::from(ch.max(1)))).sqrt() as f32;
+        let bloom_frac = engine::math::clamp(bloom_raw, 0.25, 0.5);
+        let b_scale = engine::math::min(scale * 0.5, bloom_frac);
         cx.scale_target(HDR_COLOR, scale);
-        cx.scale_target(BLOOM_A, scale * 0.5);
-        cx.scale_target(BLOOM_B, scale * 0.25);
-        cx.scale_target(BLOOM_C, scale * 0.125);
-        cx.scale_target(BLOOM_UP_B, scale * 0.25);
-        cx.scale_target(BLOOM_UP_A, scale * 0.5);
+        cx.scale_target_to_pixels(BLOOM_A, max_bloom_px);
+        cx.scale_target(BLOOM_B, b_scale * 0.5);
+        cx.scale_target(BLOOM_C, b_scale * 0.25);
+        cx.scale_target(BLOOM_UP_B, b_scale * 0.5);
+        cx.scale_target_to_pixels(BLOOM_UP_A, max_bloom_px);
 
         let u = build_frame_uniforms(&state, &cfg);
         let _ = cx.allocate_buffer(self.uniforms, size_of::<FrameUniforms>() as u64);

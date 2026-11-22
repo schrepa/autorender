@@ -12,8 +12,8 @@ use engine_render::{
     RenderBricks, Texture, wgpu,
 };
 
-pub const MAX_HIZ_MIPS: usize = 12;
-pub const MAX_HIZ_DIM: u32 = 2048;
+pub const MAX_HIZ_MIPS: usize = 11;
+pub const MAX_HIZ_DIM: u32 = 1024;
 
 const WORKGROUP_SIZE: u32 = 8;
 
@@ -70,18 +70,16 @@ impl HizInfo {
     pub const fn for_size(src_w: u32, src_h: u32) -> Self {
         let sw = if src_w > 0 { src_w } else { 1 };
         let sh = if src_h > 0 { src_h } else { 1 };
-        let raw_w = prev_pow2(sw);
-        let raw_h = prev_pow2(sh);
-        let mip0_w = if raw_w > MAX_HIZ_DIM {
-            MAX_HIZ_DIM
-        } else {
-            raw_w
-        };
-        let mip0_h = if raw_h > MAX_HIZ_DIM {
-            MAX_HIZ_DIM
-        } else {
-            raw_h
-        };
+        let mut mip0_w = prev_pow2(sw);
+        let mut mip0_h = prev_pow2(sh);
+        while mip0_w > MAX_HIZ_DIM || mip0_h > MAX_HIZ_DIM {
+            if mip0_w > 1 {
+                mip0_w >>= 1;
+            }
+            if mip0_h > 1 {
+                mip0_h >>= 1;
+            }
+        }
         let max_dim = if mip0_w >= mip0_h { mip0_w } else { mip0_h };
         let raw_mips = max_dim.ilog2() + 1;
         let max_mips = MAX_HIZ_MIPS as u32;

@@ -144,10 +144,10 @@ pub fn build_ground_mesh() -> Vec<GroundVertex> {
     let t_sand = Surface { mat: 3, style: STYLE_TERRACE_SAND };
     let plaza = Surface { mat: 0, style: STYLE_PLAZA_RADIAL };
 
-    push_top_rect(&mut out, [-800.0, 800.0], [-950.0, -265.0], 0.0, desert);
-    push_top_rect(&mut out, [-800.0, 800.0], [-145.0, 650.0], 0.0, desert);
-    push_top_rect(&mut out, [-800.0, -60.0], [-265.0, -145.0], 0.0, desert);
-    push_top_rect(&mut out, [60.0, 800.0], [-265.0, -145.0], 0.0, desert);
+    push_top_rect(&mut out, [-4500.0, 4500.0], [-4500.0, -265.0], 0.0, desert);
+    push_top_rect(&mut out, [-4500.0, 4500.0], [-145.0, 4500.0], 0.0, desert);
+    push_top_rect(&mut out, [-4500.0, -60.0], [-265.0, -145.0], 0.0, desert);
+    push_top_rect(&mut out, [60.0, 4500.0], [-265.0, -145.0], 0.0, desert);
 
     push_top_rect(&mut out, [-25.0, 25.0], [-150.0, 160.0], 0.02, avenue);
     push_top_rect(&mut out, [52.0, 68.0], [-120.0, 40.0], 0.02, arcade);

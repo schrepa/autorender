@@ -112,8 +112,10 @@ fn shadow_raster(wid_x: u32, lid: u32, cascade: u32) {
     let page_base = vc.heap_slot * PAGE_WORDS + c.cone_and_meta.w;
 
     if lid < vert_count {
-        let w0 = sh_page_heap[page_base + lid * 4u];
-        let local_pos = decode_pos(w0, c.aabb_min.xyz, c.aabb_extent.xyz);
+        let v_base = page_base + lid * 4u;
+        let w0 = sh_page_heap[v_base];
+        let w1 = sh_page_heap[v_base + 1u];
+        let local_pos = decode_pos(w0, w1, c.aabb_min.xyz, c.aabb_extent.xyz);
         let inst = sh_instances[vc.instance_id];
         let world_pos = inst_to_world(inst, local_pos);
         let clip = vp * vec4<f32>(world_pos, 1.0);

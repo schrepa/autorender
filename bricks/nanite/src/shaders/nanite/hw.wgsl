@@ -40,8 +40,10 @@ fn hw_vertex(vid: u32, iid: u32) -> HwOut {
     let page_base = vc.heap_slot * PAGE_WORDS + c.cone_and_meta.w;
     let tri_word = hw_page_heap[page_base + vert_count * 4u + tri_id];
     let local_vi = (tri_word >> (corner * 8u)) & 0xFFu;
-    let w0 = hw_page_heap[page_base + local_vi * 4u];
-    let local_pos = decode_pos(w0, c.aabb_min.xyz, c.aabb_extent.xyz);
+    let v_base = page_base + local_vi * 4u;
+    let w0 = hw_page_heap[v_base];
+    let w1 = hw_page_heap[v_base + 1u];
+    let local_pos = decode_pos(w0, w1, c.aabb_min.xyz, c.aabb_extent.xyz);
     let inst = hw_instances[vc.instance_id];
     let world_pos = inst_to_world(inst, local_pos);
     out.clip_pos = hw_uniforms.render_view_proj * vec4<f32>(world_pos, 1.0);

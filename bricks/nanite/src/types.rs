@@ -9,8 +9,8 @@ pub const MAX_OCC_CLUSTERS: u32 = 262_144;
 pub const DEDUP_SLOTS: u32 = 262_144;
 pub const BVH_QUEUE_CAP: u32 = 262_144;
 pub const CAND_CAP: u32 = 524_288;
-pub const MAX_HIZ_MIPS: usize = 12;
-pub const MAX_HIZ_DIM: u32 = 2048;
+pub const MAX_HIZ_MIPS: usize = 11;
+pub const MAX_HIZ_DIM: u32 = 512;
 pub const SHADOW_C0_DIM: u32 = 1024;
 pub const SHADOW_C1_DIM: u32 = 2048;
 pub const SHADOW_LIST_CAP: u32 = 65_536;
@@ -121,7 +121,16 @@ impl LodPreset {
     pub const fn threshold_px(self) -> f32 {
         match self {
             Self::Px1 => 1.0,
-            Self::Px2 => 2.0,
+            Self::Px2 => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    2.8
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    2.0
+                }
+            }
             Self::Px4 => 4.0,
         }
     }
@@ -280,7 +289,7 @@ impl Default for NaniteConfig {
             lod_preset: LodPreset::Px2,
             freeze_culling: false,
             hw_only: false,
-            sw_max_px: 6.0,
+            sw_max_px: 4.5,
             max_pages_per_frame: 24,
             shadows_enabled: true,
         }
@@ -381,10 +390,16 @@ pub const fn prev_pow2(value: u32) -> u32 {
 pub const fn hiz_dimensions(src_w: u32, src_h: u32) -> (u32, u32, u32) {
     let sw = if src_w > 0 { src_w } else { 1 };
     let sh = if src_h > 0 { src_h } else { 1 };
-    let raw_w = prev_pow2(sw);
-    let raw_h = prev_pow2(sh);
-    let w = if raw_w > MAX_HIZ_DIM { MAX_HIZ_DIM } else { raw_w };
-    let h = if raw_h > MAX_HIZ_DIM { MAX_HIZ_DIM } else { raw_h };
+    let mut w = prev_pow2(sw);
+    let mut h = prev_pow2(sh);
+    while w > MAX_HIZ_DIM || h > MAX_HIZ_DIM {
+        if w > 1 {
+            w >>= 1;
+        }
+        if h > 1 {
+            h >>= 1;
+        }
+    }
     let max_d = if w >= h { w } else { h };
     let raw_mips = max_d.ilog2() + 1;
     let max_mips = MAX_HIZ_MIPS as u32;

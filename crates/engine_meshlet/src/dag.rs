@@ -21,6 +21,12 @@ fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidMesh, path)
 }
 
+#[derive(Clone, Copy)]
+struct QuantBounds {
+    min: Vec3,
+    extent: Vec3,
+}
+
 struct DagNode {
     meshlet: MeshletData,
     header: ClusterHeader,
@@ -215,9 +221,11 @@ fn make_dag_node(
     meshlet: MeshletData,
     lod_level: u32,
     material_id: u8,
+    quant: QuantBounds,
 ) -> Result<DagNode, Error> {
     let raw_positions: Vec<Vec3> = meshlet.vertices.iter().map(|v| v.position).collect();
-    let (aabb_min, aabb_extent) = aabb_of_points(&raw_positions);
+    let aabb_min = quant.min;
+    let aabb_extent = quant.extent;
     let mut payload = Vec::new();
     encode_cluster_words(
         &meshlet.vertices,
@@ -357,12 +365,17 @@ fn coarse_decimate_group(
     (parts, error)
 }
 
-fn reduce_single_group(
+struct ReduceEnv<'a> {
     material_id: u8,
+    material_seams: &'a HashSet<u32>,
+    quant: QuantBounds,
+    allow_coarse_fallback: bool,
+}
+
+fn reduce_single_group(
+    env: &ReduceEnv<'_>,
     child_ids: &[usize],
     level_pos_count: &HashMap<u32, u32>,
-    material_seams: &HashSet<u32>,
-    allow_coarse_fallback: bool,
     nodes: &mut Vec<DagNode>,
     next_group_id: &mut u32,
 ) -> Result<Option<Vec<usize>>, Error> {
@@ -381,7 +394,7 @@ fn reduce_single_group(
     let mut hard_locked: HashSet<u32> = HashSet::with_hasher(FixedState::default());
     for (&p, &g_cnt) in &group_pos_count {
         let total_cnt = level_pos_count.get(&p).copied().unwrap_or(0);
-        if total_cnt > g_cnt || material_seams.contains(&p) {
+        if total_cnt > g_cnt || env.material_seams.contains(&p) {
             hard_locked.insert(p);
         }
     }
@@ -417,7 +430,7 @@ fn reduce_single_group(
         }
     }
     if (parent_meshlets.is_empty() || parent_meshlets.len() >= child_ids.len())
-        && allow_coarse_fallback
+        && env.allow_coarse_fallback
     {
         let fallback_tris = (target_parents * 48).min(in_tris / 2).max(1);
         let fallback_verts = (target_parents * 48).max(3);
@@ -445,7 +458,7 @@ fn reduce_single_group(
     let mut parent_ids = Vec::with_capacity(parent_meshlets.len());
     for pm in parent_meshlets {
         let id = nodes.len();
-        nodes.push(make_dag_node(pm, parent_lod, material_id)?);
+        nodes.push(make_dag_node(pm, parent_lod, env.material_id, env.quant)?);
         parent_ids.push(id);
     }
     let mut sphere_list = Vec::with_capacity(child_ids.len() + parent_ids.len());
@@ -483,6 +496,7 @@ fn reduce_material_dag(
     material_id: u8,
     mut active: Vec<usize>,
     material_seams: &HashSet<u32>,
+    quant: QuantBounds,
     nodes: &mut Vec<DagNode>,
     next_group_id: &mut u32,
 ) -> Result<(), Error> {
@@ -513,14 +527,18 @@ fn reduce_material_dag(
         let groups = group_clusters(&inputs);
         let mut next_active = Vec::with_capacity(active.len().div_ceil(2));
         let mut reduced_any = false;
+        let env = ReduceEnv {
+            material_id,
+            material_seams,
+            quant,
+            allow_coarse_fallback,
+        };
         for group in groups {
             let child_ids: Vec<usize> = group.iter().map(|&li| active[li]).collect();
             match reduce_single_group(
-                material_id,
+                &env,
                 &child_ids,
                 &level_pos_count,
-                material_seams,
-                allow_coarse_fallback,
                 nodes,
                 next_group_id,
             )? {
@@ -611,6 +629,11 @@ fn pack_pages_and_fallbacks(
 
 pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
     let prepared = validate_and_prepare(source)?;
+    let mesh_min = Vec3::from_array(prepared.bounds_min);
+    let quant = QuantBounds {
+        min: mesh_min,
+        extent: (Vec3::from_array(prepared.bounds_max) - mesh_min).max(Vec3::ZERO),
+    };
     let mut nodes: Vec<DagNode> = Vec::new();
     let mut next_group_id = 1_u32;
     for (&material_id, mat_tris) in &prepared.by_material {
@@ -618,13 +641,14 @@ pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
         let mut active = Vec::with_capacity(leaf_meshlets.len());
         for meshlet in leaf_meshlets {
             let id = nodes.len();
-            nodes.push(make_dag_node(meshlet, 0, material_id)?);
+            nodes.push(make_dag_node(meshlet, 0, material_id, quant)?);
             active.push(id);
         }
         reduce_material_dag(
             material_id,
             active,
             &prepared.material_seams,
+            quant,
             &mut nodes,
             &mut next_group_id,
         )?;

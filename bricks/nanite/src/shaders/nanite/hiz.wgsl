@@ -1,11 +1,9 @@
 import package::generated::nanite::HizBuildInfo;
 
 @group(1) @binding(0) var<uniform> hiz_build_info: HizBuildInfo;
-@group(1) @binding(1) var hw_depth_r32: texture_2d<f32>;
-@group(1) @binding(2) var hw_depth_tex: texture_depth_2d;
-@group(1) @binding(3) var<storage, read> sw_depth_ro: array<u32>;
-@group(1) @binding(4) var hiz_src: texture_2d<f32>;
-@group(1) @binding(5) var hiz_dst: texture_storage_2d<r32float, write>;
+@group(1) @binding(1) var<storage, read> sw_depth_ro: array<u32>;
+@group(1) @binding(2) var hiz_src: texture_2d<f32>;
+@group(1) @binding(3) var hiz_dst: texture_storage_2d<r32float, write>;
 
 fn footprint(coord: u32, dst_dim: u32, src_dim: u32) -> vec2<u32> {
     let raw_start = (coord * src_dim) / dst_dim;
@@ -16,69 +14,30 @@ fn footprint(coord: u32, dst_dim: u32, src_dim: u32) -> vec2<u32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn cs_hiz_from_r32_and_sw(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_hiz_from_sw(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dst_size = textureDimensions(hiz_dst);
     if gid.x >= dst_size.x || gid.y >= dst_size.y {
         return;
     }
-    let src_size = textureDimensions(hw_depth_r32);
-    if src_size.x == 0u || src_size.y == 0u {
+    let sw_w = hiz_build_info.src_size.x;
+    let sw_h = hiz_build_info.src_size.y;
+    if sw_w == 0u || sw_h == 0u {
         textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(0.0));
         return;
     }
-    let sw_w = select(src_size.x, hiz_build_info.src_size.x, hiz_build_info.src_size.x > 0u);
-    let sw_h = select(src_size.y, hiz_build_info.src_size.y, hiz_build_info.src_size.y > 0u);
     let sw_len = arrayLength(&sw_depth_ro);
-    let rx = footprint(gid.x, dst_size.x, src_size.x);
-    let ry = footprint(gid.y, dst_size.y, src_size.y);
-    var min_z: f32 = 1.0;
+    let rx = footprint(gid.x, dst_size.x, sw_w);
+    let ry = footprint(gid.y, dst_size.y, sw_h);
+    var min_u: u32 = 0x3F800000u;
     for (var py = ry.x; py < ry.y; py = py + 1u) {
         let row = py * sw_w;
         for (var px = rx.x; px < rx.y; px = px + 1u) {
-            var pz = textureLoad(hw_depth_r32, vec2<i32>(i32(px), i32(py)), 0).x;
-            if px < sw_w && py < sw_h {
-                let idx = row + px;
-                if idx < sw_len {
-                    pz = max(pz, bitcast<f32>(sw_depth_ro[idx]));
-                }
-            }
-            min_z = min(min_z, pz);
+            let idx = row + px;
+            let zu = select(0u, sw_depth_ro[idx], idx < sw_len);
+            min_u = min(min_u, zu);
         }
     }
-    textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(min_z, 0.0, 0.0, 0.0));
-}
-
-@compute @workgroup_size(8, 8, 1)
-fn cs_hiz_from_depth_and_sw(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let dst_size = textureDimensions(hiz_dst);
-    if gid.x >= dst_size.x || gid.y >= dst_size.y {
-        return;
-    }
-    let src_size = textureDimensions(hw_depth_tex);
-    if src_size.x == 0u || src_size.y == 0u {
-        textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(0.0));
-        return;
-    }
-    let sw_w = select(src_size.x, hiz_build_info.src_size.x, hiz_build_info.src_size.x > 0u);
-    let sw_h = select(src_size.y, hiz_build_info.src_size.y, hiz_build_info.src_size.y > 0u);
-    let sw_len = arrayLength(&sw_depth_ro);
-    let rx = footprint(gid.x, dst_size.x, src_size.x);
-    let ry = footprint(gid.y, dst_size.y, src_size.y);
-    var min_z: f32 = 1.0;
-    for (var py = ry.x; py < ry.y; py = py + 1u) {
-        let row = py * sw_w;
-        for (var px = rx.x; px < rx.y; px = px + 1u) {
-            var pz = textureLoad(hw_depth_tex, vec2<i32>(i32(px), i32(py)), 0);
-            if px < sw_w && py < sw_h {
-                let idx = row + px;
-                if idx < sw_len {
-                    pz = max(pz, bitcast<f32>(sw_depth_ro[idx]));
-                }
-            }
-            min_z = min(min_z, pz);
-        }
-    }
-    textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(min_z, 0.0, 0.0, 0.0));
+    textureStore(hiz_dst, vec2<i32>(gid.xy), vec4<f32>(bitcast<f32>(min_u), 0.0, 0.0, 0.0));
 }
 
 @compute @workgroup_size(8, 8, 1)

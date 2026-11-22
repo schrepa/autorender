@@ -27,15 +27,20 @@ fn inst_to_world(inst: NaniteInstance, p: vec3<f32>) -> vec3<f32> {
     return inst.pos_scale.xyz + quat_rotate(inst.rot_quat, p * inst.pos_scale.w);
 }
 
-fn decode_pos(w0: u32, aabb_min: vec3<f32>, aabb_extent: vec3<f32>) -> vec3<f32> {
-    let qx = f32(w0 & 0x7FFu) * (1.0 / 2047.0);
-    let qy = f32((w0 >> 11u) & 0x7FFu) * (1.0 / 2047.0);
-    let qz = f32((w0 >> 22u) & 0x3FFu) * (1.0 / 1023.0);
+fn decode_pos(w0: u32, w1: u32, aabb_min: vec3<f32>, aabb_extent: vec3<f32>) -> vec3<f32> {
+    let qx = f32(w0 & 0x3FFFu) * (1.0 / 16383.0);
+    let qy = f32((w0 >> 14u) & 0x3FFFu) * (1.0 / 16383.0);
+    let gz = ((w0 >> 28u) & 0xFu) | ((w1 & 0x3FFu) << 4u);
+    let qz = f32(gz) * (1.0 / 16383.0);
     return aabb_min + vec3<f32>(qx, qy, qz) * aabb_extent;
 }
 
 fn decode_color_ao(w1: u32) -> vec4<f32> {
-    return unpack4x8unorm(w1);
+    let r = f32((w1 >> 10u) & 0x3Fu) * (1.0 / 63.0);
+    let g = f32((w1 >> 16u) & 0x3Fu) * (1.0 / 63.0);
+    let b = f32((w1 >> 22u) & 0x1Fu) * (1.0 / 31.0);
+    let ao = f32((w1 >> 27u) & 0x1Fu) * (1.0 / 31.0);
+    return vec4<f32>(r * r, g * g, b * b, ao);
 }
 
 fn decode_octahedral(w2: u32) -> vec3<f32> {

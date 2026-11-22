@@ -134,8 +134,8 @@ fn sample_cascade_pcf(
     let sa = sin(rot_angle);
     let cmp_z = clip.z + depth_bias;
     var lit = 0.0;
-    for (var i = 0; i < 9; i = i + 1) {
-        let r = sqrt((f32(i) + 0.5) * (1.0 / 9.0)) * radius_px;
+    for (var i = 0; i < 5; i = i + 1) {
+        let r = sqrt((f32(i) + 0.5) * 0.2) * radius_px;
         let a = f32(i) * 2.3999632;
         let ox = cos(a) * r;
         let oy = sin(a) * r;
@@ -148,7 +148,7 @@ fn sample_cascade_pcf(
         lit += select(0.0, 1.0, stored_bits == 0u || cmp_z >= stored_z);
     }
     let coverage = smoothstep(0.99, 0.84, margin);
-    return vec2<f32>(lit * (1.0 / 9.0), coverage);
+    return vec2<f32>(lit * 0.2, coverage);
 }
 
 fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
@@ -165,7 +165,7 @@ fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
         0.10 + slope * 0.14,
         0.0010 + slope * 0.0012,
         angle,
-        1.65,
+        1.45,
     );
     if c0.y >= 0.99 {
         return c0.x;
@@ -179,7 +179,7 @@ fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
         0.24 + slope * 0.34,
         0.0014 + slope * 0.0018,
         angle,
-        1.55,
+        1.35,
     );
     let far_val = mix(1.0, c1.x, c1.y);
     return mix(far_val, c0.x, c0.y);
@@ -255,9 +255,9 @@ fn shade_pbr(
 
     if mat_id == 0u {
         albedo = clamp(base_color * (1.0 + micro * 0.7), vec3<f32>(0.02), vec3<f32>(0.98));
-        rough = mix(0.58, 0.45, smoothstep(0.55, 0.92, n.y));
-        wrap_amt = 0.25;
-        wrap_tint = vec3<f32>(0.95, 0.78, 0.62);
+        rough = mix(0.56, 0.42, smoothstep(0.55, 0.92, n.y));
+        wrap_amt = 0.36;
+        wrap_tint = vec3<f32>(1.00, 0.80, 0.58);
     } else if mat_id == 1u {
         let dust = smoothstep(0.58, 0.92, n.y) * 0.45;
         albedo = mix(base_color, vec3<f32>(0.30, 0.20, 0.12), dust) * (1.0 + micro);
@@ -265,7 +265,7 @@ fn shade_pbr(
     } else if mat_id == 2u {
         let verd = smoothstep(-0.006, 0.042, base_color.g - base_color.r);
         albedo = clamp(base_color * (1.0 + micro * 0.5), vec3<f32>(0.02), vec3<f32>(0.98));
-        rough = mix(0.36, 0.70, verd);
+        rough = mix(0.28, 0.68, verd);
         metallic = mix(1.0, 0.2, verd);
     } else if mat_id == 3u {
         albedo = clamp(base_color * (1.0 + micro), vec3<f32>(0.02), vec3<f32>(0.98));
@@ -277,8 +277,11 @@ fn shade_pbr(
         wrap_tint = vec3<f32>(0.35, 0.55, 0.12);
     }
 
-    let sh = eval_shadow(world_pos, n, frag_xy);
     let ndl = max(dot(n, l), 0.0);
+    var sh = 0.0;
+    if ndl > 0.001 || wrap_amt > 0.0 || backlit_amt > 0.0 || mat_id == 2u {
+        sh = eval_shadow(world_pos, n, frag_xy);
+    }
     let ndv = max(dot(n, v), 0.001);
     let h_raw = l + v;
     let h_l2 = dot(h_raw, h_raw);
@@ -298,9 +301,9 @@ fn shade_pbr(
 
     if wrap_amt > 0.0 {
         let wrap_ndl = clamp((dot(n, l) + wrap_amt) / (1.0 + wrap_amt), 0.0, 1.0);
-        let grazing = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.5);
-        let back_sun = pow(clamp(dot(-v, l), 0.0, 1.0), 2.5);
-        let sss = max(wrap_ndl - ndl, 0.0) * 0.45 + grazing * (0.28 + 0.55 * back_sun) * (0.35 + 0.65 * sh);
+        let grazing = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.15);
+        let back_sun = pow(clamp(dot(-v, l), 0.0, 1.0), 2.2);
+        let sss = max(wrap_ndl - ndl, 0.0) * 0.62 + grazing * (0.36 + 0.78 * back_sun) * (0.40 + 0.60 * sh);
         direct += albedo * wrap_tint * sun_rad * (sss * wrap_amt * (1.0 / PI));
     }
     if backlit_amt > 0.0 {
@@ -308,17 +311,23 @@ fn shade_pbr(
         let wrap_leaf = clamp((dot(n, l) + 0.35) / 1.35, 0.0, 1.0) * 0.3 * sh;
         direct += wrap_tint * sun_rad * ((trans + wrap_leaf) * backlit_amt * (1.0 / PI));
     }
+    if mat_id == 2u {
+        let rim = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.6);
+        let back_s = pow(clamp(dot(-v, l), 0.0, 1.0), 2.0);
+        direct += albedo * frame_params.sun_color_shaft.rgb * (rim * (0.45 + 1.15 * back_s) * metallic * (0.4 + 0.6 * sh));
+    }
 
     let sky_avg = mix(frame_params.sky_horiz_sun.rgb, frame_params.sky_horiz_opp.rgb, 0.5);
     let sky_hemi = mix(sky_avg, frame_params.sky_zenith.rgb, clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
-    let ground_bounce = vec3<f32>(0.42, 0.30, 0.20) * 0.35;
-    let hemi = mix(ground_bounce, sky_hemi, n.y * 0.5 + 0.5);
+    let ground_bounce = vec3<f32>(0.56, 0.39, 0.25) * 0.48;
+    let opp_bounce = vec3<f32>(0.90, 0.66, 0.42) * (clamp(dot(n, -l), 0.0, 1.0) * 0.26 * (1.0 - metallic * 0.65));
+    let hemi = mix(ground_bounce, sky_hemi, n.y * 0.5 + 0.5) + opp_bounce;
     let ao_spec = clamp(pow(ndv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
     let refl = reflect(-v, n);
     let env_col = eval_sky(refl, false);
     let f_env = fresnel_schlick(ndv, f0);
-    let env_spec = env_col * f_env * (1.0 - rough * 0.72) * ao_spec * (0.45 + 0.55 * metallic);
-    let indirect = hemi * albedo * (1.0 - metallic * 0.78) * (ao * 0.58) + env_spec;
+    let env_spec = env_col * f_env * (1.0 - rough * 0.68) * ao_spec * (0.50 + 0.85 * metallic);
+    let indirect = hemi * albedo * (1.0 - metallic * 0.76) * (ao * 0.60) + env_spec;
 
     let lit = direct + indirect;
     return apply_aerial_fog(lit, world_pos, cam_pos, -v);
@@ -361,18 +370,19 @@ fn shade_ground(
     let style = (vis_id >> 4u) & 0xFu;
     let n = ground_normal(vis_id & 0x7u);
 
+    let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
+    let dist = length(world_pos - cam_pos);
     if view_mode != 0u {
         let l = frame_params.sun_dir_illum.xyz;
         let ndl = 0.45 + 0.55 * clamp(dot(n, l) * 0.5 + 0.5, 0.0, 1.0);
-        if view_mode == 4u {
-            return vec3<f32>(0.15, 0.17, 0.21) * ndl;
+        let base_g = select(vec3<f32>(0.24, 0.23, 0.22), vec3<f32>(0.15, 0.17, 0.21), view_mode == 4u) * ndl;
+        if style == 0u {
+            return mix(base_g, vec3<f32>(0.05, 0.055, 0.07), smoothstep(520.0, 2200.0, dist));
         }
-        return vec3<f32>(0.24, 0.23, 0.22) * ndl;
+        return base_g;
     }
 
-    let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
-    let dist = length(world_pos - cam_pos);
-    let fp = max(dist / max(nanite_frame_uniforms.viewport_lod.z, 1.0), 0.002);
+    let fp = max(dist / max(nanite_frame_uniforms.shadow_info.z, 1.0), 0.002);
     var albedo = vec3<f32>(0.784, 0.701, 0.565);
     var ao = 1.0;
 
@@ -428,7 +438,15 @@ fn shade_ground(
         ao = select(1.0, 0.82, n.y < 0.5) * (1.0 - pg.x * 0.35);
     }
 
-    return shade_pbr(world_pos, n, albedo, ao, mat_id, world_pos.xz, fp, frag_xy);
+    let shaded = shade_pbr(world_pos, n, albedo, ao, mat_id, world_pos.xz, fp, frag_xy);
+    if style == 0u {
+        let to_p = world_pos - cam_pos;
+        let vd = to_p / max(dist, 1.0e-4);
+        let horiz_sky = eval_sky(vec3<f32>(vd.x, max(vd.y, 0.012), vd.z), false);
+        let h_blend = smoothstep(500.0, 2200.0, dist);
+        return mix(shaded, horiz_sky, h_blend);
+    }
+    return shaded;
 }
 
 @fragment
@@ -446,8 +464,8 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let hw_v = textureLoad(vis_hw_tex, px_i, 0).r;
     let sw_d_bits = nanite_frame_sw_depth[idx];
     let sw_d = bitcast<f32>(sw_d_bits);
-    let sw_v = select(0u, nanite_frame_sw_vis[idx], sw_d_bits != 0u);
-    let use_sw = (sw_d_bits != 0u) && (sw_v != 0u) && (sw_d > hw_d || hw_v == 0u);
+    let sw_v = nanite_frame_sw_vis[idx];
+    let use_sw = (sw_v != 0u) && (sw_d > hw_d || hw_v == 0u);
     let vis_id = select(hw_v, sw_v, use_sw);
     let win_depth = select(hw_d, sw_d, use_sw);
 
@@ -484,9 +502,16 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let b1 = page_base + i1 * 4u;
     let b2 = page_base + i2 * 4u;
 
-    let p0 = inst_to_world(inst, decode_pos(nanite_frame_page_heap[b0], c.aabb_min.xyz, c.aabb_extent.xyz));
-    let p1 = inst_to_world(inst, decode_pos(nanite_frame_page_heap[b1], c.aabb_min.xyz, c.aabb_extent.xyz));
-    let p2 = inst_to_world(inst, decode_pos(nanite_frame_page_heap[b2], c.aabb_min.xyz, c.aabb_extent.xyz));
+    let w0_0 = nanite_frame_page_heap[b0];
+    let w1_0 = nanite_frame_page_heap[b0 + 1u];
+    let w0_1 = nanite_frame_page_heap[b1];
+    let w1_1 = nanite_frame_page_heap[b1 + 1u];
+    let w0_2 = nanite_frame_page_heap[b2];
+    let w1_2 = nanite_frame_page_heap[b2 + 1u];
+
+    let p0 = inst_to_world(inst, decode_pos(w0_0, w1_0, c.aabb_min.xyz, c.aabb_extent.xyz));
+    let p1 = inst_to_world(inst, decode_pos(w0_1, w1_1, c.aabb_min.xyz, c.aabb_extent.xyz));
+    let p2 = inst_to_world(inst, decode_pos(w0_2, w1_2, c.aabb_min.xyz, c.aabb_extent.xyz));
 
     let rvp = nanite_frame_uniforms.render_view_proj;
     let c0 = rvp * vec4<f32>(p0, 1.0);
@@ -564,9 +589,9 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(pcol * ndl, 1.0);
     }
 
-    let ca0 = decode_color_ao(nanite_frame_page_heap[b0 + 1u]);
-    let ca1 = decode_color_ao(nanite_frame_page_heap[b1 + 1u]);
-    let ca2 = decode_color_ao(nanite_frame_page_heap[b2 + 1u]);
+    let ca0 = decode_color_ao(w1_0);
+    let ca1 = decode_color_ao(w1_1);
+    let ca2 = decode_color_ao(w1_2);
     let color_ao = ca0 * bary.x + ca1 * bary.y + ca2 * bary.z;
 
     let uv0 = decode_uv(nanite_frame_page_heap[b0 + 3u]);

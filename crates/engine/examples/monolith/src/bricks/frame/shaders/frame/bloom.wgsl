@@ -6,6 +6,21 @@ import package::generated::frame::FrameUniforms;
 @group(2) @binding(3) var scene_tex: texture_2d<f32>;
 @group(2) @binding(4) var<uniform> frame_params: FrameUniforms;
 
+struct BloomVert {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_bloom(@builtin(vertex_index) idx: u32) -> BloomVert {
+    let x = f32((idx << 1u) & 2u);
+    let y = f32(idx & 2u);
+    var out: BloomVert;
+    out.pos = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, y);
+    return out;
+}
+
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
@@ -35,35 +50,32 @@ fn radial_godrays(uv: vec2<f32>, frag_xy: vec2<f32>) -> vec3<f32> {
         return vec3<f32>(0.0);
     }
     let sun_uv = frame_params.sun_uv_vis.xy;
-    let radial_dist = length((uv - sun_uv) * vec2<f32>(1.35, 1.0));
-    let radial_falloff = exp(-radial_dist * 1.45);
+    let radial_dist = length((uv - sun_uv) * vec2<f32>(1.30, 1.0));
+    let radial_falloff = exp(-radial_dist * 1.28);
     if radial_falloff < 0.01 {
         return vec3<f32>(0.0);
     }
-    let scene_dim_u = textureDimensions(scene_tex);
-    let scene_dim = vec2<f32>(scene_dim_u);
-    let scene_max = vec2<i32>(scene_dim_u) - 1;
-    let density = 0.85;
-    let delta = (uv - sun_uv) * (density / 64.0);
+    let density = 0.88;
+    let delta = (uv - sun_uv) * (density / 16.0);
     let ign = fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
     var sample_uv = uv - delta * ign;
     var illum_decay = 1.0;
     var accum = vec3<f32>(0.0);
-    for (var i = 0; i < 64; i = i + 1) {
+    for (var i = 0; i < 16; i = i + 1) {
         sample_uv -= delta;
         if sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0 {
-            illum_decay *= 0.965;
+            illum_decay *= 0.8675;
             continue;
         }
-        let px = clamp(vec2<i32>(sample_uv * scene_dim), vec2<i32>(0), scene_max);
-        let s = textureLoad(scene_tex, px, 0);
-        if s.a < 0.5 {
-            let tint = mix(frame_params.sun_color_shaft.rgb, min(s.rgb, vec3<f32>(3.0)), 0.35);
-            accum += tint * (illum_decay * 0.42);
+        let s = textureSampleLevel(scene_tex, bloom_sampler, sample_uv, 0.0);
+        let sky_w = clamp(1.0 - s.a, 0.0, 1.0);
+        if sky_w > 0.01 {
+            let tint = mix(frame_params.sun_color_shaft.rgb, min(s.rgb, vec3<f32>(3.0)), 0.32);
+            accum += tint * (illum_decay * 0.44 * sky_w);
         }
-        illum_decay *= 0.965;
+        illum_decay *= 0.8675;
     }
-    return accum * (exposure * radial_falloff * vis * (1.0 / 32.0));
+    return accum * (exposure * radial_falloff * vis * (1.0 / 7.95));
 }
 
 fn upsample_tent(uv: vec2<f32>) -> vec3<f32> {
@@ -77,12 +89,11 @@ fn upsample_tent(uv: vec2<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs_extract(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_extract(in: BloomVert) -> @location(0) vec4<f32> {
     if frame_params.fog_params.w > 0.5 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    let dst_size = max(vec2<f32>(textureDimensions(src_tex)) * 0.5, vec2<f32>(1.0));
-    let uv = pos.xy / dst_size;
+    let uv = in.uv;
     let texel = 1.0 / vec2<f32>(textureDimensions(src_tex));
     let c0 = textureSampleLevel(src_tex, bloom_sampler, uv, 0.0).rgb;
     let c1 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(-texel.x, -texel.y), 0.0).rgb;
@@ -99,10 +110,9 @@ fn fs_extract(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_down(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_down(in: BloomVert) -> @location(0) vec4<f32> {
     let src_dim = vec2<f32>(textureDimensions(src_tex));
-    let dst_dim = max(src_dim * 0.5, vec2<f32>(1.0));
-    let uv = pos.xy / dst_dim;
+    let uv = in.uv;
     let d = 1.0 / src_dim;
     var sum = textureSampleLevel(src_tex, bloom_sampler, uv, 0.0).rgb * 4.0;
     sum += textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(-d.x, -d.y), 0.0).rgb;
@@ -113,17 +123,13 @@ fn fs_down(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_up(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let add_dim = vec2<f32>(textureDimensions(add_tex));
-    let uv = pos.xy / max(add_dim, vec2<f32>(1.0));
-    return vec4<f32>(upsample_tent(uv), 1.0);
+fn fs_up(in: BloomVert) -> @location(0) vec4<f32> {
+    return vec4<f32>(upsample_tent(in.uv), 1.0);
 }
 
 @fragment
-fn fs_up_final(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let add_dim = vec2<f32>(textureDimensions(add_tex));
-    let uv = pos.xy / max(add_dim, vec2<f32>(1.0));
-    let bloom_rgb = upsample_tent(uv);
-    let shafts = radial_godrays(uv, pos.xy);
+fn fs_up_final(in: BloomVert) -> @location(0) vec4<f32> {
+    let bloom_rgb = upsample_tent(in.uv);
+    let shafts = radial_godrays(in.uv, in.pos.xy);
     return vec4<f32>(bloom_rgb * frame_params.grade.y + shafts, 1.0);
 }
