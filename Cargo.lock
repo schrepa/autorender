@@ -540,6 +540,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "brick_post"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_render",
+ "engine_sources",
+]
+
+[[package]]
 name = "brick_present"
 version = "0.1.0"
 dependencies = [
