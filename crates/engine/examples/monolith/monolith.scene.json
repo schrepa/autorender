@@ -1,6 +1,6 @@
 {
   "id": "monolith",
-  "revision": 1,
+  "revision": 2,
   "entities": [
     {
       "id": "camera",
@@ -28,15 +28,6 @@
       },
       "drawn": {
         "kind": "nanite_world"
-      }
-    },
-    {
-      "id": "sanctuary_ground",
-      "node": {
-        "mobility": "static"
-      },
-      "drawn": {
-        "kind": "monolith_ground"
       }
     }
   ]

@@ -9,6 +9,7 @@ import package::nanite::common::inst_to_world;
 import package::nanite::common::decode_pos;
 import package::nanite::common::cluster_vert_count;
 import package::nanite::common::cluster_tri_count;
+import package::nanite::common::cluster_mat;
 import package::nanite::common::edge_yup_i32;
 import package::nanite::common::is_top_left_i32;
 
@@ -133,12 +134,26 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
     if min_x > max_x || min_y > max_y {
         return s;
     }
-    let q0 = vec2<i32>(round(p0.xy * 16.0));
-    let q1 = vec2<i32>(round(p1.xy * 16.0));
-    let q2 = vec2<i32>(round(p2.xy * 16.0));
-    let area = edge_yup_i32(q0, q1, q2);
+    var q0 = vec2<i32>(round(p0.xy * 16.0));
+    var q1 = vec2<i32>(round(p1.xy * 16.0));
+    var q2 = vec2<i32>(round(p2.xy * 16.0));
+    var z0_v = p0.z;
+    var z1_v = p1.z;
+    var z2_v = p2.z;
+    var area = edge_yup_i32(q0, q1, q2);
+    let mat_bit = 1u << (cluster_mat(c) & 31u);
+    let is_ds = (sw_uniforms.extra.x & mat_bit) != 0u;
     if area <= 0 {
-        return s;
+        if !is_ds || area == 0 {
+            return s;
+        }
+        let tq = q1;
+        q1 = q2;
+        q2 = tq;
+        let tz = z1_v;
+        z1_v = z2_v;
+        z2_v = tz;
+        area = -area;
     }
     let b0 = select(-1, 0, is_top_left_i32(q1, q2));
     let b1 = select(-1, 0, is_top_left_i32(q2, q0));
@@ -154,7 +169,7 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
         if (e0_s | e1_s | e2_s) < 0 {
             return s;
         }
-        let z0 = (f32(e0_0) * p0.z + f32(e1_0) * p1.z + f32(e2_0) * p2.z) / f32(area);
+        let z0 = (f32(e0_0) * z0_v + f32(e1_0) * z1_v + f32(e2_0) * z2_v) / f32(area);
         if z0 <= 0.0 || z0 > 1.0 {
             return s;
         }
@@ -181,9 +196,9 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, lid: u32) -> TriSetup {
     s.e2_start = e2_s;
     s.dx = dx;
     s.dy = dy;
-    s.z_start = (f32(e0_0) * p0.z + f32(e1_0) * p1.z + f32(e2_0) * p2.z) * inv_area;
-    s.dz_dx = (f32(dx.x) * p0.z + f32(dx.y) * p1.z + f32(dx.z) * p2.z) * inv_area;
-    s.dz_dy = (f32(dy.x) * p0.z + f32(dy.y) * p1.z + f32(dy.z) * p2.z) * inv_area;
+    s.z_start = (f32(e0_0) * z0_v + f32(e1_0) * z1_v + f32(e2_0) * z2_v) * inv_area;
+    s.dz_dx = (f32(dx.x) * z0_v + f32(dx.y) * z1_v + f32(dx.z) * z2_v) * inv_area;
+    s.dz_dy = (f32(dy.x) * z0_v + f32(dy.y) * z1_v + f32(dy.z) * z2_v) * inv_area;
     s.bbox = vec4<i32>(min_x, min_y, max_x, max_y);
     s.vis_id = ((vc.vis_slot + 1u) << 6u) | lid;
     return s;

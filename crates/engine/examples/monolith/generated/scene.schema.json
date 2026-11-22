@@ -179,7 +179,7 @@
     "MonolithDevControl": {
       "properties": {
         "bookmark": {
-          "default": "vista",
+          "default": "atrium",
           "type": "string"
         },
         "dolly": {

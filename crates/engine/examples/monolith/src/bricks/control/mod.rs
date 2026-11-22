@@ -11,7 +11,7 @@ use engine_touch::{LookPadSpec, TouchLayout, TouchState, VirtualStickSpec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::names::{NEAR_Z, SUN_DIR};
+use crate::names::{DOUBLE_SIDED_MASK, NEAR_Z, SUN_DIR};
 use crate::state::{CamBookmark, MonolithState};
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -22,7 +22,7 @@ settings! {
     #[dev]
     #[section("monolith")]
     pub struct MonolithDevControl {
-        pub bookmark: String = "vista".to_owned() => any,
+        pub bookmark: String = "atrium".to_owned() => any,
         pub view_mode: String = "lit".to_owned() => any,
         pub freeze_culling: bool = false => any,
         pub hw_only: bool = false => any,
@@ -110,7 +110,7 @@ fn shortest_angle_diff(from: f32, to: f32) -> f32 {
 
 impl Default for CameraRig {
     fn default() -> Self {
-        let (eye, target, fov) = CamBookmark::Vista.pose();
+        let (eye, target, fov) = CamBookmark::Atrium.pose();
         let (yaw, pitch) = look_angles(eye, target);
         Self {
             eye,
@@ -210,10 +210,10 @@ fn ensure_camera(
 
 fn parse_bookmark(s: &str) -> Option<CamBookmark> {
     match s.to_ascii_lowercase().as_str() {
-        "vista" => Some(CamBookmark::Vista),
-        "sentinel" => Some(CamBookmark::Sentinel),
-        "canyon" => Some(CamBookmark::Canyon),
-        "corridor" => Some(CamBookmark::Corridor),
+        "atrium" | "vista" => Some(CamBookmark::Atrium),
+        "gallery" | "sentinel" => Some(CamBookmark::Gallery),
+        "ivy" | "canyon" => Some(CamBookmark::Ivy),
+        "lion" | "corridor" => Some(CamBookmark::Lion),
         _ => None,
     }
 }
@@ -302,17 +302,17 @@ fn handle_shortcuts(
     }
 
     if kb.pressed(KeyCode::KeyV) || kb.pressed(KeyCode::F1) {
-        state.bookmark = CamBookmark::Vista;
-        state.requested_bookmark = Some(CamBookmark::Vista);
+        state.bookmark = CamBookmark::Atrium;
+        state.requested_bookmark = Some(CamBookmark::Atrium);
     } else if kb.pressed(KeyCode::KeyB) || kb.pressed(KeyCode::F2) {
-        state.bookmark = CamBookmark::Sentinel;
-        state.requested_bookmark = Some(CamBookmark::Sentinel);
+        state.bookmark = CamBookmark::Gallery;
+        state.requested_bookmark = Some(CamBookmark::Gallery);
     } else if kb.pressed(KeyCode::KeyN) || kb.pressed(KeyCode::F3) {
-        state.bookmark = CamBookmark::Canyon;
-        state.requested_bookmark = Some(CamBookmark::Canyon);
+        state.bookmark = CamBookmark::Ivy;
+        state.requested_bookmark = Some(CamBookmark::Ivy);
     } else if kb.pressed(KeyCode::KeyM) || kb.pressed(KeyCode::F4) {
-        state.bookmark = CamBookmark::Corridor;
-        state.requested_bookmark = Some(CamBookmark::Corridor);
+        state.bookmark = CamBookmark::Lion;
+        state.requested_bookmark = Some(CamBookmark::Lion);
     }
 
     if kb.pressed(KeyCode::KeyF) {
@@ -367,19 +367,10 @@ fn sync_touch_layout(
 }
 
 fn clamp_floor(eye: Vec3) -> Vec3 {
-    let in_plaza = eye.x.abs() < 32.0 && eye.z > -238.0 && eye.z < -172.0;
-    let in_terraces = eye.x.abs() < 56.0 && eye.z > -262.0 && eye.z < -148.0;
-    let min_y = if in_plaza {
-        -3.1
-    } else if in_terraces {
-        -2.0
-    } else {
-        0.65
-    };
     Vec3::new(
-        math::clamp(eye.x, -420.0, 420.0),
-        math::clamp(eye.y, min_y, 320.0),
-        math::clamp(eye.z, -580.0, 360.0),
+        math::clamp(eye.x, -15.2, 18.8),
+        math::clamp(eye.y, 0.55, 16.5),
+        math::clamp(eye.z, -8.5, 11.5),
     )
 }
 
@@ -448,24 +439,21 @@ fn step_camera(
     } else if state.dolly_enabled {
         rig.dolly_time += dt;
         match state.bookmark {
-            CamBookmark::Vista => {
-                let phase = 0.5 - 0.5 * math::cos(rig.dolly_time * std::f32::consts::PI / 40.0);
-                rig.eye = Vec3::new(0.0, 7.5, 160.0 - 40.0 * phase);
-                let (yaw, pitch) = look_angles(rig.eye, Vec3::new(0.0, 14.0, -215.0));
+            CamBookmark::Atrium => {
+                let phase = 0.5 - 0.5 * math::cos(rig.dolly_time * std::f32::consts::PI / 32.0);
+                rig.eye = Vec3::new(7.1 - 8.5 * phase, 1.95 + 0.30 * phase, -0.10);
+                let (yaw, pitch) = look_angles(rig.eye, Vec3::new(-15.0, 2.8, 0.0));
                 rig.yaw = yaw;
                 rig.pitch = pitch;
             }
-            CamBookmark::Sentinel => {
-                let pivot = Vec3::new(0.0, 18.4, -214.6);
-                let base_offset = Vec3::new(6.5, 15.0, -186.0) - pivot;
-                let angle = math::sin(rig.dolly_time * std::f32::consts::TAU / 30.0)
-                    * 12.0_f32.to_radians();
-                rig.eye = pivot + Quat::from_rotation_y(angle) * base_offset;
-                let (yaw, pitch) = look_angles(rig.eye, Vec3::new(0.0, 18.4, -214.0));
+            CamBookmark::Gallery => {
+                let phase = 0.5 - 0.5 * math::cos(rig.dolly_time * std::f32::consts::PI / 28.0);
+                rig.eye = Vec3::new(8.8 - 8.0 * phase, 6.9, -4.4);
+                let (yaw, pitch) = look_angles(rig.eye, Vec3::new(-7.5, 5.1, 1.8));
                 rig.yaw = yaw;
                 rig.pitch = pitch;
             }
-            CamBookmark::Canyon | CamBookmark::Corridor => {}
+            CamBookmark::Ivy | CamBookmark::Lion => {}
         }
     } else if manual {
         rig.yaw -= look.x * 0.0038;
@@ -474,9 +462,9 @@ fn step_camera(
         let fwd = (rot * Vec3::NEG_Z).normalize_or_zero();
         let right = (rot * Vec3::X).normalize_or_zero();
         let speed = if kb.held(KeyCode::ShiftLeft) || kb.held(KeyCode::ShiftRight) {
-            72.0
+            12.0
         } else {
-            24.0
+            4.5
         };
         let wish = fwd * math::clamp(move_f + stick.y, -1.0, 1.0)
             + right * math::clamp(move_r + stick.x, -1.0, 1.0)
@@ -485,7 +473,7 @@ fn step_camera(
             rig.eye += wish.normalize() * (speed * dt);
         }
         if wheel.abs() > 0.001 {
-            rig.eye += fwd * (wheel * 6.5);
+            rig.eye += fwd * (wheel * 1.2);
         }
         rig.eye = clamp_floor(rig.eye);
     }
@@ -561,6 +549,13 @@ fn update_control(
         state.render_scale = 1.0;
     }
     cfg.render_scale = state.render_scale;
+    cfg.shadow_c0_half = 11.0;
+    cfg.shadow_c0_forward = 6.5;
+    cfg.shadow_c0_depth = 32.0;
+    cfg.shadow_c1_half = 24.0;
+    cfg.shadow_c1_center = Vec3::new(1.5, 6.0, 0.0);
+    cfg.shadow_c1_depth = 45.0;
+    cfg.double_sided_materials = DOUBLE_SIDED_MASK;
     let eff_fov = if logical.x > 0.0 && logical.x < logical.y {
         math::min(fov_deg + 14.0, 78.0)
     } else {

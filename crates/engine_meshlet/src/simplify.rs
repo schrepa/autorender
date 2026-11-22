@@ -165,6 +165,7 @@ struct SimplifierState {
     boundary_q: Vec<Quadric>,
     hard_locked: Vec<bool>,
     locked: Vec<bool>,
+    uv_seam: Vec<bool>,
     alive_vert: Vec<bool>,
     ver: Vec<u32>,
     vert_tris: Vec<Vec<usize>>,
@@ -180,6 +181,7 @@ struct QuadricAndLocks {
     boundary_q: Vec<Quadric>,
     hard_locked: Vec<bool>,
     locked: Vec<bool>,
+    uv_seam: Vec<bool>,
 }
 
 fn build_quadrics_and_locks(
@@ -248,6 +250,21 @@ fn build_quadrics_and_locks(
             }
         }
     }
+    let mut first_uv: Vec<Option<Vec2>> = vec![None; v_count];
+    let mut uv_seam = vec![false; v_count];
+    for tri in tris {
+        for slot in 0..3 {
+            let vi = tri.v[slot] as usize;
+            let uv = tri.attrs[slot].uv;
+            if let Some(prev) = first_uv[vi] {
+                if (prev - uv).length_squared() > 1.0e-4 {
+                    uv_seam[vi] = true;
+                }
+            } else {
+                first_uv[vi] = Some(uv);
+            }
+        }
+    }
     let hard_locked: Vec<bool> = global_pos
         .iter()
         .map(|gp| hard_locked_pos.contains(gp))
@@ -261,6 +278,7 @@ fn build_quadrics_and_locks(
         boundary_q,
         hard_locked,
         locked,
+        uv_seam,
     }
 }
 
@@ -328,6 +346,7 @@ fn init_state(
         boundary_q: ql.boundary_q,
         hard_locked: ql.hard_locked,
         locked: ql.locked,
+        uv_seam: ql.uv_seam,
         alive_vert: vec![true; v_count],
         ver: vec![0; v_count],
         vert_tris: ql.vert_tris,
@@ -373,14 +392,47 @@ fn evaluate_edge(state: &SimplifierState, u: u32, v: u32) -> Option<CollapseEntr
         }
         (u, v, best_p)
     };
-    let cost = total_q.eval(target_pos);
+    let edge_len = (pv - pu).length();
+    let mut cost = total_q.eval(target_pos);
     let plane_sq = pq.eval(target_pos) / pq.weight.max(1.0e-12);
     let bnd_sq = if bq.weight > 1.0e-12 {
         bq.eval(target_pos) / bq.weight
     } else {
         0.0
     };
-    let geom_err = plane_sq.max(bnd_sq * 0.25).sqrt();
+    let mut geom_err = plane_sq.max(bnd_sq * 0.25).sqrt();
+    let seam_edge = state.uv_seam[u as usize] || state.uv_seam[v as usize];
+    if seam_edge {
+        geom_err = geom_err.max(0.25 * edge_len);
+        cost += edge_len * edge_len * 36.0;
+    } else {
+        let mut max_duv_sq = 0.0_f32;
+        for &ti in &state.vert_tris[u as usize] {
+            let tri = &state.tris[ti];
+            if !tri.alive {
+                continue;
+            }
+            let mut ui = None;
+            let mut vi = None;
+            for slot in 0..3 {
+                if tri.v[slot] == u {
+                    ui = Some(slot);
+                } else if tri.v[slot] == v {
+                    vi = Some(slot);
+                }
+            }
+            if let (Some(a), Some(b)) = (ui, vi) {
+                max_duv_sq = max(
+                    max_duv_sq,
+                    (tri.attrs[a].uv - tri.attrs[b].uv).length_squared(),
+                );
+            }
+        }
+        if max_duv_sq > 0.04 {
+            geom_err = geom_err.max(0.12 * edge_len);
+            cost += edge_len * edge_len * 8.0;
+        }
+    }
     Some(CollapseEntry {
         cost,
         geom_err,
@@ -530,7 +582,7 @@ fn collapse_is_valid(
 }
 
 fn blend_attr(a: CornerAttr, b: CornerAttr, t: f32) -> CornerAttr {
-    if a.normal.dot(b.normal) < 0.7 || (a.uv - b.uv).length_squared() > 0.0625 {
+    if a.normal.dot(b.normal) < 0.7 || (a.uv - b.uv).length_squared() > 4.0 {
         return a;
     }
     let n = a.normal.lerp(b.normal, t);
@@ -607,7 +659,7 @@ fn apply_collapse(
                 tri.v[slot] = keep;
                 if let Some(ma) = merged_attr
                     && tri.attrs[slot].normal.dot(ma.normal) > 0.7
-                    && (tri.attrs[slot].uv - ma.uv).length_squared() < 0.0625
+                    && (tri.attrs[slot].uv - ma.uv).length_squared() < 4.0
                 {
                     tri.attrs[slot] = ma;
                 }
@@ -624,7 +676,7 @@ fn apply_collapse(
             for slot in 0..3 {
                 if tri.v[slot] == keep
                     && tri.attrs[slot].normal.dot(ma.normal) > 0.7
-                    && (tri.attrs[slot].uv - ma.uv).length_squared() < 0.0625
+                    && (tri.attrs[slot].uv - ma.uv).length_squared() < 4.0
                 {
                     tri.attrs[slot] = ma;
                 }
@@ -638,6 +690,7 @@ fn apply_collapse(
     state.positions[keep as usize] = entry.target_pos;
     state.locked[keep as usize] |= state.locked[remove as usize];
     state.hard_locked[keep as usize] |= state.hard_locked[remove as usize];
+    state.uv_seam[keep as usize] |= state.uv_seam[remove as usize];
     state.alive_vert[remove as usize] = false;
     state.live_verts = state.live_verts.saturating_sub(1);
     state.ver[keep as usize] = state.ver[keep as usize].wrapping_add(1);

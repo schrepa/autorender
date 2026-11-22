@@ -12,7 +12,6 @@ import package::nanite::common::inst_to_world;
 import package::nanite::common::decode_pos;
 import package::nanite::common::cluster_vert_count;
 import package::nanite::common::cluster_tri_count;
-import package::nanite::common::cluster_mat;
 import package::nanite::common::edge_yup;
 
 @group(1) @binding(0) var<uniform> sh_uniforms: NaniteUniforms;
@@ -153,10 +152,6 @@ fn shadow_raster(wid_x: u32, lid: u32, cascade: u32) {
     let p1 = sh_v[(tri_word >> 8u) & 0xFFu];
     let p2 = sh_v[(tri_word >> 16u) & 0xFFu];
     let area = edge_yup(p0.xy, p1.xy, p2.xy);
-    let mat_id = cluster_mat(c);
-    if mat_id != 4u && area <= 1.0e-5 {
-        return;
-    }
     if abs(area) <= 1.0e-5 {
         return;
     }

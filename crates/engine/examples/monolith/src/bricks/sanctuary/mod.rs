@@ -3,23 +3,15 @@ engine::brick!(sanctuary);
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-use brick_nanite::{NANITE_P1_PASS, NaniteWorld};
+use brick_nanite::NaniteWorld;
 use engine::prelude::*;
-use engine_core::{Error, GpuStruct, KindDecl};
 #[cfg(not(target_arch = "wasm32"))]
 use engine_meshlet::MeshletManifest;
-use engine_render::{
-    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, PerBatch, Pipeline,
-    Prepare, RenderPipeline, Scene, Shape, wgpu,
-};
 
-use crate::ground::{GroundVertex, build_ground_mesh};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::layout::{HERO_ASSETS, populate_sanctuary};
-use crate::names::GROUND_KIND;
+use crate::pbr::{PbrTexturePack, PbrUploadBridge};
 use crate::state::MonolithState;
-
-const GENERATED: &[&str] = &[<GroundVertex as GpuStruct>::WGSL];
 
 pub struct SanctuaryBrick;
 
@@ -28,12 +20,8 @@ impl Brick for SanctuaryBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .draw_kind(KindDecl {
-                kind: GROUND_KIND,
-                passes: &[NANITE_P1_PASS],
-            })
-            .generated(GENERATED)
-            .draws::<GroundGpu>(GROUND_KIND, GroundGpu::draw_ground)
+            .resource::<PbrTexturePack>()
+            .resource::<PbrUploadBridge>()
             .systems(Schedule::BeforeTicks, load_sanctuary_assets);
     }
 }
@@ -48,31 +36,41 @@ fn find_asset_dir() -> Option<PathBuf> {
     ];
     candidates
         .into_iter()
-        .find(|dir| dir.join("colossus_sentinel.mlm").is_file())
+        .find(|dir| dir.join("sponza_lower_w.mlm").is_file())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_sanctuary_assets(mut world: ResMut<NaniteWorld>, mut state: ResMut<MonolithState>) {
-    if state.assets_loaded {
-        return;
-    }
-    let Some(dir) = find_asset_dir() else {
-        return;
-    };
-    world.clear();
-    for stem in HERO_ASSETS {
-        let mlm_path = dir.join(format!("{stem}.mlm"));
-        let mlp_path = dir.join(format!("{stem}.mlp"));
-        let Ok(bytes) = std::fs::read(&mlm_path) else {
+fn load_sanctuary_assets(
+    mut world: ResMut<NaniteWorld>,
+    mut pbr: ResMut<PbrTexturePack>,
+    pbr_bridge: Res<PbrUploadBridge>,
+    mut state: ResMut<MonolithState>,
+) {
+    if !state.assets_loaded {
+        let Some(dir) = find_asset_dir() else {
             return;
         };
-        let Ok(manifest) = MeshletManifest::from_bytes(&bytes) else {
-            return;
-        };
-        world.add_mesh(stem, &manifest, Some(mlp_path));
+        world.clear();
+        for stem in HERO_ASSETS {
+            let mlm_path = dir.join(format!("{stem}.mlm"));
+            let mlp_path = dir.join(format!("{stem}.mlp"));
+            let Ok(bytes) = std::fs::read(&mlm_path) else {
+                return;
+            };
+            let Ok(manifest) = MeshletManifest::from_bytes(&bytes) else {
+                return;
+            };
+            world.add_mesh(stem, &manifest, Some(mlp_path));
+        }
+        populate_sanctuary(&mut world);
+        if !pbr.pack_loaded
+            && let Ok(pack_bytes) = std::fs::read(dir.join("sponza_pbr.bin"))
+        {
+            let _ = pbr.load_bytes(pack_bytes);
+        }
+        state.assets_loaded = true;
     }
-    populate_sanctuary(&mut world);
-    state.assets_loaded = true;
+    pbr.pump_uploads(&pbr_bridge, 4);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -87,22 +85,39 @@ mod web_loader {
     use wasm_bindgen_futures::JsFuture;
 
     use crate::layout::{HERO_ASSETS, populate_sanctuary};
+    use crate::pbr::PbrTexturePack;
     use crate::state::MonolithState;
 
+    const ASSET_COUNT: usize = HERO_ASSETS.len();
     const MAX_IN_FLIGHT_REQUESTS: usize = 24;
     const MAX_RUN_PAGES: usize = 16;
     const MAX_RUN_BYTES: u64 = 256 * 1024;
     const PREFETCH_EXTRA_PAGES: u32 = 4;
 
-    #[derive(Default)]
     struct WebState {
         manifests_started: bool,
-        manifests: [Option<MeshletManifest>; 5],
-        prefetched: [Vec<(u32, Vec<u32>)>; 5],
-        mesh_page_offsets: [u32; 5],
+        manifests: [Option<MeshletManifest>; ASSET_COUNT],
+        prefetched: [Vec<(u32, Vec<u32>)>; ASSET_COUNT],
+        mesh_page_offsets: [u32; ASSET_COUNT],
+        pbr_bytes: Option<Vec<u8>>,
         world_synced: bool,
         in_flight_requests: usize,
         completed_pages: VecDeque<(u32, Option<Vec<u32>>)>,
+    }
+
+    impl Default for WebState {
+        fn default() -> Self {
+            Self {
+                manifests_started: false,
+                manifests: std::array::from_fn(|_| None),
+                prefetched: std::array::from_fn(|_| Vec::new()),
+                mesh_page_offsets: [0; ASSET_COUNT],
+                pbr_bytes: None,
+                world_synced: false,
+                in_flight_requests: 0,
+                completed_pages: VecDeque::new(),
+            }
+        }
     }
 
     struct PageRunItem {
@@ -198,6 +213,13 @@ mod web_loader {
     }
 
     fn start_manifests() {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(bytes) = fetch_bytes("/monolith/sponza_pbr.bin", None).await {
+                WEB_STATE.with(|cell| {
+                    cell.borrow_mut().pbr_bytes = Some(bytes);
+                });
+            }
+        });
         for (idx, &stem) in HERO_ASSETS.iter().enumerate() {
             let url = format!("/monolith/{stem}.mlm");
             wasm_bindgen_futures::spawn_local(async move {
@@ -285,8 +307,15 @@ mod web_loader {
     pub(super) fn pump(
         mut world: ResMut<NaniteWorld>,
         mut streaming: ResMut<NaniteStreaming>,
+        pbr: &mut PbrTexturePack,
         mut state: ResMut<MonolithState>,
     ) {
+        if !pbr.pack_loaded {
+            let ready_pbr = WEB_STATE.with(|cell| cell.borrow_mut().pbr_bytes.take());
+            if let Some(bytes) = ready_pbr {
+                let _ = pbr.load_bytes(bytes);
+            }
+        }
         if !state.assets_loaded {
             let ready_manifests = WEB_STATE.with(|cell| {
                 let mut st = cell.borrow_mut();
@@ -295,7 +324,7 @@ mod web_loader {
                     start_manifests();
                 }
                 if st.manifests.iter().all(Option::is_some) {
-                    let mut out = Vec::with_capacity(5);
+                    let mut out = Vec::with_capacity(ASSET_COUNT);
                     for slot in &mut st.manifests {
                         if let Some(m) = slot.take() {
                             out.push(m);
@@ -308,8 +337,9 @@ mod web_loader {
             });
             if let Some(manifests) = ready_manifests {
                 world.clear();
-                let mut offsets = [0_u32; 5];
-                for (idx, (stem, manifest)) in HERO_ASSETS.iter().zip(manifests.iter()).enumerate() {
+                let mut offsets = [0_u32; ASSET_COUNT];
+                for (idx, (stem, manifest)) in HERO_ASSETS.iter().zip(manifests.iter()).enumerate()
+                {
                     offsets[idx] = world.total_pages;
                     world.add_mesh(*stem, manifest);
                 }
@@ -368,82 +398,10 @@ mod web_loader {
 fn load_sanctuary_assets(
     world: ResMut<NaniteWorld>,
     streaming: ResMut<brick_nanite::NaniteStreaming>,
+    mut pbr: ResMut<PbrTexturePack>,
+    pbr_bridge: Res<PbrUploadBridge>,
     state: ResMut<MonolithState>,
 ) {
-    web_loader::pump(world, streaming, state);
-}
-
-struct GroundGpu {
-    pipeline: Pipeline<Self, Scene>,
-    verts: Buffer<Self>,
-    mesh: Option<Vec<GroundVertex>>,
-    vert_count: u32,
-}
-
-impl GroundGpu {
-    fn draw_ground(&self, draw: &mut Draw<'_, Self, Scene>) {
-        if self.vert_count > 0 {
-            draw.draw(
-                &self.pipeline,
-                Shape::Pulled {
-                    vertices: 0..self.vert_count,
-                    instances: 0..1,
-                    key: None,
-                },
-            );
-        }
-    }
-}
-
-impl GpuPart for GroundGpu {
-    type Reads = ();
-    const NAME: &'static str = "monolith_ground";
-
-    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::sanctuary::ground;
-        let verts = cx.buffer("monolith_ground_verts", Lifetime::Kept);
-        let targets = [(None, wgpu::ColorWrites::ALL)];
-        let pipeline = cx.render_pipeline(
-            Scene::named(NANITE_P1_PASS),
-            &RenderPipeline {
-                vertex: ground::VS_GROUND,
-                fragment: Some(ground::FS_GROUND),
-                vertices: &[],
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..wgpu::PrimitiveState::default()
-                },
-                depth: DepthUse::Compare {
-                    compare: wgpu::CompareFunction::GreaterEqual,
-                    write: true,
-                    bias: wgpu::DepthBiasState::default(),
-                },
-                stencil: wgpu::StencilState::default(),
-                samples: 1,
-                targets: &targets,
-                constants: &[],
-                per_batch: PerBatch::NONE,
-            },
-            &[(ground::GROUND_VERTS, Bind::Buffer(verts))],
-        )?;
-        let mesh = build_ground_mesh();
-        let vert_count = mesh.len() as u32;
-        Ok(Self {
-            pipeline,
-            verts,
-            mesh: Some(mesh),
-            vert_count,
-        })
-    }
-
-    fn prepare(&mut self, (): (), cx: &mut Prepare<'_, Self>) {
-        if let Some(mesh) = self.mesh.as_ref() {
-            let bytes = (mesh.len().max(1) * size_of::<GroundVertex>()) as u64;
-            if cx.allocate_buffer(self.verts, bytes) == Allocation::Fresh && !mesh.is_empty() {
-                cx.write(self.verts, 0, mesh);
-            }
-        }
-    }
+    web_loader::pump(world, streaming, &mut pbr, state);
+    pbr.pump_uploads(&pbr_bridge, 1);
 }

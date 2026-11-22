@@ -7,10 +7,15 @@ use engine::prelude::*;
 use engine_core::{
     Error, Filter, GpuStruct, Sampler, TargetName, ViewFacts, ViewSkip, Views, Wrap, gpu_struct,
 };
-use engine_render::{Access, Encode, FULLSCREEN, Own, PerBatch, SharedTarget, TargetClear};
+use engine_render::{
+    Access, Allocation, Encode, FULLSCREEN, Own, PerBatch, SharedTarget, TargetClear, Texture, wgpu,
+};
 
 use crate::names::{
     BLOOM_A, BLOOM_B, BLOOM_C, BLOOM_UP_A, BLOOM_UP_B, HDR_COLOR, SUN_DIR, TONED_LDR,
+};
+use crate::pbr::{
+    DecodedMip, GpuMaterialParams, MAX_MATERIALS, PbrUploadBridge, mip_count_for,
 };
 use crate::state::MonolithState;
 
@@ -28,7 +33,10 @@ gpu_struct! {
     }
 }
 
-const GENERATED: &[&str] = &[<FrameUniforms as GpuStruct>::WGSL];
+const GENERATED: &[&str] = &[
+    <FrameUniforms as GpuStruct>::WGSL,
+    <GpuMaterialParams as GpuStruct>::WGSL,
+];
 
 const LINEAR_CLAMP: Sampler = Sampler {
     wrap_u: Wrap::ClampToEdge,
@@ -39,6 +47,17 @@ const LINEAR_CLAMP: Sampler = Sampler {
     mipmap_filter: None,
     compare: None,
     anisotropy: 1,
+};
+
+const PBR_ANISO_REPEAT: Sampler = Sampler {
+    wrap_u: Wrap::Repeat,
+    wrap_v: Wrap::Repeat,
+    wrap_w: Wrap::ClampToEdge,
+    mag_filter: Filter::Linear,
+    min_filter: Filter::Linear,
+    mipmap_filter: Some(Filter::Linear),
+    compare: None,
+    anisotropy: 4,
 };
 
 pub struct FrameBrick;
@@ -71,6 +90,10 @@ struct PostProcess {
     fxaa_pipe: Pipeline<Self, Own>,
     fxaa_direct_pipe: Pipeline<Self, Own>,
     uniforms: Buffer<Self>,
+    mat_params: Buffer<Self>,
+    mat_albedo: Texture<Self>,
+    mat_normal: Texture<Self>,
+    mat_orm: Texture<Self>,
     direct: bool,
     skipped: Vec<Entity>,
 }
@@ -130,15 +153,46 @@ fn build_frame_uniforms(state: &MonolithState, cfg: &NaniteConfig) -> FrameUnifo
         (0.5, 0.5, 0.0)
     };
     FrameUniforms {
-        sun_dir_illum: [sun_dir.x, sun_dir.y, sun_dir.z, 6.8],
-        sun_color_shaft: [1.00, 0.72, 0.44, 0.64],
+        sun_dir_illum: [sun_dir.x, sun_dir.y, sun_dir.z, 11.8],
+        sun_color_shaft: [1.00, 0.90, 0.74, 0.22],
         sun_uv_vis: [uv_x, uv_y, vis, state.sim_time],
-        grade: [0.58, 0.08, 1.08, 0.16],
-        fog_params: [0.0020, 0.055, -4.0, cfg.view_mode.index() as f32],
-        fog_color: [0.96, 0.66, 0.40, 0.76],
-        sky_zenith: [0.13, 0.27, 0.58, 1.0],
-        sky_horiz_sun: [1.00, 0.60, 0.30, 1.0],
-        sky_horiz_opp: [0.76, 0.59, 0.48, 1.0],
+        grade: [0.80, 0.06, 1.08, 0.11],
+        fog_params: [0.0010, 0.04, 0.0, cfg.view_mode.index() as f32],
+        fog_color: [0.88, 0.90, 0.95, 0.72],
+        sky_zenith: [0.16, 0.38, 0.82, 1.0],
+        sky_horiz_sun: [0.98, 0.90, 0.76, 1.0],
+        sky_horiz_opp: [0.64, 0.76, 0.92, 1.0],
+    }
+}
+
+fn upload_layer_mips(
+    cx: &mut Prepare<'_, PostProcess>,
+    tex: Texture<PostProcess>,
+    layer: u32,
+    mips: &[DecodedMip],
+) {
+    for (mip_level, mip) in mips.iter().enumerate() {
+        let dim = mip.dim.max(1);
+        cx.write_texture_mip(
+            tex,
+            mip_level as u32,
+            wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
+            &mip.rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(dim * 4),
+                rows_per_image: Some(dim),
+            },
+            wgpu::Extent3d {
+                width: dim,
+                height: dim,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 }
 
@@ -255,10 +309,73 @@ fn install_bloom_chain(
     })
 }
 
+impl PostProcess {
+    fn sync_pbr_textures(&mut self, bridge: &PbrUploadBridge, cx: &mut Prepare<'_, Self>) {
+        let (albedo_dim, detail_dim, layers, pending, dirty_mats) =
+            if let Ok(mut q) = bridge.0.lock() {
+                (
+                    q.albedo_dim.max(2),
+                    q.detail_dim.max(2),
+                    q.layer_count.max(2),
+                    std::mem::take(&mut q.pending_layers),
+                    q.dirty_materials.take(),
+                )
+            } else {
+                (2, 2, 2, Vec::new(), None)
+            };
+
+        let _ = cx.allocate_mips(
+            self.mat_albedo,
+            wgpu::Extent3d {
+                width: albedo_dim,
+                height: albedo_dim,
+                depth_or_array_layers: layers,
+            },
+            mip_count_for(albedo_dim),
+        );
+        let _ = cx.allocate_mips(
+            self.mat_normal,
+            wgpu::Extent3d {
+                width: detail_dim,
+                height: detail_dim,
+                depth_or_array_layers: layers,
+            },
+            mip_count_for(detail_dim),
+        );
+        let _ = cx.allocate_mips(
+            self.mat_orm,
+            wgpu::Extent3d {
+                width: detail_dim,
+                height: detail_dim,
+                depth_or_array_layers: layers,
+            },
+            mip_count_for(detail_dim),
+        );
+
+        for layer in pending {
+            if layer.layer_idx < layers {
+                upload_layer_mips(cx, self.mat_albedo, layer.layer_idx, &layer.albedo_mips);
+                upload_layer_mips(cx, self.mat_normal, layer.layer_idx, &layer.normal_mips);
+                upload_layer_mips(cx, self.mat_orm, layer.layer_idx, &layer.orm_mips);
+            }
+        }
+
+        let mat_bytes = (MAX_MATERIALS * size_of::<GpuMaterialParams>()) as u64;
+        let fresh_mat = cx.allocate_buffer(self.mat_params, mat_bytes) == Allocation::Fresh;
+        if let Some(mats) = dirty_mats {
+            cx.write(self.mat_params, 0, &mats);
+        } else if fresh_mat {
+            let defaults = vec![GpuMaterialParams::fallback(); MAX_MATERIALS];
+            cx.write(self.mat_params, 0, &defaults);
+        }
+    }
+}
+
 impl GpuPart for PostProcess {
     type Reads = (
         Res<'static, MonolithState>,
         Res<'static, NaniteConfig>,
+        Res<'static, PbrUploadBridge>,
         Query<'static, 'static, &'static Present>,
         Query<'static, 'static, Entity, With<ViewSkip>>,
         Option<Res<'static, Views>>,
@@ -281,7 +398,24 @@ impl GpuPart for PostProcess {
         });
 
         let sampler = cx.sampler(LINEAR_CLAMP);
+        let pbr_sampler = cx.sampler(PBR_ANISO_REPEAT);
         let uniforms = cx.buffer("monolith_frame_uniforms", Lifetime::Kept);
+        let mat_params = cx.buffer("monolith_mat_params", Lifetime::Kept);
+        let mat_albedo = cx.texture(
+            "monolith_mat_albedo",
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            Lifetime::Kept,
+        );
+        let mat_normal = cx.texture(
+            "monolith_mat_normal",
+            wgpu::TextureFormat::Rgba8Unorm,
+            Lifetime::Kept,
+        );
+        let mat_orm = cx.texture(
+            "monolith_mat_orm",
+            wgpu::TextureFormat::Rgba8Unorm,
+            Lifetime::Kept,
+        );
 
         let resolve_pass = cx
             .pass("monolith_resolve")
@@ -296,6 +430,11 @@ impl GpuPart for PostProcess {
                 (resolve::VIS_HW_TEX, Bind::Target(NANITE_VIS_HW)),
                 (resolve::HW_DEPTH_TEX, Bind::Target(NANITE_DEPTH)),
                 (resolve::FRAME_PARAMS, Bind::Buffer(uniforms)),
+                (resolve::MAT_PARAMS, Bind::Buffer(mat_params)),
+                (resolve::MAT_ALBEDO, Bind::Texture(mat_albedo)),
+                (resolve::MAT_NORMAL, Bind::Texture(mat_normal)),
+                (resolve::MAT_ORM, Bind::Texture(mat_orm)),
+                (resolve::PBR_SAMPLER, Bind::Sampler(pbr_sampler)),
             ],
         )?;
 
@@ -357,6 +496,10 @@ impl GpuPart for PostProcess {
             fxaa_pipe,
             fxaa_direct_pipe,
             uniforms,
+            mat_params,
+            mat_albedo,
+            mat_normal,
+            mat_orm,
             direct: false,
             skipped: Vec::new(),
         })
@@ -364,11 +507,13 @@ impl GpuPart for PostProcess {
 
     fn prepare(
         &mut self,
-        (state, cfg, presents, skipped, views): SystemParamItem<'_, '_, Self::Reads>,
+        (state, cfg, pbr_bridge, presents, skipped, views): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.skipped.clear();
         self.skipped.extend(&skipped);
+        self.sync_pbr_textures(&pbr_bridge, cx);
+
         let scale = state.render_scale;
         let pixel_ratio = views.map_or(1.0, |v| v.frame().pixel_ratio);
         self.direct = !needs_intermediate(presents.iter().next().copied(), scale, pixel_ratio);

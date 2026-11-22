@@ -186,7 +186,8 @@ fn extract_shadow_cut(
 ) -> [u32; 2] {
     let start = out.len() as u32;
     let thresholds = [
-        0.12_f32, 0.20, 0.32, 0.50, 0.75, 1.15, 1.75, 2.6, 3.8, 5.5, 8.0, 12.0, 18.0, 28.0, 48.0,
+        0.015_f32, 0.025, 0.04, 0.065, 0.09, 0.12, 0.20, 0.32, 0.50, 0.75, 1.15, 1.75, 2.6, 3.8,
+        5.5, 8.0, 12.0, 18.0, 28.0, 48.0,
     ];
     let mut chosen: Option<f32> = None;
     for &thresh in &thresholds {
@@ -256,10 +257,20 @@ impl NaniteWorld {
         }
         fill_bvh_min_self_error(manifest, &mut self.bvh[bvh_start..], bvh_offset);
 
-        let shadow_c0_range =
-            extract_shadow_cut(&manifest.clusters, cluster_offset, 96, &mut self.shadow_cut_clusters);
-        let shadow_c1_range =
-            extract_shadow_cut(&manifest.clusters, cluster_offset, 32, &mut self.shadow_cut_clusters);
+        let c0_budget = if manifest.clusters.len() >= 2000 { 1024 } else { 96 };
+        let c1_budget = if manifest.clusters.len() >= 2000 { 512 } else { 32 };
+        let shadow_c0_range = extract_shadow_cut(
+            &manifest.clusters,
+            cluster_offset,
+            c0_budget,
+            &mut self.shadow_cut_clusters,
+        );
+        let shadow_c1_range = extract_shadow_cut(
+            &manifest.clusters,
+            cluster_offset,
+            c1_budget,
+            &mut self.shadow_cut_clusters,
+        );
         self.shadow_mesh_ranges.push(shadow_c0_range);
         self.shadow_mesh_ranges.push(shadow_c1_range);
 
@@ -475,8 +486,13 @@ impl NaniteStreaming {
             }
             wanted.push((prio, page_id as u32));
         }
+        let evictable = self.count_evictable_slots();
+        let cap = max_new_requests.min(evictable);
+        if cap == 0 {
+            return;
+        }
         wanted.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        for (prio, global_page_id) in wanted.into_iter().take(max_new_requests) {
+        for (prio, global_page_id) in wanted.into_iter().take(cap) {
             if let Some((mesh_id, mesh, local_page_id)) = world.find_page_owner(global_page_id) {
                 self.enqueue_fetch(mesh_id, mesh, local_page_id, global_page_id, prio);
             }
@@ -523,8 +539,8 @@ impl NaniteStreaming {
                 .get(global_page_id as usize)
                 .copied()
                 .unwrap_or(false);
-            let Some(slot) = self.pick_slot() else {
-                break;
+            let Some(slot) = self.pick_slot(pinned) else {
+                continue;
             };
             if let Some(old) = self.slots[slot as usize]
                 && let Some(entry) = self.page_table.get_mut(old.global_page_id as usize)
@@ -547,18 +563,32 @@ impl NaniteStreaming {
         }
     }
 
-    fn pick_slot(&self) -> Option<u32> {
+    fn count_evictable_slots(&self) -> usize {
+        let limit = (self.budget_pages as usize).min(self.slots.len());
+        let stale_cutoff = self.frame_tick.saturating_sub(4);
+        self.slots
+            .iter()
+            .take(limit)
+            .filter(|slot| {
+                slot.is_none_or(|rec| !rec.pinned && rec.last_used_frame < stale_cutoff)
+            })
+            .count()
+    }
+
+    fn pick_slot(&self, allow_active_evict: bool) -> Option<u32> {
         let limit = (self.budget_pages as usize).min(self.slots.len());
         for (idx, slot) in self.slots.iter().enumerate().take(limit) {
             if slot.is_none() {
                 return Some(idx as u32);
             }
         }
+        let stale_cutoff = self.frame_tick.saturating_sub(4);
         let mut best_idx = None;
         let mut best_age = u64::MAX;
         for (idx, slot) in self.slots.iter().enumerate().take(limit) {
             if let Some(rec) = slot
                 && !rec.pinned
+                && (allow_active_evict || rec.last_used_frame < stale_cutoff)
                 && rec.last_used_frame < best_age
             {
                 best_age = rec.last_used_frame;

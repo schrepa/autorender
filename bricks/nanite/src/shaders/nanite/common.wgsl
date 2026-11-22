@@ -58,7 +58,7 @@ fn decode_octahedral(w2: u32) -> vec3<f32> {
 }
 
 fn decode_uv(w3: u32) -> vec2<f32> {
-    return unpack2x16unorm(w3);
+    return vec2<f32>(f32(w3 & 0xFFFFu), f32(w3 >> 16u)) * (1.0 / 2048.0);
 }
 
 fn cluster_vert_count(c: GpuClusterHeader) -> u32 {

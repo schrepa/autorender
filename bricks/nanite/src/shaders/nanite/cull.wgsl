@@ -21,6 +21,7 @@ import package::nanite::common::frustum_visible;
 import package::nanite::common::projected_error;
 import package::nanite::common::projected_min_error;
 import package::nanite::common::cone_backface_culled;
+import package::nanite::common::cluster_mat;
 
 const OCC_INST_BASE: u32 = 32u;
 const OCC_CLUS_BASE: u32 = 4128u;
@@ -71,7 +72,7 @@ fn hiz_occluded_sphere(world_c: vec3<f32>, world_r: f32) -> bool {
 }
 
 fn try_claim_dedup(inst_id: u32, cluster_id: u32) -> bool {
-    let key = ((inst_id + 1u) << 18u) | (cluster_id & 0x3FFFFu);
+    let key = ((inst_id + 1u) << 21u) | (cluster_id & 0x1FFFFFu);
     var h = (inst_id * 2654435761u) ^ (cluster_id * 2246822519u);
     h = (h ^ (h >> 16u)) * 0x45D9F3Bu;
     var slot = h & DEDUP_MASK;
@@ -299,7 +300,9 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
                     local_frustum = local_frustum + 1u;
                     continue;
                 }
-                if cone_backface_culled(c, inst, world_c, world_r, cull_pos) {
+                let mat_bit = 1u << (cluster_mat(c) & 31u);
+                let is_ds = (cull_uniforms.extra.x & mat_bit) != 0u;
+                if !is_ds && cone_backface_culled(c, inst, world_c, world_r, cull_pos) {
                     local_cone = local_cone + 1u;
                     continue;
                 }

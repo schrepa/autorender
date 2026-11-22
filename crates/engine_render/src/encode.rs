@@ -726,16 +726,33 @@ impl Run {
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
+        self.write_texture_mip(texture, 0, at, bytes, layout, size);
+    }
+
+    pub(crate) fn write_texture_mip(
+        &mut self,
+        texture: u32,
+        mip_level: u32,
+        at: wgpu::Origin3d,
+        bytes: &[u8],
+        layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    ) {
         let Some(made) = self.tables.textures.get(texture as usize).and_then(Option::as_ref) else {
             let error = fault(self.path("write_texture"), ErrorCode::InvalidValue);
             self.fault(error);
             return;
         };
+        if mip_level >= made.mip_levels {
+            let error = fault(self.path("write_texture_mip"), ErrorCode::OutOfRange);
+            self.fault(error);
+            return;
+        }
         self.queue.write_declared_texture(
             texture,
             wgpu::TexelCopyTextureInfo {
                 texture: &made.texture,
-                mip_level: 0,
+                mip_level,
                 origin: at,
                 aspect: wgpu::TextureAspect::All,
             },

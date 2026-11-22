@@ -187,6 +187,7 @@ gpu_struct! {
         pub shadow_info: [f32; 4],
         pub shadow_center0: [f32; 4],
         pub shadow_center1: [f32; 4],
+        pub extra: [u32; 4],
     }
 }
 
@@ -289,6 +290,13 @@ pub struct NaniteConfig {
     pub max_pages_per_frame: usize,
     pub shadows_enabled: bool,
     pub render_scale: f32,
+    pub shadow_c0_half: f32,
+    pub shadow_c0_forward: f32,
+    pub shadow_c0_depth: f32,
+    pub shadow_c1_half: f32,
+    pub shadow_c1_center: Vec3,
+    pub shadow_c1_depth: f32,
+    pub double_sided_materials: u32,
 }
 
 impl Default for NaniteConfig {
@@ -306,6 +314,13 @@ impl Default for NaniteConfig {
             max_pages_per_frame: 48,
             shadows_enabled: true,
             render_scale: 1.0,
+            shadow_c0_half: 58.0,
+            shadow_c0_forward: 38.0,
+            shadow_c0_depth: 130.0,
+            shadow_c1_half: 340.0,
+            shadow_c1_center: Vec3::new(30.0, 8.0, -75.0),
+            shadow_c1_depth: 320.0,
+            double_sided_materials: 0,
         }
     }
 }

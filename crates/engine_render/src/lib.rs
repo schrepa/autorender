@@ -604,6 +604,19 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.write_texture(texture.0, at, bytes, layout, size);
     }
 
+    pub fn write_texture_mip(
+        &mut self,
+        texture: Texture<P>,
+        mip_level: u32,
+        at: wgpu::Origin3d,
+        bytes: &[u8],
+        layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    ) {
+        self.core
+            .write_texture_mip(texture.0, mip_level, at, bytes, layout, size);
+    }
+
     pub fn fill<S>(
         &mut self,
         pipeline: &Pipeline<P, S>,

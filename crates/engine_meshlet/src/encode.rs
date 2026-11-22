@@ -63,14 +63,34 @@ fn quantize_bits(value: f32, min_v: f32, extent: f32, max_code: u32) -> u32 {
     (t * (max_code as f32)).round() as u32
 }
 
-fn wrap_uv(value: f32) -> f32 {
-    if !value.is_finite() {
-        return 0.0;
-    }
-    if (0.0..=1.0).contains(&value) {
+const UV_FIXED_SCALE: f32 = 2048.0;
+const UV_FIXED_MAX: f32 = 65535.0 / UV_FIXED_SCALE;
+
+fn clean_uv_coord(value: f32) -> f32 {
+    if value.is_finite() && value.abs() <= 64.0 {
         value
     } else {
-        value.rem_euclid(1.0)
+        0.0
+    }
+}
+
+fn cluster_uv_origin(vertices: &[ClusterVertex]) -> (f32, f32) {
+    let mut min_u = f32::INFINITY;
+    let mut min_v = f32::INFINITY;
+    for v in vertices {
+        let u = clean_uv_coord(v.uv.x);
+        let w = clean_uv_coord(v.uv.y);
+        if u < min_u {
+            min_u = u;
+        }
+        if w < min_v {
+            min_v = w;
+        }
+    }
+    if min_u.is_finite() && min_v.is_finite() {
+        (min_u.floor(), min_v.floor())
+    } else {
+        (0.0, 0.0)
     }
 }
 
@@ -99,6 +119,7 @@ pub fn encode_cluster_words(
             .range(1.0, MAX_CLUSTER_TRIS as f64)
             .got(triangles.len()));
     }
+    let (base_u, base_v) = cluster_uv_origin(vertices);
     let start_len = out.len();
     out.reserve(vertices.len() * CLUSTER_VERTEX_WORDS + triangles.len() * CLUSTER_TRI_WORDS);
     for v in vertices {
@@ -110,8 +131,10 @@ pub fn encode_cluster_words(
         let b5 = (clamp(v.color[2], 0.0, 1.0).sqrt() * 31.0).round() as u32;
         let ao5 = (clamp(v.ao, 0.0, 1.0) * 31.0).round() as u32;
         let oct = encode_octahedral(v.normal);
-        let uv_u = (clamp(wrap_uv(v.uv.x), 0.0, 1.0) * 65535.0).round() as u16;
-        let uv_v = (clamp(wrap_uv(v.uv.y), 0.0, 1.0) * 65535.0).round() as u16;
+        let su = clamp(clean_uv_coord(v.uv.x) - base_u, 0.0, UV_FIXED_MAX);
+        let sv = clamp(clean_uv_coord(v.uv.y) - base_v, 0.0, UV_FIXED_MAX);
+        let uv_u = (su * UV_FIXED_SCALE).round() as u16;
+        let uv_v = (sv * UV_FIXED_SCALE).round() as u16;
         let w0 = (gx & 0x3FFF) | ((gy & 0x3FFF) << 14) | ((gz & 0xF) << 28);
         let w1 = ((gz >> 4) & 0x3FF)
             | ((r6 & 0x3F) << 10)
@@ -185,8 +208,8 @@ pub fn decode_cluster_words(
         let ao = f32::from(((w1 >> 27) & 0x1F) as u8) / 31.0;
         let oct_x = (w2 & 0xFFFF) as u16 as i16;
         let oct_y = ((w2 >> 16) & 0xFFFF) as u16 as i16;
-        let uv_u = f32::from((w3 & 0xFFFF) as u16) / 65535.0;
-        let uv_v = f32::from(((w3 >> 16) & 0xFFFF) as u16) / 65535.0;
+        let uv_u = f32::from((w3 & 0xFFFF) as u16) / UV_FIXED_SCALE;
+        let uv_v = f32::from(((w3 >> 16) & 0xFFFF) as u16) / UV_FIXED_SCALE;
         vertices.push(ClusterVertex {
             position: dequantize_position(qx, qy, qz, aabb_min, aabb_extent),
             normal: decode_octahedral([oct_x, oct_y]),

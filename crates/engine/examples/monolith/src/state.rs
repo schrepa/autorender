@@ -3,47 +3,47 @@ use engine::prelude::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CamBookmark {
     #[default]
-    Vista,
-    Sentinel,
-    Canyon,
-    Corridor,
+    Atrium,
+    Gallery,
+    Ivy,
+    Lion,
 }
 
 impl CamBookmark {
-    pub const ALL: [Self; 4] = [Self::Vista, Self::Sentinel, Self::Canyon, Self::Corridor];
+    pub const ALL: [Self; 4] = [Self::Atrium, Self::Gallery, Self::Ivy, Self::Lion];
 
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Vista => "VISTA",
-            Self::Sentinel => "SENTINEL",
-            Self::Canyon => "CANYON",
-            Self::Corridor => "CORRIDOR",
+            Self::Atrium => "ATRIUM",
+            Self::Gallery => "GALLERY",
+            Self::Ivy => "IVY",
+            Self::Lion => "LION",
         }
     }
 
     #[must_use]
     pub fn pose(self) -> (Vec3, Vec3, f32) {
         match self {
-            Self::Vista => (
-                Vec3::new(0.0, 7.5, 160.0),
-                Vec3::new(0.0, 14.0, -215.0),
-                42.0,
-            ),
-            Self::Sentinel => (
-                Vec3::new(6.5, 15.0, -186.0),
-                Vec3::new(0.0, 18.4, -214.0),
-                30.0,
-            ),
-            Self::Canyon => (
-                Vec3::new(-150.0, 110.0, 170.0),
-                Vec3::new(0.0, 0.0, -120.0),
+            Self::Atrium => (
+                Vec3::new(7.1, 1.95, -0.10),
+                Vec3::new(-15.0, 2.8, 0.0),
                 50.0,
             ),
-            Self::Corridor => (
-                Vec3::new(60.0, 4.2, 28.0),
-                Vec3::new(60.0, 6.5, -120.0),
-                70.0,
+            Self::Gallery => (
+                Vec3::new(8.8, 6.9, -4.4),
+                Vec3::new(-7.5, 5.1, 1.8),
+                50.0,
+            ),
+            Self::Ivy => (
+                Vec3::new(-1.6, 5.6, 1.2),
+                Vec3::new(-9.0, 8.2, 2.2),
+                48.0,
+            ),
+            Self::Lion => (
+                Vec3::new(-10.6, 2.35, 0.35),
+                Vec3::new(-15.2, 2.25, 0.0),
+                44.0,
             ),
         }
     }
@@ -78,12 +78,12 @@ pub struct MonolithState {
 
 impl Default for MonolithState {
     fn default() -> Self {
-        let (eye, target, fov) = CamBookmark::Vista.pose();
+        let (eye, target, fov) = CamBookmark::Atrium.pose();
         let fwd = (target - eye).normalize_or_zero();
         let right = fwd.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(fwd).normalize_or_zero();
         Self {
-            bookmark: CamBookmark::Vista,
+            bookmark: CamBookmark::Atrium,
             requested_bookmark: None,
             dolly_enabled: false,
             hud_hidden: false,

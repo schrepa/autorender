@@ -105,6 +105,39 @@ pub fn compute_curvature_ao(positions: &[Vec3], normals: &[Vec3], indices: &[u32
         .collect()
 }
 
+fn clean_uv_coord(v: f32) -> f32 {
+    if v.is_finite() && v.abs() <= 64.0 {
+        v
+    } else {
+        0.0
+    }
+}
+
+fn read_colors_and_ao(
+    primitive: &gltf::Primitive<'_>,
+    buffers: &[Vec<u8>],
+    positions: &[Vec3],
+    normals: &[Vec3],
+    indices: &[u32],
+) -> (Vec<[f32; 3]>, Vec<f32>) {
+    let v_count = positions.len();
+    let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
+    if let Some(iter) = reader.read_colors(0) {
+        let raw: Vec<[f32; 4]> = iter.into_rgba_f32().collect();
+        if raw.len() == v_count {
+            let cols = raw
+                .iter()
+                .map(|c| [clamp(c[0], 0.0, 1.0), clamp(c[1], 0.0, 1.0), clamp(c[2], 0.0, 1.0)])
+                .collect();
+            let aos = raw.iter().map(|c| clamp(c[3], 0.0, 1.0)).collect();
+            return (cols, aos);
+        }
+    }
+    let bcf = primitive.material().pbr_metallic_roughness().base_color_factor();
+    let rgb = [clamp(bcf[0], 0.0, 1.0), clamp(bcf[1], 0.0, 1.0), clamp(bcf[2], 0.0, 1.0)];
+    (vec![rgb; v_count], compute_curvature_ao(positions, normals, indices))
+}
+
 fn append_primitive(
     file: &str,
     primitive: &gltf::Primitive<'_>,
@@ -113,6 +146,9 @@ fn append_primitive(
     material_override: Option<u8>,
     out: &mut SourceMesh,
 ) -> Result<(), Refusal> {
+    if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
+        return Ok(());
+    }
     if primitive.mode() != Mode::Triangles {
         return Err(Refusal::new(
             "PrimitiveMode",
@@ -169,7 +205,10 @@ fn append_primitive(
     };
     let uvs: Vec<Vec2> = match reader.read_tex_coords(0) {
         Some(iter) => {
-            let raw: Vec<Vec2> = iter.into_f32().map(Vec2::from_array).collect();
+            let raw: Vec<Vec2> = iter
+                .into_f32()
+                .map(|[u, v]| Vec2::new(clean_uv_coord(u), clean_uv_coord(v)))
+                .collect();
             if raw.len() == v_count {
                 raw
             } else {
@@ -178,34 +217,7 @@ fn append_primitive(
         }
         None => vec![Vec2::ZERO; v_count],
     };
-    let (colors, ao) = match reader.read_colors(0) {
-        Some(iter) => {
-            let raw: Vec<[f32; 4]> = iter.into_rgba_f32().collect();
-            if raw.len() == v_count {
-                let col_vec = raw
-                    .iter()
-                    .map(|c| {
-                        [
-                            clamp(c[0], 0.0, 1.0),
-                            clamp(c[1], 0.0, 1.0),
-                            clamp(c[2], 0.0, 1.0),
-                        ]
-                    })
-                    .collect();
-                let ao_vec = raw.iter().map(|c| clamp(c[3], 0.0, 1.0)).collect();
-                (col_vec, ao_vec)
-            } else {
-                (
-                    vec![[1.0, 1.0, 1.0]; v_count],
-                    compute_curvature_ao(&positions, &normals, &indices),
-                )
-            }
-        }
-        None => (
-            vec![[1.0, 1.0, 1.0]; v_count],
-            compute_curvature_ao(&positions, &normals, &indices),
-        ),
-    };
+    let (colors, ao) = read_colors_and_ao(primitive, buffers, &positions, &normals, &indices);
     let mat_id = material_override.unwrap_or_else(|| {
         primitive
             .material()
