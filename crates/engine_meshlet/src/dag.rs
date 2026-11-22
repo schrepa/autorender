@@ -86,15 +86,15 @@ fn validate_lengths(source: &SourceMesh) -> Result<(usize, usize), Error> {
             .expected(Expected::Matching)
             .got(source.uvs.len()));
     }
+    if !source.colors.is_empty() && source.colors.len() != v_count {
+        return Err(invalid("$.colors")
+            .expected(Expected::Matching)
+            .got(source.colors.len()));
+    }
     if !source.ao.is_empty() && source.ao.len() != v_count {
         return Err(invalid("$.ao")
             .expected(Expected::Matching)
             .got(source.ao.len()));
-    }
-    if !source.blend.is_empty() && source.blend.len() != v_count {
-        return Err(invalid("$.blend")
-            .expected(Expected::Matching)
-            .got(source.blend.len()));
     }
     if !source.material_ids.is_empty() && source.material_ids.len() != tri_count {
         return Err(invalid("$.material_ids")
@@ -132,19 +132,32 @@ fn validate_and_prepare(source: &SourceMesh) -> Result<PreparedSource, Error> {
     let mut vertices = Vec::with_capacity(v_count);
     for (i, &normal) in normals.iter().enumerate() {
         let uv = source.uvs.get(i).copied().unwrap_or(Vec2::ZERO);
+        let raw_color = source.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]);
         let ao = source.ao.get(i).copied().unwrap_or(1.0);
-        let blend = source.blend.get(i).copied().unwrap_or(1.0);
+        let color = [
+            if raw_color[0].is_finite() {
+                clamp(raw_color[0], 0.0, 1.0)
+            } else {
+                1.0
+            },
+            if raw_color[1].is_finite() {
+                clamp(raw_color[1], 0.0, 1.0)
+            } else {
+                1.0
+            },
+            if raw_color[2].is_finite() {
+                clamp(raw_color[2], 0.0, 1.0)
+            } else {
+                1.0
+            },
+        ];
         vertices.push(ClusterVertex {
             position: source.positions[i],
             normal,
             uv: if uv.is_finite() { uv } else { Vec2::ZERO },
+            color,
             ao: if ao.is_finite() {
                 clamp(ao, 0.0, 1.0)
-            } else {
-                1.0
-            },
-            blend: if blend.is_finite() {
-                clamp(blend, 0.0, 1.0)
             } else {
                 1.0
             },
@@ -276,11 +289,80 @@ fn nearest_parent(child_center: Vec3, parent_ids: &[usize], nodes: &[DagNode]) -
     best
 }
 
+fn coarse_decimate_group(
+    child_meshlets: &[&MeshletData],
+    target_tris: usize,
+    target_verts: usize,
+) -> (Vec<MeshletData>, f32) {
+    let mut ranked: Vec<(f32, usize, [u8; 3])> = Vec::new();
+    let mut all_pts: Vec<Vec3> = Vec::new();
+    for (mi, meshlet) in child_meshlets.iter().enumerate() {
+        for v in &meshlet.vertices {
+            all_pts.push(v.position);
+        }
+        for &tri in &meshlet.triangles {
+            let p0 = meshlet.vertices[usize::from(tri[0])].position;
+            let p1 = meshlet.vertices[usize::from(tri[1])].position;
+            let p2 = meshlet.vertices[usize::from(tri[2])].position;
+            let area = (p1 - p0).cross(p2 - p0).length() * 0.5;
+            if area.is_finite() && area > 1.0e-12 {
+                ranked.push((area, mi, tri));
+            }
+        }
+    }
+    if ranked.is_empty() {
+        return (Vec::new(), 0.0);
+    }
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut vertices: Vec<ClusterVertex> = Vec::new();
+    let mut pos_ids: Vec<u32> = Vec::new();
+    let mut triangles: Vec<[u32; 3]> = Vec::new();
+    let mut remap: HashMap<(usize, u8), u32> = HashMap::with_hasher(FixedState::default());
+    let mut dropped_edge = 0.0_f32;
+    for &(_, mi, tri) in &ranked {
+        let mut needed_new = 0_usize;
+        for local in tri {
+            if !remap.contains_key(&(mi, local)) {
+                needed_new += 1;
+            }
+        }
+        let within_budget = triangles.is_empty()
+            || (triangles.len() < target_tris && vertices.len() + needed_new <= target_verts);
+        if within_budget {
+            let meshlet = child_meshlets[mi];
+            let mut out_tri = [0_u32; 3];
+            for (slot, local) in tri.into_iter().enumerate() {
+                let vid = *remap.entry((mi, local)).or_insert_with(|| {
+                    let id = vertices.len() as u32;
+                    let idx = usize::from(local);
+                    vertices.push(meshlet.vertices[idx]);
+                    pos_ids.push(meshlet.pos_ids[idx]);
+                    id
+                });
+                out_tri[slot] = vid;
+            }
+            triangles.push(out_tri);
+        } else {
+            let meshlet = child_meshlets[mi];
+            let p0 = meshlet.vertices[usize::from(tri[0])].position;
+            let p1 = meshlet.vertices[usize::from(tri[1])].position;
+            let p2 = meshlet.vertices[usize::from(tri[2])].position;
+            let e = max((p1 - p0).length(), max((p2 - p1).length(), (p0 - p2).length()));
+            dropped_edge = max(dropped_edge, e);
+        }
+    }
+    let (_, ext) = aabb_of_points(&all_pts);
+    let error = max(dropped_edge * 0.5, ext.length() * 0.06);
+    let parts = partition_meshlets(&vertices, &pos_ids, &triangles);
+    (parts, error)
+}
+
 fn reduce_single_group(
     material_id: u8,
     child_ids: &[usize],
     level_pos_count: &HashMap<u32, u32>,
     material_seams: &HashSet<u32>,
+    allow_coarse_fallback: bool,
     nodes: &mut Vec<DagNode>,
     next_group_id: &mut u32,
 ) -> Result<Option<Vec<usize>>, Error> {
@@ -316,6 +398,7 @@ fn reduce_single_group(
         &simplified.pos_ids,
         &simplified.triangles,
     );
+    let mut simplify_error = simplified.error;
     if parent_meshlets.len() >= child_ids.len() && simplified.triangles.len() > 2 {
         let tighter_tris = (target_tris * 2 / 3).max(1);
         let tighter_verts = (target_verts * 3 / 4).max(3);
@@ -329,7 +412,20 @@ fn reduce_single_group(
         let retry_parts = partition_meshlets(&retry.vertices, &retry.pos_ids, &retry.triangles);
         if !retry_parts.is_empty() && retry_parts.len() < parent_meshlets.len() {
             simplified = retry;
+            simplify_error = simplified.error;
             parent_meshlets = retry_parts;
+        }
+    }
+    if (parent_meshlets.is_empty() || parent_meshlets.len() >= child_ids.len())
+        && allow_coarse_fallback
+    {
+        let fallback_tris = (target_parents * 48).min(in_tris / 2).max(1);
+        let fallback_verts = (target_parents * 48).max(3);
+        let (fb_parts, fb_err) =
+            coarse_decimate_group(&child_meshlets, fallback_tris, fallback_verts);
+        if !fb_parts.is_empty() && fb_parts.len() < child_ids.len() {
+            parent_meshlets = fb_parts;
+            simplify_error = max(simplify_error, fb_err);
         }
     }
     if parent_meshlets.is_empty() || parent_meshlets.len() >= child_ids.len() {
@@ -343,7 +439,7 @@ fn reduce_single_group(
     }
     let parent_lod = parent_lod.min(255);
     let group_error = max(
-        max_child_err + simplified.error,
+        max_child_err + simplify_error,
         max_child_err * 1.001 + 1.0e-5,
     );
     let mut parent_ids = Vec::with_capacity(parent_meshlets.len());
@@ -391,6 +487,7 @@ fn reduce_material_dag(
     next_group_id: &mut u32,
 ) -> Result<(), Error> {
     let mut pass = 0_u32;
+    let mut allow_coarse_fallback = false;
     while active.len() > 1 && pass < 240 {
         let mut level_pos_count: HashMap<u32, u32> =
             HashMap::with_capacity_and_hasher(active.len() * 32, FixedState::default());
@@ -423,6 +520,7 @@ fn reduce_material_dag(
                 &child_ids,
                 &level_pos_count,
                 material_seams,
+                allow_coarse_fallback,
                 nodes,
                 next_group_id,
             )? {
@@ -434,6 +532,10 @@ fn reduce_material_dag(
             }
         }
         if !reduced_any {
+            if !allow_coarse_fallback && active.len() > 2 {
+                allow_coarse_fallback = true;
+                continue;
+            }
             break;
         }
         active = next_active;

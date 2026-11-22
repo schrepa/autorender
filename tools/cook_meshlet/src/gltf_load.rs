@@ -178,21 +178,33 @@ fn append_primitive(
         }
         None => vec![Vec2::ZERO; v_count],
     };
-    let (ao, blend) = match reader.read_colors(0) {
+    let (colors, ao) = match reader.read_colors(0) {
         Some(iter) => {
             let raw: Vec<[f32; 4]> = iter.into_rgba_f32().collect();
             if raw.len() == v_count {
-                let ao_vec = raw.iter().map(|c| clamp(c[3], 0.0, 1.0)).collect();
-                let blend_vec = raw
+                let col_vec = raw
                     .iter()
-                    .map(|c| clamp(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], 0.0, 1.0))
+                    .map(|c| {
+                        [
+                            clamp(c[0], 0.0, 1.0),
+                            clamp(c[1], 0.0, 1.0),
+                            clamp(c[2], 0.0, 1.0),
+                        ]
+                    })
                     .collect();
-                (ao_vec, blend_vec)
+                let ao_vec = raw.iter().map(|c| clamp(c[3], 0.0, 1.0)).collect();
+                (col_vec, ao_vec)
             } else {
-                (compute_curvature_ao(&positions, &normals, &indices), vec![1.0; v_count])
+                (
+                    vec![[1.0, 1.0, 1.0]; v_count],
+                    compute_curvature_ao(&positions, &normals, &indices),
+                )
             }
         }
-        None => (compute_curvature_ao(&positions, &normals, &indices), vec![1.0; v_count]),
+        None => (
+            vec![[1.0, 1.0, 1.0]; v_count],
+            compute_curvature_ao(&positions, &normals, &indices),
+        ),
     };
     let mat_id = material_override.unwrap_or_else(|| {
         primitive
@@ -206,8 +218,8 @@ fn append_primitive(
     out.positions.extend_from_slice(&positions);
     out.normals.extend_from_slice(&normals);
     out.uvs.extend_from_slice(&uvs);
+    out.colors.extend_from_slice(&colors);
     out.ao.extend_from_slice(&ao);
-    out.blend.extend_from_slice(&blend);
     out.indices.extend(indices.into_iter().map(|i| i + base));
     out.material_ids
         .extend(std::iter::repeat_n(mat_id, tri_count));

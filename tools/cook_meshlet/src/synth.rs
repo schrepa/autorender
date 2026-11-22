@@ -10,7 +10,7 @@ pub fn build_terrain_column_mesh() -> SourceMesh {
     let v_count = cols * rows;
     let mut positions = Vec::with_capacity(v_count);
     let mut uvs = Vec::with_capacity(v_count);
-    let mut blend = Vec::with_capacity(v_count);
+    let mut colors = Vec::with_capacity(v_count);
     let span = 32.0_f32;
     for rz in 0..rows {
         let vz = (rz as f32) / ((rows - 1) as f32);
@@ -39,7 +39,8 @@ pub fn build_terrain_column_mesh() -> SourceMesh {
             let y = hills + pedestal;
             positions.push(Vec3::new(x, y, z));
             uvs.push(Vec2::new(ux, vz));
-            blend.push(clamp(0.5 + 0.25 * sin(x * 0.35) * cos(z * 0.35), 0.2, 0.95));
+            let tone = clamp(0.75 + 0.15 * sin(x * 0.35) * cos(z * 0.35), 0.2, 0.95);
+            colors.push([tone, tone * 0.92, tone * 0.80]);
         }
     }
     let tri_count = (cols - 1) * (rows - 1) * 2;
@@ -73,8 +74,8 @@ pub fn build_terrain_column_mesh() -> SourceMesh {
         positions,
         normals,
         uvs,
+        colors,
         ao,
-        blend,
         indices,
         material_ids: vec![0; tri_count],
     }
@@ -100,8 +101,8 @@ pub fn build_multimaterial_foliage_mesh() -> SourceMesh {
             mesh.positions.push(pos);
             mesh.normals.push(n);
             mesh.uvs.push(Vec2::new(tx, ty));
+            mesh.colors.push([0.85, 0.80, 0.72]);
             mesh.ao.push(0.85);
-            mesh.blend.push(0.9);
         }
     }
     let stride = segs + 1;
@@ -137,8 +138,8 @@ pub fn build_multimaterial_foliage_mesh() -> SourceMesh {
             mesh.positions.push(p);
             mesh.normals.push(up);
             mesh.uvs.push(Vec2::new((k as f32) * 0.25, 0.5));
+            mesh.colors.push([0.22, 0.42, 0.20]);
             mesh.ao.push(0.75);
-            mesh.blend.push(0.8);
         }
         mesh.indices.extend_from_slice(&[
             v0,

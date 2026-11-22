@@ -123,7 +123,7 @@ fn verify_cluster(
     );
     let b_radius = header.bound_sphere[3];
     let tol = max(b_radius, aabb_ext.length()) * 1.0e-3 + 1.0e-4;
-    let step_err = aabb_ext.max_element() / 65535.0;
+    let step_err = aabb_ext.max_element() / 1023.0;
     *max_quant_err = max(*max_quant_err, step_err);
     for (vi, v) in decoded.vertices.iter().enumerate() {
         if !v.position.is_finite() || !v.normal.is_finite() {

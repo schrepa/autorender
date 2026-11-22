@@ -109,8 +109,8 @@ impl Quadric {
 struct CornerAttr {
     normal: Vec3,
     uv: Vec2,
+    color: [f32; 3],
     ao: f32,
-    blend: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -295,8 +295,8 @@ fn init_state(
                 CornerAttr {
                     normal: v.normal,
                     uv: v.uv,
+                    color: v.color,
                     ao: v.ao,
-                    blend: v.blend,
                 }
             };
             tris.push(SimpTri {
@@ -474,8 +474,12 @@ fn blend_attr(a: CornerAttr, b: CornerAttr, t: f32) -> CornerAttr {
     CornerAttr {
         normal,
         uv: a.uv.lerp(b.uv, t),
+        color: [
+            clamp(a.color[0] + (b.color[0] - a.color[0]) * t, 0.0, 1.0),
+            clamp(a.color[1] + (b.color[1] - a.color[1]) * t, 0.0, 1.0),
+            clamp(a.color[2] + (b.color[2] - a.color[2]) * t, 0.0, 1.0),
+        ],
         ao: clamp(a.ao + (b.ao - a.ao) * t, 0.0, 1.0),
-        blend: clamp(a.blend + (b.blend - a.blend) * t, 0.0, 1.0),
     }
 }
 
@@ -633,7 +637,9 @@ fn export_simplified(state: &SimplifierState) -> SimplifiedGroup {
                 if existing.normal.dot(attr.normal) > 0.96
                     && (existing.uv - attr.uv).length_squared() < 1.0e-3
                     && (existing.ao - attr.ao).abs() < 5.0e-2
-                    && (existing.blend - attr.blend).abs() < 5.0e-2
+                    && (existing.color[0] - attr.color[0]).abs() < 5.0e-2
+                    && (existing.color[1] - attr.color[1]).abs() < 5.0e-2
+                    && (existing.color[2] - attr.color[2]).abs() < 5.0e-2
                 {
                     found = Some(vid);
                     break;
@@ -652,8 +658,12 @@ fn export_simplified(state: &SimplifierState) -> SimplifiedGroup {
                             Vec3::Y
                         },
                         uv: attr.uv,
+                        color: [
+                            clamp(attr.color[0], 0.0, 1.0),
+                            clamp(attr.color[1], 0.0, 1.0),
+                            clamp(attr.color[2], 0.0, 1.0),
+                        ],
                         ao: clamp(attr.ao, 0.0, 1.0),
-                        blend: clamp(attr.blend, 0.0, 1.0),
                     });
                     pos_ids.push(state.global_pos[lv]);
                     per_pos[lv].push(id);

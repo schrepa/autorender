@@ -156,19 +156,31 @@ pub struct SourceMesh {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub uvs: Vec<Vec2>,
+    pub colors: Vec<[f32; 3]>,
     pub ao: Vec<f32>,
-    pub blend: Vec<f32>,
     pub indices: Vec<u32>,
     pub material_ids: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClusterVertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub uv: Vec2,
+    pub color: [f32; 3],
     pub ao: f32,
-    pub blend: f32,
+}
+
+impl Default for ClusterVertex {
+    fn default() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            normal: Vec3::Y,
+            uv: Vec2::ZERO,
+            color: [1.0, 1.0, 1.0],
+            ao: 1.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

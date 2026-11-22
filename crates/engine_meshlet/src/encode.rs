@@ -50,12 +50,12 @@ pub fn decode_octahedral(encoded: [i16; 2]) -> Vec3 {
     }
 }
 
-fn quantize_axis(value: f32, min_v: f32, extent: f32) -> u16 {
+fn quantize_bits(value: f32, min_v: f32, extent: f32, max_code: u32) -> u32 {
     if extent <= 1.0e-12 {
         return 0;
     }
     let t = clamp((value - min_v) / extent, 0.0, 1.0);
-    (t * 65535.0).round() as u16
+    (t * (max_code as f32)).round() as u32
 }
 
 fn wrap_uv(value: f32) -> f32 {
@@ -70,11 +70,10 @@ fn wrap_uv(value: f32) -> f32 {
 }
 
 pub fn dequantize_position(qx: u16, qy: u16, qz: u16, aabb_min: Vec3, aabb_extent: Vec3) -> Vec3 {
-    let inv = 1.0 / 65535.0;
     Vec3::new(
-        aabb_min.x + f32::from(qx) * inv * aabb_extent.x,
-        aabb_min.y + f32::from(qy) * inv * aabb_extent.y,
-        aabb_min.z + f32::from(qz) * inv * aabb_extent.z,
+        aabb_min.x + (f32::from(qx) / 2047.0) * aabb_extent.x,
+        aabb_min.y + (f32::from(qy) / 2047.0) * aabb_extent.y,
+        aabb_min.z + (f32::from(qz) / 1023.0) * aabb_extent.z,
     )
 }
 
@@ -98,16 +97,18 @@ pub fn encode_cluster_words(
     let start_len = out.len();
     out.reserve(vertices.len() * CLUSTER_VERTEX_WORDS + triangles.len() * CLUSTER_TRI_WORDS);
     for v in vertices {
-        let qx = quantize_axis(v.position.x, aabb_min.x, aabb_extent.x);
-        let qy = quantize_axis(v.position.y, aabb_min.y, aabb_extent.y);
-        let qz = quantize_axis(v.position.z, aabb_min.z, aabb_extent.z);
-        let ao = (clamp(v.ao, 0.0, 1.0) * 255.0).round() as u8;
-        let blend = (clamp(v.blend, 0.0, 1.0) * 255.0).round() as u8;
+        let qx = quantize_bits(v.position.x, aabb_min.x, aabb_extent.x, 2047);
+        let qy = quantize_bits(v.position.y, aabb_min.y, aabb_extent.y, 2047);
+        let qz = quantize_bits(v.position.z, aabb_min.z, aabb_extent.z, 1023);
+        let cr = (clamp(v.color[0], 0.0, 1.0) * 255.0).round() as u32;
+        let cg = (clamp(v.color[1], 0.0, 1.0) * 255.0).round() as u32;
+        let cb = (clamp(v.color[2], 0.0, 1.0) * 255.0).round() as u32;
+        let ao = (clamp(v.ao, 0.0, 1.0) * 255.0).round() as u32;
         let oct = encode_octahedral(v.normal);
         let uv_u = (clamp(wrap_uv(v.uv.x), 0.0, 1.0) * 65535.0).round() as u16;
         let uv_v = (clamp(wrap_uv(v.uv.y), 0.0, 1.0) * 65535.0).round() as u16;
-        let w0 = u32::from(qx) | (u32::from(qy) << 16);
-        let w1 = u32::from(qz) | (u32::from(ao) << 16) | (u32::from(blend) << 24);
+        let w0 = (qx & 0x7FF) | ((qy & 0x7FF) << 11) | ((qz & 0x3FF) << 22);
+        let w1 = (cr & 0xFF) | ((cg & 0xFF) << 8) | ((cb & 0xFF) << 16) | ((ao & 0xFF) << 24);
         let w2 = u32::from(oct[0] as u16) | (u32::from(oct[1] as u16) << 16);
         let w3 = u32::from(uv_u) | (u32::from(uv_v) << 16);
         out.extend_from_slice(&[w0, w1, w2, w3]);
@@ -163,11 +164,13 @@ pub fn decode_cluster_words(
         let w2 = page_words[cursor + 2];
         let w3 = page_words[cursor + 3];
         cursor += CLUSTER_VERTEX_WORDS;
-        let qx = (w0 & 0xFFFF) as u16;
-        let qy = ((w0 >> 16) & 0xFFFF) as u16;
-        let qz = (w1 & 0xFFFF) as u16;
-        let ao = f32::from(((w1 >> 16) & 0xFF) as u8) / 255.0;
-        let blend = f32::from(((w1 >> 24) & 0xFF) as u8) / 255.0;
+        let qx = (w0 & 0x7FF) as u16;
+        let qy = ((w0 >> 11) & 0x7FF) as u16;
+        let qz = ((w0 >> 22) & 0x3FF) as u16;
+        let cr = f32::from((w1 & 0xFF) as u8) / 255.0;
+        let cg = f32::from(((w1 >> 8) & 0xFF) as u8) / 255.0;
+        let cb = f32::from(((w1 >> 16) & 0xFF) as u8) / 255.0;
+        let ao = f32::from(((w1 >> 24) & 0xFF) as u8) / 255.0;
         let oct_x = (w2 & 0xFFFF) as u16 as i16;
         let oct_y = ((w2 >> 16) & 0xFFFF) as u16 as i16;
         let uv_u = f32::from((w3 & 0xFFFF) as u16) / 65535.0;
@@ -176,8 +179,8 @@ pub fn decode_cluster_words(
             position: dequantize_position(qx, qy, qz, aabb_min, aabb_extent),
             normal: decode_octahedral([oct_x, oct_y]),
             uv: Vec2::new(uv_u, uv_v),
+            color: [cr, cg, cb],
             ao,
-            blend,
         });
     }
     let mut triangles = Vec::with_capacity(tri_count);
