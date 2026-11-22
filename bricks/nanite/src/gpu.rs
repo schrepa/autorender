@@ -18,7 +18,7 @@ use crate::types::{
     mip_extent,
 };
 use crate::world::NaniteWorld;
-use crate::{NANITE_DEPTH, NANITE_DEPTH_P1, NANITE_P1_PASS, NANITE_P2_PASS, NANITE_VIS_HW};
+use crate::{NANITE_DEPTH, NANITE_P1_PASS, NANITE_P2_PASS, NANITE_VIS_HW};
 
 const HIZ_WG: u32 = 8;
 const DEDUP_BASE_WORDS: u64 = 32 + MAX_OCC_INSTANCES as u64 + (MAX_OCC_CLUSTERS as u64) * 2;
@@ -198,12 +198,6 @@ fn declare_targets_and_frame(
         samples: 1,
         clear: TargetClear::Color([0.0, 0.0, 0.0, 0.0]),
     });
-    cx.shared_target(SharedTarget {
-        name: NANITE_DEPTH_P1,
-        format: wgpu::TextureFormat::R32Float,
-        samples: 1,
-        clear: TargetClear::Color([0.0, 0.0, 0.0, 0.0]),
-    });
     cx.frame(frame::NANITE_FRAME_UNIFORMS, Bind::Buffer(buf.uniforms))?;
     cx.frame(frame::NANITE_FRAME_INSTANCES, Bind::Buffer(buf.instances))?;
     cx.frame(frame::NANITE_FRAME_CLUSTERS, Bind::Buffer(buf.clusters))?;
@@ -347,10 +341,7 @@ fn install_hw_pipes(
         write: true,
         bias: wgpu::DepthBiasState::default(),
     };
-    let p1_targets = [
-        (None, wgpu::ColorWrites::ALL),
-        (None, wgpu::ColorWrites::ALL),
-    ];
+    let p1_targets = [(None, wgpu::ColorWrites::ALL)];
     let p2_targets = [(None, wgpu::ColorWrites::ALL)];
     let hw_p1_all = [
         (hw::HW_UNIFORMS, Bind::Buffer(buf.uniforms)),
@@ -445,7 +436,7 @@ fn install_raster_pipes(
         (sw::SW_CLUSTERS, Bind::Buffer(buf.clusters)),
         (sw::SW_PAGE_HEAP, Bind::Buffer(buf.page_heap)),
         (sw::SW_DRAW_LIST, Bind::Buffer(buf.p1_draw_lists)),
-        (sw::SW_HW_DEPTH_R32, Bind::Target(NANITE_DEPTH_P1)),
+        (sw::SW_HW_DEPTH_TEX, Bind::Target(NANITE_DEPTH)),
         (sw::SW_DEPTH_RW, Bind::Buffer(buf.sw_depth)),
         (sw::SW_VIS_RW, Bind::Buffer(buf.sw_vis)),
     ];
@@ -524,6 +515,25 @@ fn install_raster_pipes(
         shadow_raster_c0,
         shadow_raster_c1,
     })
+}
+
+fn shadow_res_tier(residency_ver: u64, total_pages: u32) -> u64 {
+    let cap = u64::from(total_pages.max(1));
+    if residency_ver == 0 {
+        0
+    } else if residency_ver >= cap.min(480) {
+        6
+    } else if residency_ver >= cap.min(240) {
+        5
+    } else if residency_ver >= cap.min(110) {
+        4
+    } else if residency_ver >= cap.min(40) {
+        3
+    } else if residency_ver >= cap.min(12) {
+        2
+    } else {
+        1
+    }
 }
 
 fn ortho_shadow_vp(center: Vec3, half_extent: f32, depth_half: f32, sun_dir: Vec3, dim: u32) -> Mat4 {
@@ -865,47 +875,46 @@ impl GpuPart for NaniteGpu {
         self.freeze = cfg.freeze_culling;
         self.frame_gen = self.frame_gen.wrapping_add(1).max(1);
 
-        let c0_half = 46.0_f32;
-        let c1_half = 285.0_f32;
-        let c0_center = Vec3::new(
-            cam.render_pos.x,
-            engine::math::clamp(cam.render_pos.y, -4.0, 22.0),
-            cam.render_pos.z,
+        let c0_half = 52.0_f32;
+        let c1_half = 340.0_f32;
+        let vm = cam.render_view.to_cols_array_2d();
+        let fwd_xz = Vec3::new(-vm[0][2], 0.0, -vm[2][2]).normalize_or_zero();
+        let desired_c0 = Vec3::new(
+            cam.render_pos.x + fwd_xz.x * 36.0,
+            engine::math::clamp(cam.render_pos.y, -2.0, 26.0),
+            cam.render_pos.z + fwd_xz.z * 36.0,
         );
-        let c1_center = Vec3::new(0.0, 8.0, -100.0);
-        let sh_vp0 = ortho_shadow_vp(c0_center, c0_half, 180.0, cam.sun_dir, SHADOW_C0_DIM);
-        let sh_vp1 = ortho_shadow_vp(c1_center, c1_half, 480.0, cam.sun_dir, SHADOW_C1_DIM);
+        let c1_center = Vec3::new(30.0, 8.0, -75.0);
 
         let geom_changed = self.shadow.last_geom_rev != world.geometry_revision
             || self.shadow.last_inst_rev != world.instance_revision;
-        let c0_moved = (c0_center - self.shadow.last_c0_center).length_squared() > 36.0;
-        let shadow_target = u64::from(world.total_pages.min(96));
+        let c0_moved = (desired_c0 - self.shadow.last_c0_center).length_squared() > 100.0;
+        let tier = shadow_res_tier(self.residency_ver, world.total_pages);
         let c0_res_changed = self.shadow.last_c0_res == u64::MAX
-            || (self.residency_ver != self.shadow.last_c0_res
-                && self.shadow.last_c0_res < shadow_target
-                && (self.residency_ver <= 8
-                    || self.residency_ver >= shadow_target
-                    || (self.frame_gen & 15) == 0));
+            || (tier > 0 && tier != self.shadow.last_c0_res);
         let c1_res_changed = self.shadow.last_c1_res == u64::MAX
-            || (self.residency_ver != self.shadow.last_c1_res
-                && self.shadow.last_c1_res < shadow_target
-                && (self.residency_ver <= 8
-                    || self.residency_ver >= shadow_target
-                    || (self.frame_gen & 15) == 0));
+            || (tier > 0 && tier != self.shadow.last_c1_res);
         self.shadow.enabled = cfg.shadows_enabled && self.instance_count > 0;
         self.shadow.dirty_c0 = self.shadow.enabled && (geom_changed || c0_moved || c0_res_changed);
         self.shadow.dirty_c1 = self.shadow.enabled && (geom_changed || c1_res_changed);
         if self.shadow.dirty_c0 {
-            self.shadow.last_c0_center = c0_center;
-            self.shadow.last_c0_res = self.residency_ver;
+            self.shadow.last_c0_center = desired_c0;
+            self.shadow.last_c0_res = tier;
         }
         if self.shadow.dirty_c1 {
-            self.shadow.last_c1_res = self.residency_ver;
+            self.shadow.last_c1_res = tier;
         }
         if geom_changed {
             self.shadow.last_geom_rev = world.geometry_revision;
             self.shadow.last_inst_rev = world.instance_revision;
         }
+        let c0_center = if self.shadow.last_c0_center.length_squared() < 1.0e14 {
+            self.shadow.last_c0_center
+        } else {
+            desired_c0
+        };
+        let sh_vp0 = ortho_shadow_vp(c0_center, c0_half, 130.0, cam.sun_dir, SHADOW_C0_DIM);
+        let sh_vp1 = ortho_shadow_vp(c1_center, c1_half, 320.0, cam.sun_dir, SHADOW_C1_DIM);
 
         let render_vp = cam.render_proj * cam.render_view;
         let cull_vp = cam.cull_proj * cam.cull_view;

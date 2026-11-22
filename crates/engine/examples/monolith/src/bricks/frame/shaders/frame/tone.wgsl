@@ -44,7 +44,9 @@ fn fs_tone(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
     let raw = textureLoad(scene_color, pixel, 0).rgb;
     if frame_params.fog_params.w > 0.5 {
-        return vec4<f32>(encode_srgb(saturate(raw)), 1.0);
+        let srgb = encode_srgb(saturate(raw));
+        let luma_aa = dot(srgb, vec3<f32>(0.299, 0.587, 0.114));
+        return vec4<f32>(srgb, luma_aa);
     }
 
     var hdr = raw + textureSampleLevel(scene_bloom, tone_sampler, uv, 0.0).rgb;
@@ -55,5 +57,7 @@ fn fs_tone(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var mapped = agx_tonemap(hdr);
     let luma = dot(mapped, vec3<f32>(0.2126, 0.7152, 0.0722));
     mapped = saturate(mix(vec3<f32>(luma), mapped, frame_params.grade.z));
-    return vec4<f32>(encode_srgb(mapped), 1.0);
+    let srgb = encode_srgb(mapped);
+    let luma_aa = dot(srgb, vec3<f32>(0.299, 0.587, 0.114));
+    return vec4<f32>(srgb, luma_aa);
 }

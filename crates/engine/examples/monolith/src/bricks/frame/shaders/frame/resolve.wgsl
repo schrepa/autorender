@@ -109,6 +109,27 @@ fn eval_sky(dir: vec3<f32>, include_sun: bool) -> vec3<f32> {
     return col;
 }
 
+fn shadow_texel(tx: i32, ty: i32, cmp_z: f32, dim_u: u32, dim_i: i32, base_off: u32) -> f32 {
+    let cx = clamp(tx, 0, dim_i - 1);
+    let cy = clamp(ty, 0, dim_i - 1);
+    let bits = nanite_frame_shadow_depth[base_off + u32(cy) * dim_u + u32(cx)];
+    return select(0.0, 1.0, bits == 0u || cmp_z >= bitcast<f32>(bits));
+}
+
+fn sample_shadow_bilinear(sx: f32, sy: f32, cmp_z: f32, dim_u: u32, dim_i: i32, base_off: u32) -> f32 {
+    let gx = sx - 0.5;
+    let gy = sy - 0.5;
+    let x0 = i32(floor(gx));
+    let y0 = i32(floor(gy));
+    let fx = gx - f32(x0);
+    let fy = gy - f32(y0);
+    let s00 = shadow_texel(x0, y0, cmp_z, dim_u, dim_i, base_off);
+    let s10 = shadow_texel(x0 + 1, y0, cmp_z, dim_u, dim_i, base_off);
+    let s01 = shadow_texel(x0, y0 + 1, cmp_z, dim_u, dim_i, base_off);
+    let s11 = shadow_texel(x0 + 1, y0 + 1, cmp_z, dim_u, dim_i, base_off);
+    return mix(mix(s00, s10, fx), mix(s01, s11, fx), fy);
+}
+
 fn sample_cascade_pcf(
     world_pos: vec3<f32>,
     n: vec3<f32>,
@@ -123,7 +144,7 @@ fn sample_cascade_pcf(
     let p = world_pos + n * normal_bias;
     let clip = vp * vec4<f32>(p, 1.0);
     let margin = max(abs(clip.x), abs(clip.y));
-    if margin >= 0.99 || clip.z <= 0.001 || clip.z >= 0.999 {
+    if margin >= 0.98 || clip.z <= 0.001 || clip.z >= 0.999 {
         return vec2<f32>(1.0, 0.0);
     }
     let dim_f = f32(dim_u);
@@ -134,21 +155,17 @@ fn sample_cascade_pcf(
     let sa = sin(rot_angle);
     let cmp_z = clip.z + depth_bias;
     var lit = 0.0;
-    for (var i = 0; i < 5; i = i + 1) {
-        let r = sqrt((f32(i) + 0.5) * 0.2) * radius_px;
+    for (var i = 0; i < 4; i = i + 1) {
+        let r = sqrt((f32(i) + 0.5) * 0.25) * radius_px;
         let a = f32(i) * 2.3999632;
         let ox = cos(a) * r;
         let oy = sin(a) * r;
         let rx = ox * ca - oy * sa;
         let ry = ox * sa + oy * ca;
-        let tx = clamp(i32(floor(sx + rx)), 0, dim_i - 1);
-        let ty = clamp(i32(floor(sy + ry)), 0, dim_i - 1);
-        let stored_bits = nanite_frame_shadow_depth[base_off + u32(ty) * dim_u + u32(tx)];
-        let stored_z = bitcast<f32>(stored_bits);
-        lit += select(0.0, 1.0, stored_bits == 0u || cmp_z >= stored_z);
+        lit += sample_shadow_bilinear(sx + rx, sy + ry, cmp_z, dim_u, dim_i, base_off);
     }
-    let coverage = smoothstep(0.99, 0.84, margin);
-    return vec2<f32>(lit * 0.2, coverage);
+    let coverage = smoothstep(0.98, 0.78, margin);
+    return vec2<f32>(lit * 0.25, coverage);
 }
 
 fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
@@ -162,10 +179,10 @@ fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
         nanite_frame_uniforms.shadow_vp0,
         SHADOW_C0_DIM,
         0u,
-        0.10 + slope * 0.14,
-        0.0010 + slope * 0.0012,
+        0.06 + slope * 0.10,
+        0.00030 + slope * 0.00045,
         angle,
-        1.45,
+        1.35,
     );
     if c0.y >= 0.99 {
         return c0.x;
@@ -176,10 +193,10 @@ fn eval_shadow(world_pos: vec3<f32>, n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
         nanite_frame_uniforms.shadow_vp1,
         SHADOW_C1_DIM,
         SHADOW_C0_DIM * SHADOW_C0_DIM,
-        0.24 + slope * 0.34,
-        0.0014 + slope * 0.0018,
+        0.14 + slope * 0.22,
+        0.00035 + slope * 0.00055,
         angle,
-        1.35,
+        1.25,
     );
     let far_val = mix(1.0, c1.x, c1.y);
     return mix(far_val, c0.x, c0.y);
@@ -220,7 +237,8 @@ fn apply_aerial_fog(
     let fog_amt = 1.0 - exp(-min(optical, 5.5));
     let sun_dot = clamp(dot(view_dir, frame_params.sun_dir_illum.xyz), 0.0, 1.0);
     let mie_glow = pow(sun_dot, 5.0) * 0.35 + pow(sun_dot, 16.0) * 0.45;
-    let sky_haze = eval_sky(vec3<f32>(view_dir.x, max(view_dir.y, 0.03), view_dir.z), false);
+    let horiz_mix = mix(frame_params.sky_horiz_opp.rgb, frame_params.sky_horiz_sun.rgb, sun_dot);
+    let sky_haze = mix(horiz_mix, frame_params.sky_zenith.rgb, clamp(view_dir.y * 1.4, 0.0, 0.7));
     let fog_col = mix(frame_params.fog_color.rgb, sky_haze, 0.42) + vec3<f32>(1.0, 0.78, 0.55) * mie_glow;
     return mix(color, fog_col, clamp(fog_amt, 0.0, 0.92));
 }
@@ -233,6 +251,7 @@ fn shade_pbr(
     mat_id: u32,
     uv: vec2<f32>,
     uv_filter: f32,
+    normal_var: f32,
     frag_xy: vec2<f32>,
 ) -> vec3<f32> {
     let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
@@ -243,7 +262,7 @@ fn shade_pbr(
     let l = frame_params.sun_dir_illum.xyz;
     let sun_rad = frame_params.sun_color_shaft.rgb * frame_params.sun_dir_illum.w;
 
-    let grain_fade = 1.0 - smoothstep(0.08, 0.45, uv_filter);
+    let grain_fade = 1.0 - smoothstep(0.04, 0.25, uv_filter);
     let micro = (value_noise2(uv * 7.5) - 0.5) * 0.08 * grain_fade;
 
     var albedo = base_color;
@@ -276,6 +295,8 @@ fn shade_pbr(
         backlit_amt = 0.35;
         wrap_tint = vec3<f32>(0.35, 0.55, 0.12);
     }
+
+    rough = sqrt(clamp(rough * rough + normal_var * 0.50, 0.04, 0.96));
 
     let ndl = max(dot(n, l), 0.0);
     var sh = 0.0;
@@ -323,8 +344,11 @@ fn shade_pbr(
     let opp_bounce = vec3<f32>(0.90, 0.66, 0.42) * (clamp(dot(n, -l), 0.0, 1.0) * 0.26 * (1.0 - metallic * 0.65));
     let hemi = mix(ground_bounce, sky_hemi, n.y * 0.5 + 0.5) + opp_bounce;
     let ao_spec = clamp(pow(ndv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
-    let refl = reflect(-v, n);
-    let env_col = eval_sky(refl, false);
+    var env_col = sky_hemi;
+    if metallic > 0.05 || rough < 0.45 {
+        let refl = reflect(-v, n);
+        env_col = eval_sky(refl, false);
+    }
     let f_env = fresnel_schlick(ndv, f0);
     let env_spec = env_col * f_env * (1.0 - rough * 0.68) * ao_spec * (0.50 + 0.85 * metallic);
     let indirect = hemi * albedo * (1.0 - metallic * 0.76) * (ao * 0.60) + env_spec;
@@ -390,7 +414,7 @@ fn shade_ground(
         let sand_base = vec3<f32>(0.578, 0.332, 0.156) * 0.85;
         let macro_n = value_noise2(world_pos.xz * 0.018);
         let ripple = sin(world_pos.x * 0.22 + world_pos.z * 0.58 + macro_n * 3.0) * 0.045;
-        albedo = sand_base * (0.88 + 0.24 * macro_n + ripple * (1.0 - smoothstep(0.6, 2.5, fp)));
+        albedo = sand_base * (0.88 + 0.24 * macro_n + ripple * (1.0 - smoothstep(0.18, 0.75, fp)));
     } else if style == 1u {
         let pg = paver_grid(world_pos.xz, 1.5, 0.014, fp, true);
         let vein = value_noise2(world_pos.xz * 0.35 + vec2<f32>(pg.y * 13.0, pg.y * 7.0));
@@ -438,7 +462,7 @@ fn shade_ground(
         ao = select(1.0, 0.82, n.y < 0.5) * (1.0 - pg.x * 0.35);
     }
 
-    let shaded = shade_pbr(world_pos, n, albedo, ao, mat_id, world_pos.xz, fp, frag_xy);
+    let shaded = shade_pbr(world_pos, n, albedo, ao, mat_id, world_pos.xz, fp, 0.0, frag_xy);
     if style == 0u {
         let to_p = world_pos - cam_pos;
         let vd = to_p / max(dist, 1.0e-4);
@@ -602,6 +626,10 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let duv_dy = uv0 * db_dy.x + uv1 * db_dy.y + uv2 * db_dy.z;
     let uv_filter = length(duv_dx) + length(duv_dy);
 
+    let dn_dx = quat_rotate(inst.rot_quat, n0 * db_dx.x + n1 * db_dx.y + n2 * db_dx.z);
+    let dn_dy = quat_rotate(inst.rot_quat, n0 * db_dy.x + n1 * db_dy.y + n2 * db_dy.z);
+    let normal_var = min(dot(dn_dx, dn_dx) + dot(dn_dy, dn_dy), 0.35);
+
     let mat_id = cluster_mat(c);
     let lit = shade_pbr(
         world_pos,
@@ -611,6 +639,7 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         mat_id,
         uv_interp,
         uv_filter,
+        normal_var,
         pos.xy,
     );
     return vec4<f32>(lit, 1.0);

@@ -6,6 +6,7 @@ pub const BLOOM_B: TargetName = TargetName("monolith_bloom_b");
 pub const BLOOM_C: TargetName = TargetName("monolith_bloom_c");
 pub const BLOOM_UP_B: TargetName = TargetName("monolith_bloom_up_b");
 pub const BLOOM_UP_A: TargetName = TargetName("monolith_bloom_up_a");
+pub const TONED_LDR: TargetName = TargetName("monolith_toned");
 
 pub const GROUND_KIND: DrawKind = DrawKind("monolith_ground");
 

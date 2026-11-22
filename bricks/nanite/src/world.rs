@@ -237,9 +237,9 @@ impl NaniteWorld {
         fill_bvh_min_self_error(manifest, &mut self.bvh[bvh_start..], bvh_offset);
 
         let shadow_c0_range =
-            extract_shadow_cut(&manifest.clusters, cluster_offset, 1.4, &mut self.shadow_cut_clusters);
+            extract_shadow_cut(&manifest.clusters, cluster_offset, 0.85, &mut self.shadow_cut_clusters);
         let shadow_c1_range =
-            extract_shadow_cut(&manifest.clusters, cluster_offset, 4.8, &mut self.shadow_cut_clusters);
+            extract_shadow_cut(&manifest.clusters, cluster_offset, 1.85, &mut self.shadow_cut_clusters);
         self.shadow_mesh_ranges.push(shadow_c0_range);
         self.shadow_mesh_ranges.push(shadow_c1_range);
 

@@ -17,10 +17,9 @@ import package::nanite::common::is_top_left_i32;
 @group(1) @binding(2) var<storage, read> sw_clusters: array<GpuClusterHeader>;
 @group(1) @binding(3) var<storage, read> sw_page_heap: array<u32>;
 @group(1) @binding(4) var<storage, read> sw_draw_list: array<VisibleCluster>;
-@group(1) @binding(5) var sw_hw_depth_r32: texture_2d<f32>;
-@group(1) @binding(6) var sw_hw_depth_tex: texture_depth_2d;
-@group(1) @binding(7) var<storage, read_write> sw_depth_rw: array<atomic<u32>>;
-@group(1) @binding(8) var<storage, read_write> sw_vis_rw: array<u32>;
+@group(1) @binding(5) var sw_hw_depth_tex: texture_depth_2d;
+@group(1) @binding(6) var<storage, read_write> sw_depth_rw: array<atomic<u32>>;
+@group(1) @binding(7) var<storage, read_write> sw_vis_rw: array<u32>;
 
 var<workgroup> sh_screen: array<vec4<f32>, 64>;
 var<workgroup> sh_valid: array<u32, 64>;
@@ -47,7 +46,7 @@ fn cs_seed_sw_depth_p1(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let idx = gid.y * w + gid.x;
-    let d = textureLoad(sw_hw_depth_r32, vec2<i32>(i32(gid.x), i32(gid.y)), 0).x;
+    let d = textureLoad(sw_hw_depth_tex, vec2<i32>(i32(gid.x), i32(gid.y)), 0);
     atomicStore(&sw_depth_rw[idx], select(0u, bitcast<u32>(d), d > 0.0));
     sw_vis_rw[idx] = 0u;
 }

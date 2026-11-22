@@ -19,11 +19,6 @@ struct HwOut {
     @location(0) @interpolate(flat) vis_id: u32,
 }
 
-struct HwP1Frag {
-    @location(0) vis_hw: u32,
-    @location(1) depth_p1: f32,
-}
-
 fn hw_vertex(vid: u32, iid: u32) -> HwOut {
     let vc = hw_draw_list[iid];
     let c = hw_clusters[vc.cluster_id];
@@ -60,11 +55,8 @@ fn vs_hw_p1(
 }
 
 @fragment
-fn fs_hw_p1(in: HwOut) -> HwP1Frag {
-    var out: HwP1Frag;
-    out.vis_hw = in.vis_id;
-    out.depth_p1 = in.clip_pos.z;
-    return out;
+fn fs_hw_p1(in: HwOut) -> @location(0) u32 {
+    return in.vis_id;
 }
 
 @vertex

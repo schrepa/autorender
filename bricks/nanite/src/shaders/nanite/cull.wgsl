@@ -259,7 +259,7 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lod_scale = cull_uniforms.viewport_lod.z;
     let lod_thresh = cull_uniforms.viewport_lod.w;
 
-    var stack: array<u32, 48>;
+    var stack: array<u32, 64>;
     var sp: u32 = 1u;
     stack[0] = root_node;
     var local_tested: u32 = 0u;
@@ -339,7 +339,7 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
                     continue;
                 }
             }
-            if sp < 48u {
+            if sp < 64u {
                 stack[sp] = child_id;
                 sp = sp + 1u;
             }
@@ -450,7 +450,7 @@ fn evaluate_cluster(inst_id: u32, cluster_id: u32, is_p2: bool) {
     let is_sw = !near_straddle
         && cull_uniforms.flags.y == 0u
         && tri_px <= cull_uniforms.hiz_params.w
-        && cluster_px <= 16.0;
+        && cluster_px <= 12.0;
 
     let vis_idx = atomicAdd(&cull_state[25u], 1u);
     if vis_idx >= MAX_VIS_CLUSTERS {

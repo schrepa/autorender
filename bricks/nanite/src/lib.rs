@@ -24,7 +24,6 @@ pub use world::{MeshEntry, NaniteStreaming, NaniteWorld, PageFetchRequest, PageU
 
 pub const NANITE_DEPTH: TargetName = TargetName("nanite_depth");
 pub const NANITE_VIS_HW: TargetName = TargetName("nanite_vis_hw");
-pub const NANITE_DEPTH_P1: TargetName = TargetName("nanite_depth_p1");
 
 pub const NANITE_P1_PASS: &str = "nanite_p1";
 pub const NANITE_P2_PASS: &str = "nanite_p2";
@@ -35,7 +34,7 @@ pub struct NaniteP1Pass;
 impl PassName for NaniteP1Pass {
     const NAME: &'static str = NANITE_P1_PASS;
     const PASS: Pass = Pass {
-        writes: Writes(&[NANITE_VIS_HW, NANITE_DEPTH_P1, NANITE_DEPTH]),
+        writes: Writes(&[NANITE_VIS_HW, NANITE_DEPTH]),
         views: PassViews::Main,
     };
 }

@@ -13,7 +13,7 @@ pub const MAX_HIZ_MIPS: usize = 11;
 pub const MAX_HIZ_DIM: u32 = 512;
 pub const SHADOW_C0_DIM: u32 = 1024;
 pub const SHADOW_C1_DIM: u32 = 2048;
-pub const SHADOW_LIST_CAP: u32 = 65_536;
+pub const SHADOW_LIST_CAP: u32 = 131_072;
 pub const UNMAPPED_PAGE: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -124,14 +124,23 @@ impl LodPreset {
             Self::Px2 => {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    2.8
+                    3.8
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     2.0
                 }
             }
-            Self::Px4 => 4.0,
+            Self::Px4 => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    6.0
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    4.0
+                }
+            }
         }
     }
 
@@ -289,7 +298,7 @@ impl Default for NaniteConfig {
             lod_preset: LodPreset::Px2,
             freeze_culling: false,
             hw_only: false,
-            sw_max_px: 4.5,
+            sw_max_px: 2.2,
             max_pages_per_frame: 48,
             shadows_enabled: true,
         }

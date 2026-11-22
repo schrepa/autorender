@@ -8,11 +8,6 @@ struct GroundOut {
     @location(0) @interpolate(flat) tag: u32,
 }
 
-struct GroundFrag {
-    @location(0) vis_hw: u32,
-    @location(1) depth_p1: f32,
-}
-
 @vertex
 fn vs_ground(@builtin(vertex_index) vid: u32) -> GroundOut {
     let v = ground_verts[vid];
@@ -23,9 +18,6 @@ fn vs_ground(@builtin(vertex_index) vid: u32) -> GroundOut {
 }
 
 @fragment
-fn fs_ground(in: GroundOut) -> GroundFrag {
-    var out: GroundFrag;
-    out.vis_hw = in.tag;
-    out.depth_p1 = in.clip_pos.z;
-    return out;
+fn fs_ground(in: GroundOut) -> @location(0) u32 {
+    return in.tag;
 }

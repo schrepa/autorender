@@ -10,7 +10,7 @@ use engine_core::{
 use engine_render::{Access, Encode, FULLSCREEN, Own, PerBatch, SharedTarget, TargetClear};
 
 use crate::names::{
-    BLOOM_A, BLOOM_B, BLOOM_C, BLOOM_UP_A, BLOOM_UP_B, HDR_COLOR, SUN_DIR,
+    BLOOM_A, BLOOM_B, BLOOM_C, BLOOM_UP_A, BLOOM_UP_B, HDR_COLOR, SUN_DIR, TONED_LDR,
 };
 use crate::state::MonolithState;
 
@@ -59,7 +59,8 @@ struct PostProcess {
     bloom_u1_pass: engine_render::Pass<Self>,
     bloom_u2_pass: engine_render::Pass<Self>,
     tone_pass: engine_render::Pass<Self>,
-    tone_direct_pass: engine_render::Pass<Self>,
+    fxaa_pass: engine_render::Pass<Self>,
+    fxaa_direct_pass: engine_render::Pass<Self>,
     resolve_pipe: Pipeline<Self, Own>,
     bloom_d1_pipe: Pipeline<Self, Own>,
     bloom_d2_pipe: Pipeline<Self, Own>,
@@ -67,7 +68,8 @@ struct PostProcess {
     bloom_u1_pipe: Pipeline<Self, Own>,
     bloom_u2_pipe: Pipeline<Self, Own>,
     tone_pipe: Pipeline<Self, Own>,
-    tone_direct_pipe: Pipeline<Self, Own>,
+    fxaa_pipe: Pipeline<Self, Own>,
+    fxaa_direct_pipe: Pipeline<Self, Own>,
     uniforms: Buffer<Self>,
     direct: bool,
     skipped: Vec<Entity>,
@@ -264,13 +266,19 @@ impl GpuPart for PostProcess {
     const NAME: &'static str = "monolith_frame";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::frame::{resolve, tone};
+        use shaders::frame::{fxaa, resolve, tone};
         cx.shared_target(hdr_target(HDR_COLOR));
         cx.shared_target(hdr_target(BLOOM_A));
         cx.shared_target(hdr_target(BLOOM_B));
         cx.shared_target(hdr_target(BLOOM_C));
         cx.shared_target(hdr_target(BLOOM_UP_B));
         cx.shared_target(hdr_target(BLOOM_UP_A));
+        cx.shared_target(SharedTarget {
+            name: TONED_LDR,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            samples: 1,
+            clear: TargetClear::Color([0.0, 0.0, 0.0, 0.0]),
+        });
 
         let sampler = cx.sampler(LINEAR_CLAMP);
         let uniforms = cx.buffer("monolith_frame_uniforms", Lifetime::Kept);
@@ -303,18 +311,31 @@ impl GpuPart for PostProcess {
             .pass("monolith_tone")
             .label("monolith/tone")
             .span("tone")
-            .target(PRESENTED, Access::Clear)
+            .target(TONED_LDR, Access::Clear)
             .id();
         let tone_pipe = cx.render_pipeline(tone_pass, &fs_pipe(tone::FS_TONE), &tone_binds)?;
 
-        let tone_direct_pass = cx
-            .pass("monolith_tone_direct")
-            .label("monolith/tone_direct")
-            .span("tone")
+        let fxaa_binds = [
+            (fxaa::TONED_TEX, Bind::Target(TONED_LDR)),
+            (fxaa::FXAA_SAMPLER, Bind::Sampler(sampler)),
+            (fxaa::FRAME_PARAMS, Bind::Buffer(uniforms)),
+        ];
+        let fxaa_pass = cx
+            .pass("monolith_fxaa")
+            .label("monolith/fxaa")
+            .span("fxaa")
+            .target(PRESENTED, Access::Clear)
+            .id();
+        let fxaa_pipe = cx.render_pipeline(fxaa_pass, &fs_pipe(fxaa::FS_FXAA), &fxaa_binds)?;
+
+        let fxaa_direct_pass = cx
+            .pass("monolith_fxaa_direct")
+            .label("monolith/fxaa_direct")
+            .span("fxaa")
             .target(TargetName::CANVAS, Access::Clear)
             .id();
-        let tone_direct_pipe =
-            cx.render_pipeline(tone_direct_pass, &fs_pipe(tone::FS_TONE), &tone_binds)?;
+        let fxaa_direct_pipe =
+            cx.render_pipeline(fxaa_direct_pass, &fs_pipe(fxaa::FS_FXAA), &fxaa_binds)?;
 
         Ok(Self {
             resolve_pass,
@@ -324,7 +345,8 @@ impl GpuPart for PostProcess {
             bloom_u1_pass: b.u1_pass,
             bloom_u2_pass: b.u2_pass,
             tone_pass,
-            tone_direct_pass,
+            fxaa_pass,
+            fxaa_direct_pass,
             resolve_pipe,
             bloom_d1_pipe: b.d1_pipe,
             bloom_d2_pipe: b.d2_pipe,
@@ -332,7 +354,8 @@ impl GpuPart for PostProcess {
             bloom_u1_pipe: b.u1_pipe,
             bloom_u2_pipe: b.u2_pipe,
             tone_pipe,
-            tone_direct_pipe,
+            fxaa_pipe,
+            fxaa_direct_pipe,
             uniforms,
             direct: false,
             skipped: Vec::new(),
@@ -356,6 +379,7 @@ impl GpuPart for PostProcess {
         let bloom_frac = engine::math::clamp(bloom_raw, 0.25, 0.5);
         let b_scale = engine::math::min(scale * 0.5, bloom_frac);
         cx.scale_target(HDR_COLOR, scale);
+        cx.scale_target(TONED_LDR, scale);
         cx.scale_target_to_pixels(BLOOM_A, max_bloom_px);
         cx.scale_target(BLOOM_B, b_scale * 0.5);
         cx.scale_target(BLOOM_C, b_scale * 0.25);
@@ -377,10 +401,11 @@ impl GpuPart for PostProcess {
         cx.run(self.bloom_d3_pass);
         cx.run(self.bloom_u1_pass);
         cx.run(self.bloom_u2_pass);
+        cx.run(self.tone_pass);
         if self.direct {
-            cx.run(self.tone_direct_pass);
+            cx.run(self.fxaa_direct_pass);
         } else {
-            cx.run(self.tone_pass);
+            cx.run(self.fxaa_pass);
         }
     }
 
@@ -397,10 +422,12 @@ impl GpuPart for PostProcess {
             &self.bloom_u1_pipe
         } else if pass == self.bloom_u2_pass {
             &self.bloom_u2_pipe
-        } else if pass == self.tone_direct_pass {
-            &self.tone_direct_pipe
-        } else {
+        } else if pass == self.tone_pass {
             &self.tone_pipe
+        } else if pass == self.fxaa_direct_pass {
+            &self.fxaa_direct_pipe
+        } else {
+            &self.fxaa_pipe
         };
         cx.render().draw(
             pipe,

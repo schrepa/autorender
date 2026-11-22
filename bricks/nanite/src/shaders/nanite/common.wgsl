@@ -16,7 +16,7 @@ const NO_FALLBACK: u32 = 0xFFFFFFFFu;
 const NO_CHILD: u32 = 0xFFFFFFFFu;
 const SHADOW_C0_DIM: u32 = 1024u;
 const SHADOW_C1_DIM: u32 = 2048u;
-const SHADOW_LIST_CAP: u32 = 65536u;
+const SHADOW_LIST_CAP: u32 = 131072u;
 
 fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     let t = 2.0 * cross(q.xyz, v);

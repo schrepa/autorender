@@ -309,10 +309,7 @@ impl GpuPart for GroundGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::sanctuary::ground;
         let verts = cx.buffer("monolith_ground_verts", Lifetime::Kept);
-        let targets = [
-            (None, wgpu::ColorWrites::ALL),
-            (None, wgpu::ColorWrites::ALL),
-        ];
+        let targets = [(None, wgpu::ColorWrites::ALL)];
         let pipeline = cx.render_pipeline(
             Scene::named(NANITE_P1_PASS),
             &RenderPipeline {
