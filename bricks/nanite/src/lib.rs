@@ -15,9 +15,7 @@ use engine::prelude::*;
 use engine_core::{Source, TargetName};
 
 pub use bridge::NaniteBridgeHandle;
-pub use stream::{
-    CoalesceConfig, PageRun, PageRunItem, StreamLinkEstimator, VisibleCutParams, coalesce_page_runs,
-};
+pub use stream::{CoalesceConfig, PageRun, PageRunItem, VisibleCutParams, coalesce_page_runs};
 pub use types::{
     GpuBvhNode, GpuClusterHeader, HeapBudget, HizBuildInfo, LodPreset, MAX_HEAP_PAGES,
     NaniteCamera, NaniteConfig, NaniteInstance, NaniteTelemetry, NaniteUniforms, SHADOW_C0_DIM,

@@ -176,8 +176,7 @@ mod web_loader {
     use std::collections::VecDeque;
 
     use brick_nanite::{
-        NaniteStreaming, NaniteTelemetry, NaniteWorld, PageRun, StreamLinkEstimator,
-        coalesce_page_runs,
+        CoalesceConfig, NaniteStreaming, NaniteTelemetry, NaniteWorld, PageRun, coalesce_page_runs,
     };
     use engine::prelude::*;
     use engine_meshlet::MeshletManifest;
@@ -196,6 +195,116 @@ mod web_loader {
     const CDN_ASSET_BASE: &str = "https://d15rb9vgijd23p.cloudfront.net/monolith";
     const MIN_IN_FLIGHT_REQUESTS: usize = 8;
     const MAX_IN_FLIGHT_REQUESTS: usize = 24;
+
+    #[derive(Clone, Copy, Debug)]
+    struct StreamLinkEstimator {
+        rtt_ms: f64,
+        bw_bps: f64,
+        busy_since_ms: f64,
+        accum_active_ms: f64,
+        active_transfers: usize,
+        window_bytes: u64,
+        has_rtt: bool,
+        has_bw: bool,
+    }
+
+    impl Default for StreamLinkEstimator {
+        fn default() -> Self {
+            Self {
+                rtt_ms: 50.0,
+                bw_bps: 1.5 * 1024.0 * 1024.0,
+                busy_since_ms: 0.0,
+                accum_active_ms: 0.0,
+                active_transfers: 0,
+                window_bytes: 0,
+                has_rtt: false,
+                has_bw: false,
+            }
+        }
+    }
+
+    impl StreamLinkEstimator {
+        fn on_transfer_start(&mut self, now_ms: f64) {
+            if !now_ms.is_finite() {
+                return;
+            }
+            if self.active_transfers == 0 {
+                self.busy_since_ms = now_ms;
+            }
+            self.active_transfers = self.active_transfers.saturating_add(1);
+        }
+
+        fn on_transfer_end(&mut self, now_ms: f64, bytes: u64, ttfb_ms: f64) {
+            if !now_ms.is_finite() {
+                self.active_transfers = self.active_transfers.saturating_sub(1);
+                return;
+            }
+            let elapsed_segment = if self.active_transfers > 0 {
+                (now_ms - self.busy_since_ms).max(0.0)
+            } else {
+                0.0
+            };
+            let active_ms = self.accum_active_ms + elapsed_segment;
+            self.active_transfers = self.active_transfers.saturating_sub(1);
+            if self.active_transfers == 0 {
+                self.accum_active_ms = active_ms;
+            }
+            if bytes > 0 && ttfb_ms.is_finite() {
+                let rtt_sample = ttfb_ms.clamp(1.0, 2000.0);
+                if self.has_rtt {
+                    self.rtt_ms = self.rtt_ms * 0.75 + rtt_sample * 0.25;
+                } else {
+                    self.rtt_ms = rtt_sample;
+                    self.has_rtt = true;
+                }
+                self.window_bytes = self.window_bytes.saturating_add(bytes);
+            }
+            if active_ms >= 500.0 && self.window_bytes >= 64 * 1024 {
+                let sample_bps = (self.window_bytes as f64 / (active_ms * 0.001))
+                    .clamp(128.0 * 1024.0, 256.0e6);
+                if self.has_bw {
+                    self.bw_bps = self.bw_bps * 0.65 + sample_bps * 0.35;
+                } else {
+                    self.bw_bps = sample_bps;
+                    self.has_bw = true;
+                }
+                self.window_bytes = 0;
+                self.accum_active_ms = 0.0;
+                self.busy_since_ms = now_ms;
+            }
+        }
+
+        fn bandwidth_bps(&self) -> f64 {
+            self.bw_bps
+        }
+
+        fn bdp_bytes(&self) -> f64 {
+            self.bw_bps * (self.rtt_ms * 0.001)
+        }
+
+        fn recommended_coalesce(&self) -> CoalesceConfig {
+            let bdp = self.bdp_bytes();
+            let max_gap_bytes = ((bdp * 0.08) as u64).clamp(12 * 1024, 48 * 1024);
+            let (max_run_pages, max_run_bytes) = if self.bw_bps >= 10.0 * 1024.0 * 1024.0 {
+                (48, 512 * 1024)
+            } else if self.bw_bps >= 4.0 * 1024.0 * 1024.0 {
+                (36, 384 * 1024)
+            } else {
+                (24, 256 * 1024)
+            };
+            CoalesceConfig {
+                max_run_pages,
+                max_run_bytes,
+                max_gap_bytes,
+            }
+        }
+
+        fn recommended_concurrency(&self, min_cap: usize, max_cap: usize) -> usize {
+            let by_bw = (self.bw_bps / (512.0 * 1024.0)).round() as usize;
+            let by_bdp = (self.bdp_bytes() / (32.0 * 1024.0)).ceil() as usize;
+            by_bw.max(by_bdp).clamp(min_cap, max_cap)
+        }
+    }
 
     fn asset_base() -> &'static str {
         let Some(window) = web_sys::window() else {
