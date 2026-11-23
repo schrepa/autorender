@@ -125,135 +125,7 @@ fn load_sanctuary_assets(
 }
 
 #[cfg(target_arch = "wasm32")]
-const MAX_RUN_PAGES: usize = 24;
-#[cfg(target_arch = "wasm32")]
-const MAX_RUN_BYTES: u64 = 256 * 1024;
-#[cfg(target_arch = "wasm32")]
-const MAX_GAP_BYTES: u64 = 12 * 1024;
-#[cfg(target_arch = "wasm32")]
 const HD_IDLE_HYSTERESIS_FRAMES: u32 = 3;
-
-#[cfg(target_arch = "wasm32")]
-struct PageRunItem {
-    req: Option<brick_nanite::PageFetchRequest>,
-    global_page_id: u32,
-    rel_offset: usize,
-    byte_len: usize,
-    is_requested: bool,
-}
-
-#[cfg(target_arch = "wasm32")]
-struct PageRun {
-    mesh_id: u32,
-    mesh_name: String,
-    first_local_page: u32,
-    last_local_page: u32,
-    byte_offset: u64,
-    total_bytes: u64,
-    max_priority: u32,
-    items: Vec<PageRunItem>,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn coalesce_runs(
-    mut reqs: Vec<brick_nanite::PageFetchRequest>,
-    world: &NaniteWorld,
-) -> Vec<PageRun> {
-    reqs.sort_unstable_by(|a, b| {
-        a.mesh_id
-            .cmp(&b.mesh_id)
-            .then_with(|| a.local_page_id.cmp(&b.local_page_id))
-    });
-    let mut runs: Vec<PageRun> = Vec::new();
-    for req in reqs {
-        if let Some(last) = runs.last_mut() {
-            let expected_end = last.byte_offset.saturating_add(last.total_bytes);
-            if last.mesh_id == req.mesh_id
-                && req.local_page_id > last.last_local_page
-                && req.byte_offset >= expected_end
-            {
-                let gap = req.byte_offset - expected_end;
-                let next_total = req
-                    .byte_offset
-                    .saturating_add(req.byte_len)
-                    .saturating_sub(last.byte_offset);
-                let page_span = req
-                    .local_page_id
-                    .saturating_sub(last.first_local_page)
-                    .saturating_add(1) as usize;
-                if gap <= MAX_GAP_BYTES
-                    && next_total <= MAX_RUN_BYTES
-                    && page_span <= MAX_RUN_PAGES
-                {
-                    if gap > 0
-                        && let Some(mesh) = world.meshes.get(req.mesh_id as usize)
-                    {
-                        for local_pid in (last.last_local_page + 1)..req.local_page_id {
-                            if let Some(span) = mesh.page_spans.get(local_pid as usize)
-                                && span.byte_len > 0
-                                && span.byte_offset >= last.byte_offset
-                                && span.byte_offset.saturating_add(u64::from(span.byte_len))
-                                    <= req.byte_offset
-                            {
-                                last.items.push(PageRunItem {
-                                    req: None,
-                                    global_page_id: mesh.page_offset + local_pid,
-                                    rel_offset: (span.byte_offset - last.byte_offset) as usize,
-                                    byte_len: span.byte_len as usize,
-                                    is_requested: false,
-                                });
-                            }
-                        }
-                    }
-                    let rel_offset = (req.byte_offset - last.byte_offset) as usize;
-                    let global_page_id = req.global_page_id;
-                    let byte_len = req.byte_len as usize;
-                    last.max_priority = last.max_priority.max(req.priority);
-                    last.total_bytes = next_total;
-                    last.last_local_page = req.local_page_id;
-                    last.items.push(PageRunItem {
-                        req: Some(req),
-                        global_page_id,
-                        rel_offset,
-                        byte_len,
-                        is_requested: true,
-                    });
-                    continue;
-                }
-            }
-        }
-        let mesh_id = req.mesh_id;
-        let mesh_name = req.mesh_name.clone();
-        let local_page_id = req.local_page_id;
-        let global_page_id = req.global_page_id;
-        let byte_offset = req.byte_offset;
-        let total_bytes = req.byte_len;
-        let max_priority = req.priority;
-        runs.push(PageRun {
-            mesh_id,
-            mesh_name,
-            first_local_page: local_page_id,
-            last_local_page: local_page_id,
-            byte_offset,
-            total_bytes,
-            max_priority,
-            items: vec![PageRunItem {
-                req: Some(req),
-                global_page_id,
-                rel_offset: 0,
-                byte_len: total_bytes as usize,
-                is_requested: true,
-            }],
-        });
-    }
-    runs.sort_unstable_by(|a, b| {
-        b.max_priority
-            .cmp(&a.max_priority)
-            .then_with(|| a.mesh_id.cmp(&b.mesh_id))
-            .then_with(|| a.byte_offset.cmp(&b.byte_offset))
-    });
-    runs
-}
 
 #[cfg(target_arch = "wasm32")]
 fn is_geometry_busy(
@@ -303,15 +175,16 @@ mod web_loader {
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
-    use brick_nanite::{NaniteStreaming, NaniteTelemetry, NaniteWorld};
+    use brick_nanite::{
+        NaniteStreaming, NaniteTelemetry, NaniteWorld, PageRun, StreamLinkEstimator,
+        coalesce_page_runs,
+    };
     use engine::prelude::*;
     use engine_meshlet::MeshletManifest;
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
 
-    use super::{
-        PageRun, all_assets_mounted, coalesce_runs, is_geometry_busy, step_hd_idle_gate,
-    };
+    use super::{all_assets_mounted, is_geometry_busy, step_hd_idle_gate};
     use crate::gi::{GiUploadBridge, submit_gi_bytes};
     use crate::layout::HERO_ASSETS;
     use crate::pbr::{PbrHdRequest, PbrTexturePack};
@@ -321,8 +194,8 @@ mod web_loader {
     const CORE_ASSET_COUNT: usize = 5;
     const ASSET_VERSION: &str = "v25";
     const CDN_ASSET_BASE: &str = "https://d15rb9vgijd23p.cloudfront.net/monolith";
-    const MAX_IN_FLIGHT_REQUESTS: usize = 8;
-    const MAX_IN_FLIGHT_PBR: usize = 4;
+    const MIN_IN_FLIGHT_REQUESTS: usize = 8;
+    const MAX_IN_FLIGHT_REQUESTS: usize = 24;
 
     fn asset_base() -> &'static str {
         let Some(window) = web_sys::window() else {
@@ -366,8 +239,11 @@ mod web_loader {
         gi_bytes: Option<Vec<u8>>,
         gi_submitted: bool,
         in_flight_requests: usize,
+        active_req_cap: usize,
         in_flight_pbr: usize,
         hd_idle_frames: u32,
+        link: StreamLinkEstimator,
+        queued_runs: VecDeque<PageRun>,
         completed_pages: VecDeque<(u32, Option<Vec<u8>>, bool)>,
         completed_pbr: VecDeque<(PbrHdRequest, Option<Vec<u8>>)>,
     }
@@ -376,7 +252,7 @@ mod web_loader {
         static WEB_STATE: RefCell<WebState> = RefCell::new(WebState::default());
     }
 
-    async fn fetch_bytes(url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>, ()> {
+    async fn fetch_bytes(url: &str, range: Option<(u64, u64)>) -> Result<(Vec<u8>, f64), ()> {
         let window = web_sys::window().ok_or(())?;
         let init = web_sys::RequestInit::new();
         init.set_method("GET");
@@ -388,29 +264,48 @@ mod web_loader {
             init.set_headers(&headers);
         }
         let req = web_sys::Request::new_with_str_and_init(url, &init).map_err(|_| ())?;
+        let t0 = js_sys::Date::now();
         let resp_val = JsFuture::from(window.fetch_with_request(&req))
             .await
             .map_err(|_| ())?;
+        let ttfb_ms = (js_sys::Date::now() - t0).max(1.0);
         let resp: web_sys::Response = resp_val.dyn_into().map_err(|_| ())?;
         if !resp.ok() {
             return Err(());
         }
         let ab_promise = resp.array_buffer().map_err(|_| ())?;
         let ab = JsFuture::from(ab_promise).await.map_err(|_| ())?;
-        Ok(js_sys::Uint8Array::new(&ab).to_vec())
+        Ok((js_sys::Uint8Array::new(&ab).to_vec(), ttfb_ms))
     }
 
     fn spawn_manifest_range(start: usize, end: usize) {
         let base = asset_base();
         for (idx, &stem) in HERO_ASSETS.iter().enumerate().take(end).skip(start) {
             let url = format!("{base}/{stem}.mlm?v={ASSET_VERSION}");
+            let start_ms = js_sys::Date::now();
+            WEB_STATE.with(|cell| cell.borrow_mut().link.on_transfer_start(start_ms));
             wasm_bindgen_futures::spawn_local(async move {
-                if let Ok(bytes) = fetch_bytes(&url, None).await
-                    && let Ok(manifest) = MeshletManifest::from_bytes(&bytes)
-                {
-                    WEB_STATE.with(|cell| {
-                        cell.borrow_mut().ready_manifests.push_back((idx, manifest));
-                    });
+                match fetch_bytes(&url, None).await {
+                    Ok((bytes, ttfb_ms)) => {
+                        let wire_est = (bytes.len() as u64) / 2;
+                        let now = js_sys::Date::now();
+                        WEB_STATE.with(|cell| {
+                            cell.borrow_mut()
+                                .link
+                                .on_transfer_end(now, wire_est, ttfb_ms);
+                        });
+                        if let Ok(manifest) = MeshletManifest::from_bytes(&bytes) {
+                            WEB_STATE.with(|cell| {
+                                cell.borrow_mut().ready_manifests.push_back((idx, manifest));
+                            });
+                        }
+                    }
+                    Err(()) => {
+                        let now = js_sys::Date::now();
+                        WEB_STATE.with(|cell| {
+                            cell.borrow_mut().link.on_transfer_end(now, 0, 0.0);
+                        });
+                    }
                 }
             });
         }
@@ -419,24 +314,49 @@ mod web_loader {
     fn start_asset_fetches() {
         let base = asset_base();
         let gi_url = format!("{base}/sponza_gi.bin?v={ASSET_VERSION}");
+        let start_ms = js_sys::Date::now();
+        WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            st.link.on_transfer_start(start_ms);
+            st.link.on_transfer_start(start_ms);
+        });
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(bytes) = fetch_bytes(&gi_url, None).await {
-                WEB_STATE.with(|cell| {
-                    cell.borrow_mut().gi_bytes = Some(bytes);
-                });
+            match fetch_bytes(&gi_url, None).await {
+                Ok((bytes, ttfb_ms)) => {
+                    let now = js_sys::Date::now();
+                    let wire_est = bytes.len() as u64;
+                    WEB_STATE.with(|cell| {
+                        let mut st = cell.borrow_mut();
+                        st.link.on_transfer_end(now, wire_est, ttfb_ms);
+                        st.gi_bytes = Some(bytes);
+                    });
+                }
+                Err(()) => {
+                    let now = js_sys::Date::now();
+                    WEB_STATE.with(|cell| {
+                        cell.borrow_mut().link.on_transfer_end(now, 0, 0.0);
+                    });
+                }
             }
         });
         let pbr_url = format!("{base}/sponza_pbr_base.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
             match fetch_bytes(&pbr_url, None).await {
-                Ok(bytes) => {
+                Ok((bytes, ttfb_ms)) => {
+                    let now = js_sys::Date::now();
+                    let wire_est = bytes.len() as u64;
                     WEB_STATE.with(|cell| {
-                        cell.borrow_mut().pbr_base_bytes = Some(bytes);
+                        let mut st = cell.borrow_mut();
+                        st.link.on_transfer_end(now, wire_est, ttfb_ms);
+                        st.pbr_base_bytes = Some(bytes);
                     });
                 }
                 Err(()) => {
+                    let now = js_sys::Date::now();
                     WEB_STATE.with(|cell| {
-                        cell.borrow_mut().pbr_base_failed = true;
+                        let mut st = cell.borrow_mut();
+                        st.link.on_transfer_end(now, 0, 0.0);
+                        st.pbr_base_failed = true;
                     });
                 }
             }
@@ -444,18 +364,41 @@ mod web_loader {
         spawn_manifest_range(0, CORE_ASSET_COUNT);
     }
 
+    fn drain_queued_runs() {
+        let to_launch: Vec<PageRun> = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            let cap = st.active_req_cap.max(1);
+            let mut batch = Vec::new();
+            while st.in_flight_requests < cap {
+                let Some(run) = st.queued_runs.pop_front() else {
+                    break;
+                };
+                st.in_flight_requests += 1;
+                batch.push(run);
+            }
+            batch
+        });
+        for run in to_launch {
+            start_run_fetch(run);
+        }
+    }
+
     fn start_run_fetch(run: PageRun) {
         let base = asset_base();
         let url = format!("{base}/{}.mlp?v={ASSET_VERSION}", run.mesh_name);
         let total_len = run.total_bytes;
         let end = run.byte_offset.saturating_add(total_len).saturating_sub(1);
+        let start_ms = js_sys::Date::now();
+        WEB_STATE.with(|cell| cell.borrow_mut().link.on_transfer_start(start_ms));
         wasm_bindgen_futures::spawn_local(async move {
             let fetched = fetch_bytes(&url, Some((run.byte_offset, end))).await.ok();
-            let valid_bytes = fetched.filter(|b| b.len() == total_len as usize);
+            let now = js_sys::Date::now();
+            let valid = fetched.filter(|(b, _)| b.len() == total_len as usize);
             WEB_STATE.with(|cell| {
                 let mut st = cell.borrow_mut();
                 st.in_flight_requests = st.in_flight_requests.saturating_sub(1);
-                if let Some(bytes) = valid_bytes {
+                if let Some((bytes, ttfb_ms)) = valid {
+                    st.link.on_transfer_end(now, total_len, ttfb_ms);
                     for item in run.items {
                         let raw = bytes
                             .get(item.rel_offset..item.rel_offset + item.byte_len)
@@ -466,6 +409,7 @@ mod web_loader {
                         }
                     }
                 } else {
+                    st.link.on_transfer_end(now, 0, 0.0);
                     for item in run.items {
                         if item.is_requested {
                             st.completed_pages
@@ -474,6 +418,7 @@ mod web_loader {
                     }
                 }
             });
+            drain_queued_runs();
         });
     }
 
@@ -484,22 +429,39 @@ mod web_loader {
             .saturating_add(u64::from(req.byte_len))
             .saturating_sub(1);
         let hd_url = format!("{base}/sponza_pbr_hd.bin?v={ASSET_VERSION}");
+        let start_ms = js_sys::Date::now();
+        WEB_STATE.with(|cell| cell.borrow_mut().link.on_transfer_start(start_ms));
         wasm_bindgen_futures::spawn_local(async move {
             let fetched = fetch_bytes(&hd_url, Some((req.byte_offset, end)))
                 .await
                 .ok()
-                .filter(|b| b.len() == req.byte_len as usize);
+                .filter(|(b, _)| b.len() == req.byte_len as usize);
+            let now = js_sys::Date::now();
             WEB_STATE.with(|cell| {
                 let mut st = cell.borrow_mut();
                 st.in_flight_pbr = st.in_flight_pbr.saturating_sub(1);
-                st.completed_pbr.push_back((req, fetched));
+                let data = match fetched {
+                    Some((b, ttfb_ms)) => {
+                        st.link
+                            .on_transfer_end(now, u64::from(req.byte_len), ttfb_ms);
+                        Some(b)
+                    }
+                    None => {
+                        st.link.on_transfer_end(now, 0, 0.0);
+                        None
+                    }
+                };
+                st.completed_pbr.push_back((req, data));
             });
         });
     }
 
     fn pump_pbr_hd(pbr: &mut PbrTexturePack, allow_mid: bool, allow_hi: bool) {
+        let max_decodes = if allow_hi { 4 } else { 2 };
         let done: Vec<(PbrHdRequest, Option<Vec<u8>>)> = WEB_STATE.with(|cell| {
-            cell.borrow_mut().completed_pbr.drain(..).collect()
+            let mut st = cell.borrow_mut();
+            let count = max_decodes.min(st.completed_pbr.len());
+            st.completed_pbr.drain(..count).collect()
         });
         for (req, bytes) in done {
             let ok = bytes.is_some_and(|data| pbr.deliver_hd_blob(req, &data));
@@ -512,12 +474,17 @@ mod web_loader {
         }
         let slots = WEB_STATE.with(|cell| {
             let st = cell.borrow();
-            let cap = if allow_hi {
-                if st.in_flight_requests > 12 {
-                    1
+            let bw = st.link.bandwidth_bps();
+            let cap: usize = if allow_hi {
+                if bw >= 8.0 * 1024.0 * 1024.0 {
+                    6
                 } else {
-                    MAX_IN_FLIGHT_PBR
+                    4
                 }
+            } else if bw >= 8.0 * 1024.0 * 1024.0 {
+                4
+            } else if bw >= 3.0 * 1024.0 * 1024.0 {
+                3
             } else {
                 2
             };
@@ -544,14 +511,17 @@ mod web_loader {
         pbr_pack_loaded: bool,
         state: &mut MonolithState,
     ) -> usize {
-        let ready: Vec<(usize, MeshletManifest)> = WEB_STATE.with(|cell| {
+        let (start_initial, ready): (bool, Vec<(usize, MeshletManifest)>) = WEB_STATE.with(|cell| {
             let mut st = cell.borrow_mut();
-            if !st.fetches_started {
+            let start = !st.fetches_started;
+            if start {
                 st.fetches_started = true;
-                start_asset_fetches();
             }
-            st.ready_manifests.drain(..).collect()
+            (start, st.ready_manifests.drain(..).collect())
         });
+        if start_initial {
+            start_asset_fetches();
+        }
         if !ready.is_empty() {
             for (idx, manifest) in ready {
                 let stem = HERO_ASSETS[idx];
@@ -582,16 +552,6 @@ mod web_loader {
         total_mounted
     }
 
-    fn requeue_run_items(run: PageRun, back: &mut Vec<brick_nanite::PageFetchRequest>) {
-        for item in run.items {
-            if item.is_requested
-                && let Some(req) = item.req
-            {
-                back.push(req);
-            }
-        }
-    }
-
     fn dispatch_page_runs(
         world: &NaniteWorld,
         streaming: &mut NaniteStreaming,
@@ -599,16 +559,46 @@ mod web_loader {
         all_manifests: bool,
         prefetch_throttled: bool,
     ) {
-        let req_cap = if roots_only {
-            2
-        } else if !all_manifests || prefetch_throttled {
-            4
+        let stale: Vec<PageRun> = WEB_STATE.with(|cell| {
+            cell.borrow_mut().queued_runs.drain(..).collect()
+        });
+        if !stale.is_empty() {
+            let mut returned = Vec::new();
+            for run in stale {
+                run.into_requested(&mut returned);
+            }
+            if !returned.is_empty() {
+                streaming.requeue_fetch_requests(returned);
+            }
+        }
+        let (req_cap, in_flight, coalesce_cfg) = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            let link = st.link;
+            let cap = if roots_only {
+                if link.bandwidth_bps() >= 8.0 * 1024.0 * 1024.0 {
+                    4
+                } else {
+                    2
+                }
+            } else if !all_manifests || prefetch_throttled {
+                if link.bandwidth_bps() >= 8.0 * 1024.0 * 1024.0 {
+                    12
+                } else {
+                    4
+                }
+            } else {
+                link.recommended_concurrency(MIN_IN_FLIGHT_REQUESTS, MAX_IN_FLIGHT_REQUESTS)
+            };
+            st.active_req_cap = cap;
+            (cap, st.in_flight_requests, link.recommended_coalesce())
+        });
+        let target_buffer = if roots_only {
+            req_cap
         } else {
-            MAX_IN_FLIGHT_REQUESTS
+            req_cap.saturating_mul(2)
         };
-        let req_slots =
-            WEB_STATE.with(|cell| req_cap.saturating_sub(cell.borrow().in_flight_requests));
-        if req_slots == 0 {
+        let buf_slots = target_buffer.saturating_sub(in_flight);
+        if buf_slots == 0 {
             return;
         }
         let reqs = streaming.take_fetch_requests(1024);
@@ -629,23 +619,20 @@ mod web_loader {
         } else {
             reqs
         };
-        let mut runs = coalesce_runs(reqs, world);
-        if runs.len() > req_slots {
-            for run in runs.split_off(req_slots) {
-                requeue_run_items(run, &mut back);
+        let mut runs = coalesce_page_runs(reqs, world, coalesce_cfg);
+        if runs.len() > buf_slots {
+            for run in runs.split_off(buf_slots) {
+                run.into_requested(&mut back);
             }
         }
         if !back.is_empty() {
             streaming.requeue_fetch_requests(back);
         }
-        let run_count = runs.len();
-        if run_count > 0 {
+        if !runs.is_empty() {
             WEB_STATE.with(|cell| {
-                cell.borrow_mut().in_flight_requests += run_count;
+                cell.borrow_mut().queued_runs.extend(runs);
             });
-            for run in runs {
-                start_run_fetch(run);
-            }
+            drain_queued_runs();
         }
     }
 
@@ -719,11 +706,14 @@ mod web_loader {
             mounted >= ASSET_COUNT,
             prefetch_throttled,
         );
-        let in_flight_requests = WEB_STATE.with(|cell| cell.borrow().in_flight_requests);
+        let active_requests = WEB_STATE.with(|cell| {
+            let st = cell.borrow();
+            st.in_flight_requests + st.queued_runs.len()
+        });
         let geom_busy = is_geometry_busy(
             state.assets_loaded,
             tel.page_faults,
-            in_flight_requests,
+            active_requests,
             streaming.has_pending_work(),
             prefetch_only,
             streaming.has_evictable_slots(),
