@@ -298,16 +298,16 @@ fn clamp_grad_min_mip(
 
 fn eval_cloth_weave_xy(uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> vec2<f32> {
     let foot = max(length(gx), length(gy));
-    let fade = 1.0 - smoothstep(0.0012, 0.009, foot);
+    let fade = 1.0 - smoothstep(0.0008, 0.0055, foot);
     if fade <= 0.005 {
         return vec2<f32>(0.0);
     }
-    let freq = 220.0 * 6.2831853;
+    let freq = 260.0 * 6.2831853;
     let sx = sin(uv.x * freq);
     let sy = sin(uv.y * freq);
     let wx = cos(uv.x * freq) * (0.65 + 0.35 * sy);
     let wy = cos(uv.y * freq) * (0.65 - 0.35 * sx);
-    return vec2<f32>(wx, wy) * (0.095 * fade);
+    return vec2<f32>(wx, wy) * (0.025 * fade);
 }
 
 fn apply_normal_map(n: vec3<f32>, t_frame: vec4<f32>, nm_xy_in: vec2<f32>) -> vec3<f32> {
@@ -387,8 +387,12 @@ fn shade_sponza_pbr(
     let is_foliage = (flags & 4u) != 0u;
     let is_glass = (flags & 8u) != 0u;
 
-    let raw_ndl = dot(n, l);
+    let cloth_mask = select(0.0, clamp(1.0 - metallic, 0.0, 1.0), is_fabric);
+    let diff_n = normalize(mix(n, geom_n, 0.45 * cloth_mask));
+    let raw_ndl = dot(diff_n, l);
     let ndl = max(raw_ndl, 0.0);
+    let wrap_ndl = clamp((raw_ndl + 0.42) * (1.0 / (1.42 * 1.42)), 0.0, 1.0);
+    let diff_ndl = mix(ndl, wrap_ndl, cloth_mask);
     var sh = 0.0;
     if raw_ndl > -0.25 || is_fabric || is_foliage {
         sh = eval_shadow(world_pos, geom_n, ign);
@@ -411,7 +415,6 @@ fn shade_sponza_pbr(
     let g_term = geometry_smith(ndv, ndl, rough);
     let f_term = fresnel_schlick(vdh, f0_d);
     let ms_comp = multi_scatter_comp(f0_d, ndv, rough);
-    let cloth_mask = select(0.0, clamp(1.0 - metallic, 0.0, 1.0), is_fabric);
     let spec_scale = mix(1.0, 0.32, cloth_mask);
     let spec = ((d_term * g_term * f_term) / max(4.0 * ndv * ndl, 1.0e-4)) * ms_comp * spec_scale;
     let kd = (vec3<f32>(1.0) - f_term) * (1.0 - metallic);
@@ -423,7 +426,7 @@ fn shade_sponza_pbr(
         let sheen_col = mix(albedo * 1.15, vec3<f32>(0.96, 0.92, 0.84), 0.42);
         let sheen_rough = clamp(rough * 0.72, 0.28, 0.68);
         let d_ch = distribution_charlie(ndh, sheen_rough);
-        let v_nb = visibility_neubelt(ndv, ndl);
+        let v_nb = visibility_neubelt(ndv, max(diff_ndl, 0.001));
         let st = clamp(1.0 - ndv, 0.0, 1.0);
         let sheen_e = clamp(0.08 + 0.48 * st * st * st, 0.0, 0.52) * cloth_mask;
         diff *= (1.0 - sheen_e * 0.45);
@@ -431,7 +434,7 @@ fn shade_sponza_pbr(
         sheen_env = sheen_col * (sheen_e * 0.34);
     }
 
-    var lit = (diff + spec + sheen_direct) * sun_rad * (ndl * sh) + mat_params[mat_id].emissive_metal.rgb;
+    var lit = (diff * diff_ndl + (spec + sheen_direct) * ndl) * sun_rad * sh + mat_params[mat_id].emissive_metal.rgb;
 
     if is_fabric && cloth_mask > 0.01 {
         let back_n = max(dot(-n, l), 0.0);

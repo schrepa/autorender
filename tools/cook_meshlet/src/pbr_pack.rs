@@ -54,6 +54,8 @@ pub struct MaterialPackEntry {
     pub metallic: Option<f32>,
     #[serde(default)]
     pub normal_scale: Option<f32>,
+    #[serde(default)]
+    pub normal_smooth_passes: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -140,6 +142,7 @@ struct LayerJob {
     mr_path: Option<PathBuf>,
     occ_path: Option<PathBuf>,
     normal_scale: f32,
+    normal_smooth_passes: u32,
 }
 
 struct EncodedLayer {
@@ -337,10 +340,49 @@ struct NormalPyramid {
     top_vecs: NormalLevel,
 }
 
+fn smooth_normal_level(src: &NormalLevel) -> NormalLevel {
+    let w = src.dim as usize;
+    let mut horiz = vec![[0.0_f32; 3]; w * w];
+    for y in 0..w {
+        for x in 0..w {
+            let xm = (x + w - 1) % w;
+            let xp = (x + 1) % w;
+            let a = src.vecs[y * w + xm];
+            let b = src.vecs[y * w + x];
+            let c = src.vecs[y * w + xp];
+            horiz[y * w + x] = [
+                a[0] * 0.25 + b[0] * 0.5 + c[0] * 0.25,
+                a[1] * 0.25 + b[1] * 0.5 + c[1] * 0.25,
+                a[2] * 0.25 + b[2] * 0.5 + c[2] * 0.25,
+            ];
+        }
+    }
+    let mut vecs = vec![[0.0_f32; 3]; w * w];
+    for y in 0..w {
+        let ym = (y + w - 1) % w;
+        let yp = (y + 1) % w;
+        for x in 0..w {
+            let a = horiz[ym * w + x];
+            let b = horiz[y * w + x];
+            let c = horiz[yp * w + x];
+            vecs[y * w + x] = [
+                a[0] * 0.25 + b[0] * 0.5 + c[0] * 0.25,
+                a[1] * 0.25 + b[1] * 0.5 + c[1] * 0.25,
+                a[2] * 0.25 + b[2] * 0.5 + c[2] * 0.25,
+            ];
+        }
+    }
+    NormalLevel {
+        dim: src.dim,
+        vecs,
+    }
+}
+
 fn build_normal_pyramid(
     nm_path: Option<&PathBuf>,
     target_dim: u32,
     normal_scale: f32,
+    smooth_passes: u32,
 ) -> Result<NormalPyramid, Refusal> {
     let src_img = match nm_path {
         Some(p) if p.is_file() => load_png_image(p)?,
@@ -357,6 +399,9 @@ fn build_normal_pyramid(
     };
     while cur.dim > target_dim {
         cur = halve_normal_vecs(&cur);
+    }
+    for _ in 0..smooth_passes {
+        cur = smooth_normal_level(&cur);
     }
     let mut nm_images = Vec::new();
     let mut toksvig_vars = Vec::new();
@@ -442,7 +487,12 @@ fn encode_layer_job(job: &LayerJob, dims: PackDims) -> Result<EncodedLayer, Refu
         .map(|lvl| encode_level(Encoding::Bc7Srgb, lvl, false))
         .collect();
 
-    let nm_pyr = build_normal_pyramid(job.nm_path.as_ref(), dims.normal, job.normal_scale)?;
+    let nm_pyr = build_normal_pyramid(
+        job.nm_path.as_ref(),
+        dims.normal,
+        job.normal_scale,
+        job.normal_smooth_passes,
+    )?;
     let nm_levels: Vec<Vec<u8>> = nm_pyr
         .images
         .iter()
@@ -613,6 +663,7 @@ fn collect_materials_and_jobs(
                 mr_path,
                 occ_path,
                 normal_scale,
+                normal_smooth_passes: entry.normal_smooth_passes,
             });
             (Some(lidx), [0.6, 0.55, 0.5])
         } else {
