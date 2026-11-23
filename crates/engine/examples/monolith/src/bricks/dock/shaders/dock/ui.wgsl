@@ -55,8 +55,8 @@ fn glyph_bit(lo18: u32, hi17: u32, col: i32, row: i32) -> f32 {
     return f32((hi17 >> (idx - 18u)) & 1u);
 }
 
-fn box_dist(p: vec2<f32>, half: vec2<f32>) -> f32 {
-    let d = abs(p) - half;
+fn box_dist(p: vec2<f32>, half_size: vec2<f32>) -> f32 {
+    let d = abs(p) - half_size;
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0);
 }
 
@@ -88,10 +88,10 @@ fn fs_ui(in: UiOut) -> @location(0) vec4<f32> {
         return vec4<f32>(in.color.rgb, in.color.a * cov);
     }
 
-    let half = in.size_px * 0.5;
-    let p = in.local_px - half;
-    let r = min(in.params.x, min(half.x, half.y));
-    let q = abs(p) - (half - vec2<f32>(r));
+    let half_size = in.size_px * 0.5;
+    let p = in.local_px - half_size;
+    let r = min(in.params.x, min(half_size.x, half_size.y));
+    let q = abs(p) - (half_size - vec2<f32>(r));
     let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
     let aa = 0.85;
     let fill_a = 1.0 - smoothstep(-aa, aa, dist);
@@ -101,7 +101,7 @@ fn fs_ui(in: UiOut) -> @location(0) vec4<f32> {
 
     let bw = max(in.params.y, 1.0);
     let border_t = smoothstep(-(bw + aa), -bw + aa, dist) * fill_a;
-    let top_sheen = smoothstep(0.0, -half.y, p.y) * 0.06;
+    let top_sheen = smoothstep(0.0, -half_size.y, p.y) * 0.06;
     var rgb = in.color.rgb + vec3<f32>(top_sheen);
     var alpha = in.color.a * fill_a;
     if in.border.a > 0.002 {

@@ -10,7 +10,6 @@ import package::nanite::common::MAX_PHASE_CLUSTERS;
 import package::nanite::common::MAX_VIS_CLUSTERS;
 import package::nanite::common::MAX_OCC_INSTANCES;
 import package::nanite::common::MAX_OCC_CLUSTERS;
-import package::nanite::common::DEDUP_MASK;
 import package::nanite::common::BVH_QUEUE_CAP;
 import package::nanite::common::CAND_CAP;
 import package::nanite::common::SW_DISPATCH_STRIDE;
@@ -19,7 +18,7 @@ import package::nanite::common::NO_CHILD;
 import package::nanite::common::FLAG_DOUBLE_SIDED_SHIFTED;
 import package::nanite::common::quat_rotate;
 import package::nanite::common::projected_error;
-import package::nanite::common::dedup_hash_pair;
+import package::nanite::common::dedup_bit_triple;
 
 const OCC_INST_BASE: u32 = 32u;
 const OCC_CLUS_BASE: u32 = 65568u;
@@ -136,21 +135,14 @@ fn hiz_occluded_sphere(world_c: vec3<f32>, world_r: f32, is_prev: bool) -> bool 
 }
 
 fn try_claim_dedup(inst_id: u32, cluster_id: u32) -> bool {
-    let ht = dedup_hash_pair(inst_id, cluster_id);
-    var slot = ht.x;
-    let tag_base = ht.y << 5u;
-    for (var probe = 0u; probe < 32u; probe = probe + 1u) {
-        let key = tag_base | probe;
-        let res = atomicCompareExchangeWeak(&cull_state[DEDUP_BASE + slot], 0u, key);
-        if res.exchanged {
-            return true;
-        }
-        if res.old_value == key {
-            return false;
-        }
-        slot = (slot + 1u) & DEDUP_MASK;
-    }
-    return false;
+    let bits = dedup_bit_triple(inst_id, cluster_id);
+    let m0 = 1u << (bits.x & 31u);
+    let m1 = 1u << (bits.y & 31u);
+    let m2 = 1u << (bits.z & 31u);
+    let p0 = atomicOr(&cull_state[DEDUP_BASE + (bits.x >> 5u)], m0);
+    let p1 = atomicOr(&cull_state[DEDUP_BASE + (bits.y >> 5u)], m1);
+    let p2 = atomicOr(&cull_state[DEDUP_BASE + (bits.z >> 5u)], m2);
+    return ((p0 & m0) == 0u) || ((p1 & m1) == 0u) || ((p2 & m2) == 0u);
 }
 
 @compute @workgroup_size(1)

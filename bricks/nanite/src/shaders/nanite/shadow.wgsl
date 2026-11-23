@@ -5,12 +5,11 @@ import package::generated::nanite::VisibleCluster;
 import package::nanite::common::PAGE_WORDS;
 import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::CLUSTER_DRAW_VERTS;
-import package::nanite::common::DEDUP_MASK;
 import package::nanite::common::UNMAPPED_PAGE;
 import package::nanite::common::SHADOW_LIST_CAP;
 import package::nanite::common::transform_pos;
 import package::nanite::common::decode_pos_u16;
-import package::nanite::common::dedup_hash_pair;
+import package::nanite::common::dedup_bit_triple;
 
 const SH_DEDUP_BASE: u32 = 589856u;
 
@@ -26,21 +25,14 @@ const SH_DEDUP_BASE: u32 = 589856u;
 @group(1) @binding(9) var<storage, read> sh_list_ro: array<VisibleCluster>;
 
 fn try_claim_sh_dedup(inst_id: u32, cluster_id: u32) -> bool {
-    let ht = dedup_hash_pair(inst_id, cluster_id);
-    var slot = ht.x;
-    let tag_base = ht.y << 5u;
-    for (var probe = 0u; probe < 32u; probe = probe + 1u) {
-        let key = tag_base | probe;
-        let res = atomicCompareExchangeWeak(&sh_dedup[SH_DEDUP_BASE + slot], 0u, key);
-        if res.exchanged {
-            return true;
-        }
-        if res.old_value == key {
-            return false;
-        }
-        slot = (slot + 1u) & DEDUP_MASK;
-    }
-    return false;
+    let bits = dedup_bit_triple(inst_id, cluster_id);
+    let m0 = 1u << (bits.x & 31u);
+    let m1 = 1u << (bits.y & 31u);
+    let m2 = 1u << (bits.z & 31u);
+    let p0 = atomicOr(&sh_dedup[SH_DEDUP_BASE + (bits.x >> 5u)], m0);
+    let p1 = atomicOr(&sh_dedup[SH_DEDUP_BASE + (bits.y >> 5u)], m1);
+    let p2 = atomicOr(&sh_dedup[SH_DEDUP_BASE + (bits.z >> 5u)], m2);
+    return ((p0 & m0) == 0u) || ((p1 & m1) == 0u) || ((p2 & m2) == 0u);
 }
 
 fn shadow_collect(job_idx: u32, cascade: u32) {

@@ -5,7 +5,7 @@ const MAX_PHASE_CLUSTERS: u32 = 131072u;
 const MAX_VIS_CLUSTERS: u32 = 524288u;
 const MAX_OCC_INSTANCES: u32 = 65536u;
 const MAX_OCC_CLUSTERS: u32 = 262144u;
-const DEDUP_MASK: u32 = 262143u;
+const DEDUP_BIT_MASK: u32 = 8388607u;
 const BVH_QUEUE_CAP: u32 = 262144u;
 const CAND_CAP: u32 = 524288u;
 const SW_DISPATCH_STRIDE: u32 = 16384u;
@@ -81,15 +81,16 @@ fn is_top_left_i32(a: vec2<i32>, b: vec2<i32>) -> bool {
     return (b.y > a.y) || (b.y == a.y && b.x < a.x);
 }
 
-fn dedup_hash_pair(inst_id: u32, cluster_id: u32) -> vec2<u32> {
+fn dedup_bit_triple(inst_id: u32, cluster_id: u32) -> vec3<u32> {
     var h0 = (inst_id * 2654435761u) ^ (cluster_id * 2246822519u);
     h0 = (h0 ^ (h0 >> 16u)) * 0x45D9F3Bu;
     h0 = h0 ^ (h0 >> 16u);
     var h1 = (inst_id * 3266489917u + 0x9E3779B9u) ^ (cluster_id * 668265263u);
     h1 = (h1 ^ (h1 >> 15u)) * 0x27D4EB2Du;
     h1 = h1 ^ (h1 >> 16u);
-    let tag = max(h1 & 0x07FFFFFFu, 1u);
-    return vec2<u32>(h0 & DEDUP_MASK, tag);
+    var h2 = (h0 * 0x85EBCA6Bu) ^ (h1 * 0xC2B2AE35u);
+    h2 = h2 ^ (h2 >> 13u);
+    return vec3<u32>(h0 & DEDUP_BIT_MASK, h1 & DEDUP_BIT_MASK, h2 & DEDUP_BIT_MASK);
 }
 
 fn hash_u32(v_in: u32) -> u32 {
