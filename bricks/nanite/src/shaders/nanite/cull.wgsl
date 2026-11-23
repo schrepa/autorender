@@ -53,6 +53,14 @@ fn cull_frustum_visible(c: vec3<f32>, r: f32) -> bool {
     return m >= -r;
 }
 
+fn unpack_i8(word: u32, shift: u32) -> i32 {
+    let raw = i32((word >> shift) & 0xFFu);
+    if raw >= 128 {
+        return raw - 256;
+    }
+    return raw;
+}
+
 fn cone_culled_packed(
     packed: u32,
     rot_quat: vec4<f32>,
@@ -60,7 +68,7 @@ fn cone_culled_packed(
     world_r: f32,
     cull_pos: vec3<f32>,
 ) -> bool {
-    let cutoff = bitcast<i32>(packed) >> 24u;
+    let cutoff = unpack_i8(packed, 24u);
     if cutoff >= 127 {
         return false;
     }
@@ -70,9 +78,9 @@ fn cone_culled_packed(
         return false;
     }
     let ax = vec3<f32>(
-        f32(bitcast<i32>(packed << 24u) >> 24u),
-        f32(bitcast<i32>(packed << 16u) >> 24u),
-        f32(bitcast<i32>(packed << 8u) >> 24u),
+        f32(unpack_i8(packed, 0u)),
+        f32(unpack_i8(packed, 8u)),
+        f32(unpack_i8(packed, 16u)),
     );
     let ax_l2 = dot(ax, ax);
     if ax_l2 <= 1.0e-4 {
@@ -278,9 +286,8 @@ fn expand_step(gid_x: u32, in_cnt_idx: u32, out_cnt_idx: u32, in_base: u32, out_
         return;
     }
 
-    let inst = cull_instances[inst_id];
-    let inst_pos_scale = inst.pos_scale;
-    let inst_rot = inst.rot_quat;
+    let inst_pos_scale = cull_instances[inst_id].pos_scale;
+    let inst_rot = cull_instances[inst_id].rot_quat;
     let cull_pos = cull_uniforms.cull_pos_near.xyz;
     let near_z = cull_uniforms.cull_pos_near.w;
     let err_factor = inst_pos_scale.w * cull_uniforms.viewport_lod.z;
@@ -333,9 +340,8 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
     let item_off = Q_A_BASE + gid.x * 2u;
     let inst_id = cull_bvh_scratch[item_off];
     let root_node = cull_bvh_scratch[item_off + 1u];
-    let inst = cull_instances[inst_id];
-    let inst_pos_scale = inst.pos_scale;
-    let inst_rot = inst.rot_quat;
+    let inst_pos_scale = cull_instances[inst_id].pos_scale;
+    let inst_rot = cull_instances[inst_id].rot_quat;
     let scale = inst_pos_scale.w;
     let cull_pos = cull_uniforms.cull_pos_near.xyz;
     let near_z = cull_uniforms.cull_pos_near.w;
@@ -492,24 +498,52 @@ fn emit_visible_cluster(
     atomicAdd(&cull_state[15u], 1u);
 
     let item = VisibleCluster(inst_id, draw_cid, slot, vis_idx);
-    let mat_bit = 1u << ((c_meta >> 24u) & 31u);
-    let is_ds = (cull_uniforms.extra.x & mat_bit) != 0u;
-    let hw_cnt_idx = select(select(21u, 23u, is_p2), select(26u, 27u, is_p2), is_ds);
-    let cnt_idx = select(hw_cnt_idx, select(22u, 24u, is_p2), is_sw);
-    let hw_base = select(0u, MAX_PHASE_CLUSTERS, is_ds);
-    let list_base = select(hw_base, MAX_PHASE_CLUSTERS * 2u, is_sw);
-    let draw_idx = atomicAdd(&cull_state[cnt_idx], 1u);
-    if draw_idx < MAX_PHASE_CLUSTERS {
-        cull_draw_lists[list_base + draw_idx] = item;
+    if is_sw {
+        var sw_cnt_idx = 22u;
+        var sw_stat_idx = 5u;
+        if is_p2 {
+            sw_cnt_idx = 24u;
+            sw_stat_idx = 7u;
+        }
+        let sw_idx = atomicAdd(&cull_state[sw_cnt_idx], 1u);
+        if sw_idx < MAX_PHASE_CLUSTERS {
+            cull_draw_lists[MAX_PHASE_CLUSTERS * 2u + sw_idx] = item;
+        }
+        atomicAdd(&cull_state[sw_stat_idx], 1u);
+        atomicAdd(&cull_state[9u], tc);
+    } else {
+        let mat_bit = 1u << ((c_meta >> 24u) & 31u);
+        if (cull_uniforms.extra.x & mat_bit) != 0u {
+            var ds_cnt_idx = 26u;
+            if is_p2 {
+                ds_cnt_idx = 27u;
+            }
+            let ds_idx = atomicAdd(&cull_state[ds_cnt_idx], 1u);
+            if ds_idx < MAX_PHASE_CLUSTERS {
+                cull_draw_lists[MAX_PHASE_CLUSTERS + ds_idx] = item;
+            }
+        } else {
+            var hw_cnt_idx = 21u;
+            if is_p2 {
+                hw_cnt_idx = 23u;
+            }
+            let hw_idx = atomicAdd(&cull_state[hw_cnt_idx], 1u);
+            if hw_idx < MAX_PHASE_CLUSTERS {
+                cull_draw_lists[hw_idx] = item;
+            }
+        }
+        var hw_stat_idx = 4u;
+        if is_p2 {
+            hw_stat_idx = 6u;
+        }
+        atomicAdd(&cull_state[hw_stat_idx], 1u);
+        atomicAdd(&cull_state[8u], tc);
     }
-    atomicAdd(&cull_state[select(select(4u, 6u, is_p2), select(5u, 7u, is_p2), is_sw)], 1u);
-    atomicAdd(&cull_state[select(8u, 9u, is_sw)], tc);
 }
 
 fn evaluate_cluster(inst_id: u32, cluster_id: u32, is_p2: bool) {
-    let inst = cull_instances[inst_id];
-    let inst_pos_scale = inst.pos_scale;
-    let inst_rot = inst.rot_quat;
+    let inst_pos_scale = cull_instances[inst_id].pos_scale;
+    let inst_rot = cull_instances[inst_id].rot_quat;
     let scale = inst_pos_scale.w;
     let c_bs = cull_clusters[cluster_id].bound_sphere;
     let world_c = inst_world_pos(inst_pos_scale, inst_rot, c_bs.xyz);

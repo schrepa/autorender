@@ -18,9 +18,6 @@ import package::nanite::common::quat_rotate;
 import package::nanite::common::decode_qpos_u16;
 import package::nanite::common::decode_octahedral_10;
 import package::nanite::common::decode_uv_12;
-import package::nanite::common::cluster_lod;
-import package::nanite::common::cluster_page_id;
-import package::nanite::common::cluster_word_offset;
 
 @group(2) @binding(0) var vis_hw_tex: texture_2d<u32>;
 @group(2) @binding(1) var<uniform> frame_params: FrameUniforms;
@@ -584,19 +581,21 @@ fn ray_tri_bary_uv(
 fn eval_debug_view(view_mode: u32, vis_id: u32, use_sw: bool, world_n: vec3<f32>) -> vec4<f32> {
     let vis_slot = (vis_id >> 7u) - 1u;
     let tri_id = vis_id & 0x7Fu;
-    let vc = nanite_frame_vis_clusters[vis_slot];
-    let c = nanite_frame_clusters[vc.cluster_id];
+    let inst_id = nanite_frame_vis_clusters[vis_slot].instance_id;
+    let cluster_id = nanite_frame_vis_clusters[vis_slot].cluster_id;
+    let ec_w = nanite_frame_clusters[cluster_id].errors_and_cone.w;
+    let pf = nanite_frame_clusters[cluster_id].page_and_fallback;
     let ndl = 0.42 + 0.58 * clamp(dot(world_n, frame_params.sun_dir_illum.xyz) * 0.5 + 0.5, 0.0, 1.0);
     if view_mode == 1u {
-        let col = hash_color(vc.cluster_id ^ (vc.instance_id * 1664525u + 1013904223u));
+        let col = hash_color(cluster_id ^ (inst_id * 1664525u + 1013904223u));
         return vec4<f32>(col * ndl, 1.0);
     }
     if view_mode == 2u {
-        let col = hash_color((vc.cluster_id * 128u + tri_id) ^ (vc.instance_id * 2246822519u));
+        let col = hash_color((cluster_id * 128u + tri_id) ^ (inst_id * 2246822519u));
         return vec4<f32>(col * ndl, 1.0);
     }
     if view_mode == 3u {
-        let col = lod_heat_color(cluster_lod(c));
+        let col = lod_heat_color((ec_w >> 16u) & 0xFFu);
         return vec4<f32>(col * ndl, 1.0);
     }
     if view_mode == 4u {
@@ -604,8 +603,8 @@ fn eval_debug_view(view_mode: u32, vis_id: u32, use_sw: bool, world_n: vec3<f32>
         let sw_col = vec3<f32>(0.98, 0.52, 0.08);
         return vec4<f32>(select(hw_col, sw_col, use_sw) * ndl, 1.0);
     }
-    let page_id = cluster_page_id(c);
-    let is_root = ((c.page_and_fallback.y >> 16u) & 1u) != 0u;
+    let page_id = pf.x;
+    let is_root = ((pf.y >> 16u) & 1u) == 1u;
     let pcol = select(hash_color(page_id + 17u), vec3<f32>(0.98, 0.25, 0.72), is_root);
     return vec4<f32>(pcol * ndl, 1.0);
 }
@@ -640,17 +639,17 @@ fn read_u24(base_word: u32, idx: u32) -> u32 {
     let wi = base_word + (byte_off >> 2u);
     let rem = byte_off & 3u;
     let w0 = nanite_frame_page_heap[wi];
-    if rem == 0u {
-        return w0 & 0xFFFFFFu;
-    }
+    var res = w0 & 0xFFFFFFu;
     if rem == 1u {
-        return w0 >> 8u;
+        res = w0 >> 8u;
+    } else if rem == 2u {
+        let w1 = nanite_frame_page_heap[wi + 1u];
+        res = (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
+    } else if rem == 3u {
+        let w1 = nanite_frame_page_heap[wi + 1u];
+        res = (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
     }
-    let w1 = nanite_frame_page_heap[wi + 1u];
-    if rem == 2u {
-        return (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
-    }
-    return (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
+    return res;
 }
 
 fn read_qpos_u16(pos_base: u32, vi: u32) -> vec3<f32> {
@@ -658,7 +657,7 @@ fn read_qpos_u16(pos_base: u32, vi: u32) -> vec3<f32> {
     return decode_qpos_u16(
         nanite_frame_page_heap[pwi],
         nanite_frame_page_heap[pwi + 1u],
-        (vi & 1u) != 0u,
+        vi,
     );
 }
 
@@ -689,10 +688,13 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         contact_ao = eval_contact_ao(vec2<i32>(px), size, hit.depth, ign);
     }
 
-    let vc = nanite_frame_vis_clusters[(hit.vis_id >> 7u) - 1u];
-    let c = nanite_frame_clusters[vc.cluster_id];
-    let ec_w = c.errors_and_cone.w;
-    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let vis_slot = (hit.vis_id >> 7u) - 1u;
+    let inst_id = nanite_frame_vis_clusters[vis_slot].instance_id;
+    let cluster_id = nanite_frame_vis_clusters[vis_slot].cluster_id;
+    let heap_slot = nanite_frame_vis_clusters[vis_slot].heap_slot;
+    let ec_w = nanite_frame_clusters[cluster_id].errors_and_cone.w;
+    let word_off = nanite_frame_clusters[cluster_id].page_and_fallback.y & 0xFFFFu;
+    let page_base = heap_slot * PAGE_WORDS + word_off;
     let pos_base = page_base + CLUSTER_HEADER_WORDS;
     let tri_word = read_u24(pos_base + (((ec_w & 0xFFu) * 3u + 1u) >> 1u), hit.vis_id & 0x7Fu);
 
@@ -701,7 +703,6 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         bitcast<f32>(nanite_frame_page_heap[page_base + 1u]),
         bitcast<f32>(nanite_frame_page_heap[page_base + 2u]),
     );
-    let inst_id = vc.instance_id;
     let inst_ps = nanite_frame_instances[inst_id].pos_scale;
     let inst_rq = nanite_frame_instances[inst_id].rot_quat;
     let q_scale = bitcast<f32>(nanite_frame_page_heap[page_base + 3u]) * inst_ps.w;

@@ -6,12 +6,8 @@ import package::nanite::common::PAGE_WORDS;
 import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::MAX_PHASE_CLUSTERS;
 import package::nanite::common::SW_DISPATCH_STRIDE;
-import package::nanite::common::inst_to_world;
+import package::nanite::common::transform_pos;
 import package::nanite::common::decode_pos_u16;
-import package::nanite::common::cluster_vert_count;
-import package::nanite::common::cluster_tri_count;
-import package::nanite::common::cluster_mat;
-import package::nanite::common::cluster_word_offset;
 import package::nanite::common::edge_yup_i32;
 import package::nanite::common::is_top_left_i32;
 
@@ -75,34 +71,40 @@ fn read_u24(base_word: u32, idx: u32) -> u32 {
     let wi = base_word + (byte_off >> 2u);
     let rem = byte_off & 3u;
     let w0 = sw_page_heap[wi];
-    if rem == 0u {
-        return w0 & 0xFFFFFFu;
-    }
+    var res = w0 & 0xFFFFFFu;
     if rem == 1u {
-        return w0 >> 8u;
+        res = w0 >> 8u;
+    } else if rem == 2u {
+        let w1 = sw_page_heap[wi + 1u];
+        res = (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
+    } else if rem == 3u {
+        let w1 = sw_page_heap[wi + 1u];
+        res = (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
     }
-    let w1 = sw_page_heap[wi + 1u];
-    if rem == 2u {
-        return (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
-    }
-    return (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
+    return res;
 }
 
-fn load_cluster_vert(vc: VisibleCluster, c: GpuClusterHeader, vi: u32, origin: vec3<f32>, step: f32) {
-    let vert_count = cluster_vert_count(c);
+fn load_cluster_vert(
+    inst_id: u32,
+    page_base: u32,
+    vert_count: u32,
+    vi: u32,
+    origin: vec3<f32>,
+    step: f32,
+) {
     if vi < vert_count {
-        let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
         let pos_base = page_base + CLUSTER_HEADER_WORDS;
         let pwi = pos_base + ((vi * 3u) >> 1u);
         let local_pos = decode_pos_u16(
             sw_page_heap[pwi],
             sw_page_heap[pwi + 1u],
-            (vi & 1u) != 0u,
+            vi,
             origin,
             step,
         );
-        let inst = sw_instances[vc.instance_id];
-        let world_pos = inst_to_world(inst, local_pos);
+        let pos_scale = sw_instances[inst_id].pos_scale;
+        let rot_quat = sw_instances[inst_id].rot_quat;
+        let world_pos = transform_pos(pos_scale, rot_quat, local_pos);
         let clip = sw_uniforms.render_view_proj * vec4<f32>(world_pos, 1.0);
         if clip.w > 1.0e-5 {
             let inv_w = 1.0 / clip.w;
@@ -121,15 +123,14 @@ fn load_cluster_vert(vc: VisibleCluster, c: GpuClusterHeader, vi: u32, origin: v
     }
 }
 
-fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, tri_id: u32) -> TriSetup {
+fn setup_tri(page_base: u32, ec_w: u32, vis_slot: u32, tri_id: u32) -> TriSetup {
     var s: TriSetup;
     s.valid = 0u;
-    let tri_count = cluster_tri_count(c);
+    let tri_count = (ec_w >> 8u) & 0xFFu;
     if tri_id >= tri_count {
         return s;
     }
-    let vert_count = cluster_vert_count(c);
-    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let vert_count = ec_w & 0xFFu;
     let tri_base = page_base + CLUSTER_HEADER_WORDS + ((vert_count * 3u + 1u) >> 1u);
     let tri_word = read_u24(tri_base, tri_id);
     let i0 = tri_word & 0xFFu;
@@ -167,7 +168,7 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, tri_id: u32) -> TriSetup {
     var z1_v = p1.z;
     var z2_v = p2.z;
     var area = edge_yup_i32(q0, q1, q2);
-    let mat_bit = 1u << (cluster_mat(c) & 31u);
+    let mat_bit = 1u << ((ec_w >> 24u) & 31u);
     let is_ds = (sw_uniforms.extra.x & mat_bit) != 0u;
     if area <= 0 {
         if !is_ds || area == 0 {
@@ -191,7 +192,7 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, tri_id: u32) -> TriSetup {
     let e0_s = e0_0 + b0;
     let e1_s = e1_0 + b1;
     let e2_s = e2_0 + b2;
-    let vis_id = ((vc.vis_slot + 1u) << 7u) | (tri_id & 0x7Fu);
+    let vis_id = ((vis_slot + 1u) << 7u) | (tri_id & 0x7Fu);
     if min_x == max_x && min_y == max_y {
         if (e0_s | e1_s | e2_s) < 0 {
             return s;
@@ -325,21 +326,27 @@ fn cs_sw_depth(
     if sw_idx >= sw_total {
         return;
     }
-    let vc = sw_draw_list[MAX_PHASE_CLUSTERS * 2u + sw_idx];
-    let c = sw_clusters[vc.cluster_id];
-    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let list_idx = MAX_PHASE_CLUSTERS * 2u + sw_idx;
+    let inst_id = sw_draw_list[list_idx].instance_id;
+    let cluster_id = sw_draw_list[list_idx].cluster_id;
+    let heap_slot = sw_draw_list[list_idx].heap_slot;
+    let vis_slot = sw_draw_list[list_idx].vis_slot;
+    let ec_w = sw_clusters[cluster_id].errors_and_cone.w;
+    let word_off = sw_clusters[cluster_id].page_and_fallback.y & 0xFFFFu;
+    let vert_count = ec_w & 0xFFu;
+    let page_base = heap_slot * PAGE_WORDS + word_off;
     let origin = vec3<f32>(
         bitcast<f32>(sw_page_heap[page_base]),
         bitcast<f32>(sw_page_heap[page_base + 1u]),
         bitcast<f32>(sw_page_heap[page_base + 2u]),
     );
     let step = bitcast<f32>(sw_page_heap[page_base + 3u]);
-    load_cluster_vert(vc, c, lid, origin, step);
-    load_cluster_vert(vc, c, lid + 64u, origin, step);
+    load_cluster_vert(inst_id, page_base, vert_count, lid, origin, step);
+    load_cluster_vert(inst_id, page_base, vert_count, lid + 64u, origin, step);
     workgroupBarrier();
     let stride = u32(sw_uniforms.viewport_lod.x);
-    raster_depth_tri(setup_tri(vc, c, lid), stride);
-    raster_depth_tri(setup_tri(vc, c, lid + 64u), stride);
+    raster_depth_tri(setup_tri(page_base, ec_w, vis_slot, lid), stride);
+    raster_depth_tri(setup_tri(page_base, ec_w, vis_slot, lid + 64u), stride);
 }
 
 @compute @workgroup_size(64)
@@ -352,19 +359,25 @@ fn cs_sw_vis(
     if sw_idx >= sw_total {
         return;
     }
-    let vc = sw_draw_list[MAX_PHASE_CLUSTERS * 2u + sw_idx];
-    let c = sw_clusters[vc.cluster_id];
-    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let list_idx = MAX_PHASE_CLUSTERS * 2u + sw_idx;
+    let inst_id = sw_draw_list[list_idx].instance_id;
+    let cluster_id = sw_draw_list[list_idx].cluster_id;
+    let heap_slot = sw_draw_list[list_idx].heap_slot;
+    let vis_slot = sw_draw_list[list_idx].vis_slot;
+    let ec_w = sw_clusters[cluster_id].errors_and_cone.w;
+    let word_off = sw_clusters[cluster_id].page_and_fallback.y & 0xFFFFu;
+    let vert_count = ec_w & 0xFFu;
+    let page_base = heap_slot * PAGE_WORDS + word_off;
     let origin = vec3<f32>(
         bitcast<f32>(sw_page_heap[page_base]),
         bitcast<f32>(sw_page_heap[page_base + 1u]),
         bitcast<f32>(sw_page_heap[page_base + 2u]),
     );
     let step = bitcast<f32>(sw_page_heap[page_base + 3u]);
-    load_cluster_vert(vc, c, lid, origin, step);
-    load_cluster_vert(vc, c, lid + 64u, origin, step);
+    load_cluster_vert(inst_id, page_base, vert_count, lid, origin, step);
+    load_cluster_vert(inst_id, page_base, vert_count, lid + 64u, origin, step);
     workgroupBarrier();
     let stride = u32(sw_uniforms.viewport_lod.x);
-    raster_vis_tri(setup_tri(vc, c, lid), stride);
-    raster_vis_tri(setup_tri(vc, c, lid + 64u), stride);
+    raster_vis_tri(setup_tri(page_base, ec_w, vis_slot, lid), stride);
+    raster_vis_tri(setup_tri(page_base, ec_w, vis_slot, lid + 64u), stride);
 }

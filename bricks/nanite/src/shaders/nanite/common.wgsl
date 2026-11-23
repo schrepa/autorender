@@ -1,6 +1,3 @@
-import package::generated::nanite::NaniteInstance;
-import package::generated::nanite::GpuClusterHeader;
-
 const PAGE_WORDS: u32 = 4096u;
 const CLUSTER_HEADER_WORDS: u32 = 7u;
 const CLUSTER_DRAW_VERTS: u32 = 384u;
@@ -23,19 +20,24 @@ fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     return v + q.w * t + cross(q.xyz, t);
 }
 
-fn inst_to_world(inst: NaniteInstance, p: vec3<f32>) -> vec3<f32> {
-    return inst.pos_scale.xyz + quat_rotate(inst.rot_quat, p * inst.pos_scale.w);
+fn transform_pos(pos_scale: vec4<f32>, rot_quat: vec4<f32>, p: vec3<f32>) -> vec3<f32> {
+    return pos_scale.xyz + quat_rotate(rot_quat, p * pos_scale.w);
 }
 
-fn decode_qpos_u16(w0: u32, w1: u32, odd: bool) -> vec3<f32> {
-    let qx = select(w0 & 0xFFFFu, w0 >> 16u, odd);
-    let qy = select(w0 >> 16u, w1 & 0xFFFFu, odd);
-    let qz = select(w1 & 0xFFFFu, w1 >> 16u, odd);
+fn decode_qpos_u16(w0: u32, w1: u32, vi: u32) -> vec3<f32> {
+    var qx = w0 & 0xFFFFu;
+    var qy = w0 >> 16u;
+    var qz = w1 & 0xFFFFu;
+    if (vi & 1u) == 1u {
+        qx = w0 >> 16u;
+        qy = w1 & 0xFFFFu;
+        qz = w1 >> 16u;
+    }
     return vec3<f32>(f32(qx), f32(qy), f32(qz));
 }
 
-fn decode_pos_u16(w0: u32, w1: u32, odd: bool, origin: vec3<f32>, step: f32) -> vec3<f32> {
-    return origin + decode_qpos_u16(w0, w1, odd) * step;
+fn decode_pos_u16(w0: u32, w1: u32, vi: u32, origin: vec3<f32>, step: f32) -> vec3<f32> {
+    return origin + decode_qpos_u16(w0, w1, vi) * step;
 }
 
 fn decode_octahedral_10(packed24: u32) -> vec3<f32> {
@@ -47,37 +49,16 @@ fn decode_octahedral_10(packed24: u32) -> vec3<f32> {
     let y = py + select(fold, -fold, py >= 0.0);
     let raw = vec3<f32>(x, y, pz);
     let l2 = dot(raw, raw);
-    return select(vec3<f32>(0.0, 1.0, 0.0), raw * inverseSqrt(l2), l2 > 1.0e-20);
+    if l2 > 1.0e-20 {
+        return raw * inverseSqrt(l2);
+    }
+    return vec3<f32>(0.0, 1.0, 0.0);
 }
 
 fn decode_uv_12(packed24: u32, uv_origin: vec2<f32>, uv_step: f32) -> vec2<f32> {
     let qu = f32(packed24 & 0xFFFu);
     let qv = f32((packed24 >> 12u) & 0xFFFu);
     return uv_origin + vec2<f32>(qu, qv) * uv_step;
-}
-
-fn cluster_vert_count(c: GpuClusterHeader) -> u32 {
-    return c.errors_and_cone.w & 0xFFu;
-}
-
-fn cluster_tri_count(c: GpuClusterHeader) -> u32 {
-    return (c.errors_and_cone.w >> 8u) & 0xFFu;
-}
-
-fn cluster_lod(c: GpuClusterHeader) -> u32 {
-    return (c.errors_and_cone.w >> 16u) & 0xFFu;
-}
-
-fn cluster_mat(c: GpuClusterHeader) -> u32 {
-    return (c.errors_and_cone.w >> 24u) & 0xFFu;
-}
-
-fn cluster_page_id(c: GpuClusterHeader) -> u32 {
-    return c.page_and_fallback.x;
-}
-
-fn cluster_word_offset(c: GpuClusterHeader) -> u32 {
-    return c.page_and_fallback.y & 0xFFFFu;
 }
 
 fn projected_error(

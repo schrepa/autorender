@@ -8,7 +8,7 @@ import package::nanite::common::CLUSTER_DRAW_VERTS;
 import package::nanite::common::DEDUP_MASK;
 import package::nanite::common::UNMAPPED_PAGE;
 import package::nanite::common::SHADOW_LIST_CAP;
-import package::nanite::common::inst_to_world;
+import package::nanite::common::transform_pos;
 import package::nanite::common::decode_pos_u16;
 
 const SH_DEDUP_BASE: u32 = 528416u;
@@ -53,10 +53,11 @@ fn shadow_collect(job_idx: u32, cascade: u32) {
     let job = sh_jobs[job_base + job_idx];
     let inst_id = job.x;
     let cid = job.y;
-    let inst = sh_instances[inst_id];
+    let inst_pos_scale = sh_instances[inst_id].pos_scale;
+    let inst_rot = sh_instances[inst_id].rot_quat;
     let c_bs = sh_clusters[cid].bound_sphere;
-    let world_c = inst_to_world(inst, c_bs.xyz);
-    let world_r = c_bs.w * inst.pos_scale.w;
+    let world_c = transform_pos(inst_pos_scale, inst_rot, c_bs.xyz);
+    let world_r = c_bs.w * inst_pos_scale.w;
     var clip_xy: vec2<f32>;
     if cascade != 0u {
         let vp = sh_uniforms.shadow_vp1;
@@ -142,36 +143,19 @@ fn cs_shadow_prep() {
     atomicStore(&sh_indirect[7u], 0u);
 }
 
-fn read_u24(base_word: u32, idx: u32) -> u32 {
-    let byte_off = idx * 3u;
-    let wi = base_word + (byte_off >> 2u);
-    let rem = byte_off & 3u;
-    let w0 = sh_page_heap[wi];
-    if rem == 0u {
-        return w0 & 0xFFFFFFu;
-    }
-    if rem == 1u {
-        return w0 >> 8u;
-    }
-    let w1 = sh_page_heap[wi + 1u];
-    if rem == 2u {
-        return (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
-    }
-    return (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
-}
-
 fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
-    let vc = sh_list_ro[list_idx];
+    let inst_id = sh_list_ro[list_idx].instance_id;
+    let cluster_id = sh_list_ro[list_idx].cluster_id;
+    let heap_slot = sh_list_ro[list_idx].heap_slot;
     let tri_id = vid / 3u;
-    let ec_w = sh_clusters[vc.cluster_id].errors_and_cone.w;
+    let ec_w = sh_clusters[cluster_id].errors_and_cone.w;
     let tri_count = (ec_w >> 8u) & 0xFFu;
     if tri_id >= tri_count {
         return vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
-    let corner = vid - tri_id * 3u;
     let vert_count = ec_w & 0xFFu;
-    let word_off = sh_clusters[vc.cluster_id].page_and_fallback.y & 0xFFFFu;
-    let page_base = vc.heap_slot * PAGE_WORDS + word_off;
+    let word_off = sh_clusters[cluster_id].page_and_fallback.y & 0xFFFFu;
+    let page_base = heap_slot * PAGE_WORDS + word_off;
     let origin = vec3<f32>(
         bitcast<f32>(sh_page_heap[page_base]),
         bitcast<f32>(sh_page_heap[page_base + 1u]),
@@ -180,19 +164,28 @@ fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
     let step = bitcast<f32>(sh_page_heap[page_base + 3u]);
     let pos_base = page_base + CLUSTER_HEADER_WORDS;
     let tri_base = pos_base + ((vert_count * 3u + 1u) >> 1u);
-    let tri_word = read_u24(tri_base, tri_id);
-    let local_vi = (tri_word >> (corner * 8u)) & 0xFFu;
+    let tri_word = sh_page_heap[tri_base + (vid >> 2u)];
+    let lane = vid & 3u;
+    var local_vi = tri_word & 0xFFu;
+    if lane == 1u {
+        local_vi = (tri_word >> 8u) & 0xFFu;
+    } else if lane == 2u {
+        local_vi = (tri_word >> 16u) & 0xFFu;
+    } else if lane == 3u {
+        local_vi = tri_word >> 24u;
+    }
     let pwi = pos_base + ((local_vi * 3u) >> 1u);
     let local_pos = decode_pos_u16(
         sh_page_heap[pwi],
         sh_page_heap[pwi + 1u],
-        (local_vi & 1u) != 0u,
+        local_vi,
         origin,
         step,
     );
-    let inst = sh_instances[vc.instance_id];
-    let world_pos = inst_to_world(inst, local_pos);
-    if cascade != 0u {
+    let pos_scale = sh_instances[inst_id].pos_scale;
+    let rot_quat = sh_instances[inst_id].rot_quat;
+    let world_pos = transform_pos(pos_scale, rot_quat, local_pos);
+    if cascade == 1u {
         return sh_uniforms.shadow_vp1 * vec4<f32>(world_pos, 1.0);
     }
     return sh_uniforms.shadow_vp0 * vec4<f32>(world_pos, 1.0);
