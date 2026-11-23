@@ -7,7 +7,7 @@ import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::MAX_PHASE_CLUSTERS;
 import package::nanite::common::SW_DISPATCH_STRIDE;
 import package::nanite::common::inst_to_world;
-import package::nanite::common::decode_pos;
+import package::nanite::common::decode_pos_u16;
 import package::nanite::common::cluster_vert_count;
 import package::nanite::common::cluster_tri_count;
 import package::nanite::common::cluster_mat;
@@ -70,14 +70,30 @@ fn cs_merge_hw_depth_p2(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
+fn read_u24(base_word: u32, idx: u32) -> u32 {
+    let byte_off = idx * 3u;
+    let wi = base_word + (byte_off >> 2u);
+    let shift = (byte_off & 3u) * 8u;
+    var val = sw_page_heap[wi] >> shift;
+    if shift > 8u {
+        val |= sw_page_heap[wi + 1u] << (32u - shift);
+    }
+    return val & 0xFFFFFFu;
+}
+
 fn load_cluster_vert(vc: VisibleCluster, c: GpuClusterHeader, vi: u32, origin: vec3<f32>, step: f32) {
     let vert_count = cluster_vert_count(c);
     if vi < vert_count {
         let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
-        let v_base = page_base + CLUSTER_HEADER_WORDS + vi * 4u;
-        let w0 = sw_page_heap[v_base];
-        let w1 = sw_page_heap[v_base + 1u];
-        let local_pos = decode_pos(w0, w1, origin, step);
+        let pos_base = page_base + CLUSTER_HEADER_WORDS;
+        let pwi = pos_base + ((vi * 3u) >> 1u);
+        let local_pos = decode_pos_u16(
+            sw_page_heap[pwi],
+            sw_page_heap[pwi + 1u],
+            (vi & 1u) != 0u,
+            origin,
+            step,
+        );
         let inst = sw_instances[vc.instance_id];
         let world_pos = inst_to_world(inst, local_pos);
         let clip = sw_uniforms.render_view_proj * vec4<f32>(world_pos, 1.0);
@@ -107,7 +123,8 @@ fn setup_tri(vc: VisibleCluster, c: GpuClusterHeader, tri_id: u32) -> TriSetup {
     }
     let vert_count = cluster_vert_count(c);
     let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
-    let tri_word = sw_page_heap[page_base + CLUSTER_HEADER_WORDS + vert_count * 4u + tri_id];
+    let tri_base = page_base + CLUSTER_HEADER_WORDS + ((vert_count * 3u + 1u) >> 1u);
+    let tri_word = read_u24(tri_base, tri_id);
     let i0 = tri_word & 0xFFu;
     let i1 = (tri_word >> 8u) & 0xFFu;
     let i2 = (tri_word >> 16u) & 0xFFu;

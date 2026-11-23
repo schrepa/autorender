@@ -11,6 +11,7 @@ mod format;
 mod group;
 mod manifest;
 mod partition;
+mod quadric;
 mod simplify;
 mod verify;
 
@@ -25,10 +26,10 @@ pub use encode::{
     encode_compressed_pages, encode_octahedral, page_bytes_as_words, words_to_le_bytes,
 };
 pub use format::{
-    BVH_BRANCHING, BuildStats, BuiltMeshlet, BvhNode, CLUSTER_HEADER_WORDS, CLUSTER_TRI_WORDS,
-    CLUSTER_VERTEX_WORDS, ClusterHeader, ClusterVertex, DecodedCluster, FLAG_IN_ROOT_PAGE,
-    FLAG_PINNED_COARSE, FLAG_ROOT_CLUSTER, MANIFEST_MAGIC, MANIFEST_VERSION, MAX_CLUSTER_TRIS,
-    MAX_CLUSTER_VERTS, MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan,
-    ROOT_PARENT_ERROR, SourceMesh, VerifyReport,
+    BVH_BRANCHING, BuildStats, BuiltMeshlet, BvhNode, CLUSTER_HEADER_WORDS, ClusterHeader,
+    ClusterVertex, DecodedCluster, FLAG_HAS_VERTEX_COLOR, FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE,
+    FLAG_ROOT_CLUSTER, MANIFEST_MAGIC, MANIFEST_VERSION, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS,
+    MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan, ROOT_PARENT_ERROR,
+    SourceMesh, VerifyReport,
 };
 pub use verify::verify;

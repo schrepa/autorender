@@ -124,11 +124,11 @@ fn load_sanctuary_assets(
 }
 
 #[cfg(target_arch = "wasm32")]
-const MAX_RUN_PAGES: usize = 16;
+const MAX_RUN_PAGES: usize = 40;
 #[cfg(target_arch = "wasm32")]
-const MAX_RUN_BYTES: u64 = 256 * 1024;
+const MAX_RUN_BYTES: u64 = 384 * 1024;
 #[cfg(target_arch = "wasm32")]
-const MAX_GAP_BYTES: u64 = 64 * 1024;
+const MAX_GAP_BYTES: u64 = 96 * 1024;
 #[cfg(target_arch = "wasm32")]
 const HD_IDLE_HYSTERESIS_FRAMES: u32 = 3;
 
@@ -260,10 +260,19 @@ fn is_geometry_busy(
     page_faults: u32,
     in_flight_requests: usize,
     streaming_pending_work: bool,
+    prefetch_only: bool,
     has_evictable_slots: bool,
 ) -> bool {
-    !assets_loaded
-        || in_flight_requests > 0
+    if !assets_loaded {
+        return true;
+    }
+    if page_faults == 0
+        && in_flight_requests <= 4
+        && (prefetch_only || !streaming_pending_work)
+    {
+        return false;
+    }
+    in_flight_requests > 0
         || streaming_pending_work
         || (page_faults > 0 && has_evictable_slots)
 }
@@ -308,7 +317,7 @@ mod web_loader {
     use crate::state::MonolithState;
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
-    const MAX_IN_FLIGHT_REQUESTS: usize = 6;
+    const MAX_IN_FLIGHT_REQUESTS: usize = 10;
     const MAX_IN_FLIGHT_PBR: usize = 4;
 
     #[derive(Default)]
@@ -526,34 +535,24 @@ mod web_loader {
         world: &NaniteWorld,
         streaming: &mut NaniteStreaming,
         all_manifests: bool,
+        prefetch_throttled: bool,
     ) {
-        let req_cap = if all_manifests {
-            MAX_IN_FLIGHT_REQUESTS
+        let req_cap = if !all_manifests || prefetch_throttled {
+            4
         } else {
-            2
+            MAX_IN_FLIGHT_REQUESTS
         };
         let req_slots =
             WEB_STATE.with(|cell| req_cap.saturating_sub(cell.borrow().in_flight_requests));
         if req_slots == 0 {
             return;
         }
-        let reqs = streaming.take_fetch_requests(768);
+        let reqs = streaming.take_fetch_requests(1024);
         if reqs.is_empty() {
             return;
         }
         let mut runs = coalesce_runs(reqs, world);
         let mut back = Vec::new();
-        if !all_manifests {
-            let mut root_runs = Vec::new();
-            for run in runs {
-                if run.max_priority >= u32::MAX - 1 {
-                    root_runs.push(run);
-                } else {
-                    requeue_run_items(run, &mut back);
-                }
-            }
-            runs = root_runs;
-        }
         if runs.len() > req_slots {
             for run in runs.split_off(req_slots) {
                 requeue_run_items(run, &mut back);
@@ -619,23 +618,36 @@ mod web_loader {
             }
         }
 
-        dispatch_page_runs(&world, &mut streaming, mounted >= ASSET_COUNT);
+        let in_flight_pbr = WEB_STATE.with(|cell| cell.borrow().in_flight_pbr);
+        let pbr_hd_pending = pbr.base_done && pbr.uploaded_hi_layers < pbr.layer_count;
+        let prefetch_only = streaming.is_prefetch_only();
+        let prefetch_throttled =
+            tel.page_faults == 0 && prefetch_only && (in_flight_pbr > 0 || pbr_hd_pending);
+        dispatch_page_runs(
+            &world,
+            &mut streaming,
+            mounted >= ASSET_COUNT,
+            prefetch_throttled,
+        );
         let in_flight_requests = WEB_STATE.with(|cell| cell.borrow().in_flight_requests);
         let geom_busy = is_geometry_busy(
             state.assets_loaded,
             tel.page_faults,
             in_flight_requests,
             streaming.has_pending_work(),
+            prefetch_only,
             streaming.has_evictable_slots(),
         );
         let allow_hi = WEB_STATE.with(|cell| {
             let mut st = cell.borrow_mut();
             step_hd_idle_gate(&mut st.hd_idle_frames, state.assets_loaded, geom_busy)
         });
+        let mid_req_ok =
+            in_flight_requests <= 2 || (tel.page_faults == 0 && in_flight_requests <= 4);
         let allow_mid = allow_hi
             || (state.assets_loaded
                 && pbr.base_done
-                && in_flight_requests <= 2
+                && mid_req_ok
                 && tel.page_faults < 128
                 && pbr.mid_tier_pending());
         pump_pbr_hd(pbr, allow_mid, allow_hi);

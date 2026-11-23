@@ -15,11 +15,10 @@ import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::SHADOW_C0_DIM;
 import package::nanite::common::SHADOW_C1_DIM;
 import package::nanite::common::quat_rotate;
-import package::nanite::common::decode_octahedral;
-import package::nanite::common::decode_uv;
-import package::nanite::common::cluster_vert_count;
+import package::nanite::common::decode_qpos_u16;
+import package::nanite::common::decode_octahedral_10;
+import package::nanite::common::decode_uv_12;
 import package::nanite::common::cluster_lod;
-import package::nanite::common::cluster_mat;
 import package::nanite::common::cluster_page_id;
 import package::nanite::common::cluster_word_offset;
 
@@ -636,8 +635,24 @@ fn load_vis_hit(px: vec2<u32>, size_x: u32) -> VisHit {
     return VisHit(vis_id, win_depth, use_sw);
 }
 
-fn decode_qpos(w0: u32, w1: u32) -> vec3<f32> {
-    return vec3<f32>(f32(w0 & 0xFFFFu), f32(w0 >> 16u), f32(w1 & 0xFFFFu));
+fn read_u24(base_word: u32, idx: u32) -> u32 {
+    let byte_off = idx * 3u;
+    let wi = base_word + (byte_off >> 2u);
+    let shift = (byte_off & 3u) * 8u;
+    var val = nanite_frame_page_heap[wi] >> shift;
+    if shift > 8u {
+        val |= nanite_frame_page_heap[wi + 1u] << (32u - shift);
+    }
+    return val & 0xFFFFFFu;
+}
+
+fn read_qpos_u16(pos_base: u32, vi: u32) -> vec3<f32> {
+    let pwi = pos_base + ((vi * 3u) >> 1u);
+    return decode_qpos_u16(
+        nanite_frame_page_heap[pwi],
+        nanite_frame_page_heap[pwi + 1u],
+        (vi & 1u) != 0u,
+    );
 }
 
 @fragment
@@ -669,13 +684,10 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
     let vc = nanite_frame_vis_clusters[(hit.vis_id >> 7u) - 1u];
     let c = nanite_frame_clusters[vc.cluster_id];
-    let mat_id = min(cluster_mat(c), 31u);
+    let ec_w = c.errors_and_cone.w;
     let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
-    let verts_base = page_base + CLUSTER_HEADER_WORDS;
-    let tri_word = nanite_frame_page_heap[verts_base + cluster_vert_count(c) * 4u + (hit.vis_id & 0x7Fu)];
-    let b0 = verts_base + (tri_word & 0xFFu) * 4u;
-    let b1 = verts_base + ((tri_word >> 8u) & 0xFFu) * 4u;
-    let b2 = verts_base + ((tri_word >> 16u) & 0xFFu) * 4u;
+    let pos_base = page_base + CLUSTER_HEADER_WORDS;
+    let tri_word = read_u24(pos_base + (((ec_w & 0xFFu) * 3u + 1u) >> 1u), hit.vis_id & 0x7Fu);
 
     let origin = vec3<f32>(
         bitcast<f32>(nanite_frame_page_heap[page_base]),
@@ -687,21 +699,10 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let inst_rq = nanite_frame_instances[inst_id].rot_quat;
     let q_scale = bitcast<f32>(nanite_frame_page_heap[page_base + 3u]) * inst_ps.w;
 
-    let w0_0 = nanite_frame_page_heap[b0];
-    let w1_0 = nanite_frame_page_heap[b0 + 1u];
-    let q0 = decode_qpos(w0_0, w1_0);
+    let q0 = read_qpos_u16(pos_base, tri_word & 0xFFu);
     let p0 = inst_ps.xyz + quat_rotate(inst_rq, origin * inst_ps.w + q0 * q_scale);
-    var ao_pack = w1_0 >> 27u;
-
-    let w0_1 = nanite_frame_page_heap[b1];
-    let w1_1 = nanite_frame_page_heap[b1 + 1u];
-    let e1 = quat_rotate(inst_rq, (decode_qpos(w0_1, w1_1) - q0) * q_scale);
-    ao_pack |= (w1_1 >> 27u) << 5u;
-
-    let w0_2 = nanite_frame_page_heap[b2];
-    let w1_2 = nanite_frame_page_heap[b2 + 1u];
-    let e2 = quat_rotate(inst_rq, (decode_qpos(w0_2, w1_2) - q0) * q_scale);
-    ao_pack |= (w1_2 >> 27u) << 10u;
+    let e1 = quat_rotate(inst_rq, (read_qpos_u16(pos_base, (tri_word >> 8u) & 0xFFu) - q0) * q_scale);
+    let e2 = quat_rotate(inst_rq, (read_qpos_u16(pos_base, (tri_word >> 16u) & 0xFFu) - q0) * q_scale);
 
     let o = cam_pos - p0;
     let d_vec = cross(e2, e1);
@@ -718,9 +719,18 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
     let bary_w = 1.0 - bary_uv.x - bary_uv.y;
     let world_pos = p0 + e1 * bary_uv.x + e2 * bary_uv.y;
-    let local_n = decode_octahedral(nanite_frame_page_heap[b0 + 2u]) * bary_w
-        + decode_octahedral(nanite_frame_page_heap[b1 + 2u]) * bary_uv.x
-        + decode_octahedral(nanite_frame_page_heap[b2 + 2u]) * bary_uv.y;
+    let vert_count = ec_w & 0xFFu;
+    let tri_count = (ec_w >> 8u) & 0xFFu;
+    let norm_base = pos_base + ((vert_count * 3u + 1u) >> 1u) + ((tri_count * 3u + 3u) >> 2u);
+    let n0_p = read_u24(norm_base, tri_word & 0xFFu);
+    let n1_p = read_u24(norm_base, (tri_word >> 8u) & 0xFFu);
+    let n2_p = read_u24(norm_base, (tri_word >> 16u) & 0xFFu);
+    let local_n = decode_octahedral_10(n0_p) * bary_w
+        + decode_octahedral_10(n1_p) * bary_uv.x
+        + decode_octahedral_10(n2_p) * bary_uv.y;
+    let ao_raw = f32((n0_p >> 20u) & 0xFu) * bary_w
+        + f32((n1_p >> 20u) & 0xFu) * bary_uv.x
+        + f32((n2_p >> 20u) & 0xFu) * bary_uv.y;
     let ln_l2 = dot(local_n, local_n);
     let world_n_raw = quat_rotate(nanite_frame_instances[inst_id].rot_quat, local_n);
     let wn_l2 = dot(world_n_raw, world_n_raw);
@@ -730,12 +740,18 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         return eval_debug_view(view_mode, hit.vis_id, hit.use_sw, world_n);
     }
 
-    let ao_raw = f32(ao_pack & 0x1Fu) * bary_w + f32((ao_pack >> 5u) & 0x1Fu) * bary_uv.x + f32(ao_pack >> 10u) * bary_uv.y;
-    let ao = clamp(0.45 + 0.55 * (ao_raw * (1.0 / 31.0)), 0.35, 1.0) * contact_ao;
+    let mat_id = min(ec_w >> 24u, 31u);
+    let ao = clamp(0.45 + 0.55 * (ao_raw * (1.0 / 15.0)), 0.35, 1.0) * contact_ao;
 
-    let uv0 = decode_uv(nanite_frame_page_heap[b0 + 3u]);
-    let du1 = decode_uv(nanite_frame_page_heap[b1 + 3u]) - uv0;
-    let du2 = decode_uv(nanite_frame_page_heap[b2 + 3u]) - uv0;
+    let uv_base = norm_base + ((vert_count * 3u + 3u) >> 2u);
+    let uv_origin = vec2<f32>(
+        bitcast<f32>(nanite_frame_page_heap[page_base + 4u]),
+        bitcast<f32>(nanite_frame_page_heap[page_base + 5u]),
+    );
+    let uv_step = bitcast<f32>(nanite_frame_page_heap[page_base + 6u]);
+    let uv0 = decode_uv_12(read_u24(uv_base, tri_word & 0xFFu), uv_origin, uv_step);
+    let du1 = decode_uv_12(read_u24(uv_base, (tri_word >> 8u) & 0xFFu), uv_origin, uv_step) - uv0;
+    let du2 = decode_uv_12(read_u24(uv_base, (tri_word >> 16u) & 0xFFu), uv_origin, uv_step) - uv0;
     let uv_interp = uv0 + du1 * bary_uv.x + du2 * bary_uv.y;
     let duv_dx = clamp_uv_grad(du1 * db_dx.x + du2 * db_dx.y);
     let duv_dy = clamp_uv_grad(du1 * db_dy.x + du2 * db_dy.y);

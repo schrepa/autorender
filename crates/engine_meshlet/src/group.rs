@@ -29,8 +29,9 @@ fn build_adjacency(inputs: &[GroupInput<'_>]) -> ClusterAdjacency {
             pos_to_clusters.entry(p).or_default().push(ci);
         }
     }
-    let mut pair_weights: Vec<HashMap<usize, u32>> =
-        (0..n).map(|_| HashMap::with_hasher(FixedState::default())).collect();
+    let mut pair_weights: Vec<HashMap<usize, u32>> = (0..n)
+        .map(|_| HashMap::with_hasher(FixedState::default()))
+        .collect();
     let mut total_boundary = vec![0_u32; n];
     for clusters in pos_to_clusters.values() {
         if clusters.len() < 2 {

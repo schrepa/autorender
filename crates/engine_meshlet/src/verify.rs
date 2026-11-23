@@ -44,7 +44,8 @@ fn verify_cluster_header(
     }
     let self_err = header.self_error();
     let parent_err = header.parent_error();
-    if !self_err.is_finite() || !parent_err.is_finite() || self_err < 0.0 || parent_err <= self_err {
+    if !self_err.is_finite() || !parent_err.is_finite() || self_err < 0.0 || parent_err <= self_err
+    {
         return Err(invalid(format!("{path}.monotonicity"))
             .expected(Expected::Above)
             .got([self_err, parent_err]));
@@ -218,7 +219,8 @@ fn verify_bvh_subtree(
         if !sphere_contains_sphere(node.sphere, child.sphere) {
             return Err(invalid(format!("$.bvh[{ni}].child_sphere[{slot}]")));
         }
-        let child_max = verify_bvh_subtree(child_idx as usize, manifest, visited_nodes, cluster_hits)?;
+        let child_max =
+            verify_bvh_subtree(child_idx as usize, manifest, visited_nodes, cluster_hits)?;
         if child_max > node.max_parent_error[slot] + 1.0e-6 {
             return Err(invalid(format!("$.bvh[{ni}].max_parent_error[{slot}]"))
                 .got([child_max, node.max_parent_error[slot]]));
@@ -332,7 +334,7 @@ fn verify_partial_residency_cuts(manifest: &MeshletManifest) -> Result<u32, Erro
                 for p in ps..ps + pc {
                     per_leaf_stack.push(p);
                 }
-                if per_leaf_stack.len() > 128 {
+                if per_leaf_stack.len() > 64 {
                     return Err(
                         invalid(format!("$.residency.stack_limit[{ci}]")).got(per_leaf_stack.len())
                     );

@@ -8,102 +8,13 @@ use glam::{DVec3, Vec2, Vec3};
 use crate::bounds::bounding_sphere_points;
 use crate::format::ClusterVertex;
 use crate::partition::MeshletData;
+use crate::quadric::Quadric;
 
 pub struct SimplifiedGroup {
     pub vertices: Vec<ClusterVertex>,
     pub pos_ids: Vec<u32>,
     pub triangles: Vec<[u32; 3]>,
     pub error: f32,
-}
-
-#[derive(Clone, Copy, Default)]
-struct Quadric {
-    a00: f64,
-    a01: f64,
-    a02: f64,
-    a03: f64,
-    a11: f64,
-    a12: f64,
-    a13: f64,
-    a22: f64,
-    a23: f64,
-    a33: f64,
-    weight: f64,
-}
-
-impl Quadric {
-    fn from_plane(n: DVec3, d: f64, weight: f64) -> Self {
-        let (a, b, c) = (n.x, n.y, n.z);
-        Self {
-            a00: a * a * weight,
-            a01: a * b * weight,
-            a02: a * c * weight,
-            a03: a * d * weight,
-            a11: b * b * weight,
-            a12: b * c * weight,
-            a13: b * d * weight,
-            a22: c * c * weight,
-            a23: c * d * weight,
-            a33: d * d * weight,
-            weight,
-        }
-    }
-
-    fn add(&mut self, other: &Self) {
-        self.a00 += other.a00;
-        self.a01 += other.a01;
-        self.a02 += other.a02;
-        self.a03 += other.a03;
-        self.a11 += other.a11;
-        self.a12 += other.a12;
-        self.a13 += other.a13;
-        self.a22 += other.a22;
-        self.a23 += other.a23;
-        self.a33 += other.a33;
-        self.weight += other.weight;
-    }
-
-    fn sum(&self, other: &Self) -> Self {
-        let mut out = *self;
-        out.add(other);
-        out
-    }
-
-    fn eval(&self, p: DVec3) -> f64 {
-        let (x, y, z) = (p.x, p.y, p.z);
-        let value = self.a00 * x * x
-            + 2.0 * self.a01 * x * y
-            + 2.0 * self.a02 * x * z
-            + 2.0 * self.a03 * x
-            + self.a11 * y * y
-            + 2.0 * self.a12 * y * z
-            + 2.0 * self.a13 * y
-            + self.a22 * z * z
-            + 2.0 * self.a23 * z
-            + self.a33;
-        if value > 0.0 { value } else { 0.0 }
-    }
-
-    fn solve_optimal(&self) -> Option<DVec3> {
-        let c00 = self.a11 * self.a22 - self.a12 * self.a12;
-        let c01 = self.a02 * self.a12 - self.a01 * self.a22;
-        let c02 = self.a01 * self.a12 - self.a02 * self.a11;
-        let c11 = self.a00 * self.a22 - self.a02 * self.a02;
-        let c12 = self.a01 * self.a02 - self.a00 * self.a12;
-        let c22 = self.a00 * self.a11 - self.a01 * self.a01;
-        let det = self.a00 * c00 + self.a01 * c01 + self.a02 * c02;
-        let trace = self.a00 + self.a11 + self.a22;
-        let scale = trace * trace * trace;
-        if !det.is_finite() || det.abs() <= 1.0e-10 * scale.max(1.0e-12) {
-            return None;
-        }
-        let inv_det = -1.0 / det;
-        let x = (c00 * self.a03 + c01 * self.a13 + c02 * self.a23) * inv_det;
-        let y = (c01 * self.a03 + c11 * self.a13 + c12 * self.a23) * inv_det;
-        let z = (c02 * self.a03 + c12 * self.a13 + c22 * self.a23) * inv_det;
-        let p = DVec3::new(x, y, z);
-        p.is_finite().then_some(p)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -479,6 +390,8 @@ struct PassPolicy {
     min_dot: f64,
     check_link: bool,
     check_vn: bool,
+    allow_corner_collapse: bool,
+    relaxed: bool,
     max_bnd_sq: f64,
     max_plane_sq: f64,
     max_perp_disp: f64,
@@ -494,6 +407,47 @@ fn shared_edge_tri_count(state: &SimplifierState, u: u32, v: u32) -> u32 {
         }
     }
     count
+}
+
+fn pick_better_endpoint(
+    u: u32,
+    v: u32,
+    pu: DVec3,
+    pv: DVec3,
+    total_q: &Quadric,
+) -> (u32, u32, DVec3) {
+    if total_q.eval(pu) <= total_q.eval(pv) {
+        (u, v, pu)
+    } else {
+        (v, u, pv)
+    }
+}
+
+fn pick_interior_target(
+    u: u32,
+    v: u32,
+    pu: DVec3,
+    pv: DVec3,
+    edge_len: f64,
+    total_q: &Quadric,
+) -> (u32, u32, DVec3) {
+    let mid = (pu + pv) * 0.5;
+    let mut best_p = mid;
+    let mut best_c = total_q.eval(mid);
+    for candidate in [pu, pv] {
+        let c = total_q.eval(candidate);
+        if c < best_c {
+            best_c = c;
+            best_p = candidate;
+        }
+    }
+    if let Some(opt) = total_q.solve_optimal()
+        && (opt - mid).length() <= edge_len * 0.75 + 1.0e-6
+        && total_q.eval(opt) < best_c
+    {
+        best_p = opt;
+    }
+    (u, v, best_p)
 }
 
 fn pick_collapse_target(
@@ -519,6 +473,18 @@ fn pick_collapse_target(
     let crv = state.is_crease[v as usize];
     let ou = state.is_open[u as usize];
     let ov = state.is_open[v as usize];
+    if policy.allow_corner_collapse {
+        if lu {
+            return Some((u, v, pu));
+        }
+        if lv {
+            return Some((v, u, pv));
+        }
+        if cu_flag || cv_flag || smu || smv || ou || ov || cru || crv {
+            return Some(pick_better_endpoint(u, v, pu, pv, total_q));
+        }
+        return Some(pick_interior_target(u, v, pu, pv, edge_len, total_q));
+    }
     if lu {
         if (cv_flag && edge_len > policy.max_corner_edge) || (smv && !smu) || (crv && !cru) {
             return None;
@@ -538,11 +504,7 @@ fn pick_collapse_target(
         if edge_len > policy.max_corner_edge {
             return None;
         }
-        return if total_q.eval(pu) <= total_q.eval(pv) {
-            Some((u, v, pu))
-        } else {
-            Some((v, u, pv))
-        };
+        return Some(pick_better_endpoint(u, v, pu, pv, total_q));
     }
     if cu_flag {
         return (!(smv && !smu) && !(crv && !cru)).then_some((u, v, pu));
@@ -551,11 +513,7 @@ fn pick_collapse_target(
         return (!(smu && !smv) && !(cru && !crv)).then_some((v, u, pv));
     }
     if smu && smv {
-        return if total_q.eval(pu) <= total_q.eval(pv) {
-            Some((u, v, pu))
-        } else {
-            Some((v, u, pv))
-        };
+        return Some(pick_better_endpoint(u, v, pu, pv, total_q));
     }
     if smu && !smv {
         return (!ov || ou).then_some((u, v, pu));
@@ -564,11 +522,7 @@ fn pick_collapse_target(
         return (!ou || ov).then_some((v, u, pv));
     }
     if ou && ov {
-        return if total_q.eval(pu) <= total_q.eval(pv) {
-            Some((u, v, pu))
-        } else {
-            Some((v, u, pv))
-        };
+        return Some(pick_better_endpoint(u, v, pu, pv, total_q));
     }
     if ou && !ov {
         return (!crv).then_some((u, v, pu));
@@ -577,11 +531,7 @@ fn pick_collapse_target(
         return (!cru).then_some((v, u, pv));
     }
     if cru && crv {
-        return if total_q.eval(pu) <= total_q.eval(pv) {
-            Some((u, v, pu))
-        } else {
-            Some((v, u, pv))
-        };
+        return Some(pick_better_endpoint(u, v, pu, pv, total_q));
     }
     if cru != crv {
         return Some(if cru { (u, v, pu) } else { (v, u, pv) });
@@ -591,23 +541,7 @@ fn pick_collapse_target(
     if su != sv {
         return Some(if su { (u, v, pu) } else { (v, u, pv) });
     }
-    let mid = (pu + pv) * 0.5;
-    let mut best_p = mid;
-    let mut best_c = total_q.eval(mid);
-    for candidate in [pu, pv] {
-        let c = total_q.eval(candidate);
-        if c < best_c {
-            best_c = c;
-            best_p = candidate;
-        }
-    }
-    if let Some(opt) = total_q.solve_optimal()
-        && (opt - mid).length() <= edge_len * 0.75 + 1.0e-6
-        && total_q.eval(opt) < best_c
-    {
-        best_p = opt;
-    }
-    Some((u, v, best_p))
+    Some(pick_interior_target(u, v, pu, pv, edge_len, total_q))
 }
 
 fn edge_attribute_metrics(state: &SimplifierState, u: u32, v: u32) -> (f32, f32) {
@@ -652,10 +586,10 @@ fn evaluate_edge(
     let pv = state.positions[v as usize];
     let edge_len = (pv - pu).length();
     let plane_sq = pq.eval(target_pos) / pq.weight.max(1.0e-12);
-    let u_sq = state.plane_q[u as usize].eval(target_pos)
-        / state.plane_q[u as usize].weight.max(1.0e-12);
-    let v_sq = state.plane_q[v as usize].eval(target_pos)
-        / state.plane_q[v as usize].weight.max(1.0e-12);
+    let u_sq =
+        state.plane_q[u as usize].eval(target_pos) / state.plane_q[u as usize].weight.max(1.0e-12);
+    let v_sq =
+        state.plane_q[v as usize].eval(target_pos) / state.plane_q[v as usize].weight.max(1.0e-12);
     if plane_sq > policy.max_plane_sq || u_sq.max(v_sq) > policy.max_plane_sq * 2.0 {
         return None;
     }
@@ -665,7 +599,8 @@ fn evaluate_edge(
         || (state.is_seam[v as usize] && (target_pos - pv).length_squared() > 1.0e-18);
     let bnd_err_sq = if open_moved {
         let eval_t = bq.eval(target_pos);
-        let base_err = state.boundary_q[u as usize].eval(pu) + state.boundary_q[v as usize].eval(pv);
+        let base_err =
+            state.boundary_q[u as usize].eval(pu) + state.boundary_q[v as usize].eval(pv);
         let rms_sq = eval_t / bq.weight.max(1.0);
         let inc_sq = (eval_t - base_err).max(0.0) / bq.weight.max(1.0);
         inc_sq.max(rms_sq)
@@ -680,6 +615,10 @@ fn evaluate_edge(
     }
     let mut cost = pq.eval(target_pos) + bnd_err_sq * 64.0;
     let mut geom_err = plane_sq.max(bnd_err_sq).sqrt();
+    if policy.relaxed {
+        let disp = (target_pos - pu).length().max((target_pos - pv).length());
+        geom_err = geom_err.max(disp);
+    }
     let (max_duv_sq, min_ndot) = edge_attribute_metrics(state, u, v);
     if min_ndot < 0.7 {
         let crease = f64::from(1.0 - max(min_ndot, -1.0));
@@ -801,6 +740,111 @@ fn incident_geom_stats(state: &SimplifierState, keep: u32, remove: u32) -> (f64,
     (sum_area, max_edge)
 }
 
+fn canonical_oriented_tri(tri: [u32; 3]) -> [u32; 3] {
+    if tri[0] <= tri[1] && tri[0] <= tri[2] {
+        tri
+    } else if tri[1] <= tri[0] && tri[1] <= tri[2] {
+        [tri[1], tri[2], tri[0]]
+    } else {
+        [tri[2], tri[0], tri[1]]
+    }
+}
+
+fn check_collapsed_tri(
+    positions: &[DVec3],
+    tri: &SimpTri,
+    pair: (u32, u32),
+    target: DVec3,
+    max_allowed_edge: f64,
+    policy: PassPolicy,
+) -> Option<(f64, [u32; 3])> {
+    let (keep, remove) = pair;
+    let p_old = [
+        positions[tri.v[0] as usize],
+        positions[tri.v[1] as usize],
+        positions[tri.v[2] as usize],
+    ];
+    let p_new = [
+        if tri.v[0] == keep || tri.v[0] == remove {
+            target
+        } else {
+            p_old[0]
+        },
+        if tri.v[1] == keep || tri.v[1] == remove {
+            target
+        } else {
+            p_old[1]
+        },
+        if tri.v[2] == keep || tri.v[2] == remove {
+            target
+        } else {
+            p_old[2]
+        },
+    ];
+    let n_old = (p_old[1] - p_old[0]).cross(p_old[2] - p_old[0]);
+    let n_new = (p_new[1] - p_new[0]).cross(p_new[2] - p_new[0]);
+    let old_len = n_old.length();
+    let new_len = n_new.length();
+    if new_len <= 1.0e-14 {
+        return None;
+    }
+    let moved_old = if tri.v[0] == keep || tri.v[0] == remove {
+        p_old[0]
+    } else if tri.v[1] == keep || tri.v[1] == remove {
+        p_old[1]
+    } else {
+        p_old[2]
+    };
+    if (target - moved_old).dot(tri.ref_n).abs() > policy.max_perp_disp {
+        return None;
+    }
+    let new_area = 0.5 * new_len;
+    let new_e = tri_max_edge(p_new);
+    if new_e > max_allowed_edge {
+        return None;
+    }
+    let old_area = 0.5 * old_len;
+    let old_e = tri_max_edge(p_old);
+    let old_ratio = (old_e * old_e) / old_area.max(1.0e-18);
+    let new_ratio = (new_e * new_e) / new_area.max(1.0e-18);
+    if !policy.relaxed {
+        if new_ratio > 24.0 && (new_area > old_area * 1.05 || new_ratio > old_ratio * 1.5) {
+            return None;
+        }
+        if new_ratio > 48.0 && new_ratio > old_ratio * 1.05 {
+            return None;
+        }
+    } else if new_ratio > 64.0 && new_ratio > old_ratio * 1.5 {
+        return None;
+    }
+    if old_len > 1.0e-14 && n_old.dot(n_new) < policy.min_dot * old_len * new_len {
+        return None;
+    }
+    if tri.ref_n.dot(n_new) < policy.min_dot * new_len {
+        return None;
+    }
+    if policy.check_vn {
+        let vn = (tri.attrs[0].normal + tri.attrs[1].normal + tri.attrs[2].normal).as_dvec3();
+        let vn_len = vn.length();
+        if vn_len > 1.0e-6 && vn.dot(n_new) < (policy.min_dot * 0.75) * vn_len * new_len {
+            return None;
+        }
+    }
+    let raw_key = [
+        if tri.v[0] == remove { keep } else { tri.v[0] },
+        if tri.v[1] == remove { keep } else { tri.v[1] },
+        if tri.v[2] == remove { keep } else { tri.v[2] },
+    ];
+    let key = if policy.relaxed {
+        canonical_oriented_tri(raw_key)
+    } else {
+        let mut sorted = raw_key;
+        sorted.sort_unstable();
+        sorted
+    };
+    Some((new_area, key))
+}
+
 fn collapse_is_valid(
     state: &SimplifierState,
     keep: u32,
@@ -812,7 +856,11 @@ fn collapse_is_valid(
         return false;
     }
     let (sum_old_area, old_max_edge) = incident_geom_stats(state, keep, remove);
-    let max_allowed_edge = old_max_edge * 2.25 + 1.0e-4;
+    let max_allowed_edge = if policy.relaxed {
+        old_max_edge * 6.0 + state.group_radius * 0.5
+    } else {
+        old_max_edge * 2.25 + 1.0e-4
+    };
     let mut sum_new_area = 0.0_f64;
     let mut has_shared = false;
     let mut surviving_faces: Vec<[u32; 3]> = Vec::new();
@@ -828,87 +876,29 @@ fn collapse_is_valid(
                 has_shared = true;
                 continue;
             }
-            let p_old = [
-                state.positions[tri.v[0] as usize],
-                state.positions[tri.v[1] as usize],
-                state.positions[tri.v[2] as usize],
-            ];
-            let p_new = [
-                if tri.v[0] == keep || tri.v[0] == remove {
-                    target
-                } else {
-                    p_old[0]
-                },
-                if tri.v[1] == keep || tri.v[1] == remove {
-                    target
-                } else {
-                    p_old[1]
-                },
-                if tri.v[2] == keep || tri.v[2] == remove {
-                    target
-                } else {
-                    p_old[2]
-                },
-            ];
-            let n_old = (p_old[1] - p_old[0]).cross(p_old[2] - p_old[0]);
-            let n_new = (p_new[1] - p_new[0]).cross(p_new[2] - p_new[0]);
-            let old_len = n_old.length();
-            let new_len = n_new.length();
-            if new_len <= 1.0e-14 {
+            let Some((new_area, key)) = check_collapsed_tri(
+                &state.positions,
+                tri,
+                (keep, remove),
+                target,
+                max_allowed_edge,
+                policy,
+            ) else {
                 return false;
-            }
-            let moved_old = if tri.v[0] == keep || tri.v[0] == remove {
-                p_old[0]
-            } else if tri.v[1] == keep || tri.v[1] == remove {
-                p_old[1]
-            } else {
-                p_old[2]
             };
-            if (target - moved_old).dot(tri.ref_n).abs() > policy.max_perp_disp {
-                return false;
-            }
-            let old_area = 0.5 * old_len;
-            let new_area = 0.5 * new_len;
             sum_new_area += new_area;
-            let old_e = tri_max_edge(p_old);
-            let new_e = tri_max_edge(p_new);
-            if new_e > max_allowed_edge {
-                return false;
-            }
-            let old_ratio = (old_e * old_e) / old_area.max(1.0e-18);
-            let new_ratio = (new_e * new_e) / new_area.max(1.0e-18);
-            if new_ratio > 24.0 && (new_area > old_area * 1.05 || new_ratio > old_ratio * 1.5) {
-                return false;
-            }
-            if new_ratio > 48.0 && new_ratio > old_ratio * 1.05 {
-                return false;
-            }
-            if old_len > 1.0e-14 && n_old.dot(n_new) < policy.min_dot * old_len * new_len {
-                return false;
-            }
-            if tri.ref_n.dot(n_new) < policy.min_dot * new_len {
-                return false;
-            }
-            if policy.check_vn {
-                let vn = (tri.attrs[0].normal + tri.attrs[1].normal + tri.attrs[2].normal).as_dvec3();
-                let vn_len = vn.length();
-                if vn_len > 1.0e-6 && vn.dot(n_new) < (policy.min_dot * 0.75) * vn_len * new_len {
-                    return false;
-                }
-            }
-            let mut key = [
-                if tri.v[0] == remove { keep } else { tri.v[0] },
-                if tri.v[1] == remove { keep } else { tri.v[1] },
-                if tri.v[2] == remove { keep } else { tri.v[2] },
-            ];
-            key.sort_unstable();
             if surviving_faces.contains(&key) {
                 return false;
             }
             surviving_faces.push(key);
         }
     }
-    if sum_new_area > sum_old_area * 1.25 + 1.0e-8 {
+    let area_limit = if policy.relaxed {
+        sum_old_area * 2.0 + 1.0e-6
+    } else {
+        sum_old_area * 1.25 + 1.0e-8
+    };
+    if sum_new_area > area_limit {
         return false;
     }
     has_shared && !surviving_faces.is_empty()
@@ -986,7 +976,11 @@ fn apply_collapse(
     let edge = p_rem_old - p_keep_old;
     let edge_len_sq = edge.length_squared();
     let t = if edge_len_sq > 1.0e-16 {
-        clamp(((entry.target_pos - p_keep_old).dot(edge) / edge_len_sq) as f32, 0.0, 1.0)
+        clamp(
+            ((entry.target_pos - p_keep_old).dot(edge) / edge_len_sq) as f32,
+            0.0,
+            1.0,
+        )
     } else {
         0.0
     };
@@ -1116,10 +1110,19 @@ struct IslandComponent {
     radius: f64,
 }
 
-fn collect_prunable_islands(
-    state: &SimplifierState,
-    relax_locks: bool,
-) -> Vec<IslandComponent> {
+fn collect_prunable_islands(state: &SimplifierState, relax_level: u32) -> Vec<IslandComponent> {
+    let mut total_area = 0.0_f64;
+    for tri in &state.tris {
+        if !tri.alive {
+            continue;
+        }
+        let [a, b, c] = tri.v;
+        let pa = state.positions[a as usize];
+        let pb = state.positions[b as usize];
+        let pc = state.positions[c as usize];
+        total_area += 0.5 * (pb - pa).cross(pc - pa).length();
+    }
+    let max_island_area = total_area * 0.15;
     let mut visited = vec![false; state.tris.len()];
     let mut islands = Vec::new();
     let mut stack = Vec::new();
@@ -1172,17 +1175,27 @@ fn collect_prunable_islands(
                 }
             }
         }
-        if !has_seam && !has_hard_lock {
+        if !has_hard_lock && !has_seam {
             let bs = bounding_sphere_points(&comp_pts);
             let radius = f64::from(bs[3]);
-            let mean_tri_area = area / (comp_tris.len().max(1) as f64);
-            let is_leaf_card = has_open && radius <= 0.28 && area <= 0.10;
-            let is_thin_wisp = relax_locks
-                && radius > 0.28
-                && area <= 0.25
-                && mean_tri_area <= 0.005
-                && (area / radius) <= 0.25;
-            if is_leaf_card || is_thin_wisp {
+            let allowed = match relax_level {
+                0 => has_open && radius <= 0.28 && area <= 0.10,
+                1 => {
+                    let mean_tri_area = area / (comp_tris.len().max(1) as f64);
+                    let is_leaf_card = has_open && radius <= 0.28 && area <= 0.10;
+                    let is_thin_wisp = radius > 0.28
+                        && area <= 0.25
+                        && mean_tri_area <= 0.005
+                        && (area / radius) <= 0.25;
+                    let is_small = radius <= 0.35 && area <= 0.25;
+                    area <= max_island_area && (is_leaf_card || is_thin_wisp || is_small)
+                }
+                _ => {
+                    let max_r = (state.group_radius * 0.25).clamp(0.35, 0.65);
+                    area <= max_island_area && radius <= max_r && area <= 0.60
+                }
+            };
+            if allowed {
                 islands.push(IslandComponent {
                     tris: comp_tris,
                     verts: comp_verts,
@@ -1205,10 +1218,10 @@ fn prune_small_islands(
     state: &mut SimplifierState,
     target_tris: usize,
     target_verts: usize,
-    relax_locks: bool,
+    relax_level: u32,
 ) {
-    let islands = collect_prunable_islands(state, relax_locks);
-    if islands.len() <= 1 {
+    let islands = collect_prunable_islands(state, relax_level);
+    if (relax_level == 0 && islands.len() <= 1) || islands.is_empty() {
         return;
     }
     for island in islands {
@@ -1306,11 +1319,63 @@ fn export_simplified(state: &SimplifierState) -> SimplifiedGroup {
     }
 }
 
+fn run_relaxed_passes(
+    state: &mut SimplifierState,
+    clamped_tris: usize,
+    clamped_verts: usize,
+    relax_level: u32,
+) {
+    let over = |s: &SimplifierState| s.live_tris > clamped_tris || s.live_verts > clamped_verts;
+    if relax_level >= 1 && over(state) {
+        let p4_rms = (state.group_radius * 0.08).clamp(0.06, 0.18);
+        let bnd4 = (state.group_radius * 0.05).clamp(0.04, 0.12);
+        run_collapse_pass(
+            state,
+            clamped_tris,
+            clamped_verts,
+            PassPolicy {
+                min_dot: 0.02,
+                check_link: true,
+                check_vn: false,
+                allow_corner_collapse: false,
+                relaxed: false,
+                max_bnd_sq: bnd4 * bnd4,
+                max_plane_sq: p4_rms * p4_rms,
+                max_perp_disp: p4_rms * 1.75,
+                max_corner_edge: (state.group_radius * 0.25).clamp(0.30, 0.55),
+            },
+        );
+    }
+    if relax_level >= 2 && over(state) {
+        let p5_rms = (state.group_radius * 0.16).clamp(0.12, 0.35);
+        let bnd5 = (state.group_radius * 0.10).clamp(0.08, 0.22);
+        run_collapse_pass(
+            state,
+            clamped_tris,
+            clamped_verts,
+            PassPolicy {
+                min_dot: 0.0,
+                check_link: true,
+                check_vn: false,
+                allow_corner_collapse: true,
+                relaxed: true,
+                max_bnd_sq: bnd5 * bnd5,
+                max_plane_sq: p5_rms * p5_rms,
+                max_perp_disp: p5_rms * 2.0,
+                max_corner_edge: (state.group_radius * 0.50).clamp(0.35, 1.20),
+            },
+        );
+    }
+    if relax_level >= 2 && over(state) {
+        prune_small_islands(state, clamped_tris, clamped_verts, relax_level);
+    }
+}
+
 pub fn simplify_group(
     group_clusters: &[&MeshletData],
     hard_locked_pos: &HashSet<u32>,
     seam_locked_pos: &HashSet<u32>,
-    relax_seams: bool,
+    relax_level: u32,
     target_tris: usize,
     target_verts: usize,
 ) -> SimplifiedGroup {
@@ -1328,6 +1393,8 @@ pub fn simplify_group(
             min_dot: 0.30,
             check_link: true,
             check_vn: true,
+            allow_corner_collapse: false,
+            relaxed: false,
             max_bnd_sq: 0.0001,
             max_plane_sq: p1_rms * p1_rms,
             max_perp_disp: p1_rms * 1.5,
@@ -1343,6 +1410,8 @@ pub fn simplify_group(
                 min_dot: 0.08,
                 check_link: true,
                 check_vn: false,
+                allow_corner_collapse: false,
+                relaxed: false,
                 max_bnd_sq: 0.0009,
                 max_plane_sq: p2_rms * p2_rms,
                 max_perp_disp: p2_rms * 1.5,
@@ -1351,7 +1420,7 @@ pub fn simplify_group(
         );
     }
     if state.live_tris > clamped_tris || state.live_verts > clamped_verts {
-        prune_small_islands(&mut state, clamped_tris, clamped_verts, relax_seams);
+        prune_small_islands(&mut state, clamped_tris, clamped_verts, relax_level.min(1));
     }
     if state.live_tris > clamped_tris || state.live_verts > clamped_verts {
         run_collapse_pass(
@@ -1362,12 +1431,17 @@ pub fn simplify_group(
                 min_dot: 0.05,
                 check_link: true,
                 check_vn: false,
+                allow_corner_collapse: false,
+                relaxed: false,
                 max_bnd_sq: 0.0025,
                 max_plane_sq: p3_rms * p3_rms,
                 max_perp_disp: p3_rms * 1.5,
                 max_corner_edge: 0.28,
             },
         );
+    }
+    if relax_level >= 1 && (state.live_tris > clamped_tris || state.live_verts > clamped_verts) {
+        run_relaxed_passes(&mut state, clamped_tris, clamped_verts, relax_level);
     }
     export_simplified(&state)
 }

@@ -5,19 +5,18 @@ use serde::Serialize;
 
 pub const MAX_CLUSTER_VERTS: usize = 128;
 pub const MAX_CLUSTER_TRIS: usize = 128;
-pub const PAGE_SIZE_BYTES: usize = 32_768;
+pub const PAGE_SIZE_BYTES: usize = 16_384;
 pub const PAGE_WORDS: usize = PAGE_SIZE_BYTES / 4;
 pub const BVH_BRANCHING: usize = 4;
-pub const CLUSTER_HEADER_WORDS: usize = 4;
-pub const CLUSTER_VERTEX_WORDS: usize = 4;
-pub const CLUSTER_TRI_WORDS: usize = 1;
+pub const CLUSTER_HEADER_WORDS: usize = 7;
 pub const ROOT_PARENT_ERROR: f32 = 1.0e30;
 pub const NO_BVH_CHILD: u32 = u32::MAX;
 pub const MANIFEST_MAGIC: [u8; 4] = *b"MLM1";
-pub const MANIFEST_VERSION: u32 = 4;
+pub const MANIFEST_VERSION: u32 = 5;
 pub const FLAG_ROOT_CLUSTER: u32 = 1;
 pub const FLAG_IN_ROOT_PAGE: u32 = 2;
 pub const FLAG_PINNED_COARSE: u32 = 4;
+pub const FLAG_HAS_VERTEX_COLOR: u32 = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PageSpan {
@@ -132,9 +131,18 @@ impl ClusterHeader {
     }
 
     pub fn word_count(&self) -> u32 {
-        (CLUSTER_HEADER_WORDS as u32)
-            + self.vert_count() * (CLUSTER_VERTEX_WORDS as u32)
-            + self.tri_count() * (CLUSTER_TRI_WORDS as u32)
+        let vc = self.vert_count();
+        let tc = self.tri_count();
+        let pos_words = (vc * 3).div_ceil(2);
+        let tri_words = (tc * 3).div_ceil(4);
+        let norm_words = (vc * 3).div_ceil(4);
+        let uv_words = (vc * 3).div_ceil(4);
+        let col_words = if self.has_vertex_color() {
+            vc.div_ceil(2)
+        } else {
+            0
+        };
+        (CLUSTER_HEADER_WORDS as u32) + pos_words + tri_words + norm_words + uv_words + col_words
     }
 
     pub fn is_root(&self) -> bool {
@@ -147,6 +155,10 @@ impl ClusterHeader {
 
     pub fn is_pinned_coarse(&self) -> bool {
         (self.flags() & FLAG_PINNED_COARSE) != 0
+    }
+
+    pub fn has_vertex_color(&self) -> bool {
+        (self.flags() & FLAG_HAS_VERTEX_COLOR) != 0
     }
 
     pub fn normal_cone(&self) -> ([i8; 3], i8) {

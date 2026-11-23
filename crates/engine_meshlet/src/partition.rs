@@ -52,7 +52,10 @@ struct LocalGraph {
     disconnect_limit_sq: f32,
 }
 
-fn build_pos_adjacency(tri_pos: &[[u32; 3]], pos_count: usize) -> (Vec<u32>, Vec<usize>, Vec<usize>) {
+fn build_pos_adjacency(
+    tri_pos: &[[u32; 3]],
+    pos_count: usize,
+) -> (Vec<u32>, Vec<usize>, Vec<usize>) {
     let mut live_tris = vec![0_u32; pos_count];
     for &[p0, p1, p2] in tri_pos {
         live_tris[p0 as usize] += 1;
@@ -437,8 +440,10 @@ fn partition_meshlets_impl(
             } else {
                 Vec3::ZERO
             };
-            let next = pick_best_candidate(&graph, &scratch, center, avg_n, tight_cones)
-                .or_else(|| pick_nearby_disconnected(&graph, &mut scratch, center, avg_n, tight_cones));
+            let next =
+                pick_best_candidate(&graph, &scratch, center, avg_n, tight_cones).or_else(|| {
+                    pick_nearby_disconnected(&graph, &mut scratch, center, avg_n, tight_cones)
+                });
             let Some(chosen) = next else {
                 break;
             };

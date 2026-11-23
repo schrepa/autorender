@@ -9,7 +9,7 @@ import package::nanite::common::DEDUP_MASK;
 import package::nanite::common::UNMAPPED_PAGE;
 import package::nanite::common::SHADOW_LIST_CAP;
 import package::nanite::common::inst_to_world;
-import package::nanite::common::decode_pos;
+import package::nanite::common::decode_pos_u16;
 
 const SH_DEDUP_BASE: u32 = 528416u;
 
@@ -142,6 +142,17 @@ fn cs_shadow_prep() {
     atomicStore(&sh_indirect[7u], 0u);
 }
 
+fn read_u24(base_word: u32, idx: u32) -> u32 {
+    let byte_off = idx * 3u;
+    let wi = base_word + (byte_off >> 2u);
+    let shift = (byte_off & 3u) * 8u;
+    var val = sh_page_heap[wi] >> shift;
+    if shift > 8u {
+        val |= sh_page_heap[wi + 1u] << (32u - shift);
+    }
+    return val & 0xFFFFFFu;
+}
+
 fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
     let vc = sh_list_ro[list_idx];
     let tri_id = vid / 3u;
@@ -160,11 +171,18 @@ fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
         bitcast<f32>(sh_page_heap[page_base + 2u]),
     );
     let step = bitcast<f32>(sh_page_heap[page_base + 3u]);
-    let verts_base = page_base + CLUSTER_HEADER_WORDS;
-    let tri_word = sh_page_heap[verts_base + vert_count * 4u + tri_id];
+    let pos_base = page_base + CLUSTER_HEADER_WORDS;
+    let tri_base = pos_base + ((vert_count * 3u + 1u) >> 1u);
+    let tri_word = read_u24(tri_base, tri_id);
     let local_vi = (tri_word >> (corner * 8u)) & 0xFFu;
-    let v_base = verts_base + local_vi * 4u;
-    let local_pos = decode_pos(sh_page_heap[v_base], sh_page_heap[v_base + 1u], origin, step);
+    let pwi = pos_base + ((local_vi * 3u) >> 1u);
+    let local_pos = decode_pos_u16(
+        sh_page_heap[pwi],
+        sh_page_heap[pwi + 1u],
+        (local_vi & 1u) != 0u,
+        origin,
+        step,
+    );
     let inst = sh_instances[vc.instance_id];
     let world_pos = inst_to_world(inst, local_pos);
     if cascade != 0u {

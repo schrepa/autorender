@@ -14,12 +14,14 @@ use crate::encode::{
     compute_base_quant_step, decode_cluster_words, encode_cluster_words, encode_compressed_pages,
 };
 use crate::format::{
-    BuildStats, BuiltMeshlet, ClusterHeader, ClusterVertex, FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE,
-    FLAG_ROOT_CLUSTER, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS, MeshletManifest, PAGE_WORDS,
-    ROOT_PARENT_ERROR, SourceMesh,
+    BuildStats, BuiltMeshlet, ClusterHeader, ClusterVertex, FLAG_HAS_VERTEX_COLOR,
+    FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE, FLAG_ROOT_CLUSTER, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS,
+    MeshletManifest, PAGE_WORDS, ROOT_PARENT_ERROR, SourceMesh,
 };
 use crate::group::{GroupInput, group_clusters};
-use crate::partition::{MeshletData, partition_meshlets, partition_meshlets_compact, weld_positions};
+use crate::partition::{
+    MeshletData, partition_meshlets, partition_meshlets_compact, weld_positions,
+};
 use crate::simplify::simplify_group;
 
 fn invalid(path: impl Into<String>) -> Error {
@@ -217,6 +219,10 @@ fn validate_and_prepare(source: &SourceMesh) -> Result<PreparedSource, Error> {
     })
 }
 
+fn replace_dag_flags(header: &mut ClusterHeader, flags: u32) {
+    header.set_flags((header.flags() & FLAG_HAS_VERTEX_COLOR) | flags);
+}
+
 fn make_dag_node(
     meshlet: MeshletData,
     lod_level: u32,
@@ -225,7 +231,13 @@ fn make_dag_node(
 ) -> Result<DagNode, Error> {
     let raw_positions: Vec<Vec3> = meshlet.vertices.iter().map(|v| v.position).collect();
     let mut payload = Vec::new();
-    encode_cluster_words(&meshlet.vertices, &meshlet.triangles, base_step, &mut payload)?;
+    let (_, has_color) = encode_cluster_words(
+        &meshlet.vertices,
+        &meshlet.triangles,
+        base_step,
+        &mut payload,
+    )?;
+    let color_flag = if has_color { FLAG_HAS_VERTEX_COLOR } else { 0 };
     let meta = ClusterHeader::pack_meta(
         meshlet.vertices.len(),
         meshlet.triangles.len(),
@@ -239,7 +251,7 @@ fn make_dag_node(
         errors_and_cone: [0.0_f32.to_bits(), ROOT_PARENT_ERROR.to_bits(), 0, meta],
         page_and_fallback: [
             0,
-            ClusterHeader::pack_offset_flags(0, FLAG_ROOT_CLUSTER),
+            ClusterHeader::pack_offset_flags(0, FLAG_ROOT_CLUSTER | color_flag),
             0,
             0,
         ],
@@ -258,7 +270,7 @@ fn make_dag_node(
         errors_and_cone: [0.0_f32.to_bits(), ROOT_PARENT_ERROR.to_bits(), cone, meta],
         page_and_fallback: [
             0,
-            ClusterHeader::pack_offset_flags(0, FLAG_ROOT_CLUSTER),
+            ClusterHeader::pack_offset_flags(0, FLAG_ROOT_CLUSTER | color_flag),
             0,
             0,
         ],
@@ -275,7 +287,7 @@ struct ReduceEnv<'a> {
     material_id: u8,
     material_seams: &'a HashSet<u32>,
     base_step: f32,
-    relax_mat_seams: bool,
+    relax_level: u32,
     max_parents: usize,
     mark_pinned: bool,
 }
@@ -295,7 +307,10 @@ fn simplify_for_group(
     unique_pos.sort_unstable();
     unique_pos.dedup();
     let in_pos = unique_pos.len().max(1);
-    let base_parents = child_count.div_ceil(2).min(child_count.saturating_sub(1)).max(1);
+    let base_parents = child_count
+        .div_ceil(2)
+        .min(child_count.saturating_sub(1))
+        .max(1);
     let target_parents = if env.max_parents > 0 {
         base_parents.min(env.max_parents)
     } else {
@@ -310,7 +325,7 @@ fn simplify_for_group(
         child_meshlets,
         hard_locked,
         env.material_seams,
-        env.relax_mat_seams,
+        env.relax_level,
         target_tris,
         target_verts,
     );
@@ -327,14 +342,13 @@ fn simplify_for_group(
         let out_tris = simplified.triangles.len().max(1);
         let out_verts = simplified.vertices.len().max(1);
         let retry_tris = ((target_tris * 3 / 4).min((target_tris * target_tris) / out_tris)).max(1);
-        let retry_verts = ((target_verts * 3 / 4)
-            .min((target_verts * max_export_verts) / out_verts))
-        .max(3);
+        let retry_verts =
+            ((target_verts * 3 / 4).min((target_verts * max_export_verts) / out_verts)).max(3);
         let retry = simplify_group(
             child_meshlets,
             hard_locked,
             env.material_seams,
-            env.relax_mat_seams,
+            env.relax_level,
             retry_tris,
             retry_verts,
         );
@@ -372,7 +386,7 @@ fn reduce_single_group(
     let mut hard_locked: HashSet<u32> = HashSet::with_hasher(FixedState::default());
     for (&p, &g_cnt) in &group_pos_count {
         let total_cnt = level_pos_count.get(&p).copied().unwrap_or(0);
-        if total_cnt > g_cnt || (!env.relax_mat_seams && env.material_seams.contains(&p)) {
+        if total_cnt > g_cnt || (env.relax_level < 2 && env.material_seams.contains(&p)) {
             hard_locked.insert(p);
         }
     }
@@ -401,7 +415,12 @@ fn reduce_single_group(
     let mut parent_ids = Vec::with_capacity(parent_meshlets.len());
     for pm in parent_meshlets {
         let id = nodes.len();
-        nodes.push(make_dag_node(pm, parent_lod, env.material_id, env.base_step)?);
+        nodes.push(make_dag_node(
+            pm,
+            parent_lod,
+            env.material_id,
+            env.base_step,
+        )?);
         parent_ids.push(id);
     }
     let parent_run_id = runs.len();
@@ -416,23 +435,32 @@ fn reduce_single_group(
     let group_lod_sphere = merge_spheres(&sphere_list);
     let gid = *next_group_id;
     *next_group_id += 1;
-    let p_flag = FLAG_ROOT_CLUSTER | if env.mark_pinned { FLAG_PINNED_COARSE } else { 0 };
+    let p_flag = FLAG_ROOT_CLUSTER
+        | if env.mark_pinned {
+            FLAG_PINNED_COARSE
+        } else {
+            0
+        };
     for &pi in &parent_ids {
         let h = &mut nodes[pi].header;
         h.lod_sphere = group_lod_sphere;
         h.parent_lod_sphere = group_lod_sphere;
         h.set_self_error(group_error);
         h.set_parent_error(ROOT_PARENT_ERROR);
-        h.set_flags(p_flag);
+        replace_dag_flags(h, p_flag);
     }
-    let c_flag = if env.mark_pinned { FLAG_PINNED_COARSE } else { 0 };
+    let c_flag = if env.mark_pinned {
+        FLAG_PINNED_COARSE
+    } else {
+        0
+    };
     for &ci in child_ids {
         nodes[ci].parent_run = Some(parent_run_id);
         let h = &mut nodes[ci].header;
         h.set_parent_error(group_error);
         h.parent_lod_sphere = group_lod_sphere;
         h.set_group_id(gid);
-        h.set_flags(c_flag);
+        replace_dag_flags(h, c_flag);
     }
     Ok(Some(parent_ids))
 }
@@ -451,11 +479,7 @@ fn count_pos_across_active(active: &[usize], nodes: &[DagNode]) -> HashMap<u32, 
     level_pos_count
 }
 
-fn finalize_root_clusters(
-    roots: &[usize],
-    nodes: &mut [DagNode],
-    next_group_id: &mut u32,
-) {
+fn finalize_root_clusters(roots: &[usize], nodes: &mut [DagNode], next_group_id: &mut u32) {
     for &ri in roots {
         let gid = *next_group_id;
         *next_group_id += 1;
@@ -463,7 +487,7 @@ fn finalize_root_clusters(
         let h = &mut nodes[ri].header;
         h.set_group_id(gid);
         h.set_fallback(0, 0);
-        h.set_flags(FLAG_ROOT_CLUSTER | FLAG_PINNED_COARSE);
+        replace_dag_flags(h, FLAG_ROOT_CLUSTER | FLAG_PINNED_COARSE);
         h.set_parent_error(ROOT_PARENT_ERROR);
         h.parent_lod_sphere = h.lod_sphere;
     }
@@ -512,7 +536,7 @@ fn bridge_single_node(
     parent.header.parent_lod_sphere = merged;
     parent.header.set_self_error(next_err);
     parent.header.set_parent_error(ROOT_PARENT_ERROR);
-    parent.header.set_flags(FLAG_ROOT_CLUSTER);
+    replace_dag_flags(&mut parent.header, FLAG_ROOT_CLUSTER);
     let pid = nodes.len();
     nodes.push(parent);
     let run_id = runs.len();
@@ -524,7 +548,7 @@ fn bridge_single_node(
     ch.set_parent_error(next_err);
     ch.parent_lod_sphere = merged;
     ch.set_group_id(gid);
-    ch.set_flags(0);
+    replace_dag_flags(ch, 0);
     Ok(pid)
 }
 
@@ -575,6 +599,31 @@ fn group_frontier(
     group_clusters(&inputs, group_max, pass)
 }
 
+fn reduction_schedule(
+    unified: bool,
+    frontier_len: usize,
+    stall_streak: u32,
+) -> (usize, usize, u32) {
+    let relax_level = stall_streak.min(2);
+    if unified {
+        let max_parents = (frontier_len / 2).clamp(1, 2);
+        return (frontier_len, max_parents, relax_level);
+    }
+    let group_max = match stall_streak {
+        0 => 4,
+        1 => 6,
+        _ => 8,
+    };
+    let max_parents = if stall_streak >= 2 {
+        (group_max / 2).clamp(1, 2)
+    } else if stall_streak == 1 {
+        3
+    } else {
+        2
+    };
+    (group_max, max_parents, relax_level)
+}
+
 fn reduce_material_dag(
     material_id: u8,
     mut active: Vec<usize>,
@@ -610,13 +659,8 @@ fn reduce_material_dag(
             continue;
         }
         let unified = active.len() <= 8 && deferred.is_empty();
-        let (group_max, max_parents) = match (unified, stall_streak) {
-            (true, _) => (frontier.len(), 4),
-            (false, 0) => (4, 2),
-            (false, 1) => (6, 3),
-            (false, 2) => (8, 4),
-            (false, _) => (12, 4),
-        };
+        let (group_max, max_parents, relax_level) =
+            reduction_schedule(unified, frontier.len(), stall_streak);
         let level_pos_count = count_pos_across_active(&active, nodes);
         let groups = group_frontier(&frontier, nodes, group_max, pass);
         let mut next_active = deferred;
@@ -627,7 +671,7 @@ fn reduce_material_dag(
             material_id,
             material_seams,
             base_step,
-            relax_mat_seams: stall_streak >= 2,
+            relax_level,
             max_parents,
             mark_pinned: false,
         };
@@ -664,7 +708,7 @@ fn reduce_material_dag(
         if !reduced_any {
             stall_streak += 1;
             pass += 1;
-            if stall_streak >= 5 {
+            if stall_streak >= 4 {
                 if need_min_lod && bridge_streak < 4 {
                     active = bridge_min_lod_nodes(
                         active,

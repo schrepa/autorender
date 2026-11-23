@@ -6,7 +6,7 @@ import package::nanite::common::PAGE_WORDS;
 import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::MAX_PHASE_CLUSTERS;
 import package::nanite::common::inst_to_world;
-import package::nanite::common::decode_pos;
+import package::nanite::common::decode_pos_u16;
 
 @group(1) @binding(0) var<uniform> hw_uniforms: NaniteUniforms;
 @group(1) @binding(1) var<storage, read> hw_instances: array<NaniteInstance>;
@@ -17,6 +17,17 @@ import package::nanite::common::decode_pos;
 struct HwOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) @interpolate(flat) vis_id: u32,
+}
+
+fn read_u24(base_word: u32, idx: u32) -> u32 {
+    let byte_off = idx * 3u;
+    let wi = base_word + (byte_off >> 2u);
+    let shift = (byte_off & 3u) * 8u;
+    var val = hw_page_heap[wi] >> shift;
+    if shift > 8u {
+        val |= hw_page_heap[wi + 1u] << (32u - shift);
+    }
+    return val & 0xFFFFFFu;
 }
 
 fn hw_vertex(vid: u32, list_idx: u32) -> HwOut {
@@ -37,11 +48,18 @@ fn hw_vertex(vid: u32, list_idx: u32) -> HwOut {
         bitcast<f32>(hw_page_heap[page_base + 2u]),
     );
     let step = bitcast<f32>(hw_page_heap[page_base + 3u]);
-    let verts_base = page_base + CLUSTER_HEADER_WORDS;
-    let tri_word = hw_page_heap[verts_base + vert_count * 4u + tri_id];
+    let pos_base = page_base + CLUSTER_HEADER_WORDS;
+    let tri_base = pos_base + ((vert_count * 3u + 1u) >> 1u);
+    let tri_word = read_u24(tri_base, tri_id);
     let local_vi = (tri_word >> (corner * 8u)) & 0xFFu;
-    let v_base = verts_base + local_vi * 4u;
-    let local_pos = decode_pos(hw_page_heap[v_base], hw_page_heap[v_base + 1u], origin, step);
+    let pwi = pos_base + ((local_vi * 3u) >> 1u);
+    let local_pos = decode_pos_u16(
+        hw_page_heap[pwi],
+        hw_page_heap[pwi + 1u],
+        (local_vi & 1u) != 0u,
+        origin,
+        step,
+    );
     let inst = hw_instances[vc.instance_id];
     let world_pos = inst_to_world(inst, local_pos);
     let clip_pos = hw_uniforms.render_view_proj * vec4<f32>(world_pos, 1.0);

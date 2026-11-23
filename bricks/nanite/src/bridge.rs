@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use engine::prelude::*;
 
-use crate::types::{NaniteConfig, NaniteTelemetry};
+use crate::types::{NaniteCamera, NaniteConfig, NaniteTelemetry};
 use crate::world::{NaniteStreaming, NaniteWorld, PageUpload};
 
 #[derive(Default)]
@@ -19,6 +19,8 @@ pub struct NaniteBridgeHandle(pub Arc<Mutex<NaniteBridge>>);
 
 pub fn pump_nanite_streaming(
     world: Res<NaniteWorld>,
+    cam: Res<NaniteCamera>,
+    views: Res<Views>,
     config: Res<NaniteConfig>,
     bridge: Res<NaniteBridgeHandle>,
     mut streaming: ResMut<NaniteStreaming>,
@@ -49,8 +51,29 @@ pub fn pump_nanite_streaming(
     }
 
     if let Some(priorities) = reqs {
-        let max_new = (config.max_pages_per_frame * 8).max(768);
+        let max_new = (config.max_pages_per_frame * 8).max(1024);
         streaming.ingest_gpu_requests(&world, &priorities, max_new);
+    }
+
+    if telemetry.page_faults == 0
+        && !streaming.has_pending_work()
+        && !world.instances.is_empty()
+    {
+        let render_scale = engine::math::clamp(config.render_scale, 0.25, 1.0);
+        let vp_h = engine::math::clamp(
+            (views.frame().display_size.y as f32 * render_scale).round(),
+            360.0,
+            1080.0,
+        );
+        let lod_scale = (vp_h * 0.5) * cam.cull_proj.y_axis.y.abs();
+        streaming.enqueue_prefetch_360(
+            &world,
+            cam.cull_pos,
+            cam.near_z,
+            lod_scale,
+            config.lod_preset.threshold_px(),
+            192,
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
