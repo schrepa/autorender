@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use engine::prelude::*;
-use engine_core::DeviceLimits;
+use engine_core::{DeviceLimits, GlobalTransforms};
 
+use crate::ecs::{NaniteEcsSync, NaniteMesh, sync_ecs_nanite_instances};
 use crate::stream::VisibleCutParams;
+use crate::streaming::{NaniteStreaming, PageUpload, Prefetch360Params};
 use crate::types::{NaniteCamera, NaniteConfig, NaniteTelemetry, extract_frustum_planes};
-use crate::world::{NaniteStreaming, NaniteWorld, PageUpload, Prefetch360Params};
+use crate::world::NaniteWorld;
 
 #[derive(Default)]
 pub struct NaniteBridge {
@@ -20,8 +22,11 @@ pub struct NaniteBridge {
 pub struct NaniteBridgeHandle(pub Arc<Mutex<NaniteBridge>>);
 
 #[derive(SystemParam)]
-pub struct PumpNanite<'w> {
-    world: Res<'w, NaniteWorld>,
+pub struct PumpNanite<'w, 's> {
+    world: ResMut<'w, NaniteWorld>,
+    ecs_sync: ResMut<'w, NaniteEcsSync>,
+    globals: Option<Res<'w, GlobalTransforms>>,
+    ecs_meshes: Query<'w, 's, (Entity, &'static NaniteMesh, &'static Transform)>,
     cam: Res<'w, NaniteCamera>,
     views: Res<'w, Views>,
     config: Res<'w, NaniteConfig>,
@@ -31,7 +36,13 @@ pub struct PumpNanite<'w> {
     telemetry: ResMut<'w, NaniteTelemetry>,
 }
 
-pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
+pub fn pump_nanite_streaming(mut p: PumpNanite<'_, '_>) {
+    sync_ecs_nanite_instances(
+        &mut p.world,
+        &mut p.ecs_sync,
+        p.globals.as_deref(),
+        &p.ecs_meshes,
+    );
     p.streaming.sync_world(&p.world);
     let budget_pages = p.config.effective_budget_pages(p.limits.storage_room);
     p.streaming.set_budget(budget_pages);

@@ -16,10 +16,9 @@ pub const HERO_ASSETS: [&str; 8] = [
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn populate_sanctuary(world: &mut NaniteWorld) {
-    world.instances.clear();
-    world.total_virtual_tris = 0;
+    world.clear_instances();
     let count = world.meshes.len() as u32;
     for mesh_id in 0..count {
-        world.add_instance(mesh_id, Vec3::ZERO, Quat::IDENTITY, 1.0);
+        let _ = world.add_instance(mesh_id, Vec3::ZERO, Quat::IDENTITY, 1.0);
     }
 }

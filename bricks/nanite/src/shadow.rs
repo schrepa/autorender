@@ -85,6 +85,9 @@ pub(crate) fn build_shadow_jobs(world: &NaniteWorld) -> (Vec<[u32; 2]>, u32, u32
         let Some(mesh) = world.meshes.get(inst.info[3] as usize) else {
             continue;
         };
+        if !mesh.alive {
+            continue;
+        }
         let [start, count] = mesh.shadow_c0_range;
         for &cid in world
             .shadow_cut_clusters
@@ -100,6 +103,9 @@ pub(crate) fn build_shadow_jobs(world: &NaniteWorld) -> (Vec<[u32; 2]>, u32, u32
         let Some(mesh) = world.meshes.get(inst.info[3] as usize) else {
             continue;
         };
+        if !mesh.alive {
+            continue;
+        }
         let [start, count] = mesh.shadow_c1_range;
         for &cid in world
             .shadow_cut_clusters

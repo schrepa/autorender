@@ -2,8 +2,9 @@ use engine::prelude::*;
 use engine_math::collections::HashMap;
 use engine_meshlet::{FLAG_DOUBLE_SIDED, NO_BVH_CHILD};
 
+use crate::streaming::PageFetchRequest;
 use crate::types::{GpuBvhNode, GpuClusterHeader, UNMAPPED_PAGE};
-use crate::world::{NaniteWorld, PageFetchRequest};
+use crate::world::NaniteWorld;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CoalesceConfig {

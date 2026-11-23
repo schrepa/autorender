@@ -1,0 +1,1038 @@
+use std::collections::VecDeque;
+
+use engine::prelude::*;
+use engine_math::collections::HashMap;
+use engine_meshlet::{PAGE_SIZE_BYTES, PAGE_WORDS, decompress_page_words};
+
+use crate::stream::{CutQuery, VisibleCutParams, collect_cut_pages};
+use crate::types::{MAX_HEAP_PAGES, UNMAPPED_PAGE};
+use crate::world::{MeshEntry, NaniteWorld};
+
+const DEFAULT_CACHE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
+const MIN_CACHE_BUDGET_BYTES: usize = PAGE_SIZE_BYTES * 64;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Prefetch360Params {
+    pub cam_pos: Vec3,
+    pub near_z: f32,
+    pub lod_scale: f32,
+    pub lod_thresh: f32,
+    pub max_pages: usize,
+    pub heap_fraction: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct PageFetchRequest {
+    pub mesh_id: u32,
+    pub mesh_name: String,
+    pub local_page_id: u32,
+    pub global_page_id: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub priority: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct PageUpload {
+    pub slot: u32,
+    pub global_page_id: u32,
+    pub words: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SlotRecord {
+    global_page_id: u32,
+    pinned: bool,
+    last_used_frame: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrefetchState {
+    last_pos: Vec3,
+    last_res_ver: u64,
+    last_tick: u64,
+    last_lod_bits: u64,
+    seeded_mesh_count: usize,
+    pump_ticks: u64,
+    has_walked: bool,
+    prefetch_only: bool,
+}
+
+impl Default for PrefetchState {
+    fn default() -> Self {
+        Self {
+            last_pos: Vec3::splat(f32::INFINITY),
+            last_res_ver: u64::MAX,
+            last_tick: 0,
+            last_lod_bits: 0,
+            seeded_mesh_count: 0,
+            pump_ticks: 0,
+            has_walked: false,
+            prefetch_only: false,
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct NaniteStreaming {
+    page_table: Vec<u32>,
+    slots: Vec<Option<SlotRecord>>,
+    in_flight: Vec<bool>,
+    pinned_mask: Vec<bool>,
+    ready_mask: Vec<bool>,
+    budget_pages: u32,
+    frame_tick: u64,
+    pending_requests: VecDeque<PageFetchRequest>,
+    pinned_requests: HashMap<u32, PageFetchRequest>,
+    ready_pages: VecDeque<(u32, Vec<u32>)>,
+    pending_decode: VecDeque<u32>,
+    compressed_cache: HashMap<u32, Vec<u8>>,
+    cache_touch: HashMap<u32, u64>,
+    cache_lru: VecDeque<(u32, u64)>,
+    cache_epoch: u64,
+    cache_bytes: usize,
+    cache_budget_bytes: usize,
+    pending_uploads: Vec<PageUpload>,
+    table_dirty: bool,
+    residency_version: u64,
+    initialized_pages: u32,
+    synced_mesh_count: usize,
+    synced_compact_epoch: u64,
+    prefetch: PrefetchState,
+}
+
+impl Default for NaniteStreaming {
+    fn default() -> Self {
+        Self {
+            page_table: Vec::new(),
+            slots: Vec::new(),
+            in_flight: Vec::new(),
+            pinned_mask: Vec::new(),
+            ready_mask: Vec::new(),
+            budget_pages: 0,
+            frame_tick: 0,
+            pending_requests: VecDeque::new(),
+            pinned_requests: HashMap::default(),
+            ready_pages: VecDeque::new(),
+            pending_decode: VecDeque::new(),
+            compressed_cache: HashMap::default(),
+            cache_touch: HashMap::default(),
+            cache_lru: VecDeque::new(),
+            cache_epoch: 0,
+            cache_bytes: 0,
+            cache_budget_bytes: DEFAULT_CACHE_BUDGET_BYTES,
+            pending_uploads: Vec::new(),
+            table_dirty: true,
+            residency_version: 0,
+            initialized_pages: 0,
+            synced_mesh_count: 0,
+            synced_compact_epoch: u64::MAX,
+            prefetch: PrefetchState::default(),
+        }
+    }
+}
+
+fn make_fetch_request(
+    mesh_id: u32,
+    mesh: &MeshEntry,
+    local_page_id: u32,
+    global_page_id: u32,
+    priority: u32,
+) -> PageFetchRequest {
+    let (byte_offset, byte_len) = match mesh.page_spans.get(local_page_id as usize) {
+        Some(span) => (span.byte_offset, u64::from(span.byte_len)),
+        None => (
+            u64::from(local_page_id) * (PAGE_SIZE_BYTES as u64),
+            PAGE_SIZE_BYTES as u64,
+        ),
+    };
+    PageFetchRequest {
+        mesh_id,
+        mesh_name: mesh.name.clone(),
+        local_page_id,
+        global_page_id,
+        byte_offset,
+        byte_len,
+        priority,
+    }
+}
+
+impl NaniteStreaming {
+    fn enqueue_mesh_range(&mut self, world: &NaniteWorld, start_mesh: usize) {
+        for (mesh_id, mesh) in world.meshes.iter().enumerate().skip(start_mesh) {
+            if !mesh.alive {
+                continue;
+            }
+            for local in 0..mesh.root_page_count {
+                let global = mesh.page_offset + local;
+                if let Some(flag) = self.pinned_mask.get_mut(global as usize) {
+                    *flag = true;
+                }
+                self.pinned_requests.insert(
+                    global,
+                    make_fetch_request(mesh_id as u32, mesh, local, global, u32::MAX),
+                );
+                self.enqueue_fetch(mesh_id as u32, mesh, local, global, u32::MAX);
+            }
+        }
+        for (mesh_id, mesh) in world.meshes.iter().enumerate().skip(start_mesh) {
+            if !mesh.alive {
+                continue;
+            }
+            let warm_end = mesh.page_count.min(mesh.root_page_count.saturating_add(2));
+            for local in mesh.root_page_count..warm_end {
+                let global = mesh.page_offset + local;
+                self.enqueue_fetch(mesh_id as u32, mesh, local, global, u32::MAX - 1);
+            }
+        }
+    }
+
+    pub fn sync_world(&mut self, world: &NaniteWorld) {
+        if self.synced_compact_epoch == world.compact_epoch
+            && self.initialized_pages == world.total_pages
+            && self.synced_mesh_count == world.meshes.len()
+            && !self.page_table.is_empty()
+        {
+            return;
+        }
+        let total = world.total_pages as usize;
+        let can_append = self.synced_compact_epoch == world.compact_epoch
+            && self.synced_mesh_count > 0
+            && world.meshes.len() >= self.synced_mesh_count
+            && world.total_pages >= self.initialized_pages
+            && !self.page_table.is_empty();
+        if can_append {
+            let start_mesh = self.synced_mesh_count;
+            self.page_table.resize(total.max(1), UNMAPPED_PAGE);
+            self.in_flight.resize(total, false);
+            self.pinned_mask.resize(total, false);
+            self.ready_mask.resize(total, false);
+            self.initialized_pages = world.total_pages;
+            self.synced_mesh_count = world.meshes.len();
+            self.table_dirty = true;
+            self.residency_version = self.residency_version.wrapping_add(1);
+            let seeded = self.prefetch.seeded_mesh_count;
+            let ticks = self.prefetch.pump_ticks;
+            self.prefetch = PrefetchState {
+                seeded_mesh_count: seeded,
+                pump_ticks: ticks,
+                ..PrefetchState::default()
+            };
+            self.enqueue_mesh_range(world, start_mesh);
+            return;
+        }
+        self.page_table = vec![UNMAPPED_PAGE; total.max(1)];
+        self.slots.fill(None);
+        self.in_flight = vec![false; total];
+        self.pinned_mask = vec![false; total];
+        self.ready_mask = vec![false; total];
+        self.pending_requests.clear();
+        self.pinned_requests.clear();
+        self.ready_pages.clear();
+        self.pending_decode.clear();
+        self.compressed_cache.clear();
+        self.cache_touch.clear();
+        self.cache_lru.clear();
+        self.cache_epoch = 0;
+        self.cache_bytes = 0;
+        self.pending_uploads.clear();
+        self.initialized_pages = world.total_pages;
+        self.synced_mesh_count = world.meshes.len();
+        self.synced_compact_epoch = world.compact_epoch;
+        self.table_dirty = true;
+        self.residency_version = self.residency_version.wrapping_add(1);
+        self.prefetch = PrefetchState::default();
+        self.enqueue_mesh_range(world, 0);
+    }
+
+    pub fn set_cache_budget_bytes(&mut self, bytes: usize) {
+        let clamped = bytes.max(MIN_CACHE_BUDGET_BYTES);
+        if self.cache_budget_bytes == clamped {
+            return;
+        }
+        self.cache_budget_bytes = clamped;
+        self.evict_compressed_cache();
+    }
+
+    pub fn set_budget(&mut self, budget_pages: u32) {
+        let clamped = budget_pages.clamp(16, MAX_HEAP_PAGES);
+        if self.slots.len() < clamped as usize {
+            self.slots.resize(clamped as usize, None);
+        }
+        if self.budget_pages == clamped {
+            return;
+        }
+        self.budget_pages = clamped;
+        for slot_idx in (clamped as usize)..self.slots.len() {
+            if let Some(rec) = self.slots[slot_idx]
+                && !rec.pinned
+            {
+                if let Some(entry) = self.page_table.get_mut(rec.global_page_id as usize) {
+                    *entry = UNMAPPED_PAGE;
+                }
+                self.slots[slot_idx] = None;
+                self.table_dirty = true;
+                self.residency_version = self.residency_version.wrapping_add(1);
+            }
+        }
+    }
+
+    fn compact_cache_lru(&mut self) {
+        let mut kept = VecDeque::with_capacity(self.compressed_cache.len());
+        while let Some((pid, epoch)) = self.cache_lru.pop_front() {
+            if self.cache_touch.get(&pid).copied() == Some(epoch) {
+                kept.push_back((pid, epoch));
+            }
+        }
+        self.cache_lru = kept;
+    }
+
+    fn touch_cache(&mut self, page_id: u32) {
+        self.cache_epoch = self.cache_epoch.wrapping_add(1);
+        let epoch = self.cache_epoch;
+        self.cache_touch.insert(page_id, epoch);
+        self.cache_lru.push_back((page_id, epoch));
+        let max_queue = self.compressed_cache.len().saturating_mul(4).max(1024);
+        if self.cache_lru.len() > max_queue {
+            self.compact_cache_lru();
+        }
+    }
+
+    fn remove_from_cache(&mut self, page_id: u32) {
+        self.cache_touch.remove(&page_id);
+        if let Some(prev) = self.compressed_cache.remove(&page_id) {
+            self.cache_bytes = self.cache_bytes.saturating_sub(prev.len());
+        }
+    }
+
+    fn evict_compressed_cache(&mut self) {
+        if self.cache_bytes <= self.cache_budget_bytes {
+            return;
+        }
+        let mut deferred = Vec::new();
+        while self.cache_bytes > self.cache_budget_bytes {
+            let Some((pid, epoch)) = self.cache_lru.pop_front() else {
+                break;
+            };
+            if self.cache_touch.get(&pid).copied() != Some(epoch) {
+                continue;
+            }
+            if self.ready_mask.get(pid as usize).copied().unwrap_or(false) {
+                deferred.push((pid, epoch));
+                continue;
+            }
+            self.cache_touch.remove(&pid);
+            if let Some(bytes) = self.compressed_cache.remove(&pid) {
+                self.cache_bytes = self.cache_bytes.saturating_sub(bytes.len());
+            }
+        }
+        for item in deferred.into_iter().rev() {
+            self.cache_lru.push_front(item);
+        }
+    }
+
+    fn insert_compressed_cache(&mut self, page_id: u32, compressed: Vec<u8>) {
+        let new_len = compressed.len();
+        if let Some(prev) = self.compressed_cache.insert(page_id, compressed) {
+            self.cache_bytes = self.cache_bytes.saturating_sub(prev.len());
+        }
+        self.cache_bytes = self.cache_bytes.saturating_add(new_len);
+        self.touch_cache(page_id);
+        self.evict_compressed_cache();
+    }
+
+    pub fn deliver_compressed_page(
+        &mut self,
+        global_page_id: u32,
+        compressed: Vec<u8>,
+        requested: bool,
+    ) {
+        let idx = global_page_id as usize;
+        if requested && let Some(flag) = self.in_flight.get_mut(idx) {
+            *flag = false;
+        }
+        if compressed.is_empty()
+            || compressed.len() > self.cache_budget_bytes
+            || idx >= self.page_table.len()
+            || idx >= self.ready_mask.len()
+        {
+            return;
+        }
+        let queue_decode =
+            requested && self.page_table[idx] == UNMAPPED_PAGE && !self.ready_mask[idx];
+        if queue_decode {
+            self.ready_mask[idx] = true;
+            if self.pinned_mask.get(idx).copied().unwrap_or(false) {
+                self.pending_decode.push_front(global_page_id);
+            } else {
+                self.pending_decode.push_back(global_page_id);
+            }
+        }
+        self.insert_compressed_cache(global_page_id, compressed);
+    }
+
+    pub fn deliver_page(&mut self, global_page_id: u32, words: Vec<u32>) {
+        let idx = global_page_id as usize;
+        if let Some(flag) = self.in_flight.get_mut(idx) {
+            *flag = false;
+        }
+        if words.len() != PAGE_WORDS
+            || idx >= self.page_table.len()
+            || idx >= self.ready_mask.len()
+            || self.page_table[idx] != UNMAPPED_PAGE
+            || self.ready_mask[idx]
+        {
+            return;
+        }
+        self.ready_mask[idx] = true;
+        self.ready_pages.push_back((global_page_id, words));
+    }
+
+    pub fn fail_page(&mut self, global_page_id: u32) {
+        let idx = global_page_id as usize;
+        if let Some(flag) = self.in_flight.get_mut(idx) {
+            *flag = false;
+        }
+        let is_pinned = self.pinned_mask.get(idx).copied().unwrap_or(false);
+        let is_unmapped = self.page_table.get(idx) == Some(&UNMAPPED_PAGE);
+        let is_ready = self.ready_mask.get(idx).copied().unwrap_or(false);
+        if !is_pinned || !is_unmapped || is_ready {
+            return;
+        }
+        if self
+            .pending_requests
+            .iter()
+            .any(|r| r.global_page_id == global_page_id)
+        {
+            return;
+        }
+        if let Some(req) = self.pinned_requests.get(&global_page_id) {
+            if let Some(flag) = self.in_flight.get_mut(idx) {
+                *flag = true;
+            }
+            let mut retry = req.clone();
+            retry.priority = u32::MAX;
+            self.pending_requests.push_back(retry);
+        }
+    }
+
+    pub fn take_fetch_requests(&mut self, limit: usize) -> Vec<PageFetchRequest> {
+        if self.pending_requests.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let slice = self.pending_requests.make_contiguous();
+        slice.sort_unstable_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.mesh_id.cmp(&b.mesh_id))
+                .then_with(|| a.local_page_id.cmp(&b.local_page_id))
+        });
+        let count = limit.min(self.pending_requests.len());
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            if let Some(req) = self.pending_requests.pop_front() {
+                out.push(req);
+            }
+        }
+        out
+    }
+
+    pub fn requeue_fetch_requests(&mut self, reqs: Vec<PageFetchRequest>) {
+        for req in reqs {
+            let idx = req.global_page_id as usize;
+            let mapped =
+                self.page_table.get(idx).copied().unwrap_or(UNMAPPED_PAGE) != UNMAPPED_PAGE;
+            let ready = self.ready_mask.get(idx).copied().unwrap_or(false);
+            if mapped || ready {
+                if let Some(flag) = self.in_flight.get_mut(idx) {
+                    *flag = false;
+                }
+                continue;
+            }
+            if let Some(flag) = self.in_flight.get_mut(idx) {
+                *flag = true;
+            }
+            self.pending_requests.push_back(req);
+        }
+    }
+
+    fn retain_pinned_pending(&mut self) {
+        let mut retained = VecDeque::with_capacity(self.pending_requests.len());
+        while let Some(req) = self.pending_requests.pop_front() {
+            let idx = req.global_page_id as usize;
+            let mapped =
+                self.page_table.get(idx).copied().unwrap_or(UNMAPPED_PAGE) != UNMAPPED_PAGE;
+            let ready = self.ready_mask.get(idx).copied().unwrap_or(false);
+            if req.priority >= u32::MAX - 1 && !mapped && !ready {
+                retained.push_back(req);
+            } else if let Some(flag) = self.in_flight.get_mut(idx) {
+                *flag = false;
+            }
+        }
+        self.pending_requests = retained;
+    }
+
+    fn prune_completed_pending(&mut self) {
+        let mut retained = VecDeque::with_capacity(self.pending_requests.len());
+        while let Some(req) = self.pending_requests.pop_front() {
+            let idx = req.global_page_id as usize;
+            let mapped =
+                self.page_table.get(idx).copied().unwrap_or(UNMAPPED_PAGE) != UNMAPPED_PAGE;
+            let ready = self.ready_mask.get(idx).copied().unwrap_or(false);
+            if !mapped && !ready {
+                retained.push_back(req);
+            } else if let Some(flag) = self.in_flight.get_mut(idx) {
+                *flag = false;
+            }
+        }
+        self.pending_requests = retained;
+    }
+
+    fn is_mesh_roots_ready(&self, mesh: &MeshEntry) -> bool {
+        if !mesh.alive {
+            return true;
+        }
+        (0..mesh.root_page_count).all(|local| {
+            let global = mesh.page_offset + local;
+            self.page_table
+                .get(global as usize)
+                .copied()
+                .unwrap_or(UNMAPPED_PAGE)
+                != UNMAPPED_PAGE
+        })
+    }
+
+    fn mesh_roots_ready(&self, world: &NaniteWorld) -> Vec<bool> {
+        world
+            .meshes
+            .iter()
+            .map(|mesh| self.is_mesh_roots_ready(mesh))
+            .collect()
+    }
+
+    fn count_outstanding(&self) -> usize {
+        let in_flight_unmapped = self
+            .in_flight
+            .iter()
+            .enumerate()
+            .filter(|&(pid, &active)| {
+                active
+                    && self.page_table.get(pid).copied().unwrap_or(UNMAPPED_PAGE) == UNMAPPED_PAGE
+                    && !self.ready_mask.get(pid).copied().unwrap_or(false)
+            })
+            .count();
+        let pending_not_flagged = self
+            .pending_requests
+            .iter()
+            .filter(|req| {
+                let pid = req.global_page_id as usize;
+                !self.in_flight.get(pid).copied().unwrap_or(false)
+                    && self.page_table.get(pid).copied().unwrap_or(UNMAPPED_PAGE) == UNMAPPED_PAGE
+                    && !self.ready_mask.get(pid).copied().unwrap_or(false)
+            })
+            .count();
+        self.ready_pages
+            .len()
+            .saturating_add(self.pending_decode.len())
+            .saturating_add(in_flight_unmapped)
+            .saturating_add(pending_not_flagged)
+    }
+
+    pub fn ingest_gpu_requests(
+        &mut self,
+        world: &NaniteWorld,
+        priorities: &[u32],
+        max_new_requests: usize,
+    ) {
+        self.frame_tick = self.frame_tick.wrapping_add(1);
+        let tick = self.frame_tick;
+        let total = (world.total_pages as usize).min(priorities.len());
+
+        let mut has_unmapped_fault = false;
+        for (page_id, &prio) in priorities.iter().enumerate().take(total) {
+            if prio == 0 {
+                continue;
+            }
+            let slot = self.page_table.get(page_id).copied().unwrap_or(UNMAPPED_PAGE);
+            if slot != UNMAPPED_PAGE {
+                if let Some(Some(rec)) = self.slots.get_mut(slot as usize) {
+                    rec.last_used_frame = tick;
+                }
+                continue;
+            }
+            if !has_unmapped_fault && !self.ready_mask.get(page_id).copied().unwrap_or(false) {
+                has_unmapped_fault = true;
+            }
+        }
+
+        if !has_unmapped_fault {
+            if self.prefetch.prefetch_only {
+                self.prune_completed_pending();
+                if !self.has_pending_work() {
+                    self.prefetch.prefetch_only = false;
+                }
+            } else {
+                self.retain_pinned_pending();
+            }
+            return;
+        }
+
+        self.prefetch.prefetch_only = false;
+        self.retain_pinned_pending();
+
+        let mut wanted: Vec<(u32, u32)> = Vec::new();
+        for (page_id, &prio) in priorities.iter().enumerate().take(total) {
+            if prio == 0 {
+                continue;
+            }
+            if self.page_table.get(page_id).copied().unwrap_or(UNMAPPED_PAGE) != UNMAPPED_PAGE
+                || self.in_flight.get(page_id).copied().unwrap_or(false)
+                || self.ready_mask.get(page_id).copied().unwrap_or(false)
+            {
+                continue;
+            }
+            wanted.push((prio, page_id as u32));
+        }
+        let evictable = self.count_evictable_slots();
+        let outstanding = self.count_outstanding();
+        let slot_headroom = evictable.saturating_sub(outstanding);
+        let pipeline_headroom = max_new_requests.saturating_sub(outstanding);
+        let mut remaining_slots = max_new_requests.min(slot_headroom).min(pipeline_headroom);
+        if remaining_slots == 0 {
+            return;
+        }
+        let mut remaining_queue = 1024_usize.saturating_sub(self.pending_requests.len());
+        wanted.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        for (prio, global_page_id) in wanted {
+            if remaining_slots == 0 {
+                break;
+            }
+            let idx = global_page_id as usize;
+            if self.compressed_cache.contains_key(&global_page_id) {
+                if idx < self.ready_mask.len() && !self.ready_mask[idx] {
+                    self.ready_mask[idx] = true;
+                    self.pending_decode.push_back(global_page_id);
+                    self.touch_cache(global_page_id);
+                    remaining_slots -= 1;
+                }
+                continue;
+            }
+            if remaining_queue == 0 {
+                continue;
+            }
+            if let Some((mesh_id, mesh, local_page_id)) = world.find_page_owner(global_page_id) {
+                self.enqueue_fetch(
+                    mesh_id,
+                    mesh,
+                    local_page_id,
+                    global_page_id,
+                    prio.min(u32::MAX - 2),
+                );
+                remaining_slots -= 1;
+                remaining_queue -= 1;
+            }
+        }
+    }
+
+    pub fn seed_visible_cut(
+        &mut self,
+        world: &NaniteWorld,
+        params: VisibleCutParams,
+        max_pages: usize,
+    ) -> usize {
+        self.prefetch.pump_ticks = self.prefetch.pump_ticks.saturating_add(1);
+        if self.prefetch.pump_ticks < 2
+            || self.prefetch.seeded_mesh_count >= world.meshes.len()
+            || world.instances.is_empty()
+            || max_pages == 0
+            || params.lod_scale <= 0.0
+        {
+            return 0;
+        }
+        let start_mesh = self.prefetch.seeded_mesh_count as u32;
+        self.prefetch.seeded_mesh_count = world.meshes.len();
+        let query = CutQuery {
+            cam_pos: params.cam_pos,
+            near_z: params.near_z,
+            lod_scale: params.lod_scale,
+            thresh: params.lod_thresh,
+            frustum_planes: Some(&params.frustum_planes),
+            start_mesh_id: start_mesh,
+            roots_ready: None,
+        };
+        let mut candidates = collect_cut_pages(
+            world,
+            &self.page_table,
+            &self.in_flight,
+            &self.ready_mask,
+            query,
+        );
+        if candidates.is_empty() {
+            return 0;
+        }
+        candidates.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        let evictable = self.count_evictable_slots();
+        let outstanding = self.count_outstanding();
+        let slot_headroom = evictable.saturating_sub(outstanding);
+        let queue_headroom = 1024_usize.saturating_sub(self.pending_requests.len());
+        let budget = max_pages.min(slot_headroom).min(queue_headroom);
+        let mut queued = 0_usize;
+        for (pid, mesh_id, score) in candidates {
+            if queued >= budget {
+                break;
+            }
+            let idx = pid as usize;
+            if self.compressed_cache.contains_key(&pid) {
+                if idx < self.ready_mask.len() && !self.ready_mask[idx] {
+                    self.ready_mask[idx] = true;
+                    self.pending_decode.push_back(pid);
+                    self.touch_cache(pid);
+                    queued += 1;
+                }
+                continue;
+            }
+            if let Some(mesh) = world.meshes.get(mesh_id as usize)
+                && mesh.alive
+            {
+                let local_pid = pid.saturating_sub(mesh.page_offset);
+                let prio = ((score * 64.0) as u32).saturating_add(1).clamp(2, 0x7FFF_FFFF);
+                self.enqueue_fetch(mesh_id, mesh, local_pid, pid, prio);
+                queued += 1;
+            }
+        }
+        if queued > 0 {
+            self.prefetch.prefetch_only = false;
+        }
+        queued
+    }
+
+    pub fn enqueue_prefetch_360(
+        &mut self,
+        world: &NaniteWorld,
+        params: Prefetch360Params,
+    ) -> usize {
+        let frac = if params.heap_fraction.is_finite() {
+            engine::math::clamp(params.heap_fraction, 0.0, 0.95)
+        } else {
+            0.0
+        };
+        if world.instances.is_empty()
+            || params.max_pages == 0
+            || params.lod_scale <= 0.0
+            || frac <= 0.0
+            || self.has_pending_work()
+        {
+            return 0;
+        }
+        let cap_pages = ((self.budget_pages as f32) * frac) as usize;
+        let resident = self.resident_count() as usize;
+        if resident >= cap_pages {
+            return 0;
+        }
+        let lod_bits = (u64::from(params.lod_scale.to_bits()) << 32)
+            | u64::from(params.lod_thresh.to_bits());
+        let moved = (params.cam_pos - self.prefetch.last_pos).length_squared() > 0.25;
+        let res_changed = self.residency_version != self.prefetch.last_res_ver;
+        let tick_due = self.frame_tick.saturating_sub(self.prefetch.last_tick) >= 8;
+        let lod_changed = lod_bits != self.prefetch.last_lod_bits;
+        if self.prefetch.has_walked && !moved && !res_changed && !tick_due && !lod_changed {
+            return 0;
+        }
+        self.prefetch.last_pos = params.cam_pos;
+        self.prefetch.last_res_ver = self.residency_version;
+        self.prefetch.last_tick = self.frame_tick;
+        self.prefetch.last_lod_bits = lod_bits;
+        self.prefetch.has_walked = true;
+
+        let roots_ready = self.mesh_roots_ready(world);
+        let base_query = CutQuery {
+            cam_pos: params.cam_pos,
+            near_z: params.near_z,
+            lod_scale: params.lod_scale,
+            thresh: params.lod_thresh * 2.0,
+            frustum_planes: None,
+            start_mesh_id: 0,
+            roots_ready: Some(&roots_ready),
+        };
+        let mut candidates = collect_cut_pages(
+            world,
+            &self.page_table,
+            &self.in_flight,
+            &self.ready_mask,
+            base_query,
+        );
+        if candidates.is_empty() {
+            candidates = collect_cut_pages(
+                world,
+                &self.page_table,
+                &self.in_flight,
+                &self.ready_mask,
+                CutQuery {
+                    thresh: params.lod_thresh,
+                    ..base_query
+                },
+            );
+        }
+        if candidates.is_empty() {
+            return 0;
+        }
+        candidates.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+
+        let budget = params.max_pages.min(cap_pages.saturating_sub(resident));
+        let mut queued = 0_usize;
+        for (pid, mesh_id, score) in candidates {
+            if queued >= budget {
+                break;
+            }
+            let idx = pid as usize;
+            if self.compressed_cache.contains_key(&pid) {
+                if idx < self.ready_mask.len() && !self.ready_mask[idx] {
+                    self.ready_mask[idx] = true;
+                    self.pending_decode.push_back(pid);
+                    self.touch_cache(pid);
+                    queued += 1;
+                }
+                continue;
+            }
+            if let Some(mesh) = world.meshes.get(mesh_id as usize)
+                && mesh.alive
+            {
+                let local_pid = pid.saturating_sub(mesh.page_offset);
+                let prio = ((score * 16.0) as u32).clamp(1, 0x0FFF_FFFF);
+                self.enqueue_fetch(mesh_id, mesh, local_pid, pid, prio);
+                queued += 1;
+            }
+        }
+        if queued > 0 {
+            self.prefetch.prefetch_only = true;
+        }
+        queued
+    }
+
+    fn install_page_in_slot(
+        &mut self,
+        global_page_id: u32,
+        slot: u32,
+        pinned: bool,
+        words: Vec<u32>,
+    ) {
+        if let Some(old) = self.slots[slot as usize]
+            && let Some(entry) = self.page_table.get_mut(old.global_page_id as usize)
+        {
+            *entry = UNMAPPED_PAGE;
+        }
+        self.slots[slot as usize] = Some(SlotRecord {
+            global_page_id,
+            pinned,
+            last_used_frame: self.frame_tick,
+        });
+        self.page_table[global_page_id as usize] = slot;
+        self.pending_uploads.push(PageUpload {
+            slot,
+            global_page_id,
+            words,
+        });
+        self.table_dirty = true;
+        self.residency_version = self.residency_version.wrapping_add(1);
+    }
+
+    pub fn commit_ready_pages(&mut self, max_uploads: usize) {
+        let mut uploaded = 0_usize;
+        while uploaded < max_uploads {
+            if let Some((global_page_id, words)) = self.ready_pages.pop_front() {
+                let idx = global_page_id as usize;
+                if let Some(flag) = self.ready_mask.get_mut(idx) {
+                    *flag = false;
+                }
+                if idx >= self.page_table.len() || self.page_table[idx] != UNMAPPED_PAGE {
+                    continue;
+                }
+                let pinned = self.pinned_mask.get(idx).copied().unwrap_or(false);
+                let Some(slot) = self.pick_slot(pinned) else {
+                    continue;
+                };
+                self.install_page_in_slot(global_page_id, slot, pinned, words);
+                uploaded += 1;
+                continue;
+            }
+            let Some(global_page_id) = self.pending_decode.pop_front() else {
+                break;
+            };
+            let idx = global_page_id as usize;
+            if let Some(flag) = self.ready_mask.get_mut(idx) {
+                *flag = false;
+            }
+            if idx >= self.page_table.len() || self.page_table[idx] != UNMAPPED_PAGE {
+                continue;
+            }
+            let pinned = self.pinned_mask.get(idx).copied().unwrap_or(false);
+            let Some(slot) = self.pick_slot(pinned) else {
+                continue;
+            };
+            let decoded = self
+                .compressed_cache
+                .get(&global_page_id)
+                .and_then(|bytes| decompress_page_words(bytes).ok())
+                .filter(|w| w.len() == PAGE_WORDS);
+            let Some(words) = decoded else {
+                self.remove_from_cache(global_page_id);
+                self.fail_page(global_page_id);
+                continue;
+            };
+            self.touch_cache(global_page_id);
+            self.install_page_in_slot(global_page_id, slot, pinned, words);
+            uploaded += 1;
+        }
+    }
+
+    fn count_evictable_slots(&self) -> usize {
+        let limit = (self.budget_pages as usize).min(self.slots.len());
+        let stale_cutoff = self.frame_tick.saturating_sub(1);
+        self.slots
+            .iter()
+            .take(limit)
+            .filter(|slot| {
+                slot.is_none_or(|rec| !rec.pinned && rec.last_used_frame < stale_cutoff)
+            })
+            .count()
+    }
+
+    fn pick_slot(&self, allow_active_evict: bool) -> Option<u32> {
+        let limit = (self.budget_pages as usize).min(self.slots.len());
+        for (idx, slot) in self.slots.iter().enumerate().take(limit) {
+            if slot.is_none() {
+                return Some(idx as u32);
+            }
+        }
+        let stale_cutoff = self.frame_tick.saturating_sub(1);
+        let mut best_idx = None;
+        let mut best_age = u64::MAX;
+        for (idx, slot) in self.slots.iter().enumerate().take(limit) {
+            if let Some(rec) = slot
+                && !rec.pinned
+                && (allow_active_evict || rec.last_used_frame < stale_cutoff)
+                && rec.last_used_frame < best_age
+            {
+                best_age = rec.last_used_frame;
+                best_idx = Some(idx as u32);
+            }
+        }
+        best_idx
+    }
+
+    fn enqueue_fetch(
+        &mut self,
+        mesh_id: u32,
+        mesh: &MeshEntry,
+        local_page_id: u32,
+        global_page_id: u32,
+        priority: u32,
+    ) {
+        let idx = global_page_id as usize;
+        if self.page_table.get(idx).copied().unwrap_or(UNMAPPED_PAGE) != UNMAPPED_PAGE {
+            return;
+        }
+        if self.ready_mask.get(idx).copied().unwrap_or(false) {
+            return;
+        }
+        if let Some(flag) = self.in_flight.get_mut(idx) {
+            if *flag {
+                return;
+            }
+            *flag = true;
+        }
+        self.pending_requests.push_back(make_fetch_request(
+            mesh_id,
+            mesh,
+            local_page_id,
+            global_page_id,
+            priority,
+        ));
+    }
+
+    pub fn take_uploads(&mut self) -> Vec<PageUpload> {
+        std::mem::take(&mut self.pending_uploads)
+    }
+
+    #[must_use]
+    pub fn page_table(&self) -> &[u32] {
+        &self.page_table
+    }
+
+    pub fn take_table_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.table_dirty)
+    }
+
+    #[must_use]
+    pub fn residency_version(&self) -> u64 {
+        self.residency_version
+    }
+
+    #[must_use]
+    pub fn resident_count(&self) -> u32 {
+        self.slots.iter().filter(|s| s.is_some()).count() as u32
+    }
+
+    #[must_use]
+    pub fn pinned_count(&self) -> u32 {
+        self.slots
+            .iter()
+            .filter(|s| s.is_some_and(|rec| rec.pinned))
+            .count() as u32
+    }
+
+    #[must_use]
+    pub fn pending_fetch_count(&self) -> u32 {
+        self.in_flight.iter().filter(|&&v| v).count() as u32
+    }
+
+    #[must_use]
+    pub fn pending_request_count(&self) -> u32 {
+        self.pending_requests.len() as u32
+    }
+
+    #[must_use]
+    pub fn ready_page_count(&self) -> u32 {
+        self.ready_pages
+            .len()
+            .saturating_add(self.pending_decode.len()) as u32
+    }
+
+    #[must_use]
+    pub fn has_pending_work(&self) -> bool {
+        !self.pending_requests.is_empty()
+            || !self.ready_pages.is_empty()
+            || !self.pending_decode.is_empty()
+            || self.in_flight.iter().any(|&v| v)
+    }
+
+    #[must_use]
+    pub fn is_prefetch_only(&self) -> bool {
+        self.prefetch.prefetch_only
+    }
+
+    #[must_use]
+    pub fn has_evictable_slots(&self) -> bool {
+        self.count_evictable_slots() > 0
+    }
+
+    #[must_use]
+    pub fn all_roots_resident(&self, world: &NaniteWorld) -> bool {
+        let mut any_alive = false;
+        for mesh in &world.meshes {
+            if !mesh.alive {
+                continue;
+            }
+            any_alive = true;
+            if !self.is_mesh_roots_ready(mesh) {
+                return false;
+            }
+        }
+        any_alive
+    }
+
+    #[must_use]
+    pub fn budget_pages(&self) -> u32 {
+        self.budget_pages
+    }
+}
