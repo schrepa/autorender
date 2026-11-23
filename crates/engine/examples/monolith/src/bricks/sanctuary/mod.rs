@@ -5,8 +5,10 @@ use std::io::{Read as _, Seek as _, SeekFrom};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-use brick_nanite::NaniteWorld;
+use brick_nanite::{NaniteConfig, NaniteStreaming, NaniteWorld};
 use engine::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use engine_core::DeviceLimits;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_meshlet::MeshletManifest;
 
@@ -24,6 +26,12 @@ struct NativeHdSource {
     path: Option<PathBuf>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource, Default)]
+struct NativePageStore {
+    files: Vec<Option<std::fs::File>>,
+}
+
 pub struct SanctuaryBrick;
 
 impl Brick for SanctuaryBrick {
@@ -36,7 +44,9 @@ impl Brick for SanctuaryBrick {
             .resource::<GiUploadBridge>()
             .systems(Schedule::BeforeTicks, load_sanctuary_assets);
         #[cfg(not(target_arch = "wasm32"))]
-        bricks.resource::<NativeHdSource>();
+        bricks
+            .resource::<NativeHdSource>()
+            .resource::<NativePageStore>();
     }
 }
 
@@ -75,19 +85,58 @@ fn pump_native_hd(pbr: &mut PbrTexturePack, hd_path: &PathBuf) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_sanctuary_assets(
-    mut world: ResMut<NaniteWorld>,
-    mut pbr: ResMut<PbrTexturePack>,
-    pbr_bridge: Res<PbrUploadBridge>,
-    gi_bridge: Res<GiUploadBridge>,
-    mut hd_src: ResMut<NativeHdSource>,
-    mut state: ResMut<MonolithState>,
+fn pump_native_pages(
+    streaming: &mut NaniteStreaming,
+    store: &mut NativePageStore,
+    budget: usize,
 ) {
-    if !state.assets_loaded {
+    let reqs = streaming.take_fetch_requests(budget);
+    for req in reqs {
+        let len = req.byte_len as usize;
+        if len == 0 {
+            streaming.fail_page(req.global_page_id);
+            continue;
+        }
+        let Some(Some(file)) = store.files.get_mut(req.mesh_id as usize) else {
+            streaming.fail_page(req.global_page_id);
+            continue;
+        };
+        if file.seek(SeekFrom::Start(req.byte_offset)).is_err() {
+            streaming.fail_page(req.global_page_id);
+            continue;
+        }
+        let mut buf = vec![0u8; len];
+        if file.read_exact(&mut buf).is_err() {
+            streaming.fail_page(req.global_page_id);
+            continue;
+        }
+        streaming.deliver_compressed_page(req.global_page_id, buf, true);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(SystemParam)]
+struct NativeSanctuary<'w> {
+    world: ResMut<'w, NaniteWorld>,
+    streaming: ResMut<'w, NaniteStreaming>,
+    cfg: ResMut<'w, NaniteConfig>,
+    pbr: ResMut<'w, PbrTexturePack>,
+    pbr_bridge: Res<'w, PbrUploadBridge>,
+    gi_bridge: Res<'w, GiUploadBridge>,
+    hd_src: ResMut<'w, NativeHdSource>,
+    page_store: ResMut<'w, NativePageStore>,
+    state: ResMut<'w, MonolithState>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_sanctuary_assets(mut p: NativeSanctuary<'_>) {
+    if !p.state.assets_loaded {
         let Some(dir) = find_asset_dir() else {
             return;
         };
-        world.clear();
+        p.cfg.compressed_cache_mb = 192;
+        p.world.clear();
+        p.page_store.files.clear();
         for stem in HERO_ASSETS {
             let mlm_path = dir.join(format!("{stem}.mlm"));
             let mlp_path = dir.join(format!("{stem}.mlp"));
@@ -97,30 +146,36 @@ fn load_sanctuary_assets(
             let Ok(manifest) = MeshletManifest::from_bytes(&bytes) else {
                 return;
             };
-            world.add_mesh(stem, &manifest, Some(mlp_path));
+            let mesh_id = p.world.add_mesh(stem, &manifest) as usize;
+            if p.page_store.files.len() <= mesh_id {
+                p.page_store.files.resize_with(mesh_id + 1, || None);
+            }
+            p.page_store.files[mesh_id] = std::fs::File::open(&mlp_path).ok();
         }
-        populate_sanctuary(&mut world);
+        populate_sanctuary(&mut p.world);
+        p.streaming.sync_world(&p.world);
         if let Ok(gi_bytes) = std::fs::read(dir.join("sponza_gi.bin")) {
-            let _ = submit_gi_bytes(&gi_bridge, &gi_bytes);
+            let _ = submit_gi_bytes(&p.gi_bridge, &gi_bytes);
         }
-        if !pbr.pack_loaded
+        if !p.pbr.pack_loaded
             && let Ok(base_bytes) = std::fs::read(dir.join("sponza_pbr_base.bin"))
         {
-            let supports_bc = pbr_bridge.0.lock().is_ok_and(|q| q.supports_bc);
-            let _ = pbr.load_base_bytes(base_bytes, supports_bc);
+            let supports_bc = p.pbr_bridge.0.lock().is_ok_and(|q| q.supports_bc);
+            let _ = p.pbr.load_base_bytes(base_bytes, supports_bc);
         }
         let hd_file = dir.join("sponza_pbr_hd.bin");
         if hd_file.is_file() {
-            hd_src.path = Some(hd_file);
+            p.hd_src.path = Some(hd_file);
         }
-        state.assets_loaded = true;
+        p.state.assets_loaded = true;
     }
-    pbr.pump_uploads(&pbr_bridge, 14);
-    if pbr.base_done
-        && let Some(hd_path) = hd_src.path.as_ref()
+    pump_native_pages(&mut p.streaming, &mut p.page_store, p.cfg.max_pages_per_frame);
+    p.pbr.pump_uploads(&p.pbr_bridge, 14);
+    if p.pbr.base_done
+        && let Some(hd_path) = p.hd_src.path.as_ref()
     {
-        pump_native_hd(&mut pbr, hd_path);
-        pbr.pump_uploads(&pbr_bridge, 0);
+        pump_native_hd(&mut p.pbr, hd_path);
+        p.pbr.pump_uploads(&p.pbr_bridge, 0);
     }
 }
 
@@ -339,6 +394,7 @@ mod web_loader {
 
     #[derive(Default)]
     struct WebState {
+        config_applied: bool,
         fetches_started: bool,
         decor_fetches_started: bool,
         ready_manifests: VecDeque<(usize, MeshletManifest)>,
@@ -843,26 +899,57 @@ mod web_loader {
         let allow_mid = allow_hi || mid_pbr_active;
         pump_pbr_hd(pbr, allow_mid, allow_hi);
     }
+
+    pub(super) fn configure_nanite(
+        cfg: &mut brick_nanite::NaniteConfig,
+        limits: &engine_core::DeviceLimits,
+    ) {
+        let should_apply = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            if st.config_applied {
+                return false;
+            }
+            st.config_applied = true;
+            true
+        });
+        if !should_apply {
+            return;
+        }
+        cfg.lod_error_scale = 1.5;
+        cfg.compressed_cache_mb = 64;
+        if limits.storage_room > 0 && limits.storage_room <= 128 * 1024 * 1024 {
+            cfg.max_heap_mb = 64;
+            let cap = cfg.effective_heap_cap_pages(limits.storage_room);
+            cfg.heap_budget = cfg.heap_budget.clamp_to_pages(cap);
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn load_sanctuary_assets(
-    world: ResMut<NaniteWorld>,
-    streaming: ResMut<brick_nanite::NaniteStreaming>,
-    tel: Res<brick_nanite::NaniteTelemetry>,
-    mut pbr: ResMut<PbrTexturePack>,
-    pbr_bridge: Res<PbrUploadBridge>,
-    gi_bridge: Res<GiUploadBridge>,
-    state: ResMut<MonolithState>,
-) {
+#[derive(SystemParam)]
+struct WebSanctuary<'w> {
+    world: ResMut<'w, NaniteWorld>,
+    streaming: ResMut<'w, NaniteStreaming>,
+    cfg: ResMut<'w, NaniteConfig>,
+    limits: Res<'w, DeviceLimits>,
+    tel: Res<'w, brick_nanite::NaniteTelemetry>,
+    pbr: ResMut<'w, PbrTexturePack>,
+    pbr_bridge: Res<'w, PbrUploadBridge>,
+    gi_bridge: Res<'w, GiUploadBridge>,
+    state: ResMut<'w, MonolithState>,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_sanctuary_assets(mut p: WebSanctuary<'_>) {
+    web_loader::configure_nanite(&mut p.cfg, &p.limits);
     web_loader::pump(
-        world,
-        streaming,
-        &tel,
-        &mut pbr,
-        &pbr_bridge,
-        &gi_bridge,
-        state,
+        p.world,
+        p.streaming,
+        &p.tel,
+        &mut p.pbr,
+        &p.pbr_bridge,
+        &p.gi_bridge,
+        p.state,
     );
-    pbr.pump_uploads(&pbr_bridge, 4);
+    p.pbr.pump_uploads(&p.pbr_bridge, 4);
 }

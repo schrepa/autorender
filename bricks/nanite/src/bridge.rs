@@ -4,10 +4,8 @@ use engine::prelude::*;
 use engine_core::DeviceLimits;
 
 use crate::stream::VisibleCutParams;
-use crate::types::{
-    NaniteCamera, NaniteConfig, NaniteTelemetry, extract_frustum_planes, safe_heap_pages,
-};
-use crate::world::{NaniteStreaming, NaniteWorld, PageUpload};
+use crate::types::{NaniteCamera, NaniteConfig, NaniteTelemetry, extract_frustum_planes};
+use crate::world::{NaniteStreaming, NaniteWorld, PageUpload, Prefetch360Params};
 
 #[derive(Default)]
 pub struct NaniteBridge {
@@ -35,9 +33,11 @@ pub struct PumpNanite<'w> {
 
 pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
     p.streaming.sync_world(&p.world);
-    let heap_cap = safe_heap_pages(p.limits.storage_room);
+    let heap_cap = p.config.effective_heap_cap_pages(p.limits.storage_room);
     p.streaming
         .set_budget(p.config.heap_budget.pages().min(heap_cap));
+    p.streaming
+        .set_cache_budget_bytes((p.config.compressed_cache_mb as usize).saturating_mul(1024 * 1024));
 
     let (stats, reqs) = match p.bridge.0.lock() {
         Ok(mut guard) => (guard.latest_stats.take(), guard.latest_requests.take()),
@@ -67,13 +67,14 @@ pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
         1080.0,
     );
     let lod_scale = (vp_h * 0.5) * p.cam.cull_proj.y_axis.y.abs();
+    let lod_thresh = p.config.effective_lod_threshold_px();
     let max_new = (p.config.max_pages_per_frame * 8).max(1024);
 
     if let Some(priorities) = reqs {
         p.streaming.ingest_gpu_requests(&p.world, &priorities, max_new);
     }
 
-    if !p.world.instances.is_empty() {
+    if !p.world.instances.is_empty() && p.config.initial_cut_seed_pages > 0 {
         let cull_vp = p.cam.cull_proj * p.cam.cull_view;
         p.streaming.seed_visible_cut(
             &p.world,
@@ -81,30 +82,32 @@ pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
                 cam_pos: p.cam.cull_pos,
                 near_z: p.cam.near_z,
                 lod_scale,
-                lod_thresh: p.config.lod_preset.threshold_px() * 2.0,
+                lod_thresh: lod_thresh * 2.0,
                 frustum_planes: extract_frustum_planes(cull_vp),
                 double_sided_materials: p.config.double_sided_materials,
             },
-            192,
+            p.config.initial_cut_seed_pages,
         );
     }
 
     if p.telemetry.page_faults == 0
         && !p.streaming.has_pending_work()
         && !p.world.instances.is_empty()
+        && p.config.prefetch_360_pages > 0
+        && p.config.prefetch_360_heap_fraction > 0.0
     {
         p.streaming.enqueue_prefetch_360(
             &p.world,
-            p.cam.cull_pos,
-            p.cam.near_z,
-            lod_scale,
-            p.config.lod_preset.threshold_px(),
-            192,
+            Prefetch360Params {
+                cam_pos: p.cam.cull_pos,
+                near_z: p.cam.near_z,
+                lod_scale,
+                lod_thresh,
+                max_pages: p.config.prefetch_360_pages,
+                heap_fraction: p.config.prefetch_360_heap_fraction,
+            },
         );
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    p.streaming.pump_native_io(p.config.max_pages_per_frame);
 
     p.streaming.commit_ready_pages(p.config.max_pages_per_frame);
 

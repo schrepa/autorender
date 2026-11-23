@@ -15,7 +15,7 @@ use crate::types::{
     MAX_HEAP_PAGES, MAX_HIZ_MIPS, MAX_OCC_CLUSTERS, MAX_OCC_INSTANCES, MAX_PHASE_CLUSTERS,
     MAX_VIS_CLUSTERS, NaniteCamera, NaniteConfig, NaniteInstance, NaniteUniforms, SHADOW_C0_DIM,
     SHADOW_C1_DIM, SHADOW_LIST_CAP, VisibleCluster, extract_frustum_planes, hiz_dimensions,
-    mip_extent, safe_heap_pages,
+    mip_extent,
 };
 use crate::world::NaniteWorld;
 use crate::NANITE_VIS_HW;
@@ -781,10 +781,9 @@ impl NaniteGpu {
     fn alloc_static_and_scratch(
         &mut self,
         world: &NaniteWorld,
-        storage_room: u64,
+        heap_pages: u32,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let heap_pages = safe_heap_pages(storage_room);
         self.heap_cap_pages = heap_pages;
         let _ = cx.allocate_buffer(self.buf.uniforms, size_of::<NaniteUniforms>() as u64);
         let _ = cx.allocate_buffer(self.buf.hiz_info, size_of::<HizBuildInfo>() as u64);
@@ -1268,7 +1267,8 @@ impl GpuPart for NaniteGpu {
         (world, cam, cfg, bridge, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.alloc_static_and_scratch(&world, limits.storage_room, cx);
+        let heap_pages = cfg.effective_heap_cap_pages(limits.storage_room);
+        self.alloc_static_and_scratch(&world, heap_pages, cx);
         self.sync_bridge(&bridge, cx);
         let (cw, ch, mw, mh, mips) = self.prepare_screen_targets(&cfg, cx);
 
@@ -1282,7 +1282,8 @@ impl GpuPart for NaniteGpu {
         let render_vp = cam.render_proj * cam.render_view;
         let cull_vp = cam.cull_proj * cam.cull_view;
         let cull_vp_cols = cull_vp.to_cols_array_2d();
-        let lod_bits = cfg.lod_preset.threshold_px().to_bits();
+        let lod_thresh = cfg.effective_lod_threshold_px();
+        let lod_bits = lod_thresh.to_bits();
         let camera_same = mat4_bits_eq(&cull_vp_cols, &self.last_cull_vp);
         let state_same = lod_bits == self.last_lod_bits
             && cfg.hw_only == self.last_hw_only
@@ -1323,7 +1324,7 @@ impl GpuPart for NaniteGpu {
             inv_render_vp: render_vp.inverse().to_cols_array_2d(),
             cull_pos_near: [cam.cull_pos.x, cam.cull_pos.y, cam.cull_pos.z, cam.near_z],
             render_pos_time: [cam.render_pos.x, cam.render_pos.y, cam.render_pos.z, cam.sim_time],
-            viewport_lod: [cw as f32, ch as f32, lod_scale, cfg.lod_preset.threshold_px()],
+            viewport_lod: [cw as f32, ch as f32, lod_scale, lod_thresh],
             hiz_params: [mw as f32, mh as f32, mips as f32, cfg.sw_max_px],
             counts: [self.instance_count, self.cluster_count, self.page_count, self.frame_gen],
             flags: [

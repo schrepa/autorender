@@ -2,7 +2,7 @@ engine::brick!(dock);
 
 mod font;
 
-use brick_nanite::{NaniteConfig, NaniteTelemetry, ViewMode, safe_heap_pages};
+use brick_nanite::{NaniteConfig, NaniteTelemetry, ViewMode};
 use engine::math;
 use engine::prelude::*;
 use engine_core::{
@@ -437,7 +437,7 @@ fn update_dock(mut p: DockParams<'_>) {
         if let Some(idx) = p.dock.pressed_idx.take()
             && hovered_idx == Some(idx)
         {
-            let heap_cap = safe_heap_pages(p.limits.storage_room);
+            let heap_cap = p.cfg.effective_heap_cap_pages(p.limits.storage_room);
             apply_action(&mut p.state, &mut p.cfg, layout.items[idx].action, heap_cap);
             layout = compute_layout(&p.state, &p.cfg, safe, dpr, logical_w);
         }

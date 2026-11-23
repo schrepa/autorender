@@ -2,7 +2,7 @@ engine::brick!(control);
 
 use brick_nanite::{
     HeapBudget, LodPreset, NaniteCamera, NaniteConfig, NaniteTelemetry, ViewMode,
-    reverse_z_infinite_proj, safe_heap_pages,
+    reverse_z_infinite_proj,
 };
 use engine::math;
 use engine::prelude::*;
@@ -621,7 +621,7 @@ fn update_control(
         apply_dev_control(dev, &mut state, &mut cfg, &mut rig);
     }
 
-    let heap_cap_pages = safe_heap_pages(input.limits.storage_room);
+    let heap_cap_pages = cfg.effective_heap_cap_pages(input.limits.storage_room);
     handle_shortcuts(&input.devices, &mut state, &mut cfg, heap_cap_pages);
     cfg.heap_budget = cfg.heap_budget.clamp_to_pages(heap_cap_pages);
     if cfg.view_mode != rig.last_view_mode {

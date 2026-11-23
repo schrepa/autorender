@@ -22,7 +22,9 @@ pub use types::{
     SHADOW_C1_DIM, UNMAPPED_PAGE, ViewMode, VisibleCluster, extract_frustum_planes,
     reverse_z_infinite_proj, safe_heap_pages,
 };
-pub use world::{MeshEntry, NaniteStreaming, NaniteWorld, PageFetchRequest, PageUpload};
+pub use world::{
+    MeshEntry, NaniteStreaming, NaniteWorld, PageFetchRequest, PageUpload, Prefetch360Params,
+};
 
 pub const NANITE_VIS_HW: TargetName = TargetName("nanite_vis_hw");
 

@@ -134,31 +134,17 @@ impl HeapBudget {
 #[must_use]
 pub const fn safe_heap_pages(storage_room: u64) -> u32 {
     let page_bytes = engine_meshlet::PAGE_SIZE_BYTES as u64;
-    let max_bytes = (MAX_HEAP_PAGES as u64) * page_bytes;
-    let room = if storage_room == 0 {
-        max_bytes
-    } else if cfg!(target_arch = "wasm32") && storage_room <= 128 * 1024 * 1024 {
-        storage_room / 2
-    } else {
-        storage_room
-    };
-    let pages = room / page_bytes;
-    let hard_cap = if storage_room == 0 {
-        MAX_HEAP_PAGES as u64
-    } else {
-        storage_room / page_bytes
-    };
-    let clamped = if pages > MAX_HEAP_PAGES as u64 {
-        MAX_HEAP_PAGES as u64
+    let max_pages = MAX_HEAP_PAGES as u64;
+    if storage_room == 0 {
+        return MAX_HEAP_PAGES;
+    }
+    let pages = storage_room / page_bytes;
+    if pages > max_pages {
+        MAX_HEAP_PAGES
     } else if pages < 64 {
         64
     } else {
-        pages
-    };
-    if clamped > hard_cap && hard_cap >= 64 {
-        hard_cap as u32
-    } else {
-        clamped as u32
+        pages as u32
     }
 }
 
@@ -175,26 +161,8 @@ impl LodPreset {
     pub const fn threshold_px(self) -> f32 {
         match self {
             Self::Px1 => 1.0,
-            Self::Px2 => {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    3.0
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    2.0
-                }
-            }
-            Self::Px4 => {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    5.0
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    4.0
-                }
-            }
+            Self::Px2 => 2.0,
+            Self::Px4 => 4.0,
         }
     }
 
@@ -337,11 +305,17 @@ impl Default for NaniteCamera {
 pub struct NaniteConfig {
     pub view_mode: ViewMode,
     pub heap_budget: HeapBudget,
+    pub max_heap_mb: u32,
     pub lod_preset: LodPreset,
+    pub lod_error_scale: f32,
     pub freeze_culling: bool,
     pub hw_only: bool,
     pub sw_max_px: f32,
     pub max_pages_per_frame: usize,
+    pub compressed_cache_mb: u32,
+    pub initial_cut_seed_pages: usize,
+    pub prefetch_360_pages: usize,
+    pub prefetch_360_heap_fraction: f32,
     pub shadows_enabled: bool,
     pub render_scale: f32,
     pub shadow_c0_half: f32,
@@ -353,16 +327,53 @@ pub struct NaniteConfig {
     pub double_sided_materials: u32,
 }
 
+impl NaniteConfig {
+    #[must_use]
+    pub fn effective_lod_threshold_px(&self) -> f32 {
+        let scale = if self.lod_error_scale.is_finite() && self.lod_error_scale > 0.0 {
+            self.lod_error_scale
+        } else {
+            1.0
+        };
+        engine::math::max(self.lod_preset.threshold_px() * scale, 0.25)
+    }
+
+    #[must_use]
+    pub const fn effective_heap_cap_pages(&self, storage_room: u64) -> u32 {
+        let hw_cap = safe_heap_pages(storage_room);
+        let cfg_pages = ((self.max_heap_mb as u64) * 1024 * 1024)
+            / (engine_meshlet::PAGE_SIZE_BYTES as u64);
+        let cfg_clamped = if cfg_pages < 64 {
+            64
+        } else if cfg_pages > MAX_HEAP_PAGES as u64 {
+            MAX_HEAP_PAGES
+        } else {
+            cfg_pages as u32
+        };
+        if cfg_clamped < hw_cap {
+            cfg_clamped
+        } else {
+            hw_cap
+        }
+    }
+}
+
 impl Default for NaniteConfig {
     fn default() -> Self {
         Self {
             view_mode: ViewMode::Lit,
             heap_budget: HeapBudget::Mb128,
+            max_heap_mb: 128,
             lod_preset: LodPreset::Px2,
+            lod_error_scale: 1.0,
             freeze_culling: false,
             hw_only: true,
             sw_max_px: 2.0,
             max_pages_per_frame: 96,
+            compressed_cache_mb: 128,
+            initial_cut_seed_pages: 192,
+            prefetch_360_pages: 192,
+            prefetch_360_heap_fraction: 0.75,
             shadows_enabled: true,
             render_scale: 1.0,
             shadow_c0_half: 14.0,

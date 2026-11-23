@@ -1,10 +1,4 @@
 use std::collections::VecDeque;
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs::File;
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::{Read as _, Seek as _, SeekFrom};
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 
 use engine::prelude::*;
 use engine_math::collections::HashMap;
@@ -18,10 +12,18 @@ use crate::types::{
     GpuBvhNode, GpuClusterHeader, MAX_HEAP_PAGES, NaniteInstance, UNMAPPED_PAGE,
 };
 
-#[cfg(target_arch = "wasm32")]
-const DEFAULT_CACHE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
-#[cfg(not(target_arch = "wasm32"))]
-const DEFAULT_CACHE_BUDGET_BYTES: usize = 192 * 1024 * 1024;
+const DEFAULT_CACHE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
+const MIN_CACHE_BUDGET_BYTES: usize = PAGE_SIZE_BYTES * 64;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Prefetch360Params {
+    pub cam_pos: Vec3,
+    pub near_z: f32,
+    pub lod_scale: f32,
+    pub lod_thresh: f32,
+    pub max_pages: usize,
+    pub heap_fraction: f32,
+}
 
 #[derive(Clone, Debug)]
 pub struct MeshEntry {
@@ -37,8 +39,6 @@ pub struct MeshEntry {
     pub bound_sphere: [f32; 4],
     pub shadow_c0_range: [u32; 2],
     pub shadow_c1_range: [u32; 2],
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mlp_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -283,7 +283,6 @@ impl NaniteWorld {
         &mut self,
         name: impl Into<String>,
         manifest: &MeshletManifest,
-        #[cfg(not(target_arch = "wasm32"))] mlp_path: Option<PathBuf>,
     ) -> u32 {
         let mesh_id = self.meshes.len() as u32;
         let cluster_offset = self.clusters.len() as u32;
@@ -337,8 +336,6 @@ impl NaniteWorld {
             bound_sphere,
             shadow_c0_range,
             shadow_c1_range,
-            #[cfg(not(target_arch = "wasm32"))]
-            mlp_path,
         });
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
         mesh_id
@@ -404,8 +401,6 @@ pub struct NaniteStreaming {
     initialized_pages: u32,
     synced_mesh_count: usize,
     prefetch: PrefetchState,
-    #[cfg(not(target_arch = "wasm32"))]
-    open_files: Vec<Option<File>>,
 }
 
 impl Default for NaniteStreaming {
@@ -434,8 +429,6 @@ impl Default for NaniteStreaming {
             initialized_pages: 0,
             synced_mesh_count: 0,
             prefetch: PrefetchState::default(),
-            #[cfg(not(target_arch = "wasm32"))]
-            open_files: Vec::new(),
         }
     }
 }
@@ -507,13 +500,6 @@ impl NaniteStreaming {
             self.in_flight.resize(total, false);
             self.pinned_mask.resize(total, false);
             self.ready_mask.resize(total, false);
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                for mesh in world.meshes.iter().skip(start_mesh) {
-                    self.open_files
-                        .push(mesh.mlp_path.as_ref().and_then(|p| File::open(p).ok()));
-                }
-            }
             self.initialized_pages = world.total_pages;
             self.synced_mesh_count = world.meshes.len();
             self.table_dirty = true;
@@ -526,8 +512,6 @@ impl NaniteStreaming {
                 ..PrefetchState::default()
             };
             self.enqueue_mesh_range(world, start_mesh);
-            #[cfg(not(target_arch = "wasm32"))]
-            self.pump_native_io((world.meshes.len() - start_mesh).saturating_mul(4).max(8));
             return;
         }
         self.page_table = vec![UNMAPPED_PAGE; total.max(1)];
@@ -550,17 +534,16 @@ impl NaniteStreaming {
         self.table_dirty = true;
         self.residency_version = self.residency_version.wrapping_add(1);
         self.prefetch = PrefetchState::default();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.open_files = world
-                .meshes
-                .iter()
-                .map(|mesh| mesh.mlp_path.as_ref().and_then(|p| File::open(p).ok()))
-                .collect();
-        }
         self.enqueue_mesh_range(world, 0);
-        #[cfg(not(target_arch = "wasm32"))]
-        self.pump_native_io(world.meshes.len().saturating_mul(2).max(16));
+    }
+
+    pub fn set_cache_budget_bytes(&mut self, bytes: usize) {
+        let clamped = bytes.max(MIN_CACHE_BUDGET_BYTES);
+        if self.cache_budget_bytes == clamped {
+            return;
+        }
+        self.cache_budget_bytes = clamped;
+        self.evict_compressed_cache();
     }
 
     pub fn set_budget(&mut self, budget_pages: u32) {
@@ -1011,33 +994,36 @@ impl NaniteStreaming {
     pub fn enqueue_prefetch_360(
         &mut self,
         world: &NaniteWorld,
-        cam_pos: Vec3,
-        near_z: f32,
-        lod_scale: f32,
-        lod_thresh: f32,
-        max_pages: usize,
+        params: Prefetch360Params,
     ) -> usize {
+        let frac = if params.heap_fraction.is_finite() {
+            engine::math::clamp(params.heap_fraction, 0.0, 0.95)
+        } else {
+            0.0
+        };
         if world.instances.is_empty()
-            || max_pages == 0
-            || lod_scale <= 0.0
+            || params.max_pages == 0
+            || params.lod_scale <= 0.0
+            || frac <= 0.0
             || self.has_pending_work()
         {
             return 0;
         }
-        let cap_pages = (self.budget_pages as usize * 3) / 4;
+        let cap_pages = ((self.budget_pages as f32) * frac) as usize;
         let resident = self.resident_count() as usize;
         if resident >= cap_pages {
             return 0;
         }
-        let lod_bits = (u64::from(lod_scale.to_bits()) << 32) | u64::from(lod_thresh.to_bits());
-        let moved = (cam_pos - self.prefetch.last_pos).length_squared() > 1.0;
+        let lod_bits = (u64::from(params.lod_scale.to_bits()) << 32)
+            | u64::from(params.lod_thresh.to_bits());
+        let moved = (params.cam_pos - self.prefetch.last_pos).length_squared() > 1.0;
         let res_changed = self.residency_version != self.prefetch.last_res_ver;
         let tick_due = self.frame_tick.saturating_sub(self.prefetch.last_tick) >= 8;
         let lod_changed = lod_bits != self.prefetch.last_lod_bits;
         if self.prefetch.has_walked && !moved && !res_changed && !tick_due && !lod_changed {
             return 0;
         }
-        self.prefetch.last_pos = cam_pos;
+        self.prefetch.last_pos = params.cam_pos;
         self.prefetch.last_res_ver = self.residency_version;
         self.prefetch.last_tick = self.frame_tick;
         self.prefetch.last_lod_bits = lod_bits;
@@ -1045,10 +1031,10 @@ impl NaniteStreaming {
 
         let roots_ready = self.mesh_roots_ready(world);
         let base_query = CutQuery {
-            cam_pos,
-            near_z,
-            lod_scale,
-            thresh: lod_thresh * 2.0,
+            cam_pos: params.cam_pos,
+            near_z: params.near_z,
+            lod_scale: params.lod_scale,
+            thresh: params.lod_thresh * 2.0,
             frustum_planes: None,
             double_sided_materials: 0,
             start_mesh_id: 0,
@@ -1068,7 +1054,7 @@ impl NaniteStreaming {
                 &self.in_flight,
                 &self.ready_mask,
                 CutQuery {
-                    thresh: lod_thresh,
+                    thresh: params.lod_thresh,
                     ..base_query
                 },
             );
@@ -1078,7 +1064,7 @@ impl NaniteStreaming {
         }
         candidates.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
-        let budget = max_pages.min(cap_pages.saturating_sub(resident));
+        let budget = params.max_pages.min(cap_pages.saturating_sub(resident));
         let mut queued = 0_usize;
         for (pid, mesh_id, score) in candidates {
             if queued >= budget {
@@ -1105,26 +1091,6 @@ impl NaniteStreaming {
             self.prefetch.prefetch_only = true;
         }
         queued
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn pump_native_io(&mut self, max_pages: usize) {
-        for req in self.take_fetch_requests(max_pages) {
-            let mut raw = vec![0_u8; req.byte_len as usize];
-            let ok = self
-                .open_files
-                .get_mut(req.mesh_id as usize)
-                .and_then(Option::as_mut)
-                .is_some_and(|file| {
-                    file.seek(SeekFrom::Start(req.byte_offset)).is_ok()
-                        && file.read_exact(&mut raw).is_ok()
-                });
-            if ok {
-                self.deliver_compressed_page(req.global_page_id, raw, true);
-            } else {
-                self.fail_page(req.global_page_id);
-            }
-        }
     }
 
     fn install_page_in_slot(
