@@ -45,15 +45,8 @@ fn hw_vertex(vid: u32, list_idx: u32) -> HwOut {
     let pos_base = page_base + CLUSTER_HEADER_WORDS;
     let tri_base = pos_base + ((vert_count * 3u + 1u) >> 1u);
     let tri_word = hw_page_heap[tri_base + (vid >> 2u)];
-    let lane = vid & 3u;
-    var local_vi = tri_word & 0xFFu;
-    if lane == 1u {
-        local_vi = (tri_word >> 8u) & 0xFFu;
-    } else if lane == 2u {
-        local_vi = (tri_word >> 16u) & 0xFFu;
-    } else if lane == 3u {
-        local_vi = tri_word >> 24u;
-    }
+    let raw_vi = (tri_word >> ((vid & 3u) * 8u)) & 0xFFu;
+    let local_vi = min(raw_vi, max(vert_count, 1u) - 1u);
     let pwi = pos_base + ((local_vi * 3u) >> 1u);
     let local_pos = decode_pos_u16(
         hw_page_heap[pwi],

@@ -71,17 +71,11 @@ fn read_u24(base_word: u32, idx: u32) -> u32 {
     let wi = base_word + (byte_off >> 2u);
     let rem = byte_off & 3u;
     let w0 = sw_page_heap[wi];
-    var res = w0 & 0xFFFFFFu;
-    if rem == 1u {
-        res = w0 >> 8u;
-    } else if rem == 2u {
-        let w1 = sw_page_heap[wi + 1u];
-        res = (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
-    } else if rem == 3u {
-        let w1 = sw_page_heap[wi + 1u];
-        res = (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
-    }
-    return res;
+    let w1 = sw_page_heap[wi + 1u];
+    let lo = w0 >> (rem * 8u);
+    let hi_shift = ((4u - rem) & 3u) * 8u;
+    let hi_mask = select(0u, 0xFFFFFFFFu, rem >= 2u);
+    return (lo | ((w1 << hi_shift) & hi_mask)) & 0xFFFFFFu;
 }
 
 fn load_cluster_vert(
@@ -133,9 +127,10 @@ fn setup_tri(page_base: u32, ec_w: u32, vis_slot: u32, tri_id: u32) -> TriSetup 
     let vert_count = ec_w & 0xFFu;
     let tri_base = page_base + CLUSTER_HEADER_WORDS + ((vert_count * 3u + 1u) >> 1u);
     let tri_word = read_u24(tri_base, tri_id);
-    let i0 = tri_word & 0xFFu;
-    let i1 = (tri_word >> 8u) & 0xFFu;
-    let i2 = (tri_word >> 16u) & 0xFFu;
+    let max_vi = max(vert_count, 1u) - 1u;
+    let i0 = min(tri_word & 0xFFu, max_vi);
+    let i1 = min((tri_word >> 8u) & 0xFFu, max_vi);
+    let i2 = min((tri_word >> 16u) & 0xFFu, max_vi);
     if (sh_valid[i0] & sh_valid[i1] & sh_valid[i2]) == 0u {
         return s;
     }
