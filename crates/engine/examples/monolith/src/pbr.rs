@@ -510,13 +510,26 @@ impl PbrTexturePack {
         }
     }
 
-    pub fn take_hd_requests(&mut self, max_count: usize) -> Vec<PbrHdRequest> {
+    #[must_use]
+    pub fn mid_tier_pending(&self) -> bool {
+        self.next_mid_req < self.hd_order.len()
+            || self.retry_hd.iter().any(|r| r.tier == PbrTier::Mid)
+    }
+
+    pub fn take_hd_requests(&mut self, max_count: usize, allow_hi: bool) -> Vec<PbrHdRequest> {
         if !self.pack_loaded || !self.base_done || max_count == 0 {
             return Vec::new();
         }
         let mut out = Vec::with_capacity(max_count);
-        let take_retry = max_count.min(self.retry_hd.len());
-        out.extend(self.retry_hd.drain(..take_retry));
+        let mut remaining_retry = Vec::new();
+        for req in std::mem::take(&mut self.retry_hd) {
+            if out.len() < max_count && (allow_hi || req.tier == PbrTier::Mid) {
+                out.push(req);
+            } else {
+                remaining_retry.push(req);
+            }
+        }
+        self.retry_hd = remaining_retry;
         while out.len() < max_count && self.next_mid_req < self.hd_order.len() {
             let idx = self.hd_order[self.next_mid_req];
             self.next_mid_req += 1;
@@ -530,7 +543,7 @@ impl PbrTexturePack {
                 });
             }
         }
-        if self.next_mid_req >= self.hd_order.len() {
+        if allow_hi && self.next_mid_req >= self.hd_order.len() {
             while out.len() < max_count && self.next_hi_req < self.hd_order.len() {
                 let idx = self.hd_order[self.next_hi_req];
                 self.next_hi_req += 1;

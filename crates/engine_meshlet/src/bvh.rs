@@ -281,9 +281,9 @@ pub fn build_bvh_and_order(
     payloads: &mut Vec<Vec<u32>>,
     runs: &[Vec<usize>],
     parent_runs: &[Option<usize>],
-) -> (Vec<BvhNode>, usize) {
+) -> Vec<BvhNode> {
     if headers.is_empty() {
-        return (Vec::new(), 0);
+        return Vec::new();
     }
     let centroids: Vec<Vec3> = runs.iter().map(|r| run_centroid(r, headers)).collect();
     let (heights, root_closure) = compute_run_heights_and_root_closure(runs, headers, parent_runs);
@@ -302,8 +302,7 @@ pub fn build_bvh_and_order(
     let mut ordered = Vec::with_capacity(headers.len());
     let mut run_ranges = vec![(0_u32, 0_u32); runs.len()];
     let mut tier_trees = Vec::with_capacity(buckets.len());
-    let mut root_prefix_len = 0_usize;
-    for (key, mut bucket) in buckets {
+    for mut bucket in buckets.into_values() {
         tier_trees.push(build_tier_tree_runs(
             &mut bucket,
             runs,
@@ -312,9 +311,6 @@ pub fn build_bvh_and_order(
             &mut ordered,
             &mut run_ranges,
         ));
-        if key.0 == 0 {
-            root_prefix_len = ordered.len();
-        }
     }
     let root_tree = combine_trees(tier_trees);
     let mut bvh = Vec::new();
@@ -336,5 +332,5 @@ pub fn build_bvh_and_order(
     }
     *headers = new_headers;
     *payloads = new_payloads;
-    (bvh, root_prefix_len)
+    bvh
 }

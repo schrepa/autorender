@@ -129,12 +129,20 @@ struct ShadowTrack {
     enabled: bool,
 }
 
+struct HizTrack {
+    prev_view: Mat4,
+    prev_proj: Mat4,
+    curr_view: Mat4,
+    curr_proj: Mat4,
+}
+
 pub(crate) struct NaniteGpu {
     buf: NaniteBuffers,
     passes: NanitePasses,
     cull: CullPipes,
     raster: RasterPipes,
     shadow: ShadowTrack,
+    hiz: HizTrack,
     geom_rev: u64,
     inst_rev: u64,
     page_count: u32,
@@ -692,12 +700,12 @@ fn shadow_res_tier(residency_ver: u64, total_pages: u32) -> u64 {
     let cap = u64::from(total_pages.max(1));
     if residency_ver == 0 {
         0
-    } else if residency_ver < cap.min(32) {
+    } else if residency_ver < cap.min(64) {
         1
-    } else if residency_ver < cap.min(96) {
+    } else if residency_ver < cap.min(256) {
         2
     } else {
-        3 + (residency_ver / 128)
+        3 + (residency_ver / 512)
     }
 }
 
@@ -1166,6 +1174,8 @@ impl NaniteGpu {
             self.encode_hiz_down(cx, &self.raster.hiz_final_down);
             if cx.recorded() == engine_render::Recorded::Exact {
                 self.hiz_ready = true;
+                self.hiz.prev_view = self.hiz.curr_view;
+                self.hiz.prev_proj = self.hiz.curr_proj;
             }
         }
         cx.copy_to_readback(self.buf.stats_rb, self.buf.cull_state, 0..64);
@@ -1209,6 +1219,12 @@ impl GpuPart for NaniteGpu {
                 dirty_c1: true,
                 fresh_tex: true,
                 enabled: true,
+            },
+            hiz: HizTrack {
+                prev_view: Mat4::IDENTITY,
+                prev_proj: Mat4::IDENTITY,
+                curr_view: Mat4::IDENTITY,
+                curr_proj: Mat4::IDENTITY,
             },
             geom_rev: u64::MAX,
             inst_rev: u64::MAX,
@@ -1276,6 +1292,13 @@ impl GpuPart for NaniteGpu {
         let (sh_vp0, sh_vp1, shadow_center0, shadow_center1) =
             self.update_shadow_track(&world, &cam, &cfg);
 
+        if !self.hiz_ready {
+            self.hiz.prev_view = cam.cull_view;
+            self.hiz.prev_proj = cam.cull_proj;
+        }
+        self.hiz.curr_view = cam.cull_view;
+        self.hiz.curr_proj = cam.cull_proj;
+
         let planes = extract_frustum_planes(cull_vp);
         let eff_h = ch.min(1080) as f32;
         let lod_scale = (eff_h * 0.5) * cam.cull_proj.col(1).y.abs();
@@ -1314,6 +1337,8 @@ impl GpuPart for NaniteGpu {
                 self.shadow_c1_count,
                 0,
             ],
+            prev_cull_view: self.hiz.prev_view.to_cols_array_2d(),
+            prev_cull_proj: self.hiz.prev_proj.to_cols_array_2d(),
         };
         cx.write(self.buf.uniforms, 0, &[u]);
 

@@ -26,7 +26,7 @@ settings! {
         pub view_mode: String = "lit".to_owned() => any,
         pub freeze_culling: bool = false => any,
         pub hw_only: bool = true => any,
-        pub heap_mb: u32 = 64 => any,
+        pub heap_mb: u32 = 128 => any,
         pub lod_px: u32 = 2 => any,
         pub hud_hidden: bool = false => any,
         pub shadows: bool = true => any,
@@ -262,8 +262,9 @@ fn apply_dev_control(
     if dev.heap_mb != prev.heap_mb {
         cfg.heap_budget = match dev.heap_mb {
             16 => HeapBudget::Mb16,
+            32 => HeapBudget::Mb32,
             64 => HeapBudget::Mb64,
-            _ => HeapBudget::Mb32,
+            _ => HeapBudget::Mb128,
         };
     }
     if dev.lod_px != prev.lod_px {

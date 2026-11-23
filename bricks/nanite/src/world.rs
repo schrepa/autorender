@@ -8,15 +8,16 @@ use std::path::PathBuf;
 
 use engine::prelude::*;
 use engine_math::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use engine_meshlet::decompress_page_words;
 use engine_meshlet::{
     BvhNode, ClusterHeader, MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan,
+    decompress_page_words,
 };
 
 use crate::types::{
     GpuBvhNode, GpuClusterHeader, MAX_HEAP_PAGES, NaniteInstance, UNMAPPED_PAGE,
 };
+
+const DEFAULT_CACHE_BUDGET_BYTES: usize = 192 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct MeshEntry {
@@ -339,6 +340,13 @@ pub struct NaniteStreaming {
     pending_requests: VecDeque<PageFetchRequest>,
     pinned_requests: HashMap<u32, PageFetchRequest>,
     ready_pages: VecDeque<(u32, Vec<u32>)>,
+    pending_decode: VecDeque<u32>,
+    compressed_cache: HashMap<u32, Vec<u8>>,
+    cache_touch: HashMap<u32, u64>,
+    cache_lru: VecDeque<(u32, u64)>,
+    cache_epoch: u64,
+    cache_bytes: usize,
+    cache_budget_bytes: usize,
     pending_uploads: Vec<PageUpload>,
     table_dirty: bool,
     residency_version: u64,
@@ -361,6 +369,13 @@ impl Default for NaniteStreaming {
             pending_requests: VecDeque::new(),
             pinned_requests: HashMap::default(),
             ready_pages: VecDeque::new(),
+            pending_decode: VecDeque::new(),
+            compressed_cache: HashMap::default(),
+            cache_touch: HashMap::default(),
+            cache_lru: VecDeque::new(),
+            cache_epoch: 0,
+            cache_bytes: 0,
+            cache_budget_bytes: DEFAULT_CACHE_BUDGET_BYTES,
             pending_uploads: Vec::new(),
             table_dirty: true,
             residency_version: 0,
@@ -463,6 +478,12 @@ impl NaniteStreaming {
         self.pending_requests.clear();
         self.pinned_requests.clear();
         self.ready_pages.clear();
+        self.pending_decode.clear();
+        self.compressed_cache.clear();
+        self.cache_touch.clear();
+        self.cache_lru.clear();
+        self.cache_epoch = 0;
+        self.cache_bytes = 0;
         self.pending_uploads.clear();
         self.initialized_pages = world.total_pages;
         self.synced_mesh_count = world.meshes.len();
@@ -499,6 +520,96 @@ impl NaniteStreaming {
                 self.residency_version = self.residency_version.wrapping_add(1);
             }
         }
+    }
+
+    fn compact_cache_lru(&mut self) {
+        let mut kept = VecDeque::with_capacity(self.compressed_cache.len());
+        while let Some((pid, epoch)) = self.cache_lru.pop_front() {
+            if self.cache_touch.get(&pid).copied() == Some(epoch) {
+                kept.push_back((pid, epoch));
+            }
+        }
+        self.cache_lru = kept;
+    }
+
+    fn touch_cache(&mut self, page_id: u32) {
+        self.cache_epoch = self.cache_epoch.wrapping_add(1);
+        let epoch = self.cache_epoch;
+        self.cache_touch.insert(page_id, epoch);
+        self.cache_lru.push_back((page_id, epoch));
+        let max_queue = self.compressed_cache.len().saturating_mul(4).max(1024);
+        if self.cache_lru.len() > max_queue {
+            self.compact_cache_lru();
+        }
+    }
+
+    fn remove_from_cache(&mut self, page_id: u32) {
+        self.cache_touch.remove(&page_id);
+        if let Some(prev) = self.compressed_cache.remove(&page_id) {
+            self.cache_bytes = self.cache_bytes.saturating_sub(prev.len());
+        }
+    }
+
+    fn evict_compressed_cache(&mut self) {
+        if self.cache_bytes <= self.cache_budget_bytes {
+            return;
+        }
+        let mut deferred = Vec::new();
+        while self.cache_bytes > self.cache_budget_bytes {
+            let Some((pid, epoch)) = self.cache_lru.pop_front() else {
+                break;
+            };
+            if self.cache_touch.get(&pid).copied() != Some(epoch) {
+                continue;
+            }
+            if self.ready_mask.get(pid as usize).copied().unwrap_or(false) {
+                deferred.push((pid, epoch));
+                continue;
+            }
+            self.cache_touch.remove(&pid);
+            if let Some(bytes) = self.compressed_cache.remove(&pid) {
+                self.cache_bytes = self.cache_bytes.saturating_sub(bytes.len());
+            }
+        }
+        for item in deferred.into_iter().rev() {
+            self.cache_lru.push_front(item);
+        }
+    }
+
+    fn insert_compressed_cache(&mut self, page_id: u32, compressed: Vec<u8>) {
+        let new_len = compressed.len();
+        if let Some(prev) = self.compressed_cache.insert(page_id, compressed) {
+            self.cache_bytes = self.cache_bytes.saturating_sub(prev.len());
+        }
+        self.cache_bytes = self.cache_bytes.saturating_add(new_len);
+        self.touch_cache(page_id);
+        self.evict_compressed_cache();
+    }
+
+    pub fn deliver_compressed_page(
+        &mut self,
+        global_page_id: u32,
+        compressed: Vec<u8>,
+        requested: bool,
+    ) {
+        let idx = global_page_id as usize;
+        if requested && let Some(flag) = self.in_flight.get_mut(idx) {
+            *flag = false;
+        }
+        if compressed.is_empty()
+            || compressed.len() > self.cache_budget_bytes
+            || idx >= self.page_table.len()
+            || idx >= self.ready_mask.len()
+        {
+            return;
+        }
+        let queue_decode =
+            requested && self.page_table[idx] == UNMAPPED_PAGE && !self.ready_mask[idx];
+        if queue_decode {
+            self.ready_mask[idx] = true;
+            self.pending_decode.push_back(global_page_id);
+        }
+        self.insert_compressed_cache(global_page_id, compressed);
     }
 
     pub fn deliver_page(&mut self, global_page_id: u32, words: Vec<u32>) {
@@ -586,15 +697,7 @@ impl NaniteStreaming {
         }
     }
 
-    pub fn ingest_gpu_requests(
-        &mut self,
-        world: &NaniteWorld,
-        priorities: &[u32],
-        max_new_requests: usize,
-    ) {
-        self.frame_tick = self.frame_tick.wrapping_add(1);
-        let tick = self.frame_tick;
-        let total = (world.total_pages as usize).min(priorities.len());
+    fn retain_pinned_pending(&mut self) {
         let mut retained = VecDeque::with_capacity(self.pending_requests.len());
         while let Some(req) = self.pending_requests.pop_front() {
             let idx = req.global_page_id as usize;
@@ -608,6 +711,46 @@ impl NaniteStreaming {
             }
         }
         self.pending_requests = retained;
+    }
+
+    fn count_outstanding(&self) -> usize {
+        let in_flight_unmapped = self
+            .in_flight
+            .iter()
+            .enumerate()
+            .filter(|&(pid, &active)| {
+                active
+                    && self.page_table.get(pid).copied().unwrap_or(UNMAPPED_PAGE) == UNMAPPED_PAGE
+                    && !self.ready_mask.get(pid).copied().unwrap_or(false)
+            })
+            .count();
+        let pending_not_flagged = self
+            .pending_requests
+            .iter()
+            .filter(|req| {
+                let pid = req.global_page_id as usize;
+                !self.in_flight.get(pid).copied().unwrap_or(false)
+                    && self.page_table.get(pid).copied().unwrap_or(UNMAPPED_PAGE) == UNMAPPED_PAGE
+                    && !self.ready_mask.get(pid).copied().unwrap_or(false)
+            })
+            .count();
+        self.ready_pages
+            .len()
+            .saturating_add(self.pending_decode.len())
+            .saturating_add(in_flight_unmapped)
+            .saturating_add(pending_not_flagged)
+    }
+
+    pub fn ingest_gpu_requests(
+        &mut self,
+        world: &NaniteWorld,
+        priorities: &[u32],
+        max_new_requests: usize,
+    ) {
+        self.frame_tick = self.frame_tick.wrapping_add(1);
+        let tick = self.frame_tick;
+        let total = (world.total_pages as usize).min(priorities.len());
+        self.retain_pinned_pending();
 
         let mesh_roots_ready: Vec<bool> = world
             .meshes
@@ -648,43 +791,32 @@ impl NaniteStreaming {
             }
         }
         let evictable = self.count_evictable_slots();
-        let in_flight_unmapped = self
-            .in_flight
-            .iter()
-            .enumerate()
-            .filter(|&(pid, &active)| {
-                active
-                    && self.page_table.get(pid).copied().unwrap_or(UNMAPPED_PAGE) == UNMAPPED_PAGE
-                    && !self.ready_mask.get(pid).copied().unwrap_or(false)
-            })
-            .count();
-        let pending_not_flagged = self
-            .pending_requests
-            .iter()
-            .filter(|req| {
-                let pid = req.global_page_id as usize;
-                !self.in_flight.get(pid).copied().unwrap_or(false)
-                    && self.page_table.get(pid).copied().unwrap_or(UNMAPPED_PAGE) == UNMAPPED_PAGE
-                    && !self.ready_mask.get(pid).copied().unwrap_or(false)
-            })
-            .count();
-        let outstanding = self
-            .ready_pages
-            .len()
-            .saturating_add(in_flight_unmapped)
-            .saturating_add(pending_not_flagged);
+        let outstanding = self.count_outstanding();
         let slot_headroom = evictable.saturating_sub(outstanding);
         let pipeline_headroom = max_new_requests.saturating_sub(outstanding);
-        let queue_room = 256_usize.saturating_sub(self.pending_requests.len());
-        let cap = max_new_requests
-            .min(slot_headroom)
-            .min(pipeline_headroom)
-            .min(queue_room);
-        if cap == 0 {
+        let mut remaining_slots = max_new_requests.min(slot_headroom).min(pipeline_headroom);
+        if remaining_slots == 0 {
             return;
         }
+        let mut remaining_queue = 768_usize.saturating_sub(self.pending_requests.len());
         wanted.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        for (prio, global_page_id) in wanted.into_iter().take(cap) {
+        for (prio, global_page_id) in wanted {
+            if remaining_slots == 0 {
+                break;
+            }
+            let idx = global_page_id as usize;
+            if self.compressed_cache.contains_key(&global_page_id) {
+                if idx < self.ready_mask.len() && !self.ready_mask[idx] {
+                    self.ready_mask[idx] = true;
+                    self.pending_decode.push_back(global_page_id);
+                    self.touch_cache(global_page_id);
+                    remaining_slots -= 1;
+                }
+                continue;
+            }
+            if remaining_queue == 0 {
+                continue;
+            }
             if let Some((mesh_id, mesh, local_page_id)) = world.find_page_owner(global_page_id) {
                 self.enqueue_fetch(
                     mesh_id,
@@ -693,76 +825,111 @@ impl NaniteStreaming {
                     global_page_id,
                     prio.min(u32::MAX - 2),
                 );
+                remaining_slots -= 1;
+                remaining_queue -= 1;
             }
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn pump_native_io(&mut self, max_pages: usize) {
-        let mut raw = Vec::new();
         for req in self.take_fetch_requests(max_pages) {
-            raw.resize(req.byte_len as usize, 0);
-            let loaded = self
+            let mut raw = vec![0_u8; req.byte_len as usize];
+            let ok = self
                 .open_files
                 .get_mut(req.mesh_id as usize)
                 .and_then(Option::as_mut)
-                .and_then(|file| {
-                    file.seek(SeekFrom::Start(req.byte_offset)).ok()?;
-                    file.read_exact(&mut raw).ok()?;
-                    decompress_page_words(&raw).ok()
+                .is_some_and(|file| {
+                    file.seek(SeekFrom::Start(req.byte_offset)).is_ok()
+                        && file.read_exact(&mut raw).is_ok()
                 });
-            match loaded {
-                Some(words) => self.deliver_page(req.global_page_id, words),
-                None => self.fail_page(req.global_page_id),
+            if ok {
+                self.deliver_compressed_page(req.global_page_id, raw, true);
+            } else {
+                self.fail_page(req.global_page_id);
             }
         }
+    }
+
+    fn install_page_in_slot(
+        &mut self,
+        global_page_id: u32,
+        slot: u32,
+        pinned: bool,
+        words: Vec<u32>,
+    ) {
+        if let Some(old) = self.slots[slot as usize]
+            && let Some(entry) = self.page_table.get_mut(old.global_page_id as usize)
+        {
+            *entry = UNMAPPED_PAGE;
+        }
+        self.slots[slot as usize] = Some(SlotRecord {
+            global_page_id,
+            pinned,
+            last_used_frame: self.frame_tick,
+        });
+        self.page_table[global_page_id as usize] = slot;
+        self.pending_uploads.push(PageUpload {
+            slot,
+            global_page_id,
+            words,
+        });
+        self.table_dirty = true;
+        self.residency_version = self.residency_version.wrapping_add(1);
     }
 
     pub fn commit_ready_pages(&mut self, max_uploads: usize) {
         let mut uploaded = 0_usize;
         while uploaded < max_uploads {
-            let Some((global_page_id, words)) = self.ready_pages.pop_front() else {
+            if let Some((global_page_id, words)) = self.ready_pages.pop_front() {
+                let idx = global_page_id as usize;
+                if let Some(flag) = self.ready_mask.get_mut(idx) {
+                    *flag = false;
+                }
+                if idx >= self.page_table.len() || self.page_table[idx] != UNMAPPED_PAGE {
+                    continue;
+                }
+                let pinned = self.pinned_mask.get(idx).copied().unwrap_or(false);
+                let Some(slot) = self.pick_slot(pinned) else {
+                    continue;
+                };
+                self.install_page_in_slot(global_page_id, slot, pinned, words);
+                uploaded += 1;
+                continue;
+            }
+            let Some(global_page_id) = self.pending_decode.pop_front() else {
                 break;
             };
             let idx = global_page_id as usize;
             if let Some(flag) = self.ready_mask.get_mut(idx) {
                 *flag = false;
             }
-            if idx >= self.page_table.len() {
-                continue;
-            }
-            if self.page_table[idx] != UNMAPPED_PAGE {
+            if idx >= self.page_table.len() || self.page_table[idx] != UNMAPPED_PAGE {
                 continue;
             }
             let pinned = self.pinned_mask.get(idx).copied().unwrap_or(false);
             let Some(slot) = self.pick_slot(pinned) else {
                 continue;
             };
-            if let Some(old) = self.slots[slot as usize]
-                && let Some(entry) = self.page_table.get_mut(old.global_page_id as usize)
-            {
-                *entry = UNMAPPED_PAGE;
-            }
-            self.slots[slot as usize] = Some(SlotRecord {
-                global_page_id,
-                pinned,
-                last_used_frame: self.frame_tick,
-            });
-            self.page_table[idx] = slot;
-            self.pending_uploads.push(PageUpload {
-                slot,
-                global_page_id,
-                words,
-            });
-            self.table_dirty = true;
-            self.residency_version = self.residency_version.wrapping_add(1);
+            let decoded = self
+                .compressed_cache
+                .get(&global_page_id)
+                .and_then(|bytes| decompress_page_words(bytes).ok())
+                .filter(|w| w.len() == PAGE_WORDS);
+            let Some(words) = decoded else {
+                self.remove_from_cache(global_page_id);
+                self.fail_page(global_page_id);
+                continue;
+            };
+            self.touch_cache(global_page_id);
+            self.install_page_in_slot(global_page_id, slot, pinned, words);
             uploaded += 1;
         }
     }
 
     fn count_evictable_slots(&self) -> usize {
         let limit = (self.budget_pages as usize).min(self.slots.len());
-        let stale_cutoff = self.frame_tick.saturating_sub(4);
+        let stale_cutoff = self.frame_tick.saturating_sub(1);
         self.slots
             .iter()
             .take(limit)
@@ -779,7 +946,7 @@ impl NaniteStreaming {
                 return Some(idx as u32);
             }
         }
-        let stale_cutoff = self.frame_tick.saturating_sub(4);
+        let stale_cutoff = self.frame_tick.saturating_sub(1);
         let mut best_idx = None;
         let mut best_age = u64::MAX;
         for (idx, slot) in self.slots.iter().enumerate().take(limit) {
@@ -868,13 +1035,16 @@ impl NaniteStreaming {
 
     #[must_use]
     pub fn ready_page_count(&self) -> u32 {
-        self.ready_pages.len() as u32
+        self.ready_pages
+            .len()
+            .saturating_add(self.pending_decode.len()) as u32
     }
 
     #[must_use]
     pub fn has_pending_work(&self) -> bool {
         !self.pending_requests.is_empty()
             || !self.ready_pages.is_empty()
+            || !self.pending_decode.is_empty()
             || self.in_flight.iter().any(|&v| v)
     }
 

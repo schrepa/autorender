@@ -55,7 +55,7 @@ fn find_asset_dir() -> Option<PathBuf> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn pump_native_hd(pbr: &mut PbrTexturePack, hd_path: &PathBuf) {
-    let reqs = pbr.take_hd_requests(4);
+    let reqs = pbr.take_hd_requests(4, true);
     if reqs.is_empty() {
         return;
     }
@@ -126,19 +126,27 @@ fn load_sanctuary_assets(
 #[cfg(target_arch = "wasm32")]
 const MAX_RUN_PAGES: usize = 16;
 #[cfg(target_arch = "wasm32")]
-const MAX_RUN_BYTES: u64 = 512 * 1024;
+const MAX_RUN_BYTES: u64 = 256 * 1024;
+#[cfg(target_arch = "wasm32")]
+const MAX_GAP_BYTES: u64 = 64 * 1024;
 #[cfg(target_arch = "wasm32")]
 const HD_IDLE_HYSTERESIS_FRAMES: u32 = 3;
 
 #[cfg(target_arch = "wasm32")]
 struct PageRunItem {
-    req: brick_nanite::PageFetchRequest,
+    req: Option<brick_nanite::PageFetchRequest>,
+    global_page_id: u32,
     rel_offset: usize,
+    byte_len: usize,
+    is_requested: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
 struct PageRun {
+    mesh_id: u32,
     mesh_name: String,
+    first_local_page: u32,
+    last_local_page: u32,
     byte_offset: u64,
     total_bytes: u64,
     max_priority: u32,
@@ -146,45 +154,101 @@ struct PageRun {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn coalesce_runs(mut reqs: Vec<brick_nanite::PageFetchRequest>) -> Vec<PageRun> {
+fn coalesce_runs(
+    mut reqs: Vec<brick_nanite::PageFetchRequest>,
+    world: &NaniteWorld,
+) -> Vec<PageRun> {
     reqs.sort_unstable_by(|a, b| {
-        a.mesh_name
-            .cmp(&b.mesh_name)
-            .then_with(|| a.byte_offset.cmp(&b.byte_offset))
+        a.mesh_id
+            .cmp(&b.mesh_id)
+            .then_with(|| a.local_page_id.cmp(&b.local_page_id))
     });
     let mut runs: Vec<PageRun> = Vec::new();
     for req in reqs {
         if let Some(last) = runs.last_mut() {
-            let expected = last.byte_offset.saturating_add(last.total_bytes);
-            let next_total = last.total_bytes.saturating_add(req.byte_len);
-            if last.mesh_name == req.mesh_name
-                && req.byte_offset == expected
-                && last.items.len() < MAX_RUN_PAGES
-                && next_total <= MAX_RUN_BYTES
+            let expected_end = last.byte_offset.saturating_add(last.total_bytes);
+            if last.mesh_id == req.mesh_id
+                && req.local_page_id > last.last_local_page
+                && req.byte_offset >= expected_end
             {
-                let rel_offset = last.total_bytes as usize;
-                last.max_priority = last.max_priority.max(req.priority);
-                last.total_bytes = next_total;
-                last.items.push(PageRunItem { req, rel_offset });
-                continue;
+                let gap = req.byte_offset - expected_end;
+                let next_total = req
+                    .byte_offset
+                    .saturating_add(req.byte_len)
+                    .saturating_sub(last.byte_offset);
+                let page_span = req
+                    .local_page_id
+                    .saturating_sub(last.first_local_page)
+                    .saturating_add(1) as usize;
+                if gap <= MAX_GAP_BYTES
+                    && next_total <= MAX_RUN_BYTES
+                    && page_span <= MAX_RUN_PAGES
+                {
+                    if gap > 0
+                        && let Some(mesh) = world.meshes.get(req.mesh_id as usize)
+                    {
+                        for local_pid in (last.last_local_page + 1)..req.local_page_id {
+                            if let Some(span) = mesh.page_spans.get(local_pid as usize)
+                                && span.byte_len > 0
+                                && span.byte_offset >= last.byte_offset
+                                && span.byte_offset.saturating_add(u64::from(span.byte_len))
+                                    <= req.byte_offset
+                            {
+                                last.items.push(PageRunItem {
+                                    req: None,
+                                    global_page_id: mesh.page_offset + local_pid,
+                                    rel_offset: (span.byte_offset - last.byte_offset) as usize,
+                                    byte_len: span.byte_len as usize,
+                                    is_requested: false,
+                                });
+                            }
+                        }
+                    }
+                    let rel_offset = (req.byte_offset - last.byte_offset) as usize;
+                    let global_page_id = req.global_page_id;
+                    let byte_len = req.byte_len as usize;
+                    last.max_priority = last.max_priority.max(req.priority);
+                    last.total_bytes = next_total;
+                    last.last_local_page = req.local_page_id;
+                    last.items.push(PageRunItem {
+                        req: Some(req),
+                        global_page_id,
+                        rel_offset,
+                        byte_len,
+                        is_requested: true,
+                    });
+                    continue;
+                }
             }
         }
+        let mesh_id = req.mesh_id;
         let mesh_name = req.mesh_name.clone();
+        let local_page_id = req.local_page_id;
+        let global_page_id = req.global_page_id;
         let byte_offset = req.byte_offset;
         let total_bytes = req.byte_len;
         let max_priority = req.priority;
         runs.push(PageRun {
+            mesh_id,
             mesh_name,
+            first_local_page: local_page_id,
+            last_local_page: local_page_id,
             byte_offset,
             total_bytes,
             max_priority,
-            items: vec![PageRunItem { req, rel_offset: 0 }],
+            items: vec![PageRunItem {
+                req: Some(req),
+                global_page_id,
+                rel_offset: 0,
+                byte_len: total_bytes as usize,
+                is_requested: true,
+            }],
         });
     }
     runs.sort_unstable_by(|a, b| {
         b.max_priority
             .cmp(&a.max_priority)
-            .then_with(|| a.mesh_name.cmp(&b.mesh_name))
+            .then_with(|| a.mesh_id.cmp(&b.mesh_id))
             .then_with(|| a.byte_offset.cmp(&b.byte_offset))
     });
     runs
@@ -231,7 +295,7 @@ mod web_loader {
 
     use brick_nanite::{NaniteStreaming, NaniteTelemetry, NaniteWorld};
     use engine::prelude::*;
-    use engine_meshlet::{MeshletManifest, decompress_page_words};
+    use engine_meshlet::MeshletManifest;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
@@ -244,7 +308,7 @@ mod web_loader {
     use crate::state::MonolithState;
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
-    const MAX_IN_FLIGHT_REQUESTS: usize = 24;
+    const MAX_IN_FLIGHT_REQUESTS: usize = 6;
     const MAX_IN_FLIGHT_PBR: usize = 4;
 
     #[derive(Default)]
@@ -258,7 +322,7 @@ mod web_loader {
         in_flight_requests: usize,
         in_flight_pbr: usize,
         hd_idle_frames: u32,
-        completed_pages: VecDeque<(u32, Option<Vec<u32>>)>,
+        completed_pages: VecDeque<(u32, Option<Vec<u8>>, bool)>,
         completed_pbr: VecDeque<(PbrHdRequest, Option<Vec<u8>>)>,
     }
 
@@ -335,17 +399,20 @@ mod web_loader {
                 st.in_flight_requests = st.in_flight_requests.saturating_sub(1);
                 if let Some(bytes) = valid_bytes {
                     for item in run.items {
-                        let blen = item.req.byte_len as usize;
-                        let words = bytes
-                            .get(item.rel_offset..item.rel_offset + blen)
-                            .and_then(|slice| decompress_page_words(slice).ok());
-                        st.completed_pages
-                            .push_back((item.req.global_page_id, words));
+                        let raw = bytes
+                            .get(item.rel_offset..item.rel_offset + item.byte_len)
+                            .map(<[u8]>::to_vec);
+                        if raw.is_some() || item.is_requested {
+                            st.completed_pages
+                                .push_back((item.global_page_id, raw, item.is_requested));
+                        }
                     }
                 } else {
                     for item in run.items {
-                        st.completed_pages
-                            .push_back((item.req.global_page_id, None));
+                        if item.is_requested {
+                            st.completed_pages
+                                .push_back((item.global_page_id, None, true));
+                        }
                     }
                 }
             });
@@ -370,7 +437,7 @@ mod web_loader {
         });
     }
 
-    fn pump_pbr_hd(pbr: &mut PbrTexturePack, allow_hd: bool) {
+    fn pump_pbr_hd(pbr: &mut PbrTexturePack, allow_mid: bool, allow_hi: bool) {
         let done: Vec<(PbrHdRequest, Option<Vec<u8>>)> = WEB_STATE.with(|cell| {
             cell.borrow_mut().completed_pbr.drain(..).collect()
         });
@@ -380,22 +447,26 @@ mod web_loader {
                 pbr.fail_hd_request(req);
             }
         }
-        if !pbr.base_done || !allow_hd {
+        if !pbr.base_done || (!allow_mid && !allow_hi) {
             return;
         }
         let slots = WEB_STATE.with(|cell| {
             let st = cell.borrow();
-            let cap = if st.in_flight_requests > 12 {
-                1
+            let cap = if allow_hi {
+                if st.in_flight_requests > 12 {
+                    1
+                } else {
+                    MAX_IN_FLIGHT_PBR
+                }
             } else {
-                MAX_IN_FLIGHT_PBR
+                2
             };
             cap.saturating_sub(st.in_flight_pbr)
         });
         if slots == 0 {
             return;
         }
-        let reqs = pbr.take_hd_requests(slots);
+        let reqs = pbr.take_hd_requests(slots, allow_hi);
         if !reqs.is_empty() {
             let count = reqs.len();
             WEB_STATE.with(|cell| {
@@ -441,6 +512,67 @@ mod web_loader {
         total_mounted
     }
 
+    fn requeue_run_items(run: PageRun, back: &mut Vec<brick_nanite::PageFetchRequest>) {
+        for item in run.items {
+            if item.is_requested
+                && let Some(req) = item.req
+            {
+                back.push(req);
+            }
+        }
+    }
+
+    fn dispatch_page_runs(
+        world: &NaniteWorld,
+        streaming: &mut NaniteStreaming,
+        all_manifests: bool,
+    ) {
+        let req_cap = if all_manifests {
+            MAX_IN_FLIGHT_REQUESTS
+        } else {
+            2
+        };
+        let req_slots =
+            WEB_STATE.with(|cell| req_cap.saturating_sub(cell.borrow().in_flight_requests));
+        if req_slots == 0 {
+            return;
+        }
+        let reqs = streaming.take_fetch_requests(768);
+        if reqs.is_empty() {
+            return;
+        }
+        let mut runs = coalesce_runs(reqs, world);
+        let mut back = Vec::new();
+        if !all_manifests {
+            let mut root_runs = Vec::new();
+            for run in runs {
+                if run.max_priority >= u32::MAX - 1 {
+                    root_runs.push(run);
+                } else {
+                    requeue_run_items(run, &mut back);
+                }
+            }
+            runs = root_runs;
+        }
+        if runs.len() > req_slots {
+            for run in runs.split_off(req_slots) {
+                requeue_run_items(run, &mut back);
+            }
+        }
+        if !back.is_empty() {
+            streaming.requeue_fetch_requests(back);
+        }
+        let run_count = runs.len();
+        if run_count > 0 {
+            WEB_STATE.with(|cell| {
+                cell.borrow_mut().in_flight_requests += run_count;
+            });
+            for run in runs {
+                start_run_fetch(run);
+            }
+        }
+    }
+
     pub(super) fn pump(
         mut world: ResMut<NaniteWorld>,
         mut streaming: ResMut<NaniteStreaming>,
@@ -476,46 +608,18 @@ mod web_loader {
             return;
         }
 
-        let completed: Vec<(u32, Option<Vec<u32>>)> = WEB_STATE.with(|cell| {
+        let completed: Vec<(u32, Option<Vec<u8>>, bool)> = WEB_STATE.with(|cell| {
             cell.borrow_mut().completed_pages.drain(..).collect()
         });
-        for (page_id, words) in completed {
-            match words {
-                Some(w) => streaming.deliver_page(page_id, w),
-                None => streaming.fail_page(page_id),
+        for (page_id, compressed, is_requested) in completed {
+            match compressed {
+                Some(raw) => streaming.deliver_compressed_page(page_id, raw, is_requested),
+                None if is_requested => streaming.fail_page(page_id),
+                None => {}
             }
         }
 
-        let req_cap = if state.assets_loaded {
-            MAX_IN_FLIGHT_REQUESTS
-        } else {
-            12
-        };
-        let req_slots = WEB_STATE
-            .with(|cell| req_cap.saturating_sub(cell.borrow().in_flight_requests));
-        if req_slots > 0 {
-            let reqs = streaming.take_fetch_requests((req_slots * 8).min(192));
-            if !reqs.is_empty() {
-                let mut runs = coalesce_runs(reqs);
-                if runs.len() > req_slots {
-                    let excess = runs.split_off(req_slots);
-                    let mut back = Vec::new();
-                    for run in excess {
-                        for item in run.items {
-                            back.push(item.req);
-                        }
-                    }
-                    streaming.requeue_fetch_requests(back);
-                }
-                let run_count = runs.len();
-                WEB_STATE.with(|cell| {
-                    cell.borrow_mut().in_flight_requests += run_count;
-                });
-                for run in runs {
-                    start_run_fetch(run);
-                }
-            }
-        }
+        dispatch_page_runs(&world, &mut streaming, mounted >= ASSET_COUNT);
         let in_flight_requests = WEB_STATE.with(|cell| cell.borrow().in_flight_requests);
         let geom_busy = is_geometry_busy(
             state.assets_loaded,
@@ -524,11 +628,17 @@ mod web_loader {
             streaming.has_pending_work(),
             streaming.has_evictable_slots(),
         );
-        let allow_hd = WEB_STATE.with(|cell| {
+        let allow_hi = WEB_STATE.with(|cell| {
             let mut st = cell.borrow_mut();
             step_hd_idle_gate(&mut st.hd_idle_frames, state.assets_loaded, geom_busy)
         });
-        pump_pbr_hd(pbr, allow_hd);
+        let allow_mid = allow_hi
+            || (state.assets_loaded
+                && pbr.base_done
+                && in_flight_requests <= 2
+                && tel.page_faults < 128
+                && pbr.mid_tier_pending());
+        pump_pbr_hd(pbr, allow_mid, allow_hi);
     }
 }
 
@@ -543,5 +653,5 @@ fn load_sanctuary_assets(
     state: ResMut<MonolithState>,
 ) {
     web_loader::pump(world, streaming, &tel, &mut pbr, &gi_bridge, state);
-    pbr.pump_uploads(&pbr_bridge, 7);
+    pbr.pump_uploads(&pbr_bridge, 14);
 }

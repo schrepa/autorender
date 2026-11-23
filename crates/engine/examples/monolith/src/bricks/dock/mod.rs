@@ -311,7 +311,8 @@ fn paint_telemetry_and_stick(
     let fps_int = (state.fps_smoothed + 0.5) as u32;
     let vis_k = (tel.visible_tris() + 500) / 1000;
     let total_m = (tel.total_virtual_tris as f64) / 1_000_000.0;
-    let res_mb = (f64::from(tel.resident_pages) * 65_536.0) / (1024.0 * 1024.0);
+    let res_mb = (f64::from(tel.resident_pages) * engine_meshlet::PAGE_SIZE_BYTES as f64)
+        / (1024.0 * 1024.0);
     let frozen = if cfg.freeze_culling { " \u{00B7} HI-Z FROZEN" } else { "" };
     let line = format!(
         "{total_m:.1}M TRIS \u{00B7} VIS {vis_k}K \u{00B7} HW {}% / SW {}% \u{00B7} PAGES {}/{} ({res_mb:.1}MB) \u{00B7} {fps_int} FPS{frozen}",

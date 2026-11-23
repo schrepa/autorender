@@ -54,23 +54,29 @@ fn sample_history_catmull_rom(uv: vec2<f32>, tex_size: vec2<f32>) -> vec3<f32> {
     let w2 = 1.0 - w0 - w1 - w3;
 
     let w12 = w1 + w2;
-    let tc0 = (tc1 - 1.0) * inv_size;
-    let tc3 = (tc1 + 2.0) * inv_size;
-    let tc12 = (tc1 + w2 / max(w12, vec2<f32>(1.0e-5))) * inv_size;
-
-    let c0 = textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc12.x, tc0.y), 0.0).rgb;
-    let c1 = textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc0.x, tc12.y), 0.0).rgb;
-    let c2 = textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc12.x, tc12.y), 0.0).rgb;
-    let c3 = textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc3.x, tc12.y), 0.0).rgb;
-    let c4 = textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc12.x, tc3.y), 0.0).rgb;
+    let tc1_uv = tc1 * inv_size;
+    let tc12 = tc1_uv + (w2 / max(w12, vec2<f32>(1.0e-5))) * inv_size;
 
     let wt0 = w12.x * w0.y;
+    var sum = textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc12.x, tc1_uv.y - inv_size.y), 0.0).rgb * wt0;
+    var wsum = wt0;
+
     let wt1 = w0.x * w12.y;
+    sum += textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc1_uv.x - inv_size.x, tc12.y), 0.0).rgb * wt1;
+    wsum += wt1;
+
     let wt2 = w12.x * w12.y;
+    sum += textureSampleLevel(prev_hdr, taa_sampler, tc12, 0.0).rgb * wt2;
+    wsum += wt2;
+
     let wt3 = w3.x * w12.y;
+    sum += textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc1_uv.x + 2.0 * inv_size.x, tc12.y), 0.0).rgb * wt3;
+    wsum += wt3;
+
     let wt4 = w12.x * w3.y;
-    let sum = c0 * wt0 + c1 * wt1 + c2 * wt2 + c3 * wt3 + c4 * wt4;
-    let wsum = wt0 + wt1 + wt2 + wt3 + wt4;
+    sum += textureSampleLevel(prev_hdr, taa_sampler, vec2<f32>(tc12.x, tc1_uv.y + 2.0 * inv_size.y), 0.0).rgb * wt4;
+    wsum += wt4;
+
     return max(sum / max(wsum, 1.0e-4), vec3<f32>(0.0));
 }
 
@@ -104,10 +110,9 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let size_i = vec2<i32>(size_u);
     let size_f = vec2<f32>(size_u);
     let px = clamp(vec2<i32>(pos.xy), vec2<i32>(0), size_i - vec2<i32>(1));
-    let center_raw = textureLoad(curr_hdr, px, 0);
 
     if frame_params.fog_params.w > 0.5 || frame_params.taa_params.z > 0.5 {
-        return center_raw;
+        return textureLoad(curr_hdr, px, 0);
     }
 
     var best_d = load_scene_depth(px, size_u.x);
@@ -127,41 +132,31 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         }
     }
 
-    let uv = pos.xy / size_f;
     let best_uv = (vec2<f32>(best_px) + vec2<f32>(0.5)) / size_f;
     let best_ndc = vec2<f32>(best_uv.x * 2.0 - 1.0, 1.0 - best_uv.y * 2.0);
+    let sample_d = select(0.0001, best_d, best_d > 1.0e-5);
+    let h_w = nanite_frame_uniforms.inv_render_vp * vec4<f32>(best_ndc, sample_d, 1.0);
+    let world_p = h_w.xyz * (sign(h_w.w) / max(abs(h_w.w), 1.0e-5));
+    var reproj_v = vec4<f32>(world_p, 1.0);
+    if best_d <= 1.0e-5 {
+        reproj_v = vec4<f32>(normalize(world_p - nanite_frame_uniforms.render_pos_time.xyz), 0.0);
+    }
+    let c_clip = frame_params.curr_unjittered_vp * reproj_v;
+    let p_clip = frame_params.prev_unjittered_vp * reproj_v;
     var vel_uv = vec2<f32>(0.0);
-    if best_d > 1.0e-5 {
-        let h_w = nanite_frame_uniforms.inv_render_vp * vec4<f32>(best_ndc, best_d, 1.0);
-        let world_p = h_w.xyz / max(abs(h_w.w), 1.0e-5) * sign(h_w.w);
-        let c_clip = frame_params.curr_unjittered_vp * vec4<f32>(world_p, 1.0);
-        let p_clip = frame_params.prev_unjittered_vp * vec4<f32>(world_p, 1.0);
-        if c_clip.w > 1.0e-4 && p_clip.w > 1.0e-4 {
-            let c_ndc = c_clip.xy / c_clip.w;
-            let p_ndc = p_clip.xy / p_clip.w;
-            let c_uv = vec2<f32>(c_ndc.x * 0.5 + 0.5, 0.5 - c_ndc.y * 0.5);
-            let p_uv = vec2<f32>(p_ndc.x * 0.5 + 0.5, 0.5 - p_ndc.y * 0.5);
-            vel_uv = c_uv - p_uv;
-        }
-    } else {
-        let far_h = nanite_frame_uniforms.inv_render_vp * vec4<f32>(best_ndc, 0.0001, 1.0);
-        let far_w = far_h.xyz / max(abs(far_h.w), 1.0e-5) * sign(far_h.w);
-        let ray_d = normalize(far_w - nanite_frame_uniforms.render_pos_time.xyz);
-        let c_clip = frame_params.curr_unjittered_vp * vec4<f32>(ray_d, 0.0);
-        let p_clip = frame_params.prev_unjittered_vp * vec4<f32>(ray_d, 0.0);
-        if c_clip.w > 1.0e-4 && p_clip.w > 1.0e-4 {
-            let c_ndc = c_clip.xy / c_clip.w;
-            let p_ndc = p_clip.xy / p_clip.w;
-            let c_uv = vec2<f32>(c_ndc.x * 0.5 + 0.5, 0.5 - c_ndc.y * 0.5);
-            let p_uv = vec2<f32>(p_ndc.x * 0.5 + 0.5, 0.5 - p_ndc.y * 0.5);
-            vel_uv = c_uv - p_uv;
-        }
+    if c_clip.w > 1.0e-4 && p_clip.w > 1.0e-4 {
+        let d_ndc = c_clip.xy / c_clip.w - p_clip.xy / p_clip.w;
+        vel_uv = vec2<f32>(d_ndc.x * 0.5, -d_ndc.y * 0.5);
     }
 
+    let uv = (vec2<f32>(px) + vec2<f32>(0.5)) / size_f;
     let prev_uv = uv - vel_uv;
     if prev_uv.x < 0.0 || prev_uv.x > 1.0 || prev_uv.y < 0.0 || prev_uv.y > 1.0 {
-        return center_raw;
+        return textureLoad(curr_hdr, px, 0);
     }
+
+    let motion_t = clamp(length(vel_uv * size_f) * 0.22, 0.0, 1.0);
+    let hist_ycc = rgb_to_ycocg(karis_compress(sample_history_catmull_rom(prev_uv, size_f)));
 
     var m1 = vec3<f32>(0.0);
     var m2 = vec3<f32>(0.0);
@@ -180,21 +175,15 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
     let mean = m1 * (1.0 / 9.0);
     let stddev = sqrt(max(m2 * (1.0 / 9.0) - mean * mean, vec3<f32>(0.0)));
-
-    let vel_px = length(vel_uv * size_f);
-    let motion_t = clamp(vel_px * 0.22, 0.0, 1.0);
     let gamma = mix(1.35, 1.05, motion_t);
     let clip_min = max(n_min, mean - stddev * gamma);
     let clip_max = min(n_max, mean + stddev * gamma);
 
-    let curr_k = karis_compress(center_raw.rgb);
-    let hist_raw = sample_history_catmull_rom(prev_uv, size_f);
-    let hist_ycc = rgb_to_ycocg(karis_compress(hist_raw));
     let clamped_hist_k = max(ycocg_to_rgb(clip_aabb(clip_min, clip_max, hist_ycc)), vec3<f32>(0.0));
-
+    let center_raw = textureLoad(curr_hdr, px, 0);
+    let curr_k = karis_compress(center_raw.rgb);
     let blend = mix(0.075, 0.22, motion_t);
-    let blended_k = mix(clamped_hist_k, curr_k, blend);
-    let final_hdr = karis_expand(blended_k);
+    let final_hdr = karis_expand(mix(clamped_hist_k, curr_k, blend));
     return vec4<f32>(final_hdr, center_raw.a);
 }
 

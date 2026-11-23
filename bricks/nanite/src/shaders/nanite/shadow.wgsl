@@ -10,12 +10,6 @@ import package::nanite::common::UNMAPPED_PAGE;
 import package::nanite::common::SHADOW_LIST_CAP;
 import package::nanite::common::inst_to_world;
 import package::nanite::common::decode_pos;
-import package::nanite::common::cluster_vert_count;
-import package::nanite::common::cluster_tri_count;
-import package::nanite::common::cluster_page_id;
-import package::nanite::common::cluster_word_offset;
-import package::nanite::common::cluster_fb_start;
-import package::nanite::common::cluster_fb_count;
 
 const SH_DEDUP_BASE: u32 = 528416u;
 
@@ -60,22 +54,26 @@ fn shadow_collect(job_idx: u32, cascade: u32) {
     let inst_id = job.x;
     let cid = job.y;
     let inst = sh_instances[inst_id];
-    let c0 = sh_clusters[cid];
-    var vp = sh_uniforms.shadow_vp0;
+    let c_bs = sh_clusters[cid].bound_sphere;
+    let world_c = inst_to_world(inst, c_bs.xyz);
+    let world_r = c_bs.w * inst.pos_scale.w;
+    var clip_xy: vec2<f32>;
     if cascade != 0u {
-        vp = sh_uniforms.shadow_vp1;
+        let vp = sh_uniforms.shadow_vp1;
+        clip_xy = vp[0].xy * world_c.x + vp[1].xy * world_c.y + vp[2].xy * world_c.z + vp[3].xy;
+    } else {
+        let vp = sh_uniforms.shadow_vp0;
+        clip_xy = vp[0].xy * world_c.x + vp[1].xy * world_c.y + vp[2].xy * world_c.z + vp[3].xy;
     }
     let half_ext = select(sh_uniforms.shadow_center0.w, sh_uniforms.shadow_center1.w, cascade != 0u);
-    let world_c = inst_to_world(inst, c0.bound_sphere.xyz);
-    let world_r = c0.bound_sphere.w * inst.pos_scale.w;
-    let clip_c = vp * vec4<f32>(world_c, 1.0);
-    let r_ndc = world_r / max(half_ext, 1.0);
-    if abs(clip_c.x) > 1.0 + r_ndc || abs(clip_c.y) > 1.0 + r_ndc {
+    let safe_ext = max(half_ext, 1.0);
+    if max(abs(clip_xy.x), abs(clip_xy.y)) * safe_ext > safe_ext + world_r {
         return;
     }
     let list_base = select(0u, SHADOW_LIST_CAP, cascade != 0u);
     let counter_idx = select(8u, 9u, cascade != 0u);
-    let slot = sh_page_table[cluster_page_id(c0)];
+    let pf = sh_clusters[cid].page_and_fallback;
+    let slot = sh_page_table[pf.x];
     if slot != UNMAPPED_PAGE {
         if try_claim_sh_dedup(inst_id, cid) {
             let out_idx = atomicAdd(&sh_indirect[counter_idx], 1u);
@@ -85,36 +83,36 @@ fn shadow_collect(job_idx: u32, cascade: u32) {
         }
         return;
     }
-    var fb_stack: array<u32, 128>;
-    var sp: u32 = 0u;
-    let fb_s = cluster_fb_start(c0);
-    let fb_c = cluster_fb_count(c0);
-    for (var fi = 0u; fi < fb_c && sp < 128u; fi = fi + 1u) {
-        fb_stack[sp] = fb_s + fi;
-        sp = sp + 1u;
+    var stack: array<u32, 64>;
+    var top: u32 = 0u;
+    let fb_s = pf.z & 0x00FFFFFFu;
+    let fb_c = pf.z >> 24u;
+    for (var fi = 0u; fi < fb_c && top < 64u; fi = fi + 1u) {
+        stack[top] = fb_s + fi;
+        top = top + 1u;
     }
     for (var s = 0u; s < 1024u; s = s + 1u) {
-        if sp == 0u {
+        if top == 0u {
             break;
         }
-        sp = sp - 1u;
-        let cur = fb_stack[sp];
+        top = top - 1u;
+        let cur = stack[top];
         if !try_claim_sh_dedup(inst_id, cur) {
             continue;
         }
-        let fc = sh_clusters[cur];
-        let fs = sh_page_table[cluster_page_id(fc)];
+        let f_pf = sh_clusters[cur].page_and_fallback;
+        let fs = sh_page_table[f_pf.x];
         if fs != UNMAPPED_PAGE {
             let out_idx = atomicAdd(&sh_indirect[counter_idx], 1u);
             if out_idx < SHADOW_LIST_CAP {
                 sh_list[list_base + out_idx] = VisibleCluster(inst_id, cur, fs, cascade);
             }
         } else {
-            let ps = cluster_fb_start(fc);
-            let pc = cluster_fb_count(fc);
-            for (var fi = 0u; fi < pc && sp < 128u; fi = fi + 1u) {
-                fb_stack[sp] = ps + fi;
-                sp = sp + 1u;
+            let ps = f_pf.z & 0x00FFFFFFu;
+            let pc = f_pf.z >> 24u;
+            for (var fi = 0u; fi < pc && top < 64u; fi = fi + 1u) {
+                stack[top] = ps + fi;
+                top = top + 1u;
             }
         }
     }
@@ -146,15 +144,16 @@ fn cs_shadow_prep() {
 
 fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
     let vc = sh_list_ro[list_idx];
-    let c = sh_clusters[vc.cluster_id];
     let tri_id = vid / 3u;
-    let tri_count = cluster_tri_count(c);
+    let ec_w = sh_clusters[vc.cluster_id].errors_and_cone.w;
+    let tri_count = (ec_w >> 8u) & 0xFFu;
     if tri_id >= tri_count {
         return vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     let corner = vid - tri_id * 3u;
-    let vert_count = cluster_vert_count(c);
-    let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let vert_count = ec_w & 0xFFu;
+    let word_off = sh_clusters[vc.cluster_id].page_and_fallback.y & 0xFFFFu;
+    let page_base = vc.heap_slot * PAGE_WORDS + word_off;
     let origin = vec3<f32>(
         bitcast<f32>(sh_page_heap[page_base]),
         bitcast<f32>(sh_page_heap[page_base + 1u]),
@@ -165,16 +164,13 @@ fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
     let tri_word = sh_page_heap[verts_base + vert_count * 4u + tri_id];
     let local_vi = (tri_word >> (corner * 8u)) & 0xFFu;
     let v_base = verts_base + local_vi * 4u;
-    let w0 = sh_page_heap[v_base];
-    let w1 = sh_page_heap[v_base + 1u];
-    let local_pos = decode_pos(w0, w1, origin, step);
+    let local_pos = decode_pos(sh_page_heap[v_base], sh_page_heap[v_base + 1u], origin, step);
     let inst = sh_instances[vc.instance_id];
     let world_pos = inst_to_world(inst, local_pos);
-    var vp = sh_uniforms.shadow_vp0;
     if cascade != 0u {
-        vp = sh_uniforms.shadow_vp1;
+        return sh_uniforms.shadow_vp1 * vec4<f32>(world_pos, 1.0);
     }
-    return vp * vec4<f32>(world_pos, 1.0);
+    return sh_uniforms.shadow_vp0 * vec4<f32>(world_pos, 1.0);
 }
 
 @vertex

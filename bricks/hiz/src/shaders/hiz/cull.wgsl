@@ -1,4 +1,4 @@
-fn hiz_project_sphere(
+fn hiz_project_sphere_raw(
     center_vs: vec3<f32>,
     radius: f32,
     p00: f32,
@@ -31,8 +31,18 @@ fn hiz_project_sphere(
     let u_max = ndc_max_x * 0.5 + 0.5;
     let v_min = 0.5 - ndc_max_y * 0.5;
     let v_max = 0.5 - ndc_min_y * 0.5;
+    return vec4<f32>(u_min, v_min, u_max, v_max);
+}
+
+fn hiz_project_sphere(
+    center_vs: vec3<f32>,
+    radius: f32,
+    p00: f32,
+    p11: f32,
+    near_z: f32,
+) -> vec4<f32> {
     return clamp(
-        vec4<f32>(u_min, v_min, u_max, v_max),
+        hiz_project_sphere_raw(center_vs, radius, p00, p11, near_z),
         vec4<f32>(0.0),
         vec4<f32>(1.0),
     );
@@ -53,8 +63,10 @@ fn hiz_test_rect(
     let uv1 = clamp(max(uv_min, uv_max), vec2<f32>(0.0), vec2<f32>(1.0));
     let mip0_i = max(vec2<i32>(mip0_size), vec2<i32>(1, 1));
     let max_mip0 = mip0_i - vec2<i32>(1, 1);
-    let px_min = clamp(vec2<i32>(floor(uv0 * mip0_size)), vec2<i32>(0, 0), max_mip0);
-    let px_max = clamp(vec2<i32>(floor(uv1 * mip0_size)), vec2<i32>(0, 0), max_mip0);
+    let raw_min = clamp(vec2<i32>(floor(uv0 * mip0_size)), vec2<i32>(0, 0), max_mip0);
+    let raw_max = clamp(vec2<i32>(floor(uv1 * mip0_size)), vec2<i32>(0, 0), max_mip0);
+    let px_min = max(raw_min - vec2<i32>(1, 1), vec2<i32>(0, 0));
+    let px_max = min(raw_max + vec2<i32>(1, 1), max_mip0);
 
     let span = u32(max(px_max.x - px_min.x, px_max.y - px_min.y));
     var mip: u32 = 0u;

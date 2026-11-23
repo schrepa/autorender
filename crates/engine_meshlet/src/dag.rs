@@ -1,11 +1,14 @@
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 
 use engine_codec::{Error, ErrorCode, Expected};
 use engine_math::collections::{FixedState, HashMap, HashSet};
 use engine_math::{clamp, max};
 use glam::{Vec2, Vec3};
 
-use crate::bounds::{aabb_of_points, bounding_sphere_points, compute_normal_cone, merge_spheres};
+use crate::bounds::{
+    aabb_of_points, bounding_sphere_points, compute_normal_cone, merge_spheres, morton_3d,
+};
 use crate::bvh::build_bvh_and_order;
 use crate::encode::{
     compute_base_quant_step, decode_cluster_words, encode_cluster_words, encode_compressed_pages,
@@ -693,57 +696,265 @@ fn reduce_material_dag(
     Ok(())
 }
 
+type PackKey = Reverse<(Reverse<i32>, u32, usize)>;
+
+struct GroupPackGraph {
+    members: Vec<Vec<usize>>,
+    group_words: Vec<usize>,
+    morton_keys: Vec<u32>,
+    err_bands: Vec<i32>,
+    parent_groups: Vec<Vec<usize>>,
+    child_groups: Vec<Vec<usize>>,
+    is_root_group: Vec<bool>,
+}
+
+fn group_priority_key(graph: &GroupPackGraph, g: usize) -> PackKey {
+    Reverse((Reverse(graph.err_bands[g]), graph.morton_keys[g], g))
+}
+
+fn build_group_pack_graph(
+    headers: &[ClusterHeader],
+    payloads: &[Vec<u32>],
+    bounds_min: Vec3,
+    bounds_extent: Vec3,
+) -> GroupPackGraph {
+    let mut by_gid: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (ci, header) in headers.iter().enumerate() {
+        by_gid.entry(header.group_id()).or_default().push(ci);
+    }
+    let num_groups = by_gid.len();
+    let mut members = Vec::with_capacity(num_groups);
+    let mut group_words = Vec::with_capacity(num_groups);
+    let mut morton_keys = Vec::with_capacity(num_groups);
+    let mut err_bands = Vec::with_capacity(num_groups);
+    let mut cluster_to_group = vec![0_usize; headers.len()];
+    for (g, cis) in by_gid.into_values().enumerate() {
+        let mut words = 0_usize;
+        for &ci in &cis {
+            cluster_to_group[ci] = g;
+            words += payloads[ci].len();
+        }
+        let rep = &headers[cis[0]];
+        let ps = rep.parent_lod_sphere;
+        let center = Vec3::new(ps[0], ps[1], ps[2]);
+        let morton = morton_3d(center, bounds_min, bounds_extent);
+        let err_band = max(rep.parent_error(), 1.0e-6).log2().floor() as i32;
+        members.push(cis);
+        group_words.push(words);
+        morton_keys.push(morton);
+        err_bands.push(err_band);
+    }
+    let mut parent_groups: Vec<Vec<usize>> = vec![Vec::new(); num_groups];
+    let mut child_groups: Vec<Vec<usize>> = vec![Vec::new(); num_groups];
+    for (g, cis) in members.iter().enumerate() {
+        let mut parents = Vec::new();
+        for &ci in cis {
+            let fb_start = headers[ci].fallback_start() as usize;
+            let fb_count = headers[ci].fallback_count() as usize;
+            for &pg in &cluster_to_group[fb_start..fb_start + fb_count] {
+                if pg != g && !parents.contains(&pg) {
+                    parents.push(pg);
+                }
+            }
+        }
+        parents.sort_unstable();
+        for &pg in &parents {
+            child_groups[pg].push(g);
+        }
+        parent_groups[g] = parents;
+    }
+    let mut is_root_group = vec![false; num_groups];
+    let mut stack = Vec::new();
+    for (g, cis) in members.iter().enumerate() {
+        if cis
+            .iter()
+            .any(|&ci| headers[ci].is_root() || headers[ci].is_pinned_coarse())
+        {
+            is_root_group[g] = true;
+            stack.push(g);
+        }
+    }
+    while let Some(g) = stack.pop() {
+        for &pg in &parent_groups[g] {
+            if !is_root_group[pg] {
+                is_root_group[pg] = true;
+                stack.push(pg);
+            }
+        }
+    }
+    GroupPackGraph {
+        members,
+        group_words,
+        morton_keys,
+        err_bands,
+        parent_groups,
+        child_groups,
+        is_root_group,
+    }
+}
+
+fn place_group_clusters(
+    cis: &[usize],
+    headers: &mut [ClusterHeader],
+    payloads: &[Vec<u32>],
+    page_words: &mut Vec<u32>,
+    cur_page: &mut u32,
+    word_offset: &mut usize,
+) {
+    for &ci in cis {
+        let payload = &payloads[ci];
+        let needed = payload.len();
+        if *word_offset + needed > PAGE_WORDS {
+            *cur_page += 1;
+            *word_offset = 0;
+            page_words.resize((*cur_page as usize + 1) * PAGE_WORDS, 0);
+        }
+        let base = (*cur_page as usize) * PAGE_WORDS + *word_offset;
+        page_words[base..base + needed].copy_from_slice(payload);
+        headers[ci].set_page_location(*cur_page, *word_offset as u32);
+        *word_offset += needed;
+    }
+}
+
+fn pack_root_closure_groups(
+    graph: &GroupPackGraph,
+    headers: &mut [ClusterHeader],
+    payloads: &[Vec<u32>],
+    page_words: &mut Vec<u32>,
+) -> u32 {
+    let mut root_groups: Vec<usize> = (0..graph.members.len())
+        .filter(|&g| graph.is_root_group[g])
+        .collect();
+    root_groups.sort_unstable_by_key(|&g| (graph.morton_keys[g], g));
+    let mut cur_page = 0_u32;
+    let mut word_offset = 0_usize;
+    page_words.resize(PAGE_WORDS, 0);
+    for g in root_groups {
+        if word_offset > 0 && word_offset + graph.group_words[g] > PAGE_WORDS {
+            cur_page += 1;
+            word_offset = 0;
+            page_words.resize((cur_page as usize + 1) * PAGE_WORDS, 0);
+        }
+        place_group_clusters(
+            &graph.members[g],
+            headers,
+            payloads,
+            page_words,
+            &mut cur_page,
+            &mut word_offset,
+        );
+    }
+    let root_page_count = cur_page + 1;
+    for (g, cis) in graph.members.iter().enumerate() {
+        if graph.is_root_group[g] {
+            for &ci in cis {
+                headers[ci].set_flags(headers[ci].flags() | FLAG_IN_ROOT_PAGE);
+                headers[ci].set_fallback(0, 0);
+            }
+        }
+    }
+    root_page_count
+}
+
+fn pack_non_root_groups(
+    graph: &GroupPackGraph,
+    headers: &mut [ClusterHeader],
+    payloads: &[Vec<u32>],
+    page_words: &mut Vec<u32>,
+    root_page_count: u32,
+) -> u32 {
+    let num_groups = graph.members.len();
+    let mut in_deg = vec![0_u32; num_groups];
+    let mut eligible: BinaryHeap<PackKey> = BinaryHeap::new();
+    let mut remaining = 0_usize;
+    for (g, deg_slot) in in_deg.iter_mut().enumerate() {
+        if graph.is_root_group[g] {
+            continue;
+        }
+        remaining += 1;
+        let mut deg = 0_u32;
+        for &pg in &graph.parent_groups[g] {
+            if !graph.is_root_group[pg] {
+                deg += 1;
+            }
+        }
+        *deg_slot = deg;
+        if deg == 0 {
+            eligible.push(group_priority_key(graph, g));
+        }
+    }
+    if remaining == 0 {
+        return root_page_count;
+    }
+    let mut deferred: Vec<PackKey> = Vec::new();
+    let mut cur_page = root_page_count;
+    let mut word_offset = 0_usize;
+    page_words.resize((cur_page as usize + 1) * PAGE_WORDS, 0);
+    let mut placed = 0_usize;
+    while placed < remaining {
+        if eligible.is_empty() {
+            if deferred.is_empty() {
+                break;
+            }
+            cur_page += 1;
+            word_offset = 0;
+            page_words.resize((cur_page as usize + 1) * PAGE_WORDS, 0);
+            eligible.extend(deferred.drain(..));
+        }
+        let Some(item) = eligible.pop() else {
+            break;
+        };
+        let Reverse((_, _, item_g)) = item;
+        let g = if word_offset > 0 && word_offset + graph.group_words[item_g] > PAGE_WORDS {
+            cur_page += 1;
+            word_offset = 0;
+            page_words.resize((cur_page as usize + 1) * PAGE_WORDS, 0);
+            eligible.extend(deferred.drain(..));
+            eligible.push(item);
+            let Some(best) = eligible.pop() else {
+                break;
+            };
+            let Reverse((_, _, best_g)) = best;
+            best_g
+        } else {
+            item_g
+        };
+        place_group_clusters(
+            &graph.members[g],
+            headers,
+            payloads,
+            page_words,
+            &mut cur_page,
+            &mut word_offset,
+        );
+        placed += 1;
+        for &cg in &graph.child_groups[g] {
+            if !graph.is_root_group[cg] {
+                in_deg[cg] = in_deg[cg].saturating_sub(1);
+                if in_deg[cg] == 0 {
+                    deferred.push(group_priority_key(graph, cg));
+                }
+            }
+        }
+    }
+    cur_page + 1
+}
+
 fn pack_pages_and_fallbacks(
     headers: &mut [ClusterHeader],
     payloads: &[Vec<u32>],
-    root_prefix_len: usize,
+    bounds_min: Vec3,
+    bounds_max: Vec3,
 ) -> (Vec<u32>, u32, u32) {
+    if headers.is_empty() {
+        return (Vec::new(), 0, 0);
+    }
+    let bounds_extent = (bounds_max - bounds_min).max(Vec3::ZERO);
+    let graph = build_group_pack_graph(headers, payloads, bounds_min, bounds_extent);
     let mut page_words = Vec::new();
-    let mut page_id = 0_u32;
-    let mut word_offset = 0_usize;
-    page_words.resize(PAGE_WORDS, 0);
-    for (idx, payload) in payloads.iter().enumerate() {
-        let mut min_page = 0_u32;
-        if idx == root_prefix_len && root_prefix_len > 0 && word_offset > 0 {
-            min_page = page_id + 1;
-        }
-        let fb_start = headers[idx].fallback_start() as usize;
-        let fb_count = headers[idx].fallback_count() as usize;
-        if fb_count > 0 {
-            for parent in headers.iter().skip(fb_start).take(fb_count) {
-                min_page = min_page.max(parent.page_id() + 1);
-            }
-        }
-        if page_id < min_page {
-            page_id = min_page;
-            word_offset = 0;
-            page_words.resize((page_id as usize + 1) * PAGE_WORDS, 0);
-        }
-        let needed = payload.len();
-        if word_offset + needed > PAGE_WORDS {
-            page_id += 1;
-            word_offset = 0;
-            page_words.resize((page_id as usize + 1) * PAGE_WORDS, 0);
-        }
-        let base = (page_id as usize) * PAGE_WORDS + word_offset;
-        page_words[base..base + needed].copy_from_slice(payload);
-        headers[idx].set_page_location(page_id, word_offset as u32);
-        word_offset += needed;
-    }
-    let page_count = page_id + 1;
-    let mut max_root_page = 0_u32;
-    for header in headers.iter() {
-        if header.is_root() || header.is_pinned_coarse() {
-            max_root_page = max_root_page.max(header.page_id());
-        }
-    }
-    let root_page_count = max_root_page + 1;
-    for header in headers.iter_mut() {
-        if header.page_id() < root_page_count {
-            header.set_flags(header.flags() | FLAG_IN_ROOT_PAGE);
-            header.set_fallback(0, 0);
-        }
-    }
+    let root_page_count = pack_root_closure_groups(&graph, headers, payloads, &mut page_words);
+    let page_count =
+        pack_non_root_groups(&graph, headers, payloads, &mut page_words, root_page_count);
     (page_words, page_count, root_page_count)
 }
 
@@ -778,10 +989,13 @@ pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
     let mut headers: Vec<ClusterHeader> = nodes.iter().map(|n| n.header).collect();
     let parent_runs: Vec<Option<usize>> = nodes.iter().map(|n| n.parent_run).collect();
     let mut payloads: Vec<Vec<u32>> = nodes.into_iter().map(|n| n.payload).collect();
-    let (bvh, root_prefix_len) =
-        build_bvh_and_order(&mut headers, &mut payloads, &runs, &parent_runs);
-    let (page_words, page_count, root_page_count) =
-        pack_pages_and_fallbacks(&mut headers, &payloads, root_prefix_len);
+    let bvh = build_bvh_and_order(&mut headers, &mut payloads, &runs, &parent_runs);
+    let (page_words, page_count, root_page_count) = pack_pages_and_fallbacks(
+        &mut headers,
+        &payloads,
+        Vec3::from_array(prepared.bounds_min),
+        Vec3::from_array(prepared.bounds_max),
+    );
     let (compressed_pages, page_spans) = encode_compressed_pages(&page_words, page_count)?;
     let mut max_lod = 0_u32;
     let mut leaf_tris = 0_u32;

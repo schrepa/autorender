@@ -1,8 +1,7 @@
-import package::generated::nanite::NaniteUniforms;
 import package::generated::nanite::NaniteInstance;
 import package::generated::nanite::GpuClusterHeader;
 
-const PAGE_WORDS: u32 = 16384u;
+const PAGE_WORDS: u32 = 8192u;
 const CLUSTER_HEADER_WORDS: u32 = 4u;
 const CLUSTER_DRAW_VERTS: u32 = 384u;
 const MAX_PHASE_CLUSTERS: u32 = 131072u;
@@ -35,14 +34,6 @@ fn decode_pos(w0: u32, w1: u32, origin: vec3<f32>, step: f32) -> vec3<f32> {
     return origin + vec3<f32>(qx, qy, qz) * step;
 }
 
-fn decode_color_ao(w1: u32) -> vec4<f32> {
-    let r = f32((w1 >> 16u) & 0xFu) * (1.0 / 15.0);
-    let g = f32((w1 >> 20u) & 0xFu) * (1.0 / 15.0);
-    let b = f32((w1 >> 24u) & 0x7u) * (1.0 / 7.0);
-    let ao = f32((w1 >> 27u) & 0x1Fu) * (1.0 / 31.0);
-    return vec4<f32>(r * r, g * g, b * b, ao);
-}
-
 fn decode_octahedral(w2: u32) -> vec3<f32> {
     let p = unpack2x16snorm(w2);
     let pz = 1.0 - abs(p.x) - abs(p.y);
@@ -59,14 +50,6 @@ fn decode_octahedral(w2: u32) -> vec3<f32> {
 
 fn decode_uv(w3: u32) -> vec2<f32> {
     return vec2<f32>(f32(w3 & 0xFFFFu), f32(w3 >> 16u)) * (1.0 / 2048.0);
-}
-
-fn cluster_self_error(c: GpuClusterHeader) -> f32 {
-    return bitcast<f32>(c.errors_and_cone.x);
-}
-
-fn cluster_parent_error(c: GpuClusterHeader) -> f32 {
-    return bitcast<f32>(c.errors_and_cone.y);
 }
 
 fn cluster_vert_count(c: GpuClusterHeader) -> u32 {
@@ -93,24 +76,6 @@ fn cluster_word_offset(c: GpuClusterHeader) -> u32 {
     return c.page_and_fallback.y & 0xFFFFu;
 }
 
-fn cluster_fb_start(c: GpuClusterHeader) -> u32 {
-    return c.page_and_fallback.z & 0x00FFFFFFu;
-}
-
-fn cluster_fb_count(c: GpuClusterHeader) -> u32 {
-    return c.page_and_fallback.z >> 24u;
-}
-
-fn frustum_visible(u: NaniteUniforms, c: vec3<f32>, r: f32) -> bool {
-    if dot(u.plane0.xyz, c) + u.plane0.w < -r { return false; }
-    if dot(u.plane1.xyz, c) + u.plane1.w < -r { return false; }
-    if dot(u.plane2.xyz, c) + u.plane2.w < -r { return false; }
-    if dot(u.plane3.xyz, c) + u.plane3.w < -r { return false; }
-    if dot(u.plane4.xyz, c) + u.plane4.w < -r { return false; }
-    if dot(u.plane5.xyz, c) + u.plane5.w < -r { return false; }
-    return true;
-}
-
 fn projected_error(
     cull_pos: vec3<f32>,
     near_z: f32,
@@ -122,56 +87,6 @@ fn projected_error(
 ) -> f32 {
     let dist = max(length(cull_pos - world_c) - world_r, near_z);
     return (err * inst_scale * lod_scale) / dist;
-}
-
-fn projected_min_error(
-    cull_pos: vec3<f32>,
-    near_z: f32,
-    lod_scale: f32,
-    world_c: vec3<f32>,
-    world_r: f32,
-    err: f32,
-    inst_scale: f32,
-) -> f32 {
-    let dist = max(length(cull_pos - world_c) + world_r, near_z);
-    return (err * inst_scale * lod_scale) / dist;
-}
-
-fn unpack_i8(word: u32, shift: u32) -> i32 {
-    let raw = i32((word >> shift) & 0xFFu);
-    return select(raw, raw - 256, raw >= 128);
-}
-
-fn cone_backface_culled(
-    c: GpuClusterHeader,
-    inst: NaniteInstance,
-    world_c: vec3<f32>,
-    world_r: f32,
-    cull_pos: vec3<f32>,
-) -> bool {
-    let packed = c.errors_and_cone.z;
-    let cutoff = unpack_i8(packed, 24u);
-    if cutoff >= 127 {
-        return false;
-    }
-    let to_c = world_c - cull_pos;
-    let dist = length(to_c);
-    if dist <= world_r {
-        return false;
-    }
-    let ax = vec3<f32>(
-        f32(unpack_i8(packed, 0u)),
-        f32(unpack_i8(packed, 8u)),
-        f32(unpack_i8(packed, 16u)),
-    );
-    let ax_l2 = dot(ax, ax);
-    if ax_l2 <= 1.0e-4 {
-        return false;
-    }
-    let local_axis = ax * inverseSqrt(ax_l2);
-    let world_axis = quat_rotate(inst.rot_quat, local_axis);
-    let sin_cone = f32(cutoff) * (1.0 / 127.0);
-    return dot(to_c, world_axis) >= sin_cone * dist + world_r;
 }
 
 fn edge_yup_i32(a: vec2<i32>, b: vec2<i32>, c: vec2<i32>) -> i32 {

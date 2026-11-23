@@ -1,7 +1,7 @@
 use engine::prelude::*;
 use engine_core::{GpuStruct, gpu_struct};
 
-pub const MAX_HEAP_PAGES: u32 = 1024;
+pub const MAX_HEAP_PAGES: u32 = (128 * 1024 * 1024 / engine_meshlet::PAGE_SIZE_BYTES) as u32;
 pub const MAX_PHASE_CLUSTERS: u32 = 131_072;
 pub const MAX_VIS_CLUSTERS: u32 = 524_288;
 pub const MAX_OCC_INSTANCES: u32 = 4096;
@@ -66,18 +66,15 @@ impl ViewMode {
 pub enum HeapBudget {
     Mb16,
     Mb32,
-    #[default]
     Mb64,
+    #[default]
+    Mb128,
 }
 
 impl HeapBudget {
     #[must_use]
     pub const fn pages(self) -> u32 {
-        match self {
-            Self::Mb16 => 256,
-            Self::Mb32 => 512,
-            Self::Mb64 => 1024,
-        }
+        (self.mb() * 1024 * 1024) / (engine_meshlet::PAGE_SIZE_BYTES as u32)
     }
 
     #[must_use]
@@ -86,6 +83,7 @@ impl HeapBudget {
             Self::Mb16 => 16,
             Self::Mb32 => 32,
             Self::Mb64 => 64,
+            Self::Mb128 => 128,
         }
     }
 
@@ -95,6 +93,7 @@ impl HeapBudget {
             Self::Mb16 => "HEAP 16M",
             Self::Mb32 => "HEAP 32M",
             Self::Mb64 => "HEAP 64M",
+            Self::Mb128 => "HEAP 128M",
         }
     }
 
@@ -103,7 +102,8 @@ impl HeapBudget {
         match self {
             Self::Mb16 => Self::Mb32,
             Self::Mb32 => Self::Mb64,
-            Self::Mb64 => Self::Mb16,
+            Self::Mb64 => Self::Mb128,
+            Self::Mb128 => Self::Mb16,
         }
     }
 }
@@ -188,6 +188,8 @@ gpu_struct! {
         pub shadow_center0: [f32; 4],
         pub shadow_center1: [f32; 4],
         pub extra: [u32; 4],
+        pub prev_cull_view: [[f32; 4]; 4],
+        pub prev_cull_proj: [[f32; 4]; 4],
     }
 }
 
@@ -301,12 +303,12 @@ impl Default for NaniteConfig {
     fn default() -> Self {
         Self {
             view_mode: ViewMode::Lit,
-            heap_budget: HeapBudget::Mb64,
+            heap_budget: HeapBudget::Mb128,
             lod_preset: LodPreset::Px2,
             freeze_culling: false,
             hw_only: true,
             sw_max_px: 2.0,
-            max_pages_per_frame: 48,
+            max_pages_per_frame: 96,
             shadows_enabled: true,
             render_scale: 1.0,
             shadow_c0_half: 14.0,

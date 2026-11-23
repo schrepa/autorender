@@ -343,6 +343,27 @@ fn verify_partial_residency_cuts(manifest: &MeshletManifest) -> Result<u32, Erro
     Ok(checks + 1)
 }
 
+fn verify_group_page_atomicity(manifest: &MeshletManifest) -> Result<(), Error> {
+    let mut groups: HashMap<u32, (usize, u32)> =
+        HashMap::with_capacity_and_hasher(manifest.clusters.len(), FixedState::default());
+    for header in &manifest.clusters {
+        let gid = header.group_id();
+        let entry = groups.entry(gid).or_insert((0, header.page_id()));
+        entry.0 += header.word_count() as usize;
+    }
+    for (ci, header) in manifest.clusters.iter().enumerate() {
+        let gid = header.group_id();
+        if let Some(&(total_words, first_page)) = groups.get(&gid)
+            && total_words <= PAGE_WORDS
+            && header.page_id() != first_page
+        {
+            return Err(invalid(format!("$.clusters[{ci}].group_page_split"))
+                .got([first_page, header.page_id()]));
+        }
+    }
+    Ok(())
+}
+
 fn verify_group_consistency_and_cuts(
     manifest: &MeshletManifest,
     leaf_count: u32,
@@ -364,6 +385,7 @@ fn verify_group_consistency_and_cuts(
             group_ref.insert(gid, (header.parent_error(), header.parent_lod_sphere));
         }
     }
+    verify_group_page_atomicity(manifest)?;
     let min_b = Vec3::from_array(manifest.bounds_min);
     let max_b = Vec3::from_array(manifest.bounds_max);
     let center = (min_b + max_b) * 0.5;

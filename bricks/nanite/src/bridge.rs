@@ -49,7 +49,7 @@ pub fn pump_nanite_streaming(
     }
 
     if let Some(priorities) = reqs {
-        let max_new = (config.max_pages_per_frame * 4).max(192);
+        let max_new = (config.max_pages_per_frame * 8).max(768);
         streaming.ingest_gpu_requests(&world, &priorities, max_new);
     }
 

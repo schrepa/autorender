@@ -44,38 +44,35 @@ fn radial_godrays(uv: vec2<f32>, frag_xy: vec2<f32>) -> vec3<f32> {
     if frame_params.fog_params.w > 0.5 {
         return vec3<f32>(0.0);
     }
-    let vis = frame_params.sun_uv_vis.z;
-    let exposure = frame_params.sun_color_shaft.w;
-    if vis * exposure <= 0.005 {
+    let vis_exp = frame_params.sun_uv_vis.z * frame_params.sun_color_shaft.w;
+    if vis_exp <= 0.005 {
         return vec3<f32>(0.0);
     }
-    let sun_uv = frame_params.sun_uv_vis.xy;
-    let radial_dist = length((uv - sun_uv) * vec2<f32>(1.30, 1.0));
+    let to_uv = uv - frame_params.sun_uv_vis.xy;
+    let radial_dist = length(to_uv * vec2<f32>(1.30, 1.0));
     let radial_falloff = exp(-radial_dist * 1.28);
     if radial_falloff < 0.01 {
         return vec3<f32>(0.0);
     }
-    let density = 0.88;
-    let delta = (uv - sun_uv) * (density / 10.0);
+    let delta = to_uv * (0.88 / 10.0);
     let ign = fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
     var sample_uv = uv - delta * ign;
     var illum_decay = 1.0;
     var accum = vec3<f32>(0.0);
+    let sun_rgb = frame_params.sun_color_shaft.rgb;
     for (var i = 0; i < 10; i = i + 1) {
         sample_uv -= delta;
-        if sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0 {
-            illum_decay *= 0.80;
-            continue;
-        }
-        let s = textureSampleLevel(scene_tex, bloom_sampler, sample_uv, 0.0);
-        let sky_w = clamp(1.0 - s.a, 0.0, 1.0);
-        if sky_w > 0.01 {
-            let tint = mix(frame_params.sun_color_shaft.rgb, min(s.rgb, vec3<f32>(3.0)), 0.32);
-            accum += tint * (illum_decay * 0.44 * sky_w);
+        if sample_uv.x >= 0.0 && sample_uv.x <= 1.0 && sample_uv.y >= 0.0 && sample_uv.y <= 1.0 {
+            let s = textureSampleLevel(scene_tex, bloom_sampler, sample_uv, 0.0);
+            let sky_w = clamp(1.0 - s.a, 0.0, 1.0);
+            if sky_w > 0.01 {
+                let tint = mix(sun_rgb, min(s.rgb, vec3<f32>(3.0)), 0.32);
+                accum += tint * (illum_decay * sky_w);
+            }
         }
         illum_decay *= 0.80;
     }
-    return accum * (exposure * radial_falloff * vis * (1.0 / 5.0));
+    return accum * (vis_exp * radial_falloff * (0.44 / 5.0));
 }
 
 fn upsample_tent(uv: vec2<f32>) -> vec3<f32> {
@@ -95,17 +92,33 @@ fn fs_extract(in: BloomVert) -> @location(0) vec4<f32> {
     }
     let uv = in.uv;
     let texel = 1.0 / vec2<f32>(textureDimensions(src_tex));
+
     let c0 = textureSampleLevel(src_tex, bloom_sampler, uv, 0.0).rgb;
-    let c1 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(-texel.x, -texel.y), 0.0).rgb;
-    let c2 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(texel.x, -texel.y), 0.0).rgb;
-    let c3 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(-texel.x, texel.y), 0.0).rgb;
-    let c4 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(texel.x, texel.y), 0.0).rgb;
     let w0 = karis_weight(c0) * 2.0;
+    var sum = c0 * w0;
+    var wsum = w0;
+
+    let c1 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(-texel.x, -texel.y), 0.0).rgb;
     let w1 = karis_weight(c1);
+    sum += c1 * w1;
+    wsum += w1;
+
+    let c2 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(texel.x, -texel.y), 0.0).rgb;
     let w2 = karis_weight(c2);
+    sum += c2 * w2;
+    wsum += w2;
+
+    let c3 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(-texel.x, texel.y), 0.0).rgb;
     let w3 = karis_weight(c3);
+    sum += c3 * w3;
+    wsum += w3;
+
+    let c4 = textureSampleLevel(src_tex, bloom_sampler, uv + vec2<f32>(texel.x, texel.y), 0.0).rgb;
     let w4 = karis_weight(c4);
-    let avg = (c0 * w0 + c1 * w1 + c2 * w2 + c3 * w3 + c4 * w4) / (w0 + w1 + w2 + w3 + w4);
+    sum += c4 * w4;
+    wsum += w4;
+
+    let avg = sum / wsum;
     return vec4<f32>(soft_threshold(min(avg, vec3<f32>(16.0))), 1.0);
 }
 
@@ -129,7 +142,7 @@ fn fs_up(in: BloomVert) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_up_final(in: BloomVert) -> @location(0) vec4<f32> {
-    let bloom_rgb = upsample_tent(in.uv);
     let shafts = radial_godrays(in.uv, in.pos.xy);
+    let bloom_rgb = upsample_tent(in.uv);
     return vec4<f32>(bloom_rgb * frame_params.grade.y + shafts, 1.0);
 }

@@ -5,7 +5,7 @@ use serde::Serialize;
 
 pub const MAX_CLUSTER_VERTS: usize = 128;
 pub const MAX_CLUSTER_TRIS: usize = 128;
-pub const PAGE_SIZE_BYTES: usize = 65_536;
+pub const PAGE_SIZE_BYTES: usize = 32_768;
 pub const PAGE_WORDS: usize = PAGE_SIZE_BYTES / 4;
 pub const BVH_BRANCHING: usize = 4;
 pub const CLUSTER_HEADER_WORDS: usize = 4;
@@ -14,7 +14,7 @@ pub const CLUSTER_TRI_WORDS: usize = 1;
 pub const ROOT_PARENT_ERROR: f32 = 1.0e30;
 pub const NO_BVH_CHILD: u32 = u32::MAX;
 pub const MANIFEST_MAGIC: [u8; 4] = *b"MLM1";
-pub const MANIFEST_VERSION: u32 = 3;
+pub const MANIFEST_VERSION: u32 = 4;
 pub const FLAG_ROOT_CLUSTER: u32 = 1;
 pub const FLAG_IN_ROOT_PAGE: u32 = 2;
 pub const FLAG_PINNED_COARSE: u32 = 4;

@@ -15,8 +15,6 @@ import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::SHADOW_C0_DIM;
 import package::nanite::common::SHADOW_C1_DIM;
 import package::nanite::common::quat_rotate;
-import package::nanite::common::decode_pos;
-import package::nanite::common::decode_color_ao;
 import package::nanite::common::decode_octahedral;
 import package::nanite::common::decode_uv;
 import package::nanite::common::cluster_vert_count;
@@ -40,6 +38,24 @@ import package::nanite::common::cluster_word_offset;
 
 const PI: f32 = 3.14159265;
 const NO_TEX_LAYER: u32 = 0xFFFFFFFFu;
+
+struct GiPair {
+    diff: vec3<f32>,
+    refl: vec3<f32>,
+}
+
+struct MaterialSample {
+    albedo: vec3<f32>,
+    shaded_n: vec3<f32>,
+    rough: f32,
+    metallic: f32,
+}
+
+struct VisHit {
+    vis_id: u32,
+    depth: f32,
+    use_sw: bool,
+}
 
 fn hash_u32(v_in: u32) -> u32 {
     var v = v_in;
@@ -109,12 +125,15 @@ fn eval_sky(dir: vec3<f32>, include_sun: bool) -> vec3<f32> {
     let g = frame_params.fog_color.w;
     let g2 = g * g;
     let denom = max(1.0 + g2 - 2.0 * g * cos_theta, 0.02);
-    let mie = (1.0 - g2) / (4.0 * PI * pow(denom, 1.5));
+    let mie = (1.0 - g2) / (4.0 * PI * denom * sqrt(denom));
     col += vec3<f32>(1.0, 0.90, 0.72) * (min(mie, 1.8) * 0.22 * (1.0 - up_t * 0.45));
 
     if include_sun {
-        let corona = pow(clamp((cos_theta - 0.992) / 0.008, 0.0, 1.0), 3.0);
-        let soft_glow = pow(clamp((cos_theta - 0.94) / 0.06, 0.0, 1.0), 4.0);
+        let ct = clamp((cos_theta - 0.992) * 125.0, 0.0, 1.0);
+        let corona = ct * ct * ct;
+        let st = clamp((cos_theta - 0.94) * (1.0 / 0.06), 0.0, 1.0);
+        let st2 = st * st;
+        let soft_glow = st2 * st2;
         let disk = smoothstep(0.99992, 0.99997, cos_theta);
         col += frame_params.sun_color_shaft.rgb * (soft_glow * 0.45 + corona * 2.2 + disk * 24.0);
     }
@@ -126,7 +145,7 @@ fn sample_cascade_c0(
     n: vec3<f32>,
     normal_bias: f32,
     depth_bias: f32,
-    rot_angle: f32,
+    cs: vec2<f32>,
 ) -> vec2<f32> {
     let p = world_pos + n * normal_bias;
     let clip = nanite_frame_uniforms.shadow_vp0 * vec4<f32>(p, 1.0);
@@ -136,14 +155,12 @@ fn sample_cascade_c0(
     }
     let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
     let cmp_z = clamp(clip.z + depth_bias, 0.0, 1.0);
-    let radius = 1.65 / f32(SHADOW_C0_DIM);
-    var acc = 0.0;
-    for (var i = 0u; i < 4u; i = i + 1u) {
-        let r = sqrt((f32(i) + 0.5) * 0.25) * radius;
-        let ang = f32(i) * 2.3999632 + rot_angle;
-        let off = vec2<f32>(cos(ang), sin(ang)) * r;
-        acc += textureSampleCompareLevel(nanite_frame_shadow_c0, shadow_sampler, uv + off, cmp_z);
-    }
+    let r_cs = cs * (1.65 / f32(SHADOW_C0_DIM));
+    let r_cs_p = vec2<f32>(-r_cs.y, r_cs.x);
+    var acc = textureSampleCompareLevel(nanite_frame_shadow_c0, shadow_sampler, uv + r_cs * 0.35355339, cmp_z);
+    acc += textureSampleCompareLevel(nanite_frame_shadow_c0, shadow_sampler, uv + r_cs * -0.45154436 + r_cs_p * 0.41365165, cmp_z);
+    acc += textureSampleCompareLevel(nanite_frame_shadow_c0, shadow_sampler, uv + r_cs * 0.06911606 + r_cs_p * -0.78754236, cmp_z);
+    acc += textureSampleCompareLevel(nanite_frame_shadow_c0, shadow_sampler, uv + r_cs * 0.56914251 + r_cs_p * 0.74234548, cmp_z);
     let coverage = smoothstep(0.98, 0.84, margin);
     return vec2<f32>(acc * 0.25, coverage);
 }
@@ -153,7 +170,7 @@ fn sample_cascade_c1(
     n: vec3<f32>,
     normal_bias: f32,
     depth_bias: f32,
-    rot_angle: f32,
+    cs: vec2<f32>,
 ) -> vec2<f32> {
     let p = world_pos + n * normal_bias;
     let clip = nanite_frame_uniforms.shadow_vp1 * vec4<f32>(p, 1.0);
@@ -163,23 +180,22 @@ fn sample_cascade_c1(
     }
     let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
     let cmp_z = clamp(clip.z + depth_bias, 0.0, 1.0);
-    let radius = 1.85 / f32(SHADOW_C1_DIM);
-    var acc = 0.0;
-    for (var i = 0u; i < 4u; i = i + 1u) {
-        let r = sqrt((f32(i) + 0.5) * 0.25) * radius;
-        let ang = f32(i) * 2.3999632 + rot_angle;
-        let off = vec2<f32>(cos(ang), sin(ang)) * r;
-        acc += textureSampleCompareLevel(nanite_frame_shadow_c1, shadow_sampler, uv + off, cmp_z);
-    }
+    let r_cs = cs * (1.85 / f32(SHADOW_C1_DIM));
+    let r_cs_p = vec2<f32>(-r_cs.y, r_cs.x);
+    var acc = textureSampleCompareLevel(nanite_frame_shadow_c1, shadow_sampler, uv + r_cs * 0.35355339, cmp_z);
+    acc += textureSampleCompareLevel(nanite_frame_shadow_c1, shadow_sampler, uv + r_cs * -0.45154436 + r_cs_p * 0.41365165, cmp_z);
+    acc += textureSampleCompareLevel(nanite_frame_shadow_c1, shadow_sampler, uv + r_cs * 0.06911606 + r_cs_p * -0.78754236, cmp_z);
+    acc += textureSampleCompareLevel(nanite_frame_shadow_c1, shadow_sampler, uv + r_cs * 0.56914251 + r_cs_p * 0.74234548, cmp_z);
     let coverage = smoothstep(0.98, 0.84, margin);
     return vec2<f32>(acc * 0.25, coverage);
 }
 
-fn eval_shadow(world_pos: vec3<f32>, geom_n: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
+fn eval_shadow(world_pos: vec3<f32>, geom_n: vec3<f32>, ign: f32) -> f32 {
     if frame_params.gi_max_pad.w < 0.5 {
         return 1.0;
     }
-    let rot = temporal_ign(frag_xy) * 6.2831853;
+    let rot = ign * 6.2831853;
+    let cs = vec2<f32>(cos(rot), sin(rot));
     let ndl = max(dot(geom_n, frame_params.sun_dir_illum.xyz), 0.0);
     let slope = clamp(1.0 - ndl, 0.0, 1.0);
     let c0 = sample_cascade_c0(
@@ -187,7 +203,7 @@ fn eval_shadow(world_pos: vec3<f32>, geom_n: vec3<f32>, frag_xy: vec2<f32>) -> f
         geom_n,
         0.014 + slope * 0.022,
         0.00022 + slope * 0.00032,
-        rot,
+        cs,
     );
     if c0.y >= 0.99 {
         return c0.x;
@@ -197,38 +213,52 @@ fn eval_shadow(world_pos: vec3<f32>, geom_n: vec3<f32>, frag_xy: vec2<f32>) -> f
         geom_n,
         0.028 + slope * 0.042,
         0.00036 + slope * 0.00050,
-        rot,
+        cs,
     );
     let far_val = mix(1.0, c1.x, c1.y);
     return mix(far_val, c0.x, c0.y);
 }
 
-fn eval_geomerics_sh(sh: vec4<f32>, dir: vec3<f32>) -> f32 {
+fn eval_geomerics_sh_pair(
+    sh: vec4<f32>,
+    n: vec3<f32>,
+    refl: vec3<f32>,
+    need_refl: bool,
+) -> vec2<f32> {
     let r0 = max(sh.x, 1.0e-5);
     let l1 = sh.yzw;
     let l1_len = length(l1);
     let r = clamp(l1_len / r0, 0.0, 1.0);
-    let q = 0.5 * (1.0 + dot(dir, l1 / max(l1_len, 1.0e-5)));
+    let l1_dir = l1 * (1.0 / max(l1_len, 1.0e-5));
     let p = 1.0 + 2.0 * r;
     let a = (1.0 - r) / (1.0 + r);
-    return r0 * (a + (1.0 - a) * (p + 1.0) * pow(clamp(q, 0.0, 1.0), p));
+    let c1 = (1.0 - a) * (p + 1.0);
+    let qn = clamp(0.5 * (1.0 + dot(n, l1_dir)), 0.0, 1.0);
+    let dn = max(r0 * (a + c1 * pow(qn, p)), 0.0);
+    var dr = dn;
+    if need_refl {
+        let qr = clamp(0.5 * (1.0 + dot(refl, l1_dir)), 0.0, 1.0);
+        dr = max(r0 * (a + c1 * pow(qr, p)), 0.0);
+    }
+    return vec2<f32>(dn, dr);
 }
 
-struct GiProbeSample {
-    r: vec4<f32>,
-    g: vec4<f32>,
-    b: vec4<f32>,
-    valid: bool,
-}
-
-fn fetch_gi_probe(world_pos: vec3<f32>, geom_n: vec3<f32>) -> GiProbeSample {
-    var out: GiProbeSample;
+fn eval_gi_pair(
+    world_pos: vec3<f32>,
+    geom_n: vec3<f32>,
+    n: vec3<f32>,
+    refl: vec3<f32>,
+    need_refl: bool,
+) -> GiPair {
     if frame_params.gi_min_pad.w < 0.5 {
-        out.r = vec4<f32>(0.0);
-        out.g = vec4<f32>(0.0);
-        out.b = vec4<f32>(0.0);
-        out.valid = false;
-        return out;
+        let up_n = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+        let d = mix(vec3<f32>(0.24, 0.19, 0.14), vec3<f32>(0.36, 0.44, 0.58), up_n);
+        var r_col = d;
+        if need_refl {
+            let up_r = clamp(refl.y * 0.5 + 0.5, 0.0, 1.0);
+            r_col = mix(vec3<f32>(0.24, 0.19, 0.14), vec3<f32>(0.36, 0.44, 0.58), up_r);
+        }
+        return GiPair(d * 1.55, r_col);
     }
     let gmin = frame_params.gi_min_pad.xyz;
     let gmax = frame_params.gi_max_pad.xyz;
@@ -237,26 +267,26 @@ fn fetch_gi_probe(world_pos: vec3<f32>, geom_n: vec3<f32>) -> GiProbeSample {
     let dims = vec3<f32>(textureDimensions(gi_sh_r));
     let half_tex = vec3<f32>(0.5) / max(dims, vec3<f32>(1.0));
     let uvw = clamp(uvw_raw, half_tex, vec3<f32>(1.0) - half_tex);
-    out.r = textureSampleLevel(gi_sh_r, gi_sampler, uvw, 0.0);
-    out.g = textureSampleLevel(gi_sh_g, gi_sampler, uvw, 0.0);
-    out.b = textureSampleLevel(gi_sh_b, gi_sampler, uvw, 0.0);
-    out.valid = true;
-    return out;
-}
 
-fn eval_gi_dir(probe: GiProbeSample, dir: vec3<f32>) -> vec3<f32> {
-    if !probe.valid {
-        let up = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-        return mix(vec3<f32>(0.24, 0.19, 0.14), vec3<f32>(0.36, 0.44, 0.58), up);
-    }
-    return max(
-        vec3<f32>(
-            eval_geomerics_sh(probe.r, dir),
-            eval_geomerics_sh(probe.g, dir),
-            eval_geomerics_sh(probe.b, dir),
-        ),
-        vec3<f32>(0.0),
+    let gr = eval_geomerics_sh_pair(
+        textureSampleLevel(gi_sh_r, gi_sampler, uvw, 0.0),
+        n,
+        refl,
+        need_refl,
     );
+    let gg = eval_geomerics_sh_pair(
+        textureSampleLevel(gi_sh_g, gi_sampler, uvw, 0.0),
+        n,
+        refl,
+        need_refl,
+    );
+    let gb = eval_geomerics_sh_pair(
+        textureSampleLevel(gi_sh_b, gi_sampler, uvw, 0.0),
+        n,
+        refl,
+        need_refl,
+    );
+    return GiPair(vec3<f32>(gr.x, gg.x, gb.x) * 1.55, vec3<f32>(gr.y, gg.y, gb.y));
 }
 
 fn load_scene_depth(px: vec2<i32>, size_x: u32) -> f32 {
@@ -271,7 +301,7 @@ fn load_scene_depth(px: vec2<i32>, size_x: u32) -> f32 {
     return d;
 }
 
-fn eval_contact_ao(px_i: vec2<i32>, size: vec2<u32>, center_d: f32, frag_xy: vec2<f32>) -> f32 {
+fn eval_contact_ao(px_i: vec2<i32>, size: vec2<u32>, center_d: f32, ign: f32) -> f32 {
     if center_d <= 1.0e-5 {
         return 1.0;
     }
@@ -279,22 +309,21 @@ fn eval_contact_ao(px_i: vec2<i32>, size: vec2<u32>, center_d: f32, frag_xy: vec
     let center_z = near_z / center_d;
     let max_rad = clamp(20.0 / max(center_z, 1.2), 3.5, 14.0);
     let max_px = vec2<i32>(size) - vec2<i32>(1);
-    let ign = temporal_ign(frag_xy);
     let a0 = ign * 6.2831853;
+    var dir = vec2<f32>(cos(a0), sin(a0));
+    let ign_phase = ign * 7.31;
     var occ = 0.0;
     for (var k = 0u; k < 4u; k = k + 1u) {
-        let ang = a0 + f32(k) * 1.5707963;
         let ring = select(0.48, 0.96, (k & 1u) != 0u);
-        let rad = max_rad * (ring + 0.14 * fract(ign * 7.31 + f32(k) * 0.37));
-        let off = vec2<i32>(round(vec2<f32>(cos(ang), sin(ang)) * rad));
+        let rad = max_rad * (ring + 0.14 * fract(ign_phase + f32(k) * 0.37));
+        let off = vec2<i32>(round(dir * rad));
         let c = clamp(px_i + off, vec2<i32>(0), max_px);
         let sd = load_scene_depth(c, size.x);
         if sd > 1.0e-5 {
-            let sz = near_z / sd;
-            let dz = center_z - sz;
-            let hit = smoothstep(0.02, 0.16, dz) * (1.0 - smoothstep(0.38, 1.15, dz));
-            occ += hit;
+            let dz = center_z - near_z / sd;
+            occ += smoothstep(0.02, 0.16, dz) * (1.0 - smoothstep(0.38, 1.15, dz));
         }
+        dir = vec2<f32>(-dir.y, dir.x);
     }
     return clamp(1.0 - occ * 0.17, 0.42, 1.0);
 }
@@ -315,39 +344,45 @@ fn geometry_smith(ndv: f32, ndl: f32, rough: f32) -> f32 {
 }
 
 fn fresnel_schlick(cos_t: f32, f0: vec3<f32>) -> vec3<f32> {
-    let f = pow(clamp(1.0 - cos_t, 0.0, 1.0), 5.0);
+    let x = clamp(1.0 - cos_t, 0.0, 1.0);
+    let x2 = x * x;
+    let f = x2 * x2 * x;
     return f0 + (vec3<f32>(1.0) - f0) * f;
 }
 
 fn eval_lantern_glow(world_pos: vec3<f32>, n: vec3<f32>, albedo: vec3<f32>, metallic: f32) -> vec3<f32> {
-    let lantern_col = vec3<f32>(1.0, 0.64, 0.28) * 2.1;
-    var accum = vec3<f32>(0.0);
-    let xs = array<f32, 5>(-13.8, -1.8, -1.8, 6.2, 6.2);
-    let ys = array<f32, 5>(3.6, 4.1, 4.1, 4.1, 4.1);
-    let zs = array<f32, 5>(0.0, -4.8, 4.8, -4.8, 4.8);
-    for (var i = 0; i < 5; i = i + 1) {
-        let lp = vec3<f32>(xs[i], ys[i], zs[i]);
+    if world_pos.x < -21.0 || world_pos.x > 13.5 || world_pos.y > 11.5 || abs(world_pos.z) > 12.0 {
+        return vec3<f32>(0.0);
+    }
+    var accum = 0.0;
+    for (var i = 0u; i < 5u; i = i + 1u) {
+        var lp = vec3<f32>(-13.8, 3.6, 0.0);
+        if i > 0u {
+            let lx = select(-1.8, 6.2, i >= 3u);
+            let lz = select(-4.8, 4.8, (i & 1u) == 0u);
+            lp = vec3<f32>(lx, 4.1, lz);
+        }
         let delta = lp - world_pos;
         let d2 = dot(delta, delta);
         if d2 < 46.0 {
             let inv_d = inverseSqrt(max(d2, 0.08));
-            let ldir = delta * inv_d;
-            let atten = clamp(1.0 - d2 * (1.0 / 46.0), 0.0, 1.0);
+            let atten = 1.0 - d2 * (1.0 / 46.0);
             let falloff = (atten * atten) / (1.0 + d2 * 0.45);
-            let ndl = clamp(dot(n, ldir) * 0.72 + 0.28, 0.0, 1.0);
-            accum += lantern_col * (falloff * ndl);
+            let ndl = clamp(dot(n, delta) * inv_d * 0.72 + 0.28, 0.0, 1.0);
+            accum += falloff * ndl;
         }
     }
-    return accum * albedo * (1.0 - metallic * 0.7) * (1.0 / PI);
+    return vec3<f32>(2.1, 1.344, 0.588) * albedo * (accum * (1.0 - metallic * 0.7) * (1.0 / PI));
 }
 
 fn apply_aerial_fog(
     color: vec3<f32>,
     world_pos: vec3<f32>,
     cam_pos: vec3<f32>,
-    view_dir: vec3<f32>,
 ) -> vec3<f32> {
-    let dist = length(world_pos - cam_pos);
+    let to_w = world_pos - cam_pos;
+    let dist = length(to_w);
+    let view_dir = to_w / max(dist, 1.0e-4);
     let density = frame_params.fog_params.x;
     let falloff = frame_params.fog_params.y;
     let avg_h = max(0.5 * (cam_pos.y + world_pos.y), 0.0);
@@ -358,23 +393,16 @@ fn apply_aerial_fog(
     return mix(color, fog_col, clamp(fog_amt, 0.0, 0.22));
 }
 
-fn perturb_normal(
-    p0: vec3<f32>,
-    p1: vec3<f32>,
-    p2: vec3<f32>,
-    uv0: vec2<f32>,
-    uv1: vec2<f32>,
-    uv2: vec2<f32>,
+fn build_tangent_frame(
+    e1: vec3<f32>,
+    e2: vec3<f32>,
+    du1: vec2<f32>,
+    du2: vec2<f32>,
     n: vec3<f32>,
-    nm_sample: vec2<f32>,
-) -> vec3<f32> {
-    let e1 = p1 - p0;
-    let e2 = p2 - p0;
-    let du1 = uv1 - uv0;
-    let du2 = uv2 - uv0;
+) -> vec4<f32> {
     let det = du1.x * du2.y - du1.y * du2.x;
     if abs(det) <= 1.0e-8 {
-        return n;
+        return vec4<f32>(0.0);
     }
     let inv_det = 1.0 / det;
     let t_raw = (e1 * du2.y - e2 * du1.y) * inv_det;
@@ -382,40 +410,91 @@ fn perturb_normal(
     let t_ortho = t_raw - n * dot(n, t_raw);
     let t_l2 = dot(t_ortho, t_ortho);
     if t_l2 <= 1.0e-8 {
-        return n;
+        return vec4<f32>(0.0);
     }
     let t = t_ortho * inverseSqrt(t_l2);
     let sign_b = select(-1.0, 1.0, dot(cross(n, t), b_raw) >= 0.0);
-    let b = cross(n, t) * sign_b;
+    return vec4<f32>(t, sign_b);
+}
+
+fn apply_normal_map(n: vec3<f32>, t_frame: vec4<f32>, nm_sample: vec2<f32>) -> vec3<f32> {
+    if t_frame.w == 0.0 {
+        return n;
+    }
+    let b = cross(n, t_frame.xyz) * t_frame.w;
     let tn_xy = nm_sample * 2.0 - vec2<f32>(1.0);
     let tn_z = sqrt(max(1.0 - dot(tn_xy, tn_xy), 0.01));
-    let world_nm = t * tn_xy.x + b * tn_xy.y + n * tn_z;
+    let world_nm = t_frame.xyz * tn_xy.x + b * tn_xy.y + n * tn_z;
     let l2 = dot(world_nm, world_nm);
     return select(n, world_nm * inverseSqrt(l2), l2 > 1.0e-6);
+}
+
+fn eval_material(
+    mat_id: u32,
+    uv_interp: vec2<f32>,
+    duv_dx: vec2<f32>,
+    duv_dy: vec2<f32>,
+    t_frame: vec4<f32>,
+    geom_n: vec3<f32>,
+    ln_l2: f32,
+) -> MaterialSample {
+    let layer_flags = mat_params[mat_id].layer_flags;
+    let base_cr = mat_params[mat_id].base_color_rough;
+    let tex_layer = layer_flags.x;
+    let min_mip = layer_flags.z;
+
+    var albedo = base_cr.rgb;
+    var rough = base_cr.w;
+    var metallic = mat_params[mat_id].emissive_metal.w;
+    var shaded_n = geom_n;
+
+    if tex_layer != NO_TEX_LAYER {
+        let li = i32(tex_layer);
+        let grad_x = duv_dx * 0.70710678;
+        let grad_y = duv_dy * 0.70710678;
+        var nm_xy = vec2<f32>(0.5, 0.5);
+        var orm_gb = vec2<f32>(0.8, 0.0);
+        if min_mip == 0u {
+            albedo = textureSampleGrad(mat_albedo, pbr_sampler, uv_interp, li, grad_x, grad_y).rgb;
+            nm_xy = textureSampleGrad(mat_normal, pbr_sampler, uv_interp, li, grad_x, grad_y).rg;
+            orm_gb = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, grad_x, grad_y).gb;
+        } else {
+            let max_g = sqrt(max(dot(grad_x, grad_x), dot(grad_y, grad_y)));
+            let dim_f = f32(textureDimensions(mat_albedo).x);
+            let lod = max(log2(max(max_g * dim_f, 1.0)), f32(min_mip));
+            albedo = textureSampleLevel(mat_albedo, pbr_sampler, uv_interp, li, lod).rgb;
+            nm_xy = textureSampleLevel(mat_normal, pbr_sampler, uv_interp, li, lod).rg;
+            if min_mip == 1u {
+                orm_gb = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, grad_x, grad_y).gb;
+            } else {
+                let orm_dim = f32(textureDimensions(mat_orm).x);
+                let orm_lod = max(log2(max(max_g * orm_dim, 1.0)), f32(min_mip - 1u));
+                orm_gb = textureSampleLevel(mat_orm, pbr_sampler, uv_interp, li, orm_lod).gb;
+            }
+        }
+        rough = clamp(orm_gb.x * base_cr.w, 0.04, 0.98);
+        metallic = clamp(orm_gb.y * metallic, 0.0, 1.0);
+        shaded_n = apply_normal_map(geom_n, t_frame, nm_xy);
+    }
+
+    let normal_var = clamp(1.0 - ln_l2, 0.0, 0.30);
+    rough = sqrt(clamp(rough * rough + normal_var * 0.35, 0.03, 0.96));
+    return MaterialSample(albedo, shaded_n, rough, metallic);
 }
 
 fn shade_sponza_pbr(
     world_pos: vec3<f32>,
     geom_n: vec3<f32>,
-    shaded_n: vec3<f32>,
+    n: vec3<f32>,
     albedo: vec3<f32>,
-    rough_in: f32,
+    rough: f32,
     metallic: f32,
-    emissive: vec3<f32>,
     ao: f32,
-    flags: u32,
-    normal_var: f32,
-    frag_xy: vec2<f32>,
+    mat_id: u32,
+    ign: f32,
 ) -> vec3<f32> {
-    let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
-    let to_cam = cam_pos - world_pos;
-    let v_len = max(length(to_cam), 1.0e-4);
-    let v = to_cam / v_len;
-    let n = shaded_n;
     let l = frame_params.sun_dir_illum.xyz;
-    let sun_rad = frame_params.sun_color_shaft.rgb * frame_params.sun_dir_illum.w;
-    let rough = sqrt(clamp(rough_in * rough_in + normal_var * 0.35, 0.03, 0.96));
-
+    let flags = mat_params[mat_id].layer_flags.y;
     let is_fabric = (flags & 2u) != 0u;
     let is_foliage = (flags & 4u) != 0u;
     let is_glass = (flags & 8u) != 0u;
@@ -424,8 +503,13 @@ fn shade_sponza_pbr(
     let ndl = max(raw_ndl, 0.0);
     var sh = 0.0;
     if raw_ndl > -0.25 || is_fabric || is_foliage {
-        sh = eval_shadow(world_pos, geom_n, frag_xy);
+        sh = eval_shadow(world_pos, geom_n, ign);
     }
+
+    let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
+    let to_cam = cam_pos - world_pos;
+    let v = to_cam / max(length(to_cam), 1.0e-4);
+    let sun_rad = frame_params.sun_color_shaft.rgb * frame_params.sun_dir_illum.w;
     let ndv = max(dot(n, v), 0.001);
     let h_raw = l + v;
     let h_l2 = dot(h_raw, h_raw);
@@ -433,271 +517,233 @@ fn shade_sponza_pbr(
     let ndh = max(dot(n, h), 0.0);
     let vdh = max(dot(v, h), 0.0);
 
-    let f0 = mix(vec3<f32>(0.04), albedo, metallic);
+    let f0_d = mix(vec3<f32>(0.04), albedo, metallic);
     let d_term = distribution_ggx(ndh, rough);
     let g_term = geometry_smith(ndv, ndl, rough);
-    let f_term = fresnel_schlick(vdh, f0);
+    let f_term = fresnel_schlick(vdh, f0_d);
     let spec = (d_term * g_term * f_term) / max(4.0 * ndv * ndl, 1.0e-4);
     let kd = (vec3<f32>(1.0) - f_term) * (1.0 - metallic);
     let diff = kd * albedo * (1.0 / PI);
 
-    var direct = (diff + spec) * sun_rad * ndl * sh;
+    var lit = (diff + spec) * sun_rad * (ndl * sh) + mat_params[mat_id].emissive_metal.rgb;
 
     if is_fabric {
         let back_n = max(dot(-n, l), 0.0);
-        let back_view = pow(clamp(dot(-v, l), 0.0, 1.0), 2.5);
-        let sheen = pow(clamp(1.0 - ndv, 0.0, 1.0), 3.0) * 0.22;
+        let bv = clamp(dot(-v, l), 0.0, 1.0);
+        let back_view = bv * bv * sqrt(bv);
+        let st = clamp(1.0 - ndv, 0.0, 1.0);
+        let sheen = st * st * st * 0.22;
         let trans = (back_n * 0.42 + back_view * 0.55) * (0.30 + 0.70 * sh);
-        direct += albedo * sun_rad * (trans * 0.36 * (1.0 / PI)) + albedo * sheen * (0.25 + 0.75 * sh);
+        lit += albedo * sun_rad * (trans * 0.36 * (1.0 / PI)) + albedo * (sheen * (0.25 + 0.75 * sh));
     }
     if is_foliage {
         let back_n = max(dot(-n, l), 0.0);
-        let back_view = pow(clamp(dot(-v, l), 0.0, 1.0), 3.0);
+        let bv = clamp(dot(-v, l), 0.0, 1.0);
+        let back_view = bv * bv * bv;
         let sss_col = albedo * vec3<f32>(1.15, 1.35, 0.65);
         let trans = (back_n * 0.35 + back_view * 0.60) * (0.30 + 0.70 * sh);
-        direct += sss_col * sun_rad * (trans * 0.42 * (1.0 / PI));
+        lit += sss_col * sun_rad * (trans * 0.42 * (1.0 / PI));
     }
+    lit += eval_lantern_glow(world_pos, n, albedo, metallic);
 
-    let gi_probe = fetch_gi_probe(world_pos, geom_n);
-    let gi_diff = eval_gi_dir(gi_probe, n) * 1.55;
-    let ao_spec = clamp(pow(ndv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
     let refl = reflect(-v, n);
-    let gi_refl = eval_gi_dir(gi_probe, refl);
-    let sky_refl = eval_sky(refl, false);
+    let need_refl = rough <= 0.72 || metallic >= 0.05 || is_glass;
+    let diff_w = albedo * ((1.0 - metallic * 0.82) * ao);
+    let ao_spec = clamp(pow(ndv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
+    let f_env = fresnel_schlick(ndv, f0_d);
+    let spec_boost = select(0.65 + 0.85 * metallic, 1.40, is_glass);
+    let env_w = f_env * ((1.0 - rough * 0.70) * ao_spec * spec_boost);
     let open_z = 1.0 - smoothstep(2.8, 7.6, abs(world_pos.z));
     let open_x = 1.0 - smoothstep(9.5, 16.5, abs(world_pos.x - 1.0));
-    let sky_vis = clamp(open_z * open_x * smoothstep(-0.1, 0.55, refl.y), 0.0, 1.0);
-    let env_col = mix(gi_refl, sky_refl * 0.72, sky_vis * (1.0 - rough * 0.7));
-    let f_env = fresnel_schlick(ndv, f0);
-    let spec_boost = select(0.65 + 0.85 * metallic, 1.40, is_glass);
-    let env_spec = env_col * f_env * (1.0 - rough * 0.70) * ao_spec * spec_boost;
+    let sky_w = clamp(open_z * open_x * smoothstep(-0.1, 0.55, refl.y), 0.0, 1.0) * (1.0 - rough * 0.7);
 
-    let indirect = gi_diff * albedo * (1.0 - metallic * 0.82) * ao + env_spec;
-    let lanterns = eval_lantern_glow(world_pos, n, albedo, metallic);
+    let gi = eval_gi_pair(world_pos, geom_n, n, refl, need_refl);
+    lit += gi.diff * diff_w;
 
-    let lit = direct + indirect + lanterns + emissive;
-    return apply_aerial_fog(lit, world_pos, cam_pos, -v);
+    var env_col = gi.refl;
+    if sky_w > 0.005 {
+        env_col = mix(gi.refl, eval_sky(refl, false) * 0.72, sky_w);
+    }
+    lit += env_col * env_w;
+    return apply_aerial_fog(lit, world_pos, cam_pos);
 }
 
-fn ray_tri_bary(o: vec3<f32>, e1: vec3<f32>, e2: vec3<f32>, q: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
-    let h = cross(r, e2);
-    let det = dot(e1, h);
+fn ray_tri_bary_uv(
+    d_vec: vec3<f32>,
+    m_vec: vec3<f32>,
+    q_vec: vec3<f32>,
+    r: vec3<f32>,
+) -> vec2<f32> {
+    let det = dot(r, d_vec);
     if abs(det) <= 1.0e-12 {
-        return vec3<f32>(0.3333333, 0.3333333, 0.3333334);
+        return vec2<f32>(0.3333333, 0.3333334);
     }
     let inv_det = 1.0 / det;
-    let u = dot(o, h) * inv_det;
-    let v = dot(r, q) * inv_det;
-    return vec3<f32>(1.0 - u - v, u, v);
+    return vec2<f32>(dot(r, m_vec), dot(r, q_vec)) * inv_det;
 }
 
-fn world_ray(inv_vp: mat4x4<f32>, ndc: vec2<f32>, cam_pos: vec3<f32>) -> vec3<f32> {
-    let h = inv_vp * vec4<f32>(ndc, 0.5, 1.0);
-    let w = h.xyz / max(abs(h.w), 1.0e-5) * sign(h.w);
-    return w - cam_pos;
+fn eval_debug_view(view_mode: u32, vis_id: u32, use_sw: bool, world_n: vec3<f32>) -> vec4<f32> {
+    let vis_slot = (vis_id >> 7u) - 1u;
+    let tri_id = vis_id & 0x7Fu;
+    let vc = nanite_frame_vis_clusters[vis_slot];
+    let c = nanite_frame_clusters[vc.cluster_id];
+    let ndl = 0.42 + 0.58 * clamp(dot(world_n, frame_params.sun_dir_illum.xyz) * 0.5 + 0.5, 0.0, 1.0);
+    if view_mode == 1u {
+        let col = hash_color(vc.cluster_id ^ (vc.instance_id * 1664525u + 1013904223u));
+        return vec4<f32>(col * ndl, 1.0);
+    }
+    if view_mode == 2u {
+        let col = hash_color((vc.cluster_id * 128u + tri_id) ^ (vc.instance_id * 2246822519u));
+        return vec4<f32>(col * ndl, 1.0);
+    }
+    if view_mode == 3u {
+        let col = lod_heat_color(cluster_lod(c));
+        return vec4<f32>(col * ndl, 1.0);
+    }
+    if view_mode == 4u {
+        let hw_col = vec3<f32>(0.06, 0.80, 0.96);
+        let sw_col = vec3<f32>(0.98, 0.52, 0.08);
+        return vec4<f32>(select(hw_col, sw_col, use_sw) * ndl, 1.0);
+    }
+    let page_id = cluster_page_id(c);
+    let is_root = ((c.page_and_fallback.y >> 16u) & 1u) != 0u;
+    let pcol = select(hash_color(page_id + 17u), vec3<f32>(0.98, 0.25, 0.72), is_root);
+    return vec4<f32>(pcol * ndl, 1.0);
 }
 
-@fragment
-fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let vp = nanite_frame_uniforms.viewport_lod.xy;
-    let size = max(vec2<u32>(vp), vec2<u32>(1u));
-    let px = min(vec2<u32>(pos.xy), size - vec2<u32>(1u));
-    let px_i = vec2<i32>(px);
-    let uv = pos.xy / max(vp, vec2<f32>(1.0));
-    let ndc_p = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    let view_mode = nanite_frame_uniforms.flags.z;
+fn clamp_uv_grad(g: vec2<f32>) -> vec2<f32> {
+    let l2 = dot(g, g);
+    if l2 > 0.0625 {
+        return g * (0.25 * inverseSqrt(l2));
+    }
+    return g;
+}
 
-    let hw_d = textureLoad(nanite_frame_depth, px_i, 0);
-    let hw_v = textureLoad(vis_hw_tex, px_i, 0).r;
+fn load_vis_hit(px: vec2<u32>, size_x: u32) -> VisHit {
+    let hw_d = textureLoad(nanite_frame_depth, vec2<i32>(px), 0);
+    let hw_v = textureLoad(vis_hw_tex, vec2<i32>(px), 0).r;
     var vis_id = hw_v;
     var win_depth = hw_d;
     var use_sw = false;
     if nanite_frame_uniforms.flags.y == 0u {
-        let idx = px.y * size.x + px.x;
+        let idx = px.y * size_x + px.x;
         let sw_d = bitcast<f32>(nanite_frame_sw_depth[idx]);
         let sw_v = nanite_frame_sw_vis[idx];
         use_sw = (sw_v != 0u) && (sw_d > hw_d || hw_v == 0u);
         vis_id = select(hw_v, sw_v, use_sw);
         win_depth = select(hw_d, sw_d, use_sw);
     }
+    return VisHit(vis_id, win_depth, use_sw);
+}
 
-    if vis_id == 0u {
+fn decode_qpos(w0: u32, w1: u32) -> vec3<f32> {
+    return vec3<f32>(f32(w0 & 0xFFFFu), f32(w0 >> 16u), f32(w1 & 0xFFFFu));
+}
+
+@fragment
+fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let vp = max(nanite_frame_uniforms.viewport_lod.xy, vec2<f32>(1.0));
+    let size = max(vec2<u32>(nanite_frame_uniforms.viewport_lod.xy), vec2<u32>(1u));
+    let px = min(vec2<u32>(pos.xy), size - vec2<u32>(1u));
+    let view_mode = nanite_frame_uniforms.flags.z;
+    let hit = load_vis_hit(px, size.x);
+
+    let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
+    let inv_vp = nanite_frame_uniforms.inv_render_vp;
+    if hit.vis_id == 0u {
         if view_mode != 0u {
             return vec4<f32>(0.05, 0.055, 0.07, 0.0);
         }
-        let inv_vp = nanite_frame_uniforms.inv_render_vp;
-        let far_h = inv_vp * vec4<f32>(ndc_p, 0.0001, 1.0);
-        let far_w = far_h.xyz / max(abs(far_h.w), 1.0e-5) * sign(far_h.w);
-        let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
-        let ray_d = normalize(far_w - cam_pos);
-        return vec4<f32>(eval_sky(ray_d, true), 0.0);
+        let uv_s = pos.xy / vp;
+        let ndc_s = vec2<f32>(uv_s.x * 2.0 - 1.0, 1.0 - uv_s.y * 2.0);
+        let far_h = inv_vp * vec4<f32>(ndc_s, 0.0001, 1.0);
+        let far_r = (far_h.xyz - cam_pos * far_h.w) * select(-1.0, 1.0, far_h.w >= 0.0);
+        return vec4<f32>(eval_sky(normalize(far_r), true), 0.0);
     }
 
-    let vis_slot = (vis_id >> 7u) - 1u;
-    let tri_id = vis_id & 0x7Fu;
-    let vc = nanite_frame_vis_clusters[vis_slot];
+    let ign = temporal_ign(pos.xy);
+    var contact_ao = 1.0;
+    if view_mode == 0u {
+        contact_ao = eval_contact_ao(vec2<i32>(px), size, hit.depth, ign);
+    }
+
+    let vc = nanite_frame_vis_clusters[(hit.vis_id >> 7u) - 1u];
     let c = nanite_frame_clusters[vc.cluster_id];
-    let inst_ps = nanite_frame_instances[vc.instance_id].pos_scale;
-    let inst_rq = nanite_frame_instances[vc.instance_id].rot_quat;
-    let vert_count = cluster_vert_count(c);
+    let mat_id = min(cluster_mat(c), 31u);
     let page_base = vc.heap_slot * PAGE_WORDS + cluster_word_offset(c);
+    let verts_base = page_base + CLUSTER_HEADER_WORDS;
+    let tri_word = nanite_frame_page_heap[verts_base + cluster_vert_count(c) * 4u + (hit.vis_id & 0x7Fu)];
+    let b0 = verts_base + (tri_word & 0xFFu) * 4u;
+    let b1 = verts_base + ((tri_word >> 8u) & 0xFFu) * 4u;
+    let b2 = verts_base + ((tri_word >> 16u) & 0xFFu) * 4u;
+
     let origin = vec3<f32>(
         bitcast<f32>(nanite_frame_page_heap[page_base]),
         bitcast<f32>(nanite_frame_page_heap[page_base + 1u]),
         bitcast<f32>(nanite_frame_page_heap[page_base + 2u]),
     );
-    let step = bitcast<f32>(nanite_frame_page_heap[page_base + 3u]);
-    let verts_base = page_base + CLUSTER_HEADER_WORDS;
-    let tri_word = nanite_frame_page_heap[verts_base + vert_count * 4u + tri_id];
-    let i0 = tri_word & 0xFFu;
-    let i1 = (tri_word >> 8u) & 0xFFu;
-    let i2 = (tri_word >> 16u) & 0xFFu;
-
-    let b0 = verts_base + i0 * 4u;
-    let b1 = verts_base + i1 * 4u;
-    let b2 = verts_base + i2 * 4u;
+    let inst_id = vc.instance_id;
+    let inst_ps = nanite_frame_instances[inst_id].pos_scale;
+    let inst_rq = nanite_frame_instances[inst_id].rot_quat;
+    let q_scale = bitcast<f32>(nanite_frame_page_heap[page_base + 3u]) * inst_ps.w;
 
     let w0_0 = nanite_frame_page_heap[b0];
     let w1_0 = nanite_frame_page_heap[b0 + 1u];
+    let q0 = decode_qpos(w0_0, w1_0);
+    let p0 = inst_ps.xyz + quat_rotate(inst_rq, origin * inst_ps.w + q0 * q_scale);
+    var ao_pack = w1_0 >> 27u;
+
     let w0_1 = nanite_frame_page_heap[b1];
     let w1_1 = nanite_frame_page_heap[b1 + 1u];
+    let e1 = quat_rotate(inst_rq, (decode_qpos(w0_1, w1_1) - q0) * q_scale);
+    ao_pack |= (w1_1 >> 27u) << 5u;
+
     let w0_2 = nanite_frame_page_heap[b2];
     let w1_2 = nanite_frame_page_heap[b2 + 1u];
+    let e2 = quat_rotate(inst_rq, (decode_qpos(w0_2, w1_2) - q0) * q_scale);
+    ao_pack |= (w1_2 >> 27u) << 10u;
 
-    let p0 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_0, w1_0, origin, step) * inst_ps.w);
-    let p1 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_1, w1_1, origin, step) * inst_ps.w);
-    let p2 = inst_ps.xyz + quat_rotate(inst_rq, decode_pos(w0_2, w1_2, origin, step) * inst_ps.w);
-
-    let cam_pos = nanite_frame_uniforms.render_pos_time.xyz;
-    let inv_vp = nanite_frame_uniforms.inv_render_vp;
-    let e1 = p1 - p0;
-    let e2 = p2 - p0;
     let o = cam_pos - p0;
-    let q = cross(o, e1);
-    let r_c = world_ray(inv_vp, ndc_p, cam_pos);
-    let r_x = world_ray(inv_vp, ndc_p + vec2<f32>(2.0 / max(vp.x, 1.0), 0.0), cam_pos);
-    let r_y = world_ray(inv_vp, ndc_p + vec2<f32>(0.0, -2.0 / max(vp.y, 1.0)), cam_pos);
-    let bary = ray_tri_bary(o, e1, e2, q, r_c);
-    let bary_x = ray_tri_bary(o, e1, e2, q, r_x);
-    let bary_y = ray_tri_bary(o, e1, e2, q, r_y);
-    let db_dx = bary_x - bary;
-    let db_dy = bary_y - bary;
+    let d_vec = cross(e2, e1);
+    let m_vec = cross(e2, o);
+    let q_vec = cross(o, e1);
+    let ndc_p = vec2<f32>((pos.x / vp.x) * 2.0 - 1.0, 1.0 - (pos.y / vp.y) * 2.0);
+    let h_c = inv_vp * vec4<f32>(ndc_p, 0.5, 1.0);
+    let r_c = h_c.xyz - cam_pos * h_c.w;
+    let dr_x = (inv_vp[0].xyz - cam_pos * inv_vp[0].w) * (2.0 / vp.x);
+    let dr_y = -(inv_vp[1].xyz - cam_pos * inv_vp[1].w) * (2.0 / vp.y);
+    let bary_uv = ray_tri_bary_uv(d_vec, m_vec, q_vec, r_c);
+    let db_dx = ray_tri_bary_uv(d_vec, m_vec, q_vec, r_c + dr_x) - bary_uv;
+    let db_dy = ray_tri_bary_uv(d_vec, m_vec, q_vec, r_c + dr_y) - bary_uv;
 
-    let world_pos = p0 * bary.x + p1 * bary.y + p2 * bary.z;
-    let n0 = decode_octahedral(nanite_frame_page_heap[b0 + 2u]);
-    let n1 = decode_octahedral(nanite_frame_page_heap[b1 + 2u]);
-    let n2 = decode_octahedral(nanite_frame_page_heap[b2 + 2u]);
-    let local_n = n0 * bary.x + n1 * bary.y + n2 * bary.z;
+    let bary_w = 1.0 - bary_uv.x - bary_uv.y;
+    let world_pos = p0 + e1 * bary_uv.x + e2 * bary_uv.y;
+    let local_n = decode_octahedral(nanite_frame_page_heap[b0 + 2u]) * bary_w
+        + decode_octahedral(nanite_frame_page_heap[b1 + 2u]) * bary_uv.x
+        + decode_octahedral(nanite_frame_page_heap[b2 + 2u]) * bary_uv.y;
     let ln_l2 = dot(local_n, local_n);
-    let world_n_raw = quat_rotate(inst_rq, local_n);
+    let world_n_raw = quat_rotate(nanite_frame_instances[inst_id].rot_quat, local_n);
     let wn_l2 = dot(world_n_raw, world_n_raw);
     let world_n = select(vec3<f32>(0.0, 1.0, 0.0), world_n_raw * inverseSqrt(wn_l2), wn_l2 > 1.0e-8);
 
     if view_mode != 0u {
-        let ndl = 0.42 + 0.58 * clamp(dot(world_n, frame_params.sun_dir_illum.xyz) * 0.5 + 0.5, 0.0, 1.0);
-        if view_mode == 1u {
-            let col = hash_color(vc.cluster_id ^ (vc.instance_id * 1664525u + 1013904223u));
-            return vec4<f32>(col * ndl, 1.0);
-        }
-        if view_mode == 2u {
-            let col = hash_color((vc.cluster_id * 128u + tri_id) ^ (vc.instance_id * 2246822519u));
-            return vec4<f32>(col * ndl, 1.0);
-        }
-        if view_mode == 3u {
-            let col = lod_heat_color(cluster_lod(c));
-            return vec4<f32>(col * ndl, 1.0);
-        }
-        if view_mode == 4u {
-            let hw_col = vec3<f32>(0.06, 0.80, 0.96);
-            let sw_col = vec3<f32>(0.98, 0.52, 0.08);
-            return vec4<f32>(select(hw_col, sw_col, use_sw) * ndl, 1.0);
-        }
-        let page_id = cluster_page_id(c);
-        let is_root = ((c.page_and_fallback.y >> 16u) & 1u) != 0u;
-        let pcol = select(hash_color(page_id + 17u), vec3<f32>(0.98, 0.25, 0.72), is_root);
-        return vec4<f32>(pcol * ndl, 1.0);
+        return eval_debug_view(view_mode, hit.vis_id, hit.use_sw, world_n);
     }
 
-    let ca0 = decode_color_ao(w1_0);
-    let ca1 = decode_color_ao(w1_1);
-    let ca2 = decode_color_ao(w1_2);
-    let color_ao = ca0 * bary.x + ca1 * bary.y + ca2 * bary.z;
+    let ao_raw = f32(ao_pack & 0x1Fu) * bary_w + f32((ao_pack >> 5u) & 0x1Fu) * bary_uv.x + f32(ao_pack >> 10u) * bary_uv.y;
+    let ao = clamp(0.45 + 0.55 * (ao_raw * (1.0 / 31.0)), 0.35, 1.0) * contact_ao;
 
     let uv0 = decode_uv(nanite_frame_page_heap[b0 + 3u]);
-    let uv1 = decode_uv(nanite_frame_page_heap[b1 + 3u]);
-    let uv2 = decode_uv(nanite_frame_page_heap[b2 + 3u]);
-    let uv_interp = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
-    var duv_dx = uv0 * db_dx.x + uv1 * db_dx.y + uv2 * db_dx.z;
-    var duv_dy = uv0 * db_dy.x + uv1 * db_dy.y + uv2 * db_dy.z;
-    let dx_len = length(duv_dx);
-    if dx_len > 0.25 {
-        duv_dx *= 0.25 / dx_len;
-    }
-    let dy_len = length(duv_dy);
-    if dy_len > 0.25 {
-        duv_dy *= 0.25 / dy_len;
-    }
+    let du1 = decode_uv(nanite_frame_page_heap[b1 + 3u]) - uv0;
+    let du2 = decode_uv(nanite_frame_page_heap[b2 + 3u]) - uv0;
+    let uv_interp = uv0 + du1 * bary_uv.x + du2 * bary_uv.y;
+    let duv_dx = clamp_uv_grad(du1 * db_dx.x + du2 * db_dx.y);
+    let duv_dy = clamp_uv_grad(du1 * db_dy.x + du2 * db_dy.y);
 
-    let v_dir = normalize(cam_pos - world_pos);
-    let geom_n = select(world_n, -world_n, dot(world_n, v_dir) < 0.0);
+    let geom_n = select(world_n, -world_n, dot(world_n, cam_pos - world_pos) < 0.0);
+    let t_frame = build_tangent_frame(e1, e2, du1, du2, geom_n);
+    let mat = eval_material(mat_id, uv_interp, duv_dx, duv_dy, t_frame, geom_n, ln_l2);
 
-    let mat_id = min(cluster_mat(c), 31u);
-    let mp = mat_params[mat_id];
-    let tex_layer = mp.layer_flags.x;
-    let mat_flags = mp.layer_flags.y;
-    let min_mip = mp.layer_flags.z;
-
-    var albedo = mp.base_color_rough.rgb;
-    var rough = mp.base_color_rough.w;
-    var metallic = mp.emissive_metal.w;
-    var shaded_n = geom_n;
-
-    if tex_layer != NO_TEX_LAYER {
-        let li = i32(tex_layer);
-        let grad_x = duv_dx * 0.70710678;
-        let grad_y = duv_dy * 0.70710678;
-        let max_g = max(length(grad_x), length(grad_y));
-        var nm_xy = vec2<f32>(0.5, 0.5);
-        if min_mip == 0u {
-            albedo = textureSampleGrad(mat_albedo, pbr_sampler, uv_interp, li, grad_x, grad_y).rgb;
-            nm_xy = textureSampleGrad(mat_normal, pbr_sampler, uv_interp, li, grad_x, grad_y).rg;
-        } else {
-            let dim_f = f32(textureDimensions(mat_albedo).x);
-            let lod = max(log2(max(max_g * dim_f, 1.0)), f32(min_mip));
-            albedo = textureSampleLevel(mat_albedo, pbr_sampler, uv_interp, li, lod).rgb;
-            nm_xy = textureSampleLevel(mat_normal, pbr_sampler, uv_interp, li, lod).rg;
-        }
-        let orm_min = select(0u, min_mip - 1u, min_mip > 0u);
-        var orm = vec3<f32>(1.0, 0.8, 0.0);
-        if orm_min == 0u {
-            orm = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, grad_x, grad_y).rgb;
-        } else {
-            let orm_dim = f32(textureDimensions(mat_orm).x);
-            let orm_lod = max(log2(max(max_g * orm_dim, 1.0)), f32(orm_min));
-            orm = textureSampleLevel(mat_orm, pbr_sampler, uv_interp, li, orm_lod).rgb;
-        }
-        rough = clamp(orm.g * mp.base_color_rough.w, 0.04, 0.98);
-        metallic = clamp(orm.b * mp.emissive_metal.w, 0.0, 1.0);
-        shaded_n = perturb_normal(p0, p1, p2, uv0, uv1, uv2, geom_n, nm_xy);
-    }
-
-    let vert_ao = clamp(0.45 + 0.55 * color_ao.a, 0.35, 1.0);
-    let ss_ao = eval_contact_ao(px_i, size, win_depth, pos.xy);
-    let ao = vert_ao * ss_ao;
-    let normal_var = clamp(1.0 - ln_l2, 0.0, 0.30);
-
-    let lit = shade_sponza_pbr(
-        world_pos,
-        geom_n,
-        shaded_n,
-        albedo,
-        rough,
-        metallic,
-        mp.emissive_metal.rgb,
-        ao,
-        mat_flags,
-        normal_var,
-        pos.xy,
-    );
+    let lit = shade_sponza_pbr(world_pos, geom_n, mat.shaded_n, mat.albedo, mat.rough, mat.metallic, ao, mat_id, ign);
     return vec4<f32>(lit, 1.0);
 }
