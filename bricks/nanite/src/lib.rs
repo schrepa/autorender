@@ -7,6 +7,7 @@ engine::brick!();
 
 mod bridge;
 mod gpu;
+mod shadow;
 mod stream;
 mod types;
 mod world;
@@ -17,9 +18,9 @@ use engine_core::{Source, TargetName};
 pub use bridge::NaniteBridgeHandle;
 pub use stream::{CoalesceConfig, PageRun, PageRunItem, VisibleCutParams, coalesce_page_runs};
 pub use types::{
-    GpuBvhNode, GpuClusterHeader, HeapBudget, HizBuildInfo, LodPreset, MAX_HEAP_PAGES,
-    NaniteCamera, NaniteConfig, NaniteInstance, NaniteTelemetry, NaniteUniforms, SHADOW_C0_DIM,
-    SHADOW_C1_DIM, UNMAPPED_PAGE, ViewMode, VisibleCluster, extract_frustum_planes,
+    DEFAULT_SHADOW_DIM, GpuBvhNode, GpuClusterHeader, HizBuildInfo, MAX_HEAP_PAGES, NaniteCamera,
+    NaniteConfig, NaniteInstance, NaniteShadowConfig, NaniteTelemetry, NaniteUniforms,
+    UNMAPPED_PAGE, ViewMode, VisibleCluster, extract_frustum_planes, pages_for_mb,
     reverse_z_infinite_proj, safe_heap_pages,
 };
 pub use world::{

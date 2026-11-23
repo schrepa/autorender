@@ -78,6 +78,7 @@ pub fn build_terrain_column_mesh() -> SourceMesh {
         ao,
         indices,
         material_ids: vec![0; tri_count],
+        double_sided_materials: Vec::new(),
     }
 }
 

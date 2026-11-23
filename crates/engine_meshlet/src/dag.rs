@@ -14,9 +14,10 @@ use crate::encode::{
     compute_base_quant_step, decode_cluster_words, encode_cluster_words, encode_compressed_pages,
 };
 use crate::format::{
-    BuildStats, BuiltMeshlet, ClusterHeader, ClusterVertex, FLAG_HAS_VERTEX_COLOR,
-    FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE, FLAG_ROOT_CLUSTER, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS,
-    MeshletManifest, PAGE_WORDS, ROOT_PARENT_ERROR, SourceMesh,
+    BuildStats, BuiltMeshlet, ClusterHeader, ClusterVertex, FLAG_DOUBLE_SIDED,
+    FLAG_HAS_VERTEX_COLOR, FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE, FLAG_ROOT_CLUSTER,
+    MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS, MeshletManifest, PAGE_WORDS, ROOT_PARENT_ERROR,
+    SourceMesh,
 };
 use crate::group::{GroupInput, group_clusters};
 use crate::partition::{
@@ -220,7 +221,7 @@ fn validate_and_prepare(source: &SourceMesh) -> Result<PreparedSource, Error> {
 }
 
 fn replace_dag_flags(header: &mut ClusterHeader, flags: u32) {
-    header.set_flags((header.flags() & FLAG_HAS_VERTEX_COLOR) | flags);
+    header.set_flags((header.flags() & (FLAG_HAS_VERTEX_COLOR | FLAG_DOUBLE_SIDED)) | flags);
 }
 
 fn make_dag_node(
@@ -1031,6 +1032,13 @@ pub fn build(source: &SourceMesh) -> Result<BuiltMeshlet, Error> {
         )?;
     }
     let mut headers: Vec<ClusterHeader> = nodes.iter().map(|n| n.header).collect();
+    if !source.double_sided_materials.is_empty() {
+        for header in &mut headers {
+            if source.double_sided_materials.contains(&header.material_id()) {
+                header.set_flags(header.flags() | FLAG_DOUBLE_SIDED);
+            }
+        }
+    }
     let parent_runs: Vec<Option<usize>> = nodes.iter().map(|n| n.parent_run).collect();
     let mut payloads: Vec<Vec<u32>> = nodes.into_iter().map(|n| n.payload).collect();
     let bvh = build_bvh_and_order(&mut headers, &mut payloads, &runs, &parent_runs);

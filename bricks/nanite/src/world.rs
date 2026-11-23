@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use engine::prelude::*;
 use engine_math::collections::HashMap;
 use engine_meshlet::{
-    BvhNode, ClusterHeader, MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan,
-    decompress_page_words,
+    BvhNode, ClusterHeader, FLAG_DOUBLE_SIDED, MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES,
+    PAGE_WORDS, PageSpan, decompress_page_words,
 };
 
 use crate::stream::{CutQuery, VisibleCutParams, collect_cut_pages};
@@ -356,12 +356,57 @@ impl NaniteWorld {
             pos_scale: [pos.x, pos.y, pos.z, scale],
             rot_quat: [rot.x, rot.y, rot.z, rot.w],
             bound_sphere: [world_c.x, world_c.y, world_c.z, world_r],
-            info: [mesh.bvh_root, mesh.cluster_offset, mesh.cluster_count, mesh_id],
+            info: [mesh.bvh_root, 0, 0, mesh_id],
         });
         self.total_virtual_tris = self
             .total_virtual_tris
             .saturating_add(u64::from(mesh.source_tri_count));
         self.instance_revision = self.instance_revision.wrapping_add(1);
+    }
+
+    pub fn set_mesh_double_sided(&mut self, mesh_id: u32, double_sided: bool) {
+        let Some(mesh) = self.meshes.get(mesh_id as usize) else {
+            return;
+        };
+        let start = mesh.cluster_offset as usize;
+        let end = start
+            .saturating_add(mesh.cluster_count as usize)
+            .min(self.clusters.len());
+        let bit = FLAG_DOUBLE_SIDED << 16;
+        let mut changed = false;
+        for c in &mut self.clusters[start..end] {
+            let prev = c.page_and_fallback[1];
+            let next = if double_sided { prev | bit } else { prev & !bit };
+            if next != prev {
+                c.page_and_fallback[1] = next;
+                changed = true;
+            }
+        }
+        if changed {
+            self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        }
+    }
+
+    pub fn set_mesh_double_sided_materials(&mut self, mesh_id: u32, materials: &[u8]) {
+        let Some(mesh) = self.meshes.get(mesh_id as usize) else {
+            return;
+        };
+        let start = mesh.cluster_offset as usize;
+        let end = start
+            .saturating_add(mesh.cluster_count as usize)
+            .min(self.clusters.len());
+        let bit = FLAG_DOUBLE_SIDED << 16;
+        let mut changed = false;
+        for c in &mut self.clusters[start..end] {
+            let mat_id = ((c.errors_and_cone[3] >> 24) & 0xFF) as u8;
+            if materials.contains(&mat_id) && (c.page_and_fallback[1] & bit) == 0 {
+                c.page_and_fallback[1] |= bit;
+                changed = true;
+            }
+        }
+        if changed {
+            self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        }
     }
 
     #[must_use]
@@ -407,11 +452,11 @@ impl Default for NaniteStreaming {
     fn default() -> Self {
         Self {
             page_table: Vec::new(),
-            slots: vec![None; MAX_HEAP_PAGES as usize],
+            slots: Vec::new(),
             in_flight: Vec::new(),
             pinned_mask: Vec::new(),
             ready_mask: Vec::new(),
-            budget_pages: MAX_HEAP_PAGES,
+            budget_pages: 0,
             frame_tick: 0,
             pending_requests: VecDeque::new(),
             pinned_requests: HashMap::default(),
@@ -548,6 +593,9 @@ impl NaniteStreaming {
 
     pub fn set_budget(&mut self, budget_pages: u32) {
         let clamped = budget_pages.clamp(16, MAX_HEAP_PAGES);
+        if self.slots.len() < clamped as usize {
+            self.slots.resize(clamped as usize, None);
+        }
         if self.budget_pages == clamped {
             return;
         }
@@ -943,7 +991,6 @@ impl NaniteStreaming {
             lod_scale: params.lod_scale,
             thresh: params.lod_thresh,
             frustum_planes: Some(&params.frustum_planes),
-            double_sided_materials: params.double_sided_materials,
             start_mesh_id: start_mesh,
             roots_ready: None,
         };
@@ -1036,7 +1083,6 @@ impl NaniteStreaming {
             lod_scale: params.lod_scale,
             thresh: params.lod_thresh * 2.0,
             frustum_planes: None,
-            double_sided_materials: 0,
             start_mesh_id: 0,
             roots_ready: Some(&roots_ready),
         };

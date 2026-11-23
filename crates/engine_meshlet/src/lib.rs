@@ -27,9 +27,9 @@ pub use encode::{
 };
 pub use format::{
     BVH_BRANCHING, BuildStats, BuiltMeshlet, BvhNode, CLUSTER_HEADER_WORDS, ClusterHeader,
-    ClusterVertex, DecodedCluster, FLAG_HAS_VERTEX_COLOR, FLAG_IN_ROOT_PAGE, FLAG_PINNED_COARSE,
-    FLAG_ROOT_CLUSTER, MANIFEST_MAGIC, MANIFEST_VERSION, MAX_CLUSTER_TRIS, MAX_CLUSTER_VERTS,
-    MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan, ROOT_PARENT_ERROR,
-    SourceMesh, VerifyReport,
+    ClusterVertex, DecodedCluster, FLAG_DOUBLE_SIDED, FLAG_HAS_VERTEX_COLOR, FLAG_IN_ROOT_PAGE,
+    FLAG_PINNED_COARSE, FLAG_ROOT_CLUSTER, MANIFEST_MAGIC, MANIFEST_VERSION, MAX_CLUSTER_TRIS,
+    MAX_CLUSTER_VERTS, MeshletManifest, NO_BVH_CHILD, PAGE_SIZE_BYTES, PAGE_WORDS, PageSpan,
+    ROOT_PARENT_ERROR, SourceMesh, VerifyReport,
 };
 pub use verify::verify;

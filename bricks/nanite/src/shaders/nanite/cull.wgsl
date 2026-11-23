@@ -16,12 +16,14 @@ import package::nanite::common::CAND_CAP;
 import package::nanite::common::SW_DISPATCH_STRIDE;
 import package::nanite::common::UNMAPPED_PAGE;
 import package::nanite::common::NO_CHILD;
+import package::nanite::common::FLAG_DOUBLE_SIDED_SHIFTED;
 import package::nanite::common::quat_rotate;
 import package::nanite::common::projected_error;
+import package::nanite::common::dedup_hash_pair;
 
 const OCC_INST_BASE: u32 = 32u;
-const OCC_CLUS_BASE: u32 = 4128u;
-const DEDUP_BASE: u32 = 528416u;
+const OCC_CLUS_BASE: u32 = 65568u;
+const DEDUP_BASE: u32 = 589856u;
 const Q_A_BASE: u32 = 0u;
 const Q_B_BASE: u32 = 524288u;
 const CAND_BASE: u32 = 1048576u;
@@ -134,11 +136,11 @@ fn hiz_occluded_sphere(world_c: vec3<f32>, world_r: f32, is_prev: bool) -> bool 
 }
 
 fn try_claim_dedup(inst_id: u32, cluster_id: u32) -> bool {
-    let key = ((inst_id + 1u) << 21u) | (cluster_id & 0x1FFFFFu);
-    var h = (inst_id * 2654435761u) ^ (cluster_id * 2246822519u);
-    h = (h ^ (h >> 16u)) * 0x45D9F3Bu;
-    var slot = h & DEDUP_MASK;
+    let ht = dedup_hash_pair(inst_id, cluster_id);
+    var slot = ht.x;
+    let tag_base = ht.y << 5u;
     for (var probe = 0u; probe < 32u; probe = probe + 1u) {
+        let key = tag_base | probe;
         let res = atomicCompareExchangeWeak(&cull_state[DEDUP_BASE + slot], 0u, key);
         if res.exchanged {
             return true;
@@ -347,7 +349,6 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
     let near_z = cull_uniforms.cull_pos_near.w;
     let err_factor = scale * cull_uniforms.viewport_lod.z;
     let lod_thresh = cull_uniforms.viewport_lod.w;
-    let ds_mask = cull_uniforms.extra.x;
 
     var stack: array<u32, 32>;
     stack[0] = root_node;
@@ -390,8 +391,8 @@ fn cs_bvh_dfs_cut(@builtin(global_invocation_id) gid: vec3<u32>) {
                     local_frustum = local_frustum + 1u;
                     continue;
                 }
-                let mat_bit = 1u << ((ec.w >> 24u) & 31u);
-                if (ds_mask & mat_bit) == 0u
+                let pf_y = cull_clusters[cid].page_and_fallback.y;
+                if (pf_y & FLAG_DOUBLE_SIDED_SHIFTED) == 0u
                     && cone_culled_packed(ec.z, inst_rot, world_c, world_r, cull_pos)
                 {
                     local_cone = local_cone + 1u;
@@ -457,6 +458,7 @@ fn emit_visible_cluster(
     slot: u32,
     page_id: u32,
     c_meta: u32,
+    is_ds: bool,
     dc_world_c: vec3<f32>,
     dc_world_r: f32,
     is_p2: bool,
@@ -512,8 +514,7 @@ fn emit_visible_cluster(
         atomicAdd(&cull_state[sw_stat_idx], 1u);
         atomicAdd(&cull_state[9u], tc);
     } else {
-        let mat_bit = 1u << ((c_meta >> 24u) & 31u);
-        if (cull_uniforms.extra.x & mat_bit) != 0u {
+        if is_ds {
             var ds_cnt_idx = 26u;
             if is_p2 {
                 ds_cnt_idx = 27u;
@@ -567,7 +568,8 @@ fn evaluate_cluster(inst_id: u32, cluster_id: u32, is_p2: bool) {
     let slot = cull_page_table[orig_page];
     let ec_w = cull_clusters[cluster_id].errors_and_cone.w;
     if slot != UNMAPPED_PAGE {
-        emit_visible_cluster(inst_id, cluster_id, slot, orig_page, ec_w, world_c, world_r, is_p2, 0u);
+        let is_ds = (pf.y & FLAG_DOUBLE_SIDED_SHIFTED) != 0u;
+        emit_visible_cluster(inst_id, cluster_id, slot, orig_page, ec_w, is_ds, world_c, world_r, is_p2, 0u);
         return;
     }
 
@@ -614,7 +616,8 @@ fn evaluate_cluster(inst_id: u32, cluster_id: u32, is_p2: bool) {
             let f_meta = cull_clusters[cur].errors_and_cone.w;
             let f_wc = inst_world_pos(inst_pos_scale, inst_rot, f_bs.xyz);
             let f_wr = f_bs.w * scale;
-            emit_visible_cluster(inst_id, cur, fs, fp, f_meta, f_wc, f_wr, is_p2, 1u);
+            let f_ds = (f_pf.y & FLAG_DOUBLE_SIDED_SHIFTED) != 0u;
+            emit_visible_cluster(inst_id, cur, fs, fp, f_meta, f_ds, f_wc, f_wr, is_p2, 1u);
         } else {
             let ps = f_pf.z & 0x00FFFFFFu;
             let pc = f_pf.z >> 24u;

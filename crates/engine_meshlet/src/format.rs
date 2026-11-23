@@ -17,6 +17,7 @@ pub const FLAG_ROOT_CLUSTER: u32 = 1;
 pub const FLAG_IN_ROOT_PAGE: u32 = 2;
 pub const FLAG_PINNED_COARSE: u32 = 4;
 pub const FLAG_HAS_VERTEX_COLOR: u32 = 8;
+pub const FLAG_DOUBLE_SIDED: u32 = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PageSpan {
@@ -161,6 +162,10 @@ impl ClusterHeader {
         (self.flags() & FLAG_HAS_VERTEX_COLOR) != 0
     }
 
+    pub fn is_double_sided(&self) -> bool {
+        (self.flags() & FLAG_DOUBLE_SIDED) != 0
+    }
+
     pub fn normal_cone(&self) -> ([i8; 3], i8) {
         let word = self.errors_and_cone[2];
         let ax = (word & 0xFF) as u8 as i8;
@@ -209,6 +214,7 @@ pub struct SourceMesh {
     pub ao: Vec<f32>,
     pub indices: Vec<u32>,
     pub material_ids: Vec<u8>,
+    pub double_sided_materials: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

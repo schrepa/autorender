@@ -10,8 +10,9 @@ import package::nanite::common::UNMAPPED_PAGE;
 import package::nanite::common::SHADOW_LIST_CAP;
 import package::nanite::common::transform_pos;
 import package::nanite::common::decode_pos_u16;
+import package::nanite::common::dedup_hash_pair;
 
-const SH_DEDUP_BASE: u32 = 528416u;
+const SH_DEDUP_BASE: u32 = 589856u;
 
 @group(1) @binding(0) var<uniform> sh_uniforms: NaniteUniforms;
 @group(1) @binding(1) var<storage, read> sh_instances: array<NaniteInstance>;
@@ -25,11 +26,11 @@ const SH_DEDUP_BASE: u32 = 528416u;
 @group(1) @binding(9) var<storage, read> sh_list_ro: array<VisibleCluster>;
 
 fn try_claim_sh_dedup(inst_id: u32, cluster_id: u32) -> bool {
-    let key = ((inst_id + 1u) << 21u) | (cluster_id & 0x1FFFFFu);
-    var h = (inst_id * 2654435761u) ^ (cluster_id * 2246822519u);
-    h = (h ^ (h >> 16u)) * 0x45D9F3Bu;
-    var slot = h & DEDUP_MASK;
+    let ht = dedup_hash_pair(inst_id, cluster_id);
+    var slot = ht.x;
+    let tag_base = ht.y << 5u;
     for (var probe = 0u; probe < 32u; probe = probe + 1u) {
+        let key = tag_base | probe;
         let res = atomicCompareExchangeWeak(&sh_dedup[SH_DEDUP_BASE + slot], 0u, key);
         if res.exchanged {
             return true;

@@ -11,7 +11,7 @@ use engine_core::{
 use engine_render::{Access, Encode, Own, PerBatch};
 use engine_touch::TouchState;
 
-use crate::state::{CamBookmark, MonolithState};
+use crate::state::{CamBookmark, HeapPreset, LodPreset, MonolithState, view_mode_label};
 
 gpu_struct! {
     pub struct UiHeader {
@@ -91,7 +91,7 @@ fn build_items(state: &MonolithState, cfg: &NaniteConfig) -> Vec<PillItem> {
     let mut items = Vec::with_capacity(13);
     for v in ViewMode::ALL {
         items.push(PillItem {
-            label: v.label(),
+            label: view_mode_label(v),
             action: Action::View(v),
             active: cfg.view_mode == v,
             rect: [0.0; 4],
@@ -115,14 +115,14 @@ fn build_items(state: &MonolithState, cfg: &NaniteConfig) -> Vec<PillItem> {
         group: 2,
     });
     items.push(PillItem {
-        label: cfg.heap_budget.label(),
+        label: HeapPreset::from_mb(cfg.heap_budget_mb).label(),
         action: Action::CycleHeap,
         active: false,
         rect: [0.0; 4],
         group: 2,
     });
     items.push(PillItem {
-        label: cfg.lod_preset.label(),
+        label: LodPreset::from_scaled_px(cfg.lod_error_px, state.lod_error_scale).label(),
         action: Action::CycleLod,
         active: false,
         rect: [0.0; 4],
@@ -292,8 +292,15 @@ fn apply_action(
             state.requested_bookmark = Some(c);
         }
         Action::ToggleFreeze => cfg.freeze_culling = !cfg.freeze_culling,
-        Action::CycleHeap => cfg.heap_budget = cfg.heap_budget.next_within(heap_cap_pages),
-        Action::CycleLod => cfg.lod_preset = cfg.lod_preset.next(),
+        Action::CycleHeap => {
+            cfg.heap_budget_mb = HeapPreset::from_mb(cfg.heap_budget_mb)
+                .next_within(heap_cap_pages)
+                .mb();
+        }
+        Action::CycleLod => {
+            let next = LodPreset::from_scaled_px(cfg.lod_error_px, state.lod_error_scale).next();
+            cfg.lod_error_px = next.base_px() * state.lod_error_scale;
+        }
     }
 }
 

@@ -6,6 +6,7 @@ import package::nanite::common::PAGE_WORDS;
 import package::nanite::common::CLUSTER_HEADER_WORDS;
 import package::nanite::common::MAX_PHASE_CLUSTERS;
 import package::nanite::common::SW_DISPATCH_STRIDE;
+import package::nanite::common::FLAG_DOUBLE_SIDED_SHIFTED;
 import package::nanite::common::transform_pos;
 import package::nanite::common::decode_pos_u16;
 import package::nanite::common::edge_yup_i32;
@@ -117,7 +118,7 @@ fn load_cluster_vert(
     }
 }
 
-fn setup_tri(page_base: u32, ec_w: u32, vis_slot: u32, tri_id: u32) -> TriSetup {
+fn setup_tri(page_base: u32, ec_w: u32, is_ds: bool, vis_slot: u32, tri_id: u32) -> TriSetup {
     var s: TriSetup;
     s.valid = 0u;
     let tri_count = (ec_w >> 8u) & 0xFFu;
@@ -163,8 +164,6 @@ fn setup_tri(page_base: u32, ec_w: u32, vis_slot: u32, tri_id: u32) -> TriSetup 
     var z1_v = p1.z;
     var z2_v = p2.z;
     var area = edge_yup_i32(q0, q1, q2);
-    let mat_bit = 1u << ((ec_w >> 24u) & 31u);
-    let is_ds = (sw_uniforms.extra.x & mat_bit) != 0u;
     if area <= 0 {
         if !is_ds || area == 0 {
             return s;
@@ -327,7 +326,9 @@ fn cs_sw_depth(
     let heap_slot = sw_draw_list[list_idx].heap_slot;
     let vis_slot = sw_draw_list[list_idx].vis_slot;
     let ec_w = sw_clusters[cluster_id].errors_and_cone.w;
-    let word_off = sw_clusters[cluster_id].page_and_fallback.y & 0xFFFFu;
+    let pf_y = sw_clusters[cluster_id].page_and_fallback.y;
+    let word_off = pf_y & 0xFFFFu;
+    let is_ds = (pf_y & FLAG_DOUBLE_SIDED_SHIFTED) != 0u;
     let vert_count = ec_w & 0xFFu;
     let page_base = heap_slot * PAGE_WORDS + word_off;
     let origin = vec3<f32>(
@@ -340,8 +341,8 @@ fn cs_sw_depth(
     load_cluster_vert(inst_id, page_base, vert_count, lid + 64u, origin, step);
     workgroupBarrier();
     let stride = u32(sw_uniforms.viewport_lod.x);
-    raster_depth_tri(setup_tri(page_base, ec_w, vis_slot, lid), stride);
-    raster_depth_tri(setup_tri(page_base, ec_w, vis_slot, lid + 64u), stride);
+    raster_depth_tri(setup_tri(page_base, ec_w, is_ds, vis_slot, lid), stride);
+    raster_depth_tri(setup_tri(page_base, ec_w, is_ds, vis_slot, lid + 64u), stride);
 }
 
 @compute @workgroup_size(64)
@@ -360,7 +361,9 @@ fn cs_sw_vis(
     let heap_slot = sw_draw_list[list_idx].heap_slot;
     let vis_slot = sw_draw_list[list_idx].vis_slot;
     let ec_w = sw_clusters[cluster_id].errors_and_cone.w;
-    let word_off = sw_clusters[cluster_id].page_and_fallback.y & 0xFFFFu;
+    let pf_y = sw_clusters[cluster_id].page_and_fallback.y;
+    let word_off = pf_y & 0xFFFFu;
+    let is_ds = (pf_y & FLAG_DOUBLE_SIDED_SHIFTED) != 0u;
     let vert_count = ec_w & 0xFFu;
     let page_base = heap_slot * PAGE_WORDS + word_off;
     let origin = vec3<f32>(
@@ -373,6 +376,6 @@ fn cs_sw_vis(
     load_cluster_vert(inst_id, page_base, vert_count, lid + 64u, origin, step);
     workgroupBarrier();
     let stride = u32(sw_uniforms.viewport_lod.x);
-    raster_vis_tri(setup_tri(page_base, ec_w, vis_slot, lid), stride);
-    raster_vis_tri(setup_tri(page_base, ec_w, vis_slot, lid + 64u), stride);
+    raster_vis_tri(setup_tri(page_base, ec_w, is_ds, vis_slot, lid), stride);
+    raster_vis_tri(setup_tri(page_base, ec_w, is_ds, vis_slot, lid + 64u), stride);
 }

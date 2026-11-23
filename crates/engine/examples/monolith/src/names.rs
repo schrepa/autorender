@@ -10,5 +10,4 @@ pub const BLOOM_UP_A: TargetName = TargetName("monolith_bloom_up_a");
 
 pub const NEAR_Z: f32 = 0.08;
 pub const SUN_DIR: [f32; 3] = [0.18, 0.93, 0.32];
-pub const DOUBLE_SIDED_MASK: u32 =
-    (1 << 11) | (1 << 14) | (1 << 27) | (1 << 28) | (1 << 29) | (1 << 30) | (1 << 31);
+pub const DOUBLE_SIDED_MATERIALS: &[u8] = &[11, 14, 27, 28, 29, 30, 31];

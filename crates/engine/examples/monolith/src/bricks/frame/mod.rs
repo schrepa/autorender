@@ -228,7 +228,7 @@ fn build_frame_uniforms(
             gi_max[0],
             gi_max[1],
             gi_max[2],
-            if cfg.shadows_enabled { 1.0 } else { 0.0 },
+            if cfg.shadow.enabled { 1.0 } else { 0.0 },
         ],
         taa_params: [
             state.jitter_px[0],

@@ -1,18 +1,17 @@
 use engine::prelude::*;
 use engine_core::{GpuStruct, gpu_struct};
 
-pub const MAX_HEAP_PAGES: u32 = (128 * 1024 * 1024 / engine_meshlet::PAGE_SIZE_BYTES) as u32;
+pub const MAX_HEAP_PAGES: u32 = (512 * 1024 * 1024 / engine_meshlet::PAGE_SIZE_BYTES) as u32;
 pub const MAX_PHASE_CLUSTERS: u32 = 131_072;
 pub const MAX_VIS_CLUSTERS: u32 = 524_288;
-pub const MAX_OCC_INSTANCES: u32 = 4096;
+pub const MAX_OCC_INSTANCES: u32 = 65_536;
 pub const MAX_OCC_CLUSTERS: u32 = 262_144;
 pub const DEDUP_SLOTS: u32 = 262_144;
 pub const BVH_QUEUE_CAP: u32 = 262_144;
 pub const CAND_CAP: u32 = 524_288;
 pub const MAX_HIZ_MIPS: usize = 11;
 pub const MAX_HIZ_DIM: u32 = 512;
-pub const SHADOW_C0_DIM: u32 = 2048;
-pub const SHADOW_C1_DIM: u32 = 2048;
+pub const DEFAULT_SHADOW_DIM: u32 = 2048;
 pub const SHADOW_LIST_CAP: u32 = 131_072;
 pub const UNMAPPED_PAGE: u32 = u32::MAX;
 
@@ -38,18 +37,6 @@ impl ViewMode {
     ];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Lit => "LIT",
-            Self::Meshlets => "MESHLETS",
-            Self::Triangles => "TRIS",
-            Self::Lod => "LOD",
-            Self::HwSw => "HW/SW",
-            Self::Pages => "PAGES",
-        }
-    }
-
-    #[must_use]
     pub const fn index(self) -> u32 {
         match self {
             Self::Lit => 0,
@@ -62,72 +49,15 @@ impl ViewMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum HeapBudget {
-    Mb16,
-    Mb32,
-    Mb64,
-    #[default]
-    Mb128,
-}
-
-impl HeapBudget {
-    #[must_use]
-    pub const fn pages(self) -> u32 {
-        (self.mb() * 1024 * 1024) / (engine_meshlet::PAGE_SIZE_BYTES as u32)
-    }
-
-    #[must_use]
-    pub const fn mb(self) -> u32 {
-        match self {
-            Self::Mb16 => 16,
-            Self::Mb32 => 32,
-            Self::Mb64 => 64,
-            Self::Mb128 => 128,
-        }
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Mb16 => "HEAP 16M",
-            Self::Mb32 => "HEAP 32M",
-            Self::Mb64 => "HEAP 64M",
-            Self::Mb128 => "HEAP 128M",
-        }
-    }
-
-    #[must_use]
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Mb16 => Self::Mb32,
-            Self::Mb32 => Self::Mb64,
-            Self::Mb64 => Self::Mb128,
-            Self::Mb128 => Self::Mb16,
-        }
-    }
-
-    #[must_use]
-    pub const fn next_within(self, max_pages: u32) -> Self {
-        let cand = self.next();
-        if cand.pages() <= max_pages {
-            cand
-        } else {
-            Self::Mb16
-        }
-    }
-
-    #[must_use]
-    pub const fn clamp_to_pages(self, max_pages: u32) -> Self {
-        if self.pages() <= max_pages {
-            self
-        } else if Self::Mb64.pages() <= max_pages {
-            Self::Mb64
-        } else if Self::Mb32.pages() <= max_pages {
-            Self::Mb32
-        } else {
-            Self::Mb16
-        }
+#[must_use]
+pub const fn pages_for_mb(mb: u32) -> u32 {
+    let raw = ((mb as u64) * 1024 * 1024) / (engine_meshlet::PAGE_SIZE_BYTES as u64);
+    if raw < 64 {
+        64
+    } else if raw > MAX_HEAP_PAGES as u64 {
+        MAX_HEAP_PAGES
+    } else {
+        raw as u32
     }
 }
 
@@ -145,43 +75,6 @@ pub const fn safe_heap_pages(storage_room: u64) -> u32 {
         64
     } else {
         pages as u32
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum LodPreset {
-    Px1,
-    #[default]
-    Px2,
-    Px4,
-}
-
-impl LodPreset {
-    #[must_use]
-    pub const fn threshold_px(self) -> f32 {
-        match self {
-            Self::Px1 => 1.0,
-            Self::Px2 => 2.0,
-            Self::Px4 => 4.0,
-        }
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Px1 => "LOD 1PX",
-            Self::Px2 => "LOD 2PX",
-            Self::Px4 => "LOD 4PX",
-        }
-    }
-
-    #[must_use]
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Px1 => Self::Px2,
-            Self::Px2 => Self::Px4,
-            Self::Px4 => Self::Px1,
-        }
     }
 }
 
@@ -284,19 +177,59 @@ pub struct NaniteCamera {
 
 impl Default for NaniteCamera {
     fn default() -> Self {
-        let pos = Vec3::new(0.0, 7.5, 160.0);
-        let view = Mat4::look_at_rh(pos, Vec3::new(0.0, 14.0, -215.0), Vec3::Y);
-        let proj = reverse_z_infinite_proj(42.0_f32.to_radians(), 16.0 / 9.0, 0.1);
+        let proj = reverse_z_infinite_proj(60.0_f32.to_radians(), 16.0 / 9.0, 0.1);
         Self {
-            render_pos: pos,
-            render_view: view,
+            render_pos: Vec3::ZERO,
+            render_view: Mat4::IDENTITY,
             render_proj: proj,
-            cull_pos: pos,
-            cull_view: view,
+            cull_pos: Vec3::ZERO,
+            cull_view: Mat4::IDENTITY,
             cull_proj: proj,
             near_z: 0.1,
             sim_time: 0.0,
-            sun_dir: Vec3::new(0.28, 0.86, 0.42).normalize(),
+            sun_dir: Vec3::Y,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NaniteShadowConfig {
+    pub enabled: bool,
+    pub dim: u32,
+    pub c0_half: f32,
+    pub c0_forward: f32,
+    pub c0_depth: f32,
+    pub c0_y_bounds: Option<[f32; 2]>,
+    pub c1_half: f32,
+    pub c1_center: Option<Vec3>,
+    pub c1_depth: f32,
+}
+
+impl Default for NaniteShadowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dim: DEFAULT_SHADOW_DIM,
+            c0_half: 16.0,
+            c0_forward: 6.0,
+            c0_depth: 64.0,
+            c0_y_bounds: None,
+            c1_half: 64.0,
+            c1_center: None,
+            c1_depth: 128.0,
+        }
+    }
+}
+
+impl NaniteShadowConfig {
+    #[must_use]
+    pub const fn effective_dim(&self) -> u32 {
+        if self.dim < 256 {
+            256
+        } else if self.dim > 4096 {
+            4096
+        } else {
+            self.dim
         }
     }
 }
@@ -304,10 +237,10 @@ impl Default for NaniteCamera {
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct NaniteConfig {
     pub view_mode: ViewMode,
-    pub heap_budget: HeapBudget,
+    pub heap_budget_mb: u32,
     pub max_heap_mb: u32,
-    pub lod_preset: LodPreset,
-    pub lod_error_scale: f32,
+    pub lod_error_px: f32,
+    pub lod_max_viewport_h: u32,
     pub freeze_culling: bool,
     pub hw_only: bool,
     pub sw_max_px: f32,
@@ -316,45 +249,42 @@ pub struct NaniteConfig {
     pub initial_cut_seed_pages: usize,
     pub prefetch_360_pages: usize,
     pub prefetch_360_heap_fraction: f32,
-    pub shadows_enabled: bool,
     pub render_scale: f32,
-    pub shadow_c0_half: f32,
-    pub shadow_c0_forward: f32,
-    pub shadow_c0_depth: f32,
-    pub shadow_c1_half: f32,
-    pub shadow_c1_center: Vec3,
-    pub shadow_c1_depth: f32,
-    pub double_sided_materials: u32,
+    pub shadow: NaniteShadowConfig,
 }
 
 impl NaniteConfig {
     #[must_use]
     pub fn effective_lod_threshold_px(&self) -> f32 {
-        let scale = if self.lod_error_scale.is_finite() && self.lod_error_scale > 0.0 {
-            self.lod_error_scale
+        if self.lod_error_px.is_finite() && self.lod_error_px > 0.0 {
+            engine::math::max(self.lod_error_px, 0.25)
         } else {
-            1.0
+            2.0
+        }
+    }
+
+    #[must_use]
+    pub fn effective_lod_viewport_h(&self, canvas_h: u32) -> f32 {
+        let clamped = if self.lod_max_viewport_h > 0 {
+            canvas_h.min(self.lod_max_viewport_h)
+        } else {
+            canvas_h
         };
-        engine::math::max(self.lod_preset.threshold_px() * scale, 0.25)
+        engine::math::max(clamped as f32, 1.0)
     }
 
     #[must_use]
     pub const fn effective_heap_cap_pages(&self, storage_room: u64) -> u32 {
         let hw_cap = safe_heap_pages(storage_room);
-        let cfg_pages = ((self.max_heap_mb as u64) * 1024 * 1024)
-            / (engine_meshlet::PAGE_SIZE_BYTES as u64);
-        let cfg_clamped = if cfg_pages < 64 {
-            64
-        } else if cfg_pages > MAX_HEAP_PAGES as u64 {
-            MAX_HEAP_PAGES
-        } else {
-            cfg_pages as u32
-        };
-        if cfg_clamped < hw_cap {
-            cfg_clamped
-        } else {
-            hw_cap
-        }
+        let cfg_cap = pages_for_mb(self.max_heap_mb);
+        if cfg_cap < hw_cap { cfg_cap } else { hw_cap }
+    }
+
+    #[must_use]
+    pub const fn effective_budget_pages(&self, storage_room: u64) -> u32 {
+        let cap = self.effective_heap_cap_pages(storage_room);
+        let want = pages_for_mb(self.heap_budget_mb);
+        if want < cap { want } else { cap }
     }
 }
 
@@ -362,10 +292,10 @@ impl Default for NaniteConfig {
     fn default() -> Self {
         Self {
             view_mode: ViewMode::Lit,
-            heap_budget: HeapBudget::Mb128,
+            heap_budget_mb: 128,
             max_heap_mb: 128,
-            lod_preset: LodPreset::Px2,
-            lod_error_scale: 1.0,
+            lod_error_px: 2.0,
+            lod_max_viewport_h: 0,
             freeze_culling: false,
             hw_only: true,
             sw_max_px: 2.0,
@@ -374,15 +304,8 @@ impl Default for NaniteConfig {
             initial_cut_seed_pages: 192,
             prefetch_360_pages: 192,
             prefetch_360_heap_fraction: 0.75,
-            shadows_enabled: true,
             render_scale: 1.0,
-            shadow_c0_half: 14.0,
-            shadow_c0_forward: 6.0,
-            shadow_c0_depth: 48.0,
-            shadow_c1_half: 32.0,
-            shadow_c1_center: Vec3::new(1.0, 6.0, 0.0),
-            shadow_c1_depth: 64.0,
-            double_sided_materials: 0,
+            shadow: NaniteShadowConfig::default(),
         }
     }
 }

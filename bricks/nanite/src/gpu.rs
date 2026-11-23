@@ -10,12 +10,12 @@ use engine_render::{
 
 use crate::bridge::NaniteBridgeHandle;
 use crate::shaders::nanite::{cull, frame, hiz, hw, shadow, sw};
+use crate::shadow::{ShadowTrack, build_shadow_jobs};
 use crate::types::{
     BVH_QUEUE_CAP, CAND_CAP, DEDUP_SLOTS, GpuBvhNode, GpuClusterHeader, HizBuildInfo,
     MAX_HEAP_PAGES, MAX_HIZ_MIPS, MAX_OCC_CLUSTERS, MAX_OCC_INSTANCES, MAX_PHASE_CLUSTERS,
-    MAX_VIS_CLUSTERS, NaniteCamera, NaniteConfig, NaniteInstance, NaniteUniforms, SHADOW_C0_DIM,
-    SHADOW_C1_DIM, SHADOW_LIST_CAP, VisibleCluster, extract_frustum_planes, hiz_dimensions,
-    mip_extent,
+    MAX_VIS_CLUSTERS, NaniteCamera, NaniteConfig, NaniteInstance, NaniteUniforms, SHADOW_LIST_CAP,
+    VisibleCluster, extract_frustum_planes, hiz_dimensions, mip_extent,
 };
 use crate::world::NaniteWorld;
 use crate::NANITE_VIS_HW;
@@ -115,18 +115,6 @@ struct NanitePasses {
     hw_p2: Pass<NaniteGpu>,
     sw_p2: Pass<NaniteGpu>,
     hiz_final: Pass<NaniteGpu>,
-}
-
-struct ShadowTrack {
-    last_c0_center: Vec3,
-    last_c0_res: u64,
-    last_c1_res: u64,
-    last_geom_rev: u64,
-    last_inst_rev: u64,
-    dirty_c0: bool,
-    dirty_c1: bool,
-    fresh_tex: bool,
-    enabled: bool,
 }
 
 struct HizTrack {
@@ -697,40 +685,6 @@ fn install_raster_pipes(
     })
 }
 
-fn shadow_res_tier(residency_ver: u64, total_pages: u32) -> u64 {
-    let cap = u64::from(total_pages.max(1));
-    if residency_ver == 0 {
-        0
-    } else if residency_ver < cap.min(64) {
-        1
-    } else if residency_ver < cap.min(256) {
-        2
-    } else {
-        3 + (residency_ver / 512)
-    }
-}
-
-fn ortho_shadow_vp(center: Vec3, half_extent: f32, depth_half: f32, sun_dir: Vec3, dim: u32) -> Mat4 {
-    let dir = sun_dir.normalize_or_zero();
-    let up = if dir.y.abs() > 0.95 { Vec3::Z } else { Vec3::Y };
-    let eye = center + dir * depth_half;
-    let view = Mat4::look_at_rh(eye, center, up);
-    let texel = (half_extent * 2.0) / (dim as f32);
-    let snapped_c = view.transform_point3(center);
-    let sx = (snapped_c.x / texel).floor() * texel - snapped_c.x;
-    let sy = (snapped_c.y / texel).floor() * texel - snapped_c.y;
-    let shift = Mat4::from_translation(Vec3::new(sx, sy, 0.0));
-    let ortho = Mat4::orthographic_rh(
-        -half_extent,
-        half_extent,
-        -half_extent,
-        half_extent,
-        depth_half * 2.0,
-        0.0,
-    );
-    ortho * shift * view
-}
-
 fn mat4_bits_eq(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> bool {
     for col in 0..4 {
         for row in 0..4 {
@@ -742,45 +696,11 @@ fn mat4_bits_eq(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> bool {
     true
 }
 
-fn build_shadow_jobs(world: &NaniteWorld) -> (Vec<[u32; 2]>, u32, u32) {
-    let mut jobs = Vec::new();
-    for (inst_id, inst) in world.instances.iter().enumerate() {
-        let Some(mesh) = world.meshes.get(inst.info[3] as usize) else {
-            continue;
-        };
-        let [start, count] = mesh.shadow_c0_range;
-        for &cid in world
-            .shadow_cut_clusters
-            .iter()
-            .skip(start as usize)
-            .take(count as usize)
-        {
-            jobs.push([inst_id as u32, cid]);
-        }
-    }
-    let c0_count = jobs.len() as u32;
-    for (inst_id, inst) in world.instances.iter().enumerate() {
-        let Some(mesh) = world.meshes.get(inst.info[3] as usize) else {
-            continue;
-        };
-        let [start, count] = mesh.shadow_c1_range;
-        for &cid in world
-            .shadow_cut_clusters
-            .iter()
-            .skip(start as usize)
-            .take(count as usize)
-        {
-            jobs.push([inst_id as u32, cid]);
-        }
-    }
-    let c1_count = (jobs.len() as u32).saturating_sub(c0_count);
-    (jobs, c0_count, c1_count)
-}
-
 impl NaniteGpu {
     fn alloc_static_and_scratch(
         &mut self,
         world: &NaniteWorld,
+        cfg: &NaniteConfig,
         heap_pages: u32,
         cx: &mut Prepare<'_, Self>,
     ) {
@@ -807,35 +727,47 @@ impl NaniteGpu {
         if cx.allocate_buffer(self.buf.indirect_p2, INDIRECT_BYTES) == Allocation::Fresh {
             cx.write(self.buf.indirect_p2, 0, &[0_u32; 64]);
         }
+        let sh_dim = if cfg.shadow.enabled {
+            cfg.shadow.effective_dim()
+        } else {
+            1
+        };
         let sh_c0_alloc = cx.allocate(
             self.buf.shadow_c0,
             wgpu::Extent3d {
-                width: SHADOW_C0_DIM,
-                height: SHADOW_C0_DIM,
+                width: sh_dim,
+                height: sh_dim,
                 depth_or_array_layers: 1,
             },
         );
         let sh_c1_alloc = cx.allocate(
             self.buf.shadow_c1,
             wgpu::Extent3d {
-                width: SHADOW_C1_DIM,
-                height: SHADOW_C1_DIM,
+                width: sh_dim,
+                height: sh_dim,
                 depth_or_array_layers: 1,
             },
         );
         self.shadow.fresh_tex =
             sh_c0_alloc == Allocation::Fresh || sh_c1_alloc == Allocation::Fresh;
-        let _ = cx.allocate_buffer(
-            self.buf.shadow_list,
-            u64::from(SHADOW_LIST_CAP) * 2 * size_of::<VisibleCluster>() as u64,
-        );
+        let shadow_list_bytes = if cfg.shadow.enabled {
+            u64::from(SHADOW_LIST_CAP) * 2 * size_of::<VisibleCluster>() as u64
+        } else {
+            size_of::<VisibleCluster>() as u64 * 2
+        };
+        let _ = cx.allocate_buffer(self.buf.shadow_list, shadow_list_bytes);
         if cx.allocate_buffer(self.buf.shadow_indirect, 64) == Allocation::Fresh {
             cx.write(self.buf.shadow_indirect, 0, &[0_u32; 16]);
         }
-        self.upload_world_buffers(world, cx);
+        self.upload_world_buffers(world, cfg.shadow.enabled, cx);
     }
 
-    fn upload_world_buffers(&mut self, world: &NaniteWorld, cx: &mut Prepare<'_, Self>) {
+    fn upload_world_buffers(
+        &mut self,
+        world: &NaniteWorld,
+        shadows_enabled: bool,
+        cx: &mut Prepare<'_, Self>,
+    ) {
         let cl_bytes = (world.clusters.len().max(1) * size_of::<GpuClusterHeader>()) as u64;
         let bvh_bytes = (world.bvh.len().max(1) * size_of::<GpuBvhNode>()) as u64;
         let fresh_cl = cx.allocate_buffer(self.buf.clusters, cl_bytes) == Allocation::Fresh;
@@ -863,26 +795,34 @@ impl NaniteGpu {
             self.static_frames = 0;
         }
 
-        let jobs_dirty = geom_dirty || inst_dirty;
-        let (jobs, c0_cnt, c1_cnt) = if jobs_dirty {
-            build_shadow_jobs(world)
-        } else {
-            (Vec::new(), self.shadow_c0_count, self.shadow_c1_count)
-        };
-        let total_jobs = (c0_cnt.saturating_add(c1_cnt) as usize).max(1);
-        let fresh_jobs = cx.allocate_buffer(self.buf.shadow_jobs, (total_jobs * 8) as u64)
-            == Allocation::Fresh;
-        if jobs_dirty || fresh_jobs {
-            let to_write = if jobs_dirty {
-                jobs
+        if shadows_enabled {
+            let need_jobs = geom_dirty
+                || inst_dirty
+                || (self.shadow_c0_count == 0 && self.shadow_c1_count == 0 && !world.instances.is_empty());
+            let (jobs, c0_cnt, c1_cnt) = if need_jobs {
+                build_shadow_jobs(world)
             } else {
-                build_shadow_jobs(world).0
+                (Vec::new(), self.shadow_c0_count, self.shadow_c1_count)
             };
-            self.shadow_c0_count = c0_cnt;
-            self.shadow_c1_count = c1_cnt;
-            if !to_write.is_empty() {
-                cx.write(self.buf.shadow_jobs, 0, &to_write);
+            let total_jobs = (c0_cnt.saturating_add(c1_cnt) as usize).max(1);
+            let fresh_jobs = cx.allocate_buffer(self.buf.shadow_jobs, (total_jobs * 8) as u64)
+                == Allocation::Fresh;
+            if need_jobs || fresh_jobs {
+                let to_write = if need_jobs {
+                    jobs
+                } else {
+                    build_shadow_jobs(world).0
+                };
+                self.shadow_c0_count = c0_cnt;
+                self.shadow_c1_count = c1_cnt;
+                if !to_write.is_empty() {
+                    cx.write(self.buf.shadow_jobs, 0, &to_write);
+                }
             }
+        } else {
+            self.shadow_c0_count = 0;
+            self.shadow_c1_count = 0;
+            let _ = cx.allocate_buffer(self.buf.shadow_jobs, 16);
         }
 
         let page_words = world.total_pages.max(1) as u64;
@@ -1035,78 +975,6 @@ impl NaniteGpu {
         cx.dispatch(&self.cull.prep_draws_p2, [1, 1, 1]);
     }
 
-    fn update_shadow_track(
-        &mut self,
-        world: &NaniteWorld,
-        cam: &NaniteCamera,
-        cfg: &NaniteConfig,
-    ) -> (Mat4, Mat4, [f32; 4], [f32; 4]) {
-        let c0_half = engine::math::max(cfg.shadow_c0_half, 2.0);
-        let c1_half = engine::math::max(cfg.shadow_c1_half, 4.0);
-        let vm = cam.render_view.to_cols_array_2d();
-        let fwd_xz = Vec3::new(-vm[0][2], 0.0, -vm[2][2]).normalize_or_zero();
-        let desired_c0 = Vec3::new(
-            cam.render_pos.x + fwd_xz.x * cfg.shadow_c0_forward,
-            engine::math::clamp(cam.render_pos.y, -2.0, 26.0),
-            cam.render_pos.z + fwd_xz.z * cfg.shadow_c0_forward,
-        );
-        let c1_center = cfg.shadow_c1_center;
-
-        let geom_changed = self.shadow.last_geom_rev != world.geometry_revision
-            || self.shadow.last_inst_rev != world.instance_revision;
-        if geom_changed || self.shadow.fresh_tex {
-            self.shadow.last_geom_rev = world.geometry_revision;
-            self.shadow.last_inst_rev = world.instance_revision;
-            self.shadow.last_c0_res = u64::MAX;
-            self.shadow.last_c1_res = u64::MAX;
-        }
-        let move_step = engine::math::max(c0_half * 0.25, 1.5);
-        let c0_moved = (desired_c0 - self.shadow.last_c0_center).length_squared()
-            > move_step * move_step;
-        let tier = shadow_res_tier(self.residency_ver, world.total_pages);
-        let c0_res_changed = self.shadow.last_c0_res == u64::MAX
-            || (tier > 0 && tier != self.shadow.last_c0_res);
-        let c1_res_changed = self.shadow.last_c1_res == u64::MAX
-            || (tier > 0 && tier != self.shadow.last_c1_res);
-        self.shadow.enabled = cfg.shadows_enabled && self.instance_count > 0;
-        let want_c0 = (self.shadow.enabled && (c0_moved || c0_res_changed)) || self.shadow.fresh_tex;
-        let want_c1 = (self.shadow.enabled && c1_res_changed) || self.shadow.fresh_tex;
-        self.shadow.dirty_c0 = want_c0;
-        self.shadow.dirty_c1 = want_c1;
-        if self.shadow.dirty_c0 && self.shadow.enabled {
-            self.shadow.last_c0_center = desired_c0;
-            self.shadow.last_c0_res = tier;
-        }
-        if self.shadow.dirty_c1 && self.shadow.enabled {
-            self.shadow.last_c1_res = tier;
-        }
-        let c0_center = if self.shadow.last_c0_center.length_squared() < 1.0e14 {
-            self.shadow.last_c0_center
-        } else {
-            desired_c0
-        };
-        let sh_vp0 = ortho_shadow_vp(
-            c0_center,
-            c0_half,
-            engine::math::max(cfg.shadow_c0_depth, 20.0),
-            cam.sun_dir,
-            SHADOW_C0_DIM,
-        );
-        let sh_vp1 = ortho_shadow_vp(
-            c1_center,
-            c1_half,
-            engine::math::max(cfg.shadow_c1_depth, 40.0),
-            cam.sun_dir,
-            SHADOW_C1_DIM,
-        );
-        (
-            sh_vp0,
-            sh_vp1,
-            [c0_center.x, c0_center.y, c0_center.z, c0_half],
-            [c1_center.x, c1_center.y, c1_center.z, c1_half],
-        )
-    }
-
     fn prepare_screen_targets(
         &mut self,
         cfg: &NaniteConfig,
@@ -1219,17 +1087,7 @@ impl GpuPart for NaniteGpu {
             passes,
             cull,
             raster,
-            shadow: ShadowTrack {
-                last_c0_center: Vec3::splat(1.0e9),
-                last_c0_res: u64::MAX,
-                last_c1_res: u64::MAX,
-                last_geom_rev: u64::MAX,
-                last_inst_rev: u64::MAX,
-                dirty_c0: true,
-                dirty_c1: true,
-                fresh_tex: true,
-                enabled: true,
-            },
+            shadow: ShadowTrack::default(),
             hiz: HizTrack {
                 prev_view: Mat4::IDENTITY,
                 prev_proj: Mat4::IDENTITY,
@@ -1268,7 +1126,7 @@ impl GpuPart for NaniteGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         let heap_pages = cfg.effective_heap_cap_pages(limits.storage_room);
-        self.alloc_static_and_scratch(&world, heap_pages, cx);
+        self.alloc_static_and_scratch(&world, &cfg, heap_pages, cx);
         self.sync_bridge(&bridge, cx);
         let (cw, ch, mw, mh, mips) = self.prepare_screen_targets(&cfg, cx);
 
@@ -1302,8 +1160,13 @@ impl GpuPart for NaniteGpu {
         }
         self.skip_p2 = self.hw_only && self.hiz_ready && self.static_frames >= 2;
 
-        let (sh_vp0, sh_vp1, shadow_center0, shadow_center1) =
-            self.update_shadow_track(&world, &cam, &cfg);
+        let sh = self.shadow.update(
+            &world,
+            &cam,
+            &cfg,
+            self.instance_count,
+            self.residency_ver,
+        );
 
         if !self.hiz_ready {
             self.hiz.prev_view = cam.cull_view;
@@ -1313,7 +1176,7 @@ impl GpuPart for NaniteGpu {
         self.hiz.curr_proj = cam.cull_proj;
 
         let planes = extract_frustum_planes(cull_vp);
-        let eff_h = ch.min(1080) as f32;
+        let eff_h = cfg.effective_lod_viewport_h(ch);
         let lod_scale = (eff_h * 0.5) * cam.cull_proj.col(1).y.abs();
         let render_lod_scale = (ch as f32 * 0.5) * cam.render_proj.col(1).y.abs();
         let u = NaniteUniforms {
@@ -1339,17 +1202,17 @@ impl GpuPart for NaniteGpu {
             plane3: planes[3],
             plane4: planes[4],
             plane5: planes[5],
-            shadow_vp0: sh_vp0.to_cols_array_2d(),
-            shadow_vp1: sh_vp1.to_cols_array_2d(),
-            shadow_info: [SHADOW_C0_DIM as f32, SHADOW_C1_DIM as f32, render_lod_scale, 0.0],
-            shadow_center0,
-            shadow_center1,
-            extra: [
-                cfg.double_sided_materials,
-                self.shadow_c0_count,
-                self.shadow_c1_count,
-                0,
+            shadow_vp0: sh.vp0.to_cols_array_2d(),
+            shadow_vp1: sh.vp1.to_cols_array_2d(),
+            shadow_info: [
+                sh.dim as f32,
+                sh.dim as f32,
+                render_lod_scale,
+                if self.shadow.enabled { 1.0 } else { 0.0 },
             ],
+            shadow_center0: sh.center0,
+            shadow_center1: sh.center1,
+            extra: [0, self.shadow_c0_count, self.shadow_c1_count, 0],
             prev_cull_view: self.hiz.prev_view.to_cols_array_2d(),
             prev_cull_proj: self.hiz.prev_proj.to_cols_array_2d(),
         };

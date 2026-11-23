@@ -1,8 +1,7 @@
 engine::brick!(control);
 
 use brick_nanite::{
-    HeapBudget, LodPreset, NaniteCamera, NaniteConfig, NaniteTelemetry, ViewMode,
-    reverse_z_infinite_proj,
+    NaniteCamera, NaniteConfig, NaniteTelemetry, ViewMode, reverse_z_infinite_proj,
 };
 use engine::math;
 use engine::prelude::*;
@@ -11,8 +10,8 @@ use engine_touch::{LookPadSpec, TouchLayout, TouchState, VirtualStickSpec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::names::{DOUBLE_SIDED_MASK, NEAR_Z, SUN_DIR};
-use crate::state::{CamBookmark, MonolithState};
+use crate::names::{NEAR_Z, SUN_DIR};
+use crate::state::{CamBookmark, HeapPreset, LodPreset, MonolithState, view_mode_label};
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -260,25 +259,21 @@ fn apply_dev_control(
         cfg.hw_only = dev.hw_only;
     }
     if dev.heap_mb != prev.heap_mb {
-        cfg.heap_budget = match dev.heap_mb {
-            16 => HeapBudget::Mb16,
-            32 => HeapBudget::Mb32,
-            64 => HeapBudget::Mb64,
-            _ => HeapBudget::Mb128,
-        };
+        cfg.heap_budget_mb = HeapPreset::from_mb(dev.heap_mb).mb();
     }
     if dev.lod_px != prev.lod_px {
-        cfg.lod_preset = match dev.lod_px {
+        let preset = match dev.lod_px {
             1 => LodPreset::Px1,
             4 => LodPreset::Px4,
             _ => LodPreset::Px2,
         };
+        cfg.lod_error_px = preset.base_px() * state.lod_error_scale;
     }
     if dev.hud_hidden != prev.hud_hidden {
         state.hud_hidden = dev.hud_hidden;
     }
     if dev.shadows != prev.shadows {
-        cfg.shadows_enabled = dev.shadows;
+        cfg.shadow.enabled = dev.shadows;
     }
     if dev.dolly != prev.dolly {
         state.dolly_enabled = dev.dolly;
@@ -325,10 +320,13 @@ fn handle_shortcuts(
         cfg.freeze_culling = !cfg.freeze_culling;
     }
     if kb.pressed(KeyCode::KeyG) {
-        cfg.heap_budget = cfg.heap_budget.next_within(heap_cap_pages);
+        cfg.heap_budget_mb = HeapPreset::from_mb(cfg.heap_budget_mb)
+            .next_within(heap_cap_pages)
+            .mb();
     }
     if kb.pressed(KeyCode::KeyL) {
-        cfg.lod_preset = cfg.lod_preset.next();
+        let next = LodPreset::from_scaled_px(cfg.lod_error_px, state.lod_error_scale).next();
+        cfg.lod_error_px = next.base_px() * state.lod_error_scale;
     }
     if kb.pressed(KeyCode::KeyR) {
         cfg.hw_only = !cfg.hw_only;
@@ -623,7 +621,9 @@ fn update_control(
 
     let heap_cap_pages = cfg.effective_heap_cap_pages(input.limits.storage_room);
     handle_shortcuts(&input.devices, &mut state, &mut cfg, heap_cap_pages);
-    cfg.heap_budget = cfg.heap_budget.clamp_to_pages(heap_cap_pages);
+    cfg.heap_budget_mb = HeapPreset::from_mb(cfg.heap_budget_mb)
+        .clamp_to_pages(heap_cap_pages)
+        .mb();
     if cfg.view_mode != rig.last_view_mode {
         state.taa_reset = true;
         rig.last_view_mode = cfg.view_mode;
@@ -659,13 +659,14 @@ fn update_control(
         state.render_scale = 1.0;
     }
     cfg.render_scale = state.render_scale;
-    cfg.shadow_c0_half = 14.0;
-    cfg.shadow_c0_forward = 6.0;
-    cfg.shadow_c0_depth = 48.0;
-    cfg.shadow_c1_half = 32.0;
-    cfg.shadow_c1_center = Vec3::new(1.0, 6.0, 0.0);
-    cfg.shadow_c1_depth = 64.0;
-    cfg.double_sided_materials = DOUBLE_SIDED_MASK;
+    cfg.lod_max_viewport_h = 1080;
+    cfg.shadow.c0_half = 14.0;
+    cfg.shadow.c0_forward = 6.0;
+    cfg.shadow.c0_depth = 48.0;
+    cfg.shadow.c0_y_bounds = Some([-2.0, 26.0]);
+    cfg.shadow.c1_half = 32.0;
+    cfg.shadow.c1_center = Some(Vec3::new(1.0, 6.0, 0.0));
+    cfg.shadow.c1_depth = 64.0;
     let eff_fov = if logical.x > 0.0 && logical.x < logical.y {
         math::min(fov_deg + 14.0, 78.0)
     } else {
@@ -710,7 +711,7 @@ fn publish_dev_stats(
         frame_count: state.frame_count,
         fps: state.fps_smoothed,
         bookmark: state.bookmark.label().to_owned(),
-        view_mode: cfg.view_mode.label().to_owned(),
+        view_mode: view_mode_label(cfg.view_mode).to_owned(),
         freeze_culling: cfg.freeze_culling,
         total_virtual_tris: tel.total_virtual_tris,
         visible_tris: tel.visible_tris(),

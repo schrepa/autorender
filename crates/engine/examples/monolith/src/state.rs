@@ -1,4 +1,140 @@
+use brick_nanite::{ViewMode, pages_for_mb};
 use engine::prelude::*;
+
+#[must_use]
+pub const fn view_mode_label(mode: ViewMode) -> &'static str {
+    match mode {
+        ViewMode::Lit => "LIT",
+        ViewMode::Meshlets => "MESHLETS",
+        ViewMode::Triangles => "TRIS",
+        ViewMode::Lod => "LOD",
+        ViewMode::HwSw => "HW/SW",
+        ViewMode::Pages => "PAGES",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum HeapPreset {
+    Mb16,
+    Mb32,
+    Mb64,
+    #[default]
+    Mb128,
+}
+
+impl HeapPreset {
+    #[must_use]
+    pub const fn from_mb(mb: u32) -> Self {
+        match mb {
+            0..=16 => Self::Mb16,
+            17..=32 => Self::Mb32,
+            33..=64 => Self::Mb64,
+            _ => Self::Mb128,
+        }
+    }
+
+    #[must_use]
+    pub const fn mb(self) -> u32 {
+        match self {
+            Self::Mb16 => 16,
+            Self::Mb32 => 32,
+            Self::Mb64 => 64,
+            Self::Mb128 => 128,
+        }
+    }
+
+    #[must_use]
+    pub const fn pages(self) -> u32 {
+        pages_for_mb(self.mb())
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Mb16 => "HEAP 16M",
+            Self::Mb32 => "HEAP 32M",
+            Self::Mb64 => "HEAP 64M",
+            Self::Mb128 => "HEAP 128M",
+        }
+    }
+
+    #[must_use]
+    pub const fn next_within(self, max_pages: u32) -> Self {
+        let cand = match self {
+            Self::Mb16 => Self::Mb32,
+            Self::Mb32 => Self::Mb64,
+            Self::Mb64 => Self::Mb128,
+            Self::Mb128 => Self::Mb16,
+        };
+        if cand.pages() <= max_pages {
+            cand
+        } else {
+            Self::Mb16
+        }
+    }
+
+    #[must_use]
+    pub const fn clamp_to_pages(self, max_pages: u32) -> Self {
+        if self.pages() <= max_pages {
+            self
+        } else if Self::Mb64.pages() <= max_pages {
+            Self::Mb64
+        } else if Self::Mb32.pages() <= max_pages {
+            Self::Mb32
+        } else {
+            Self::Mb16
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LodPreset {
+    Px1,
+    #[default]
+    Px2,
+    Px4,
+}
+
+impl LodPreset {
+    #[must_use]
+    pub const fn base_px(self) -> f32 {
+        match self {
+            Self::Px1 => 1.0,
+            Self::Px2 => 2.0,
+            Self::Px4 => 4.0,
+        }
+    }
+
+    #[must_use]
+    pub fn from_scaled_px(px: f32, scale: f32) -> Self {
+        let base = px / engine::math::max(scale, 0.01);
+        if base <= 1.5 {
+            Self::Px1
+        } else if base <= 3.0 {
+            Self::Px2
+        } else {
+            Self::Px4
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Px1 => "LOD 1PX",
+            Self::Px2 => "LOD 2PX",
+            Self::Px4 => "LOD 4PX",
+        }
+    }
+
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Px1 => Self::Px2,
+            Self::Px2 => Self::Px4,
+            Self::Px4 => Self::Px1,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CamBookmark {
@@ -77,6 +213,7 @@ pub struct MonolithState {
     pub frozen_cull_proj: Mat4,
     pub was_frozen: bool,
     pub assets_loaded: bool,
+    pub lod_error_scale: f32,
 }
 
 impl Default for MonolithState {
@@ -112,6 +249,7 @@ impl Default for MonolithState {
             frozen_cull_proj: Mat4::IDENTITY,
             was_frozen: false,
             assets_loaded: false,
+            lod_error_scale: 1.0,
         }
     }
 }

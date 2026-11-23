@@ -17,6 +17,7 @@ use crate::gi::GiUploadBridge;
 use crate::gi::submit_gi_bytes;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::layout::{HERO_ASSETS, populate_sanctuary};
+use crate::names::DOUBLE_SIDED_MATERIALS;
 use crate::pbr::{PbrTexturePack, PbrUploadBridge};
 use crate::state::MonolithState;
 
@@ -135,6 +136,8 @@ fn load_sanctuary_assets(mut p: NativeSanctuary<'_>) {
             return;
         };
         p.cfg.compressed_cache_mb = 192;
+        p.cfg.lod_max_viewport_h = 1080;
+        p.cfg.shadow.enabled = true;
         p.world.clear();
         p.page_store.files.clear();
         for stem in HERO_ASSETS {
@@ -146,11 +149,14 @@ fn load_sanctuary_assets(mut p: NativeSanctuary<'_>) {
             let Ok(manifest) = MeshletManifest::from_bytes(&bytes) else {
                 return;
             };
-            let mesh_id = p.world.add_mesh(stem, &manifest) as usize;
-            if p.page_store.files.len() <= mesh_id {
-                p.page_store.files.resize_with(mesh_id + 1, || None);
+            let mesh_id = p.world.add_mesh(stem, &manifest);
+            p.world
+                .set_mesh_double_sided_materials(mesh_id, DOUBLE_SIDED_MATERIALS);
+            let idx = mesh_id as usize;
+            if p.page_store.files.len() <= idx {
+                p.page_store.files.resize_with(idx + 1, || None);
             }
-            p.page_store.files[mesh_id] = std::fs::File::open(&mlp_path).ok();
+            p.page_store.files[idx] = std::fs::File::open(&mlp_path).ok();
         }
         populate_sanctuary(&mut p.world);
         p.streaming.sync_world(&p.world);
@@ -691,6 +697,7 @@ mod web_loader {
             for (idx, manifest) in ready {
                 let stem = HERO_ASSETS[idx];
                 let mesh_id = world.add_mesh(stem, &manifest);
+                world.set_mesh_double_sided_materials(mesh_id, super::DOUBLE_SIDED_MATERIALS);
                 world.add_instance(mesh_id, Vec3::ZERO, Quat::IDENTITY, 1.0);
                 WEB_STATE.with(|cell| {
                     cell.borrow_mut().total_mounted += 1;
@@ -903,6 +910,7 @@ mod web_loader {
     pub(super) fn configure_nanite(
         cfg: &mut brick_nanite::NaniteConfig,
         limits: &engine_core::DeviceLimits,
+        state: &mut MonolithState,
     ) {
         let should_apply = WEB_STATE.with(|cell| {
             let mut st = cell.borrow_mut();
@@ -915,12 +923,14 @@ mod web_loader {
         if !should_apply {
             return;
         }
-        cfg.lod_error_scale = 1.5;
+        state.lod_error_scale = 1.5;
+        cfg.lod_error_px = 3.0;
+        cfg.lod_max_viewport_h = 1080;
         cfg.compressed_cache_mb = 64;
+        cfg.shadow.enabled = true;
         if limits.storage_room > 0 && limits.storage_room <= 128 * 1024 * 1024 {
             cfg.max_heap_mb = 64;
-            let cap = cfg.effective_heap_cap_pages(limits.storage_room);
-            cfg.heap_budget = cfg.heap_budget.clamp_to_pages(cap);
+            cfg.heap_budget_mb = 64;
         }
     }
 }
@@ -941,7 +951,7 @@ struct WebSanctuary<'w> {
 
 #[cfg(target_arch = "wasm32")]
 fn load_sanctuary_assets(mut p: WebSanctuary<'_>) {
-    web_loader::configure_nanite(&mut p.cfg, &p.limits);
+    web_loader::configure_nanite(&mut p.cfg, &p.limits, &mut p.state);
     web_loader::pump(
         p.world,
         p.streaming,

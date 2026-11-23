@@ -33,9 +33,8 @@ pub struct PumpNanite<'w> {
 
 pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
     p.streaming.sync_world(&p.world);
-    let heap_cap = p.config.effective_heap_cap_pages(p.limits.storage_room);
-    p.streaming
-        .set_budget(p.config.heap_budget.pages().min(heap_cap));
+    let budget_pages = p.config.effective_budget_pages(p.limits.storage_room);
+    p.streaming.set_budget(budget_pages);
     p.streaming
         .set_cache_budget_bytes((p.config.compressed_cache_mb as usize).saturating_mul(1024 * 1024));
 
@@ -61,11 +60,11 @@ pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
     }
 
     let render_scale = engine::math::clamp(p.config.render_scale, 0.25, 1.0);
-    let vp_h = engine::math::clamp(
+    let scaled_h = engine::math::max(
         (p.views.frame().display_size.y as f32 * render_scale).round(),
-        360.0,
-        1080.0,
-    );
+        1.0,
+    ) as u32;
+    let vp_h = p.config.effective_lod_viewport_h(scaled_h);
     let lod_scale = (vp_h * 0.5) * p.cam.cull_proj.y_axis.y.abs();
     let lod_thresh = p.config.effective_lod_threshold_px();
     let max_new = (p.config.max_pages_per_frame * 8).max(1024);
@@ -84,7 +83,6 @@ pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
                 lod_scale,
                 lod_thresh: lod_thresh * 2.0,
                 frustum_planes: extract_frustum_planes(cull_vp),
-                double_sided_materials: p.config.double_sided_materials,
             },
             p.config.initial_cut_seed_pages,
         );

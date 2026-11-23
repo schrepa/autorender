@@ -1,6 +1,6 @@
 use engine::prelude::*;
 use engine_math::collections::HashMap;
-use engine_meshlet::NO_BVH_CHILD;
+use engine_meshlet::{FLAG_DOUBLE_SIDED, NO_BVH_CHILD};
 
 use crate::types::{GpuBvhNode, GpuClusterHeader, UNMAPPED_PAGE};
 use crate::world::{NaniteWorld, PageFetchRequest};
@@ -164,7 +164,6 @@ pub struct VisibleCutParams {
     pub lod_scale: f32,
     pub lod_thresh: f32,
     pub frustum_planes: [[f32; 4]; 6],
-    pub double_sided_materials: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -174,7 +173,6 @@ pub(crate) struct CutQuery<'a> {
     pub lod_scale: f32,
     pub thresh: f32,
     pub frustum_planes: Option<&'a [[f32; 4]; 6]>,
-    pub double_sided_materials: u32,
     pub start_mesh_id: u32,
     pub roots_ready: Option<&'a [bool]>,
 }
@@ -300,8 +298,8 @@ fn eval_cut_cluster(
         if !frustum_visible(planes, world_c, world_r) {
             return None;
         }
-        let mat_bit = 1_u32 << ((c.errors_and_cone[3] >> 24) & 31);
-        if (query.double_sided_materials & mat_bit) == 0
+        let is_ds = (c.page_and_fallback[1] & (FLAG_DOUBLE_SIDED << 16)) != 0;
+        if !is_ds
             && cone_culled(c.errors_and_cone[2], xform.rot, world_c, world_r, query.cam_pos)
         {
             return None;

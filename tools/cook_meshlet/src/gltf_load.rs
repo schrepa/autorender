@@ -235,6 +235,9 @@ fn append_primitive(
     out.indices.extend(indices.into_iter().map(|i| i + base));
     out.material_ids
         .extend(std::iter::repeat_n(mat_id, tri_count));
+    if primitive.material().double_sided() && !out.double_sided_materials.contains(&mat_id) {
+        out.double_sided_materials.push(mat_id);
+    }
     Ok(())
 }
 
