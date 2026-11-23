@@ -584,10 +584,7 @@ fn evaluate_cluster(inst_id: u32, cluster_id: u32, is_p2: bool) {
     }
     let dist = max(length(cull_pos - world_c) - world_r, near_z);
     let fg_boost = clamp(12.0 / max(dist, 1.5), 1.0, 8.0);
-    let mat_bit = 1u << ((ec_w >> 24u) & 31u);
-    let is_ds = (cull_uniforms.extra.x & mat_bit) != 0u;
-    let ds_boost = select(1.0, 2.0, is_ds && dist < 18.0);
-    let weighted_proj = min(parent_proj * fg_boost * ds_boost, 65535.0);
+    let weighted_proj = min(parent_proj * fg_boost, 65535.0);
     let prio = clamp(u32(weighted_proj * 64.0) + 1u, 2u, 0x7FFFFFFFu);
     atomicMax(&cull_page_requests[orig_page], prio);
     atomicAdd(&cull_state[10u], 1u);

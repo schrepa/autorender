@@ -292,30 +292,47 @@ fn fill_bvh_min_self_error(
     }
 }
 
+const SHADOW_THRESHOLDS: [f32; 23] = [
+    0.002_f32, 0.004, 0.008, 0.015, 0.025, 0.04, 0.065, 0.09, 0.12, 0.20, 0.32, 0.50, 0.75, 1.15,
+    1.75, 2.6, 3.8, 5.5, 8.0, 12.0, 18.0, 28.0, 48.0,
+];
+
+fn count_shadow_cut_thresholds(clusters: &[ClusterHeader]) -> [usize; SHADOW_THRESHOLDS.len()] {
+    let mut diff = [0_isize; SHADOW_THRESHOLDS.len() + 1];
+    for c in clusters {
+        let se = c.self_error();
+        let pe = c.parent_error();
+        if !se.is_finite() || !pe.is_finite() || se >= pe {
+            continue;
+        }
+        let lo = SHADOW_THRESHOLDS.partition_point(|&t| t < se);
+        let hi = SHADOW_THRESHOLDS.partition_point(|&t| t < pe);
+        if lo < hi {
+            diff[lo] += 1;
+            diff[hi] -= 1;
+        }
+    }
+    let mut counts = [0_usize; SHADOW_THRESHOLDS.len()];
+    let mut running = 0_isize;
+    for (slot, &delta) in counts.iter_mut().zip(diff.iter()) {
+        running += delta;
+        *slot = running.max(0) as usize;
+    }
+    counts
+}
+
 fn extract_shadow_cut(
     clusters: &[ClusterHeader],
+    counts: &[usize; SHADOW_THRESHOLDS.len()],
     cluster_offset: u32,
     max_clusters: usize,
     out: &mut Vec<u32>,
 ) -> [u32; 2] {
     let start = out.len() as u32;
-    let thresholds = [
-        0.002_f32, 0.004, 0.008, 0.015, 0.025, 0.04, 0.065, 0.09, 0.12, 0.20, 0.32, 0.50, 0.75,
-        1.15, 1.75, 2.6, 3.8, 5.5, 8.0, 12.0, 18.0, 28.0, 48.0,
-    ];
-    let mut chosen: Option<f32> = None;
-    for &thresh in &thresholds {
-        let mut cnt = 0_usize;
-        for c in clusters {
-            if c.parent_error() > thresh && c.self_error() <= thresh {
-                cnt += 1;
-            }
-        }
-        if cnt > 0 && cnt <= max_clusters {
-            chosen = Some(thresh);
-            break;
-        }
-    }
+    let chosen = SHADOW_THRESHOLDS
+        .iter()
+        .zip(counts.iter())
+        .find_map(|(&thresh, &cnt)| (cnt > 0 && cnt <= max_clusters).then_some(thresh));
     if let Some(thresh) = chosen {
         for (idx, c) in clusters.iter().enumerate() {
             if c.parent_error() > thresh && c.self_error() <= thresh {
@@ -373,14 +390,17 @@ impl NaniteWorld {
 
         let c0_budget = if manifest.clusters.len() >= 1000 { 4096 } else { 512 };
         let c1_budget = if manifest.clusters.len() >= 1000 { 2048 } else { 256 };
+        let shadow_counts = count_shadow_cut_thresholds(&manifest.clusters);
         let shadow_c0_range = extract_shadow_cut(
             &manifest.clusters,
+            &shadow_counts,
             cluster_offset,
             c0_budget,
             &mut self.shadow_cut_clusters,
         );
         let shadow_c1_range = extract_shadow_cut(
             &manifest.clusters,
+            &shadow_counts,
             cluster_offset,
             c1_budget,
             &mut self.shadow_cut_clusters,
@@ -850,20 +870,22 @@ impl NaniteStreaming {
         self.pending_requests = retained;
     }
 
+    fn is_mesh_roots_ready(&self, mesh: &MeshEntry) -> bool {
+        (0..mesh.root_page_count).all(|local| {
+            let global = mesh.page_offset + local;
+            self.page_table
+                .get(global as usize)
+                .copied()
+                .unwrap_or(UNMAPPED_PAGE)
+                != UNMAPPED_PAGE
+        })
+    }
+
     fn mesh_roots_ready(&self, world: &NaniteWorld) -> Vec<bool> {
         world
             .meshes
             .iter()
-            .map(|mesh| {
-                (0..mesh.root_page_count).all(|local| {
-                    let global = mesh.page_offset + local;
-                    self.page_table
-                        .get(global as usize)
-                        .copied()
-                        .unwrap_or(UNMAPPED_PAGE)
-                        != UNMAPPED_PAGE
-                })
-            })
+            .map(|mesh| self.is_mesh_roots_ready(mesh))
             .collect()
     }
 
@@ -1389,6 +1411,15 @@ impl NaniteStreaming {
     #[must_use]
     pub fn has_evictable_slots(&self) -> bool {
         self.count_evictable_slots() > 0
+    }
+
+    #[must_use]
+    pub fn all_roots_resident(&self, world: &NaniteWorld) -> bool {
+        !world.meshes.is_empty()
+            && world
+                .meshes
+                .iter()
+                .all(|mesh| self.is_mesh_roots_ready(mesh))
     }
 
     #[must_use]
