@@ -68,11 +68,21 @@ pub const fn mip_extent(mip0_w: u32, mip0_h: u32, mip: u32) -> (u32, u32) {
 impl HizInfo {
     #[must_use]
     pub const fn for_size(src_w: u32, src_h: u32) -> Self {
+        Self::for_size_capped(src_w, src_h, MAX_HIZ_DIM)
+    }
+
+    #[must_use]
+    pub const fn for_size_capped(src_w: u32, src_h: u32, max_dim_cap: u32) -> Self {
         let sw = if src_w > 0 { src_w } else { 1 };
         let sh = if src_h > 0 { src_h } else { 1 };
+        let dim_cap = if max_dim_cap == 0 || max_dim_cap > MAX_HIZ_DIM {
+            MAX_HIZ_DIM
+        } else {
+            max_dim_cap
+        };
         let mut mip0_w = prev_pow2(sw);
         let mut mip0_h = prev_pow2(sh);
-        while mip0_w > MAX_HIZ_DIM || mip0_h > MAX_HIZ_DIM {
+        while mip0_w > dim_cap || mip0_h > dim_cap {
             if mip0_w > 1 {
                 mip0_w >>= 1;
             }
@@ -195,13 +205,39 @@ impl<P: GpuPart> HizPyramid<P> {
         })
     }
 
+    pub fn install_from_depth_texture(
+        cx: &mut Install<'_, P>,
+        pass: Pass<P>,
+        depth_tex: Texture<P>,
+    ) -> Result<Self, Error> {
+        let texture = cx.texture("hiz_pyramid", wgpu::TextureFormat::R32Float, Lifetime::Kept);
+        let uniform = cx.buffer("hiz_info", Lifetime::Kept);
+        let primary = Self::build_pass_from_depth_bind(cx, pass, texture, Bind::Texture(depth_tex))?;
+        Ok(Self {
+            texture,
+            uniform,
+            primary,
+            info: HizInfo::default(),
+            uploaded: None,
+        })
+    }
+
     pub fn install_pass_from_depth(
         &self,
         cx: &mut Install<'_, P>,
         pass: Pass<P>,
         depth_target: TargetName,
     ) -> Result<HizPass<P>, Error> {
-        Self::build_pass_from_depth(cx, pass, self.texture, depth_target)
+        Self::build_pass_from_depth_bind(cx, pass, self.texture, Bind::Target(depth_target))
+    }
+
+    pub fn install_pass_from_depth_texture(
+        &self,
+        cx: &mut Install<'_, P>,
+        pass: Pass<P>,
+        depth_tex: Texture<P>,
+    ) -> Result<HizPass<P>, Error> {
+        Self::build_pass_from_depth_bind(cx, pass, self.texture, Bind::Texture(depth_tex))
     }
 
     pub fn install_pass_from_depth_and_sw(
@@ -227,13 +263,22 @@ impl<P: GpuPart> HizPyramid<P> {
         texture: Texture<P>,
         depth_target: TargetName,
     ) -> Result<HizPass<P>, Error> {
+        Self::build_pass_from_depth_bind(cx, pass, texture, Bind::Target(depth_target))
+    }
+
+    fn build_pass_from_depth_bind(
+        cx: &mut Install<'_, P>,
+        pass: Pass<P>,
+        texture: Texture<P>,
+        depth_bind: Bind<P>,
+    ) -> Result<HizPass<P>, Error> {
         use shaders::hiz::pyramid;
         let build_mip0 = cx.compute_pipeline(
             pass,
             pyramid::CS_HIZ_FROM_DEPTH,
             &[],
             &[
-                (pyramid::HW_DEPTH, Bind::Target(depth_target)),
+                (pyramid::HW_DEPTH, depth_bind),
                 (pyramid::HIZ_DST, Bind::TextureMip(texture, 0)),
             ],
         )?;
@@ -281,7 +326,16 @@ impl<P: GpuPart> HizPyramid<P> {
     }
 
     pub fn prepare_sized(&mut self, cx: &mut Prepare<'_, P>, src_size: (u32, u32)) -> Allocation {
-        let info = HizInfo::for_size(src_size.0, src_size.1);
+        self.prepare_sized_capped(cx, src_size, MAX_HIZ_DIM)
+    }
+
+    pub fn prepare_sized_capped(
+        &mut self,
+        cx: &mut Prepare<'_, P>,
+        src_size: (u32, u32),
+        max_dim: u32,
+    ) -> Allocation {
+        let info = HizInfo::for_size_capped(src_size.0, src_size.1, max_dim);
         let tex_alloc = cx.allocate_mips(
             self.texture,
             wgpu::Extent3d {
