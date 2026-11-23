@@ -1,6 +1,6 @@
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
-use engine_core::{Entry, Error, PassViews, Var, ViewFacts};
+use engine_core::{DeviceLimits, Entry, Error, PassViews, Var, ViewFacts};
 use engine_meshlet::PAGE_SIZE_BYTES;
 use engine_render::{
     Access, Allocation, Bind, Buffer, ComputePipeline, DepthUse, Encode, GpuPart, Install,
@@ -15,7 +15,7 @@ use crate::types::{
     MAX_HEAP_PAGES, MAX_HIZ_MIPS, MAX_OCC_CLUSTERS, MAX_OCC_INSTANCES, MAX_PHASE_CLUSTERS,
     MAX_VIS_CLUSTERS, NaniteCamera, NaniteConfig, NaniteInstance, NaniteUniforms, SHADOW_C0_DIM,
     SHADOW_C1_DIM, SHADOW_LIST_CAP, VisibleCluster, extract_frustum_planes, hiz_dimensions,
-    mip_extent,
+    mip_extent, safe_heap_pages,
 };
 use crate::world::NaniteWorld;
 use crate::NANITE_VIS_HW;
@@ -165,6 +165,7 @@ pub(crate) struct NaniteGpu {
     last_freeze: bool,
     last_residency_ver: u64,
     residency_ver: u64,
+    heap_cap_pages: u32,
 }
 
 fn pick(
@@ -777,12 +778,19 @@ fn build_shadow_jobs(world: &NaniteWorld) -> (Vec<[u32; 2]>, u32, u32) {
 }
 
 impl NaniteGpu {
-    fn alloc_static_and_scratch(&mut self, world: &NaniteWorld, cx: &mut Prepare<'_, Self>) {
+    fn alloc_static_and_scratch(
+        &mut self,
+        world: &NaniteWorld,
+        storage_room: u64,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        let heap_pages = safe_heap_pages(storage_room);
+        self.heap_cap_pages = heap_pages;
         let _ = cx.allocate_buffer(self.buf.uniforms, size_of::<NaniteUniforms>() as u64);
         let _ = cx.allocate_buffer(self.buf.hiz_info, size_of::<HizBuildInfo>() as u64);
         let _ = cx.allocate_buffer(
             self.buf.page_heap,
-            u64::from(MAX_HEAP_PAGES) * (PAGE_SIZE_BYTES as u64),
+            u64::from(heap_pages) * (PAGE_SIZE_BYTES as u64),
         );
         let _ = cx.allocate_buffer(
             self.buf.vis_clusters,
@@ -918,8 +926,10 @@ impl NaniteGpu {
             self.residency_ver = guard.residency_version;
         }
         for up in uploads {
-            let byte_off = u64::from(up.slot) * (PAGE_SIZE_BYTES as u64);
-            cx.write(self.buf.page_heap, byte_off, &up.words);
+            if up.slot < self.heap_cap_pages {
+                let byte_off = u64::from(up.slot) * (PAGE_SIZE_BYTES as u64);
+                cx.write(self.buf.page_heap, byte_off, &up.words);
+            }
         }
         if let Some(pt) = table
             && !pt.is_empty()
@@ -1195,6 +1205,7 @@ impl GpuPart for NaniteGpu {
         Res<'static, NaniteCamera>,
         Res<'static, NaniteConfig>,
         Res<'static, NaniteBridgeHandle>,
+        Res<'static, DeviceLimits>,
     );
     const NAME: &'static str = "brick_nanite";
 
@@ -1248,15 +1259,16 @@ impl GpuPart for NaniteGpu {
             last_freeze: false,
             last_residency_ver: u64::MAX,
             residency_ver: 0,
+            heap_cap_pages: MAX_HEAP_PAGES,
         })
     }
 
     fn prepare(
         &mut self,
-        (world, cam, cfg, bridge): SystemParamItem<'_, '_, Self::Reads>,
+        (world, cam, cfg, bridge, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.alloc_static_and_scratch(&world, cx);
+        self.alloc_static_and_scratch(&world, limits.storage_room, cx);
         self.sync_bridge(&bridge, cx);
         let (cw, ch, mw, mh, mips) = self.prepare_screen_targets(&cfg, cx);
 

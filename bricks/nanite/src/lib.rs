@@ -18,7 +18,7 @@ pub use types::{
     GpuBvhNode, GpuClusterHeader, HeapBudget, HizBuildInfo, LodPreset, MAX_HEAP_PAGES,
     NaniteCamera, NaniteConfig, NaniteInstance, NaniteTelemetry, NaniteUniforms, SHADOW_C0_DIM,
     SHADOW_C1_DIM, UNMAPPED_PAGE, ViewMode, VisibleCluster, extract_frustum_planes,
-    reverse_z_infinite_proj,
+    reverse_z_infinite_proj, safe_heap_pages,
 };
 pub use world::{MeshEntry, NaniteStreaming, NaniteWorld, PageFetchRequest, PageUpload};
 

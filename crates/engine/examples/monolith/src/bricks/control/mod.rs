@@ -2,11 +2,11 @@ engine::brick!(control);
 
 use brick_nanite::{
     HeapBudget, LodPreset, NaniteCamera, NaniteConfig, NaniteTelemetry, ViewMode,
-    reverse_z_infinite_proj,
+    reverse_z_infinite_proj, safe_heap_pages,
 };
 use engine::math;
 use engine::prelude::*;
-use engine_core::{DevSetting, KeyCode, Stats};
+use engine_core::{DevSetting, DeviceLimits, KeyCode, Stats};
 use engine_touch::{LookPadSpec, TouchLayout, TouchState, VirtualStickSpec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -290,6 +290,7 @@ fn handle_shortcuts(
     devices: &Devices,
     state: &mut MonolithState,
     cfg: &mut NaniteConfig,
+    heap_cap_pages: u32,
 ) {
     let kb = &devices.keyboard;
     if kb.pressed(KeyCode::Digit1) {
@@ -324,7 +325,7 @@ fn handle_shortcuts(
         cfg.freeze_culling = !cfg.freeze_culling;
     }
     if kb.pressed(KeyCode::KeyG) {
-        cfg.heap_budget = cfg.heap_budget.next();
+        cfg.heap_budget = cfg.heap_budget.next_within(heap_cap_pages);
     }
     if kb.pressed(KeyCode::KeyL) {
         cfg.lod_preset = cfg.lod_preset.next();
@@ -493,6 +494,7 @@ struct ControlInput<'w> {
     devices: Res<'w, Devices>,
     pointer: Res<'w, Pointer>,
     views: Res<'w, Views>,
+    limits: Res<'w, DeviceLimits>,
     profile: Option<Res<'w, InputProfile>>,
     touch_layout: Option<ResMut<'w, TouchLayout>>,
     touch_state: Option<ResMut<'w, TouchState>>,
@@ -619,7 +621,9 @@ fn update_control(
         apply_dev_control(dev, &mut state, &mut cfg, &mut rig);
     }
 
-    handle_shortcuts(&input.devices, &mut state, &mut cfg);
+    let heap_cap_pages = safe_heap_pages(input.limits.storage_room);
+    handle_shortcuts(&input.devices, &mut state, &mut cfg, heap_cap_pages);
+    cfg.heap_budget = cfg.heap_budget.clamp_to_pages(heap_cap_pages);
     if cfg.view_mode != rig.last_view_mode {
         state.taa_reset = true;
         rig.last_view_mode = cfg.view_mode;

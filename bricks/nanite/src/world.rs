@@ -17,6 +17,9 @@ use crate::types::{
     GpuBvhNode, GpuClusterHeader, MAX_HEAP_PAGES, NaniteInstance, UNMAPPED_PAGE,
 };
 
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_CACHE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_CACHE_BUDGET_BYTES: usize = 192 * 1024 * 1024;
 
 #[derive(Clone, Debug)]

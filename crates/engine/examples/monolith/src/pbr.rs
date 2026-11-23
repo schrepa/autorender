@@ -63,6 +63,8 @@ pub struct PbrUploadQueue {
     pub normal_dim: u32,
     pub orm_dim: u32,
     pub layer_count: u32,
+    pub supports_bc: bool,
+    pub gpu_queried: bool,
     pub pending_mips: Vec<PbrMipUpload>,
     pub dirty_materials: Option<Vec<GpuMaterialParams>>,
 }
@@ -74,6 +76,8 @@ impl Default for PbrUploadQueue {
             normal_dim: 4,
             orm_dim: 4,
             layer_count: 2,
+            supports_bc: true,
+            gpu_queried: false,
             pending_mips: Vec::new(),
             dirty_materials: Some(vec![GpuMaterialParams::fallback(); MAX_MATERIALS]),
         }
@@ -111,6 +115,7 @@ pub struct PbrTexturePack {
     pub albedo_dim: u32,
     pub normal_dim: u32,
     pub orm_dim: u32,
+    source_albedo_dim: u32,
     pub base_dim: u32,
     pub layer_count: u32,
     next_base_layer: usize,
@@ -139,6 +144,7 @@ impl Default for PbrTexturePack {
             albedo_dim: 4,
             normal_dim: 4,
             orm_dim: 4,
+            source_albedo_dim: 4,
             base_dim: 4,
             layer_count: 2,
             next_base_layer: 0,
@@ -315,8 +321,39 @@ fn build_hd_layer_order(
     order
 }
 
+fn parse_layer_tables(
+    bytes: &[u8],
+    mat_table_end: usize,
+    base_table_end: usize,
+    layer_count: usize,
+) -> Option<(Vec<BaseLayerSpan>, Vec<HdLayerSpan>)> {
+    let mut base_spans = Vec::with_capacity(layer_count);
+    for i in 0..layer_count {
+        let off = mat_table_end + i * 24;
+        base_spans.push(BaseLayerSpan {
+            bc_off: read_u32_le(bytes, off)? as usize,
+            bc_len: read_u32_le(bytes, off + 4)? as usize,
+            nm_off: read_u32_le(bytes, off + 8)? as usize,
+            nm_len: read_u32_le(bytes, off + 12)? as usize,
+            orm_off: read_u32_le(bytes, off + 16)? as usize,
+            orm_len: read_u32_le(bytes, off + 20)? as usize,
+        });
+    }
+    let mut hd_spans = Vec::with_capacity(layer_count);
+    for i in 0..layer_count {
+        let off = base_table_end + i * 32;
+        hd_spans.push(HdLayerSpan {
+            mid_off: read_u64_le(bytes, off)?,
+            mid_len: read_u32_le(bytes, off + 8)?,
+            hi_off: read_u64_le(bytes, off + 16)?,
+            hi_len: read_u32_le(bytes, off + 24)?,
+        });
+    }
+    Some((base_spans, hd_spans))
+}
+
 impl PbrTexturePack {
-    pub fn load_base_bytes(&mut self, bytes: Vec<u8>) -> bool {
+    pub fn load_base_bytes(&mut self, bytes: Vec<u8>, supports_bc: bool) -> bool {
         if bytes.len() < 32 || bytes[0..4] != SPB2_MAGIC {
             return false;
         }
@@ -357,56 +394,21 @@ impl PbrTexturePack {
         if bytes.len() < hd_table_end {
             return false;
         }
-        let Some((mats, targets)) = parse_materials(&bytes, mat_count as usize) else {
+        let Some((mut mats, targets)) = parse_materials(&bytes, mat_count as usize) else {
             return false;
         };
-        let mut base_spans = Vec::with_capacity(layer_count as usize);
-        for i in 0..layer_count as usize {
-            let off = mat_table_end + i * 24;
-            let (
-                Some(bc_off),
-                Some(bc_len),
-                Some(nm_off),
-                Some(nm_len),
-                Some(orm_off),
-                Some(orm_len),
-            ) = (
-                read_u32_le(&bytes, off),
-                read_u32_le(&bytes, off + 4),
-                read_u32_le(&bytes, off + 8),
-                read_u32_le(&bytes, off + 12),
-                read_u32_le(&bytes, off + 16),
-                read_u32_le(&bytes, off + 20),
-            )
-            else {
-                return false;
-            };
-            base_spans.push(BaseLayerSpan {
-                bc_off: bc_off as usize,
-                bc_len: bc_len as usize,
-                nm_off: nm_off as usize,
-                nm_len: nm_len as usize,
-                orm_off: orm_off as usize,
-                orm_len: orm_len as usize,
-            });
-        }
-        let mut hd_spans = Vec::with_capacity(layer_count as usize);
-        for i in 0..layer_count as usize {
-            let off = base_table_end + i * 32;
-            let (Some(mid_off), Some(mid_len), Some(hi_off), Some(hi_len)) = (
-                read_u64_le(&bytes, off),
-                read_u32_le(&bytes, off + 8),
-                read_u64_le(&bytes, off + 16),
-                read_u32_le(&bytes, off + 24),
-            ) else {
-                return false;
-            };
-            hd_spans.push(HdLayerSpan {
-                mid_off,
-                mid_len,
-                hi_off,
-                hi_len,
-            });
+        let Some((base_spans, hd_spans)) =
+            parse_layer_tables(&bytes, mat_table_end, base_table_end, layer_count as usize)
+        else {
+            return false;
+        };
+        let max_dim = if supports_bc { u32::MAX } else { 512 };
+        let eff_albedo = albedo_dim.min(max_dim).max(base_dim);
+        let eff_normal = normal_dim.min(max_dim).max(base_dim);
+        let eff_orm = orm_dim.min(max_dim).max(base_dim);
+        let base_mip = mip_count_for(eff_albedo).saturating_sub(mip_count_for(base_dim));
+        for mat in &mut mats {
+            mat.layer_flags[2] = mat.layer_flags[2].min(base_mip);
         }
         let hd_order = build_hd_layer_order(layer_count as usize, &mats, &targets);
         self.base_bytes = Some(bytes);
@@ -415,9 +417,10 @@ impl PbrTexturePack {
         self.base_spans = base_spans;
         self.hd_spans = hd_spans;
         self.hd_order = hd_order;
-        self.albedo_dim = albedo_dim;
-        self.normal_dim = normal_dim;
-        self.orm_dim = orm_dim;
+        self.albedo_dim = eff_albedo;
+        self.normal_dim = eff_normal;
+        self.orm_dim = eff_orm;
+        self.source_albedo_dim = albedo_dim;
         self.base_dim = base_dim;
         self.layer_count = layer_count.max(2);
         self.next_base_layer = 0;
@@ -516,16 +519,25 @@ impl PbrTexturePack {
             || self.retry_hd.iter().any(|r| r.tier == PbrTier::Mid)
     }
 
+    #[must_use]
+    pub fn hd_pending(&self) -> bool {
+        let need_hi = self.albedo_dim >= self.source_albedo_dim && self.source_albedo_dim > 512;
+        self.uploaded_mid_layers < self.layer_count
+            || (need_hi && self.uploaded_hi_layers < self.layer_count)
+    }
+
     pub fn take_hd_requests(&mut self, max_count: usize, allow_hi: bool) -> Vec<PbrHdRequest> {
         if !self.pack_loaded || !self.base_done || max_count == 0 {
             return Vec::new();
         }
+        let need_hi = self.albedo_dim >= self.source_albedo_dim && self.source_albedo_dim > 512;
+        let want_hi = allow_hi && need_hi;
         let mut out = Vec::with_capacity(max_count);
         let mut remaining_retry = Vec::new();
         for req in std::mem::take(&mut self.retry_hd) {
-            if out.len() < max_count && (allow_hi || req.tier == PbrTier::Mid) {
+            if out.len() < max_count && (want_hi || req.tier == PbrTier::Mid) {
                 out.push(req);
-            } else {
+            } else if req.tier == PbrTier::Mid || need_hi {
                 remaining_retry.push(req);
             }
         }
@@ -543,7 +555,7 @@ impl PbrTexturePack {
                 });
             }
         }
-        if allow_hi && self.next_mid_req >= self.hd_order.len() {
+        if want_hi && self.next_mid_req >= self.hd_order.len() {
             while out.len() < max_count && self.next_hi_req < self.hd_order.len() {
                 let idx = self.hd_order[self.next_hi_req];
                 self.next_hi_req += 1;
@@ -562,23 +574,24 @@ impl PbrTexturePack {
     }
 
     pub fn deliver_hd_blob(&mut self, req: PbrHdRequest, compressed: &[u8]) -> bool {
-        let d512 = self.albedo_dim / 2;
-        let d256 = self.albedo_dim / 4;
+        let d512 = self.source_albedo_dim / 2;
+        let d256 = self.source_albedo_dim / 4;
         let s512 = bc_level_bytes(d512);
         let s256 = bc_level_bytes(d256);
-        let s1024 = bc_level_bytes(self.albedo_dim);
+        let s1024 = bc_level_bytes(self.source_albedo_dim);
         match req.tier {
             PbrTier::Mid => {
                 let expected = (s512 + s256) * 3;
                 let Some(raw) = inflate_raw(compressed, expected) else {
                     return false;
                 };
+                let mid_mip = mip_count_for(self.albedo_dim).saturating_sub(mip_count_for(d512));
                 let mut cur = 0_usize;
                 let specs = [
-                    (PbrChannel::Albedo, 1_u32, d512, s512),
-                    (PbrChannel::Albedo, 2_u32, d256, s256),
-                    (PbrChannel::Normal, 1_u32, d512, s512),
-                    (PbrChannel::Normal, 2_u32, d256, s256),
+                    (PbrChannel::Albedo, mid_mip, d512, s512),
+                    (PbrChannel::Albedo, mid_mip + 1, d256, s256),
+                    (PbrChannel::Normal, mid_mip, d512, s512),
+                    (PbrChannel::Normal, mid_mip + 1, d256, s256),
                     (PbrChannel::Orm, 0_u32, self.orm_dim, s512),
                     (PbrChannel::Orm, 1_u32, self.orm_dim / 2, s256),
                 ];
@@ -595,13 +608,16 @@ impl PbrTexturePack {
                 self.uploaded_mid_layers = self.uploaded_mid_layers.saturating_add(1);
                 for (mat, &target) in self.materials.iter_mut().zip(self.target_layers.iter()) {
                     if target == req.layer_idx {
-                        mat.layer_flags[2] = mat.layer_flags[2].min(1);
+                        mat.layer_flags[2] = mat.layer_flags[2].min(mid_mip);
                         self.materials_dirty = true;
                     }
                 }
                 true
             }
             PbrTier::Hi => {
+                if self.albedo_dim < self.source_albedo_dim {
+                    return true;
+                }
                 let expected = s1024 * 2;
                 let Some(raw) = inflate_raw(compressed, expected) else {
                     return false;

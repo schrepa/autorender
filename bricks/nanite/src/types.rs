@@ -106,6 +106,60 @@ impl HeapBudget {
             Self::Mb128 => Self::Mb16,
         }
     }
+
+    #[must_use]
+    pub const fn next_within(self, max_pages: u32) -> Self {
+        let cand = self.next();
+        if cand.pages() <= max_pages {
+            cand
+        } else {
+            Self::Mb16
+        }
+    }
+
+    #[must_use]
+    pub const fn clamp_to_pages(self, max_pages: u32) -> Self {
+        if self.pages() <= max_pages {
+            self
+        } else if Self::Mb64.pages() <= max_pages {
+            Self::Mb64
+        } else if Self::Mb32.pages() <= max_pages {
+            Self::Mb32
+        } else {
+            Self::Mb16
+        }
+    }
+}
+
+#[must_use]
+pub const fn safe_heap_pages(storage_room: u64) -> u32 {
+    let page_bytes = engine_meshlet::PAGE_SIZE_BYTES as u64;
+    let max_bytes = (MAX_HEAP_PAGES as u64) * page_bytes;
+    let room = if storage_room == 0 {
+        max_bytes
+    } else if cfg!(target_arch = "wasm32") && storage_room <= 128 * 1024 * 1024 {
+        storage_room / 2
+    } else {
+        storage_room
+    };
+    let pages = room / page_bytes;
+    let hard_cap = if storage_room == 0 {
+        MAX_HEAP_PAGES as u64
+    } else {
+        storage_room / page_bytes
+    };
+    let clamped = if pages > MAX_HEAP_PAGES as u64 {
+        MAX_HEAP_PAGES as u64
+    } else if pages < 64 {
+        64
+    } else {
+        pages
+    };
+    if clamped > hard_cap && hard_cap >= 64 {
+        hard_cap as u32
+    } else {
+        clamped as u32
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

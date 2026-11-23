@@ -638,12 +638,19 @@ fn load_vis_hit(px: vec2<u32>, size_x: u32) -> VisHit {
 fn read_u24(base_word: u32, idx: u32) -> u32 {
     let byte_off = idx * 3u;
     let wi = base_word + (byte_off >> 2u);
-    let shift = (byte_off & 3u) * 8u;
-    var val = nanite_frame_page_heap[wi] >> shift;
-    if shift > 8u {
-        val |= nanite_frame_page_heap[wi + 1u] << (32u - shift);
+    let rem = byte_off & 3u;
+    let w0 = nanite_frame_page_heap[wi];
+    if rem == 0u {
+        return w0 & 0xFFFFFFu;
     }
-    return val & 0xFFFFFFu;
+    if rem == 1u {
+        return w0 >> 8u;
+    }
+    let w1 = nanite_frame_page_heap[wi + 1u];
+    if rem == 2u {
+        return (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
+    }
+    return (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
 }
 
 fn read_qpos_u16(pos_base: u32, vi: u32) -> vec3<f32> {

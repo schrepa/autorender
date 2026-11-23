@@ -386,7 +386,7 @@ fn reduce_single_group(
     let mut hard_locked: HashSet<u32> = HashSet::with_hasher(FixedState::default());
     for (&p, &g_cnt) in &group_pos_count {
         let total_cnt = level_pos_count.get(&p).copied().unwrap_or(0);
-        if total_cnt > g_cnt || (env.relax_level < 2 && env.material_seams.contains(&p)) {
+        if total_cnt > g_cnt || env.material_seams.contains(&p) {
             hard_locked.insert(p);
         }
     }

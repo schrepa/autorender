@@ -106,7 +106,8 @@ fn load_sanctuary_assets(
         if !pbr.pack_loaded
             && let Ok(base_bytes) = std::fs::read(dir.join("sponza_pbr_base.bin"))
         {
-            let _ = pbr.load_base_bytes(base_bytes);
+            let supports_bc = pbr_bridge.0.lock().is_ok_and(|q| q.supports_bc);
+            let _ = pbr.load_base_bytes(base_bytes, supports_bc);
         }
         let hd_file = dir.join("sponza_pbr_hd.bin");
         if hd_file.is_file() {
@@ -317,6 +318,7 @@ mod web_loader {
     use crate::state::MonolithState;
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
+    const ASSET_VERSION: &str = "v25";
     const MAX_IN_FLIGHT_REQUESTS: usize = 10;
     const MAX_IN_FLIGHT_PBR: usize = 4;
 
@@ -365,7 +367,7 @@ mod web_loader {
 
     fn spawn_manifest_range(start: usize, end: usize) {
         for (idx, &stem) in HERO_ASSETS.iter().enumerate().take(end).skip(start) {
-            let url = format!("/monolith/{stem}.mlm");
+            let url = format!("/monolith/{stem}.mlm?v={ASSET_VERSION}");
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(bytes) = fetch_bytes(&url, None).await
                     && let Ok(manifest) = MeshletManifest::from_bytes(&bytes)
@@ -379,15 +381,17 @@ mod web_loader {
     }
 
     fn start_asset_fetches() {
+        let gi_url = format!("/monolith/sponza_gi.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(bytes) = fetch_bytes("/monolith/sponza_gi.bin", None).await {
+            if let Ok(bytes) = fetch_bytes(&gi_url, None).await {
                 WEB_STATE.with(|cell| {
                     cell.borrow_mut().gi_bytes = Some(bytes);
                 });
             }
         });
+        let pbr_url = format!("/monolith/sponza_pbr_base.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(bytes) = fetch_bytes("/monolith/sponza_pbr_base.bin", None).await {
+            if let Ok(bytes) = fetch_bytes(&pbr_url, None).await {
                 WEB_STATE.with(|cell| {
                     cell.borrow_mut().pbr_base_bytes = Some(bytes);
                 });
@@ -397,7 +401,7 @@ mod web_loader {
     }
 
     fn start_run_fetch(run: PageRun) {
-        let url = format!("/monolith/{}.mlp", run.mesh_name);
+        let url = format!("/monolith/{}.mlp?v={ASSET_VERSION}", run.mesh_name);
         let total_len = run.total_bytes;
         let end = run.byte_offset.saturating_add(total_len).saturating_sub(1);
         wasm_bindgen_futures::spawn_local(async move {
@@ -433,8 +437,9 @@ mod web_loader {
             .byte_offset
             .saturating_add(u64::from(req.byte_len))
             .saturating_sub(1);
+        let hd_url = format!("/monolith/sponza_pbr_hd.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
-            let fetched = fetch_bytes("/monolith/sponza_pbr_hd.bin", Some((req.byte_offset, end)))
+            let fetched = fetch_bytes(&hd_url, Some((req.byte_offset, end)))
                 .await
                 .ok()
                 .filter(|b| b.len() == req.byte_len as usize);
@@ -577,6 +582,7 @@ mod web_loader {
         mut streaming: ResMut<NaniteStreaming>,
         tel: &NaniteTelemetry,
         pbr: &mut PbrTexturePack,
+        pbr_bridge: &crate::pbr::PbrUploadBridge,
         gi_bridge: &GiUploadBridge,
         mut state: ResMut<MonolithState>,
     ) {
@@ -596,9 +602,14 @@ mod web_loader {
             });
         }
         if !pbr.pack_loaded {
-            let ready_pbr = WEB_STATE.with(|cell| cell.borrow_mut().pbr_base_bytes.take());
-            if let Some(bytes) = ready_pbr {
-                let _ = pbr.load_base_bytes(bytes);
+            let (queried, supports_bc) = pbr_bridge
+                .0
+                .lock()
+                .map_or((false, true), |q| (q.gpu_queried, q.supports_bc));
+            if queried
+                && let Some(bytes) = WEB_STATE.with(|cell| cell.borrow_mut().pbr_base_bytes.take())
+            {
+                let _ = pbr.load_base_bytes(bytes, supports_bc);
             }
         }
         let mounted =
@@ -619,7 +630,7 @@ mod web_loader {
         }
 
         let in_flight_pbr = WEB_STATE.with(|cell| cell.borrow().in_flight_pbr);
-        let pbr_hd_pending = pbr.base_done && pbr.uploaded_hi_layers < pbr.layer_count;
+        let pbr_hd_pending = pbr.base_done && pbr.hd_pending();
         let prefetch_only = streaming.is_prefetch_only();
         let prefetch_throttled =
             tel.page_faults == 0 && prefetch_only && (in_flight_pbr > 0 || pbr_hd_pending);
@@ -664,6 +675,14 @@ fn load_sanctuary_assets(
     gi_bridge: Res<GiUploadBridge>,
     state: ResMut<MonolithState>,
 ) {
-    web_loader::pump(world, streaming, &tel, &mut pbr, &gi_bridge, state);
+    web_loader::pump(
+        world,
+        streaming,
+        &tel,
+        &mut pbr,
+        &pbr_bridge,
+        &gi_bridge,
+        state,
+    );
     pbr.pump_uploads(&pbr_bridge, 14);
 }

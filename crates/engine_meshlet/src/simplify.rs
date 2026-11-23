@@ -390,8 +390,6 @@ struct PassPolicy {
     min_dot: f64,
     check_link: bool,
     check_vn: bool,
-    allow_corner_collapse: bool,
-    relaxed: bool,
     max_bnd_sq: f64,
     max_plane_sq: f64,
     max_perp_disp: f64,
@@ -473,18 +471,6 @@ fn pick_collapse_target(
     let crv = state.is_crease[v as usize];
     let ou = state.is_open[u as usize];
     let ov = state.is_open[v as usize];
-    if policy.allow_corner_collapse {
-        if lu {
-            return Some((u, v, pu));
-        }
-        if lv {
-            return Some((v, u, pv));
-        }
-        if cu_flag || cv_flag || smu || smv || ou || ov || cru || crv {
-            return Some(pick_better_endpoint(u, v, pu, pv, total_q));
-        }
-        return Some(pick_interior_target(u, v, pu, pv, edge_len, total_q));
-    }
     if lu {
         if (cv_flag && edge_len > policy.max_corner_edge) || (smv && !smu) || (crv && !cru) {
             return None;
@@ -615,10 +601,6 @@ fn evaluate_edge(
     }
     let mut cost = pq.eval(target_pos) + bnd_err_sq * 64.0;
     let mut geom_err = plane_sq.max(bnd_err_sq).sqrt();
-    if policy.relaxed {
-        let disp = (target_pos - pu).length().max((target_pos - pv).length());
-        geom_err = geom_err.max(disp);
-    }
     let (max_duv_sq, min_ndot) = edge_attribute_metrics(state, u, v);
     if min_ndot < 0.7 {
         let crease = f64::from(1.0 - max(min_ndot, -1.0));
@@ -740,16 +722,6 @@ fn incident_geom_stats(state: &SimplifierState, keep: u32, remove: u32) -> (f64,
     (sum_area, max_edge)
 }
 
-fn canonical_oriented_tri(tri: [u32; 3]) -> [u32; 3] {
-    if tri[0] <= tri[1] && tri[0] <= tri[2] {
-        tri
-    } else if tri[1] <= tri[0] && tri[1] <= tri[2] {
-        [tri[1], tri[2], tri[0]]
-    } else {
-        [tri[2], tri[0], tri[1]]
-    }
-}
-
 fn check_collapsed_tri(
     positions: &[DVec3],
     tri: &SimpTri,
@@ -807,14 +779,10 @@ fn check_collapsed_tri(
     let old_e = tri_max_edge(p_old);
     let old_ratio = (old_e * old_e) / old_area.max(1.0e-18);
     let new_ratio = (new_e * new_e) / new_area.max(1.0e-18);
-    if !policy.relaxed {
-        if new_ratio > 24.0 && (new_area > old_area * 1.05 || new_ratio > old_ratio * 1.5) {
-            return None;
-        }
-        if new_ratio > 48.0 && new_ratio > old_ratio * 1.05 {
-            return None;
-        }
-    } else if new_ratio > 64.0 && new_ratio > old_ratio * 1.5 {
+    if new_ratio > 24.0 && (new_area > old_area * 1.05 || new_ratio > old_ratio * 1.5) {
+        return None;
+    }
+    if new_ratio > 48.0 && new_ratio > old_ratio * 1.05 {
         return None;
     }
     if old_len > 1.0e-14 && n_old.dot(n_new) < policy.min_dot * old_len * new_len {
@@ -830,18 +798,12 @@ fn check_collapsed_tri(
             return None;
         }
     }
-    let raw_key = [
+    let mut key = [
         if tri.v[0] == remove { keep } else { tri.v[0] },
         if tri.v[1] == remove { keep } else { tri.v[1] },
         if tri.v[2] == remove { keep } else { tri.v[2] },
     ];
-    let key = if policy.relaxed {
-        canonical_oriented_tri(raw_key)
-    } else {
-        let mut sorted = raw_key;
-        sorted.sort_unstable();
-        sorted
-    };
+    key.sort_unstable();
     Some((new_area, key))
 }
 
@@ -856,11 +818,7 @@ fn collapse_is_valid(
         return false;
     }
     let (sum_old_area, old_max_edge) = incident_geom_stats(state, keep, remove);
-    let max_allowed_edge = if policy.relaxed {
-        old_max_edge * 6.0 + state.group_radius * 0.5
-    } else {
-        old_max_edge * 2.25 + 1.0e-4
-    };
+    let max_allowed_edge = old_max_edge * 2.25 + 1.0e-4;
     let mut sum_new_area = 0.0_f64;
     let mut has_shared = false;
     let mut surviving_faces: Vec<[u32; 3]> = Vec::new();
@@ -893,11 +851,7 @@ fn collapse_is_valid(
             surviving_faces.push(key);
         }
     }
-    let area_limit = if policy.relaxed {
-        sum_old_area * 2.0 + 1.0e-6
-    } else {
-        sum_old_area * 1.25 + 1.0e-8
-    };
+    let area_limit = sum_old_area * 1.25 + 1.0e-8;
     if sum_new_area > area_limit {
         return false;
     }
@@ -1327,42 +1281,38 @@ fn run_relaxed_passes(
 ) {
     let over = |s: &SimplifierState| s.live_tris > clamped_tris || s.live_verts > clamped_verts;
     if relax_level >= 1 && over(state) {
-        let p4_rms = (state.group_radius * 0.08).clamp(0.06, 0.18);
-        let bnd4 = (state.group_radius * 0.05).clamp(0.04, 0.12);
+        let p4_rms = (state.group_radius * 0.05).clamp(0.04, 0.10);
+        let bnd4 = (state.group_radius * 0.03).clamp(0.025, 0.07);
         run_collapse_pass(
             state,
             clamped_tris,
             clamped_verts,
             PassPolicy {
-                min_dot: 0.02,
+                min_dot: 0.12,
                 check_link: true,
                 check_vn: false,
-                allow_corner_collapse: false,
-                relaxed: false,
                 max_bnd_sq: bnd4 * bnd4,
                 max_plane_sq: p4_rms * p4_rms,
-                max_perp_disp: p4_rms * 1.75,
-                max_corner_edge: (state.group_radius * 0.25).clamp(0.30, 0.55),
+                max_perp_disp: p4_rms * 1.5,
+                max_corner_edge: (state.group_radius * 0.14).clamp(0.18, 0.32),
             },
         );
     }
     if relax_level >= 2 && over(state) {
-        let p5_rms = (state.group_radius * 0.16).clamp(0.12, 0.35);
-        let bnd5 = (state.group_radius * 0.10).clamp(0.08, 0.22);
+        let p5_rms = (state.group_radius * 0.08).clamp(0.06, 0.15);
+        let bnd5 = (state.group_radius * 0.05).clamp(0.04, 0.10);
         run_collapse_pass(
             state,
             clamped_tris,
             clamped_verts,
             PassPolicy {
-                min_dot: 0.0,
+                min_dot: 0.08,
                 check_link: true,
                 check_vn: false,
-                allow_corner_collapse: true,
-                relaxed: true,
                 max_bnd_sq: bnd5 * bnd5,
                 max_plane_sq: p5_rms * p5_rms,
-                max_perp_disp: p5_rms * 2.0,
-                max_corner_edge: (state.group_radius * 0.50).clamp(0.35, 1.20),
+                max_perp_disp: p5_rms * 1.6,
+                max_corner_edge: (state.group_radius * 0.22).clamp(0.24, 0.42),
             },
         );
     }
@@ -1393,8 +1343,6 @@ pub fn simplify_group(
             min_dot: 0.30,
             check_link: true,
             check_vn: true,
-            allow_corner_collapse: false,
-            relaxed: false,
             max_bnd_sq: 0.0001,
             max_plane_sq: p1_rms * p1_rms,
             max_perp_disp: p1_rms * 1.5,
@@ -1407,11 +1355,9 @@ pub fn simplify_group(
             clamped_tris,
             clamped_verts,
             PassPolicy {
-                min_dot: 0.08,
+                min_dot: 0.15,
                 check_link: true,
                 check_vn: false,
-                allow_corner_collapse: false,
-                relaxed: false,
                 max_bnd_sq: 0.0009,
                 max_plane_sq: p2_rms * p2_rms,
                 max_perp_disp: p2_rms * 1.5,
@@ -1428,15 +1374,13 @@ pub fn simplify_group(
             clamped_tris,
             clamped_verts,
             PassPolicy {
-                min_dot: 0.05,
+                min_dot: 0.10,
                 check_link: true,
                 check_vn: false,
-                allow_corner_collapse: false,
-                relaxed: false,
                 max_bnd_sq: 0.0025,
                 max_plane_sq: p3_rms * p3_rms,
                 max_perp_disp: p3_rms * 1.5,
-                max_corner_edge: 0.28,
+                max_corner_edge: 0.25,
             },
         );
     }

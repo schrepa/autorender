@@ -462,8 +462,11 @@ fn alloc_frame_resources(cx: &mut Install<'_, PostProcess>) -> FrameResources {
 
 impl PostProcess {
     fn sync_pbr_textures(&mut self, bridge: &PbrUploadBridge, cx: &mut Prepare<'_, Self>) {
+        let supports_bc = is_bc_format(cx.texture_format(self.res.mat_albedo));
         let (albedo_dim, normal_dim, orm_dim, layers, pending, dirty_mats) =
             if let Ok(mut q) = bridge.0.lock() {
+                q.supports_bc = supports_bc;
+                q.gpu_queried = true;
                 (
                     q.albedo_dim.max(4),
                     q.normal_dim.max(4),

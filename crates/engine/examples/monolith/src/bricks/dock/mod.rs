@@ -2,10 +2,12 @@ engine::brick!(dock);
 
 mod font;
 
-use brick_nanite::{NaniteConfig, NaniteTelemetry, ViewMode};
+use brick_nanite::{NaniteConfig, NaniteTelemetry, ViewMode, safe_heap_pages};
 use engine::math;
 use engine::prelude::*;
-use engine_core::{Error, GpuStruct, PassViews, TargetName, ViewFacts, Views, gpu_struct};
+use engine_core::{
+    DeviceLimits, Error, GpuStruct, PassViews, TargetName, ViewFacts, Views, gpu_struct,
+};
 use engine_render::{Access, Encode, Own, PerBatch};
 use engine_touch::TouchState;
 
@@ -277,7 +279,12 @@ fn hit_test(rect: [f32; 4], pt: Vec2) -> bool {
     pt.x >= rect[0] && pt.x <= rect[0] + rect[2] && pt.y >= rect[1] && pt.y <= rect[1] + rect[3]
 }
 
-fn apply_action(state: &mut MonolithState, cfg: &mut NaniteConfig, action: Action) {
+fn apply_action(
+    state: &mut MonolithState,
+    cfg: &mut NaniteConfig,
+    action: Action,
+    heap_cap_pages: u32,
+) {
     match action {
         Action::View(v) => cfg.view_mode = v,
         Action::Cam(c) => {
@@ -285,7 +292,7 @@ fn apply_action(state: &mut MonolithState, cfg: &mut NaniteConfig, action: Actio
             state.requested_bookmark = Some(c);
         }
         Action::ToggleFreeze => cfg.freeze_culling = !cfg.freeze_culling,
-        Action::CycleHeap => cfg.heap_budget = cfg.heap_budget.next(),
+        Action::CycleHeap => cfg.heap_budget = cfg.heap_budget.next_within(heap_cap_pages),
         Action::CycleLod => cfg.lod_preset = cfg.lod_preset.next(),
     }
 }
@@ -376,6 +383,7 @@ fn paint_telemetry_and_stick(
 struct DockParams<'w> {
     views: Res<'w, Views>,
     pointer: Res<'w, Pointer>,
+    limits: Res<'w, DeviceLimits>,
     touch: Option<Res<'w, TouchState>>,
     telemetry: Res<'w, NaniteTelemetry>,
     state: ResMut<'w, MonolithState>,
@@ -429,7 +437,8 @@ fn update_dock(mut p: DockParams<'_>) {
         if let Some(idx) = p.dock.pressed_idx.take()
             && hovered_idx == Some(idx)
         {
-            apply_action(&mut p.state, &mut p.cfg, layout.items[idx].action);
+            let heap_cap = safe_heap_pages(p.limits.storage_room);
+            apply_action(&mut p.state, &mut p.cfg, layout.items[idx].action, heap_cap);
             layout = compute_layout(&p.state, &p.cfg, safe, dpr, logical_w);
         }
         p.state.ui_captured_pointer = false;

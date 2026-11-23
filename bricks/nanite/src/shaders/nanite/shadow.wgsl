@@ -145,12 +145,19 @@ fn cs_shadow_prep() {
 fn read_u24(base_word: u32, idx: u32) -> u32 {
     let byte_off = idx * 3u;
     let wi = base_word + (byte_off >> 2u);
-    let shift = (byte_off & 3u) * 8u;
-    var val = sh_page_heap[wi] >> shift;
-    if shift > 8u {
-        val |= sh_page_heap[wi + 1u] << (32u - shift);
+    let rem = byte_off & 3u;
+    let w0 = sh_page_heap[wi];
+    if rem == 0u {
+        return w0 & 0xFFFFFFu;
     }
-    return val & 0xFFFFFFu;
+    if rem == 1u {
+        return w0 >> 8u;
+    }
+    let w1 = sh_page_heap[wi + 1u];
+    if rem == 2u {
+        return (w0 >> 16u) | ((w1 & 0xFFu) << 16u);
+    }
+    return (w0 >> 24u) | ((w1 & 0xFFFFu) << 8u);
 }
 
 fn shadow_vertex(vid: u32, list_idx: u32, cascade: u32) -> vec4<f32> {
