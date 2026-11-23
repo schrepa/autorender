@@ -33,6 +33,7 @@ struct MaterialSample {
     shaded_n: vec3<f32>,
     rough: f32,
     metallic: f32,
+    ao: f32,
 }
 
 fn temporal_ign(frag_xy: vec2<f32>) -> f32 {
@@ -132,7 +133,7 @@ fn eval_gi_pair(
             let up_r = clamp(refl.y * 0.5 + 0.5, 0.0, 1.0);
             r_col = mix(vec3<f32>(0.24, 0.19, 0.14), vec3<f32>(0.36, 0.44, 0.58), up_r);
         }
-        return GiPair(d * 1.55, r_col);
+        return GiPair(d * 1.32, r_col);
     }
     let gmin = frame_params.gi_min_pad.xyz;
     let gmax = frame_params.gi_max_pad.xyz;
@@ -160,7 +161,7 @@ fn eval_gi_pair(
         refl,
         need_refl,
     );
-    return GiPair(vec3<f32>(gr.x, gg.x, gb.x) * 1.55, vec3<f32>(gr.y, gg.y, gb.y));
+    return GiPair(vec3<f32>(gr.x, gg.x, gb.x) * 1.32, vec3<f32>(gr.y, gg.y, gb.y));
 }
 
 fn eval_contact_ao(px_i: vec2<i32>, size: vec2<u32>, center_d: f32, ign: f32) -> f32 {
@@ -255,14 +256,67 @@ fn apply_aerial_fog(
     return mix(color, fog_col, clamp(fog_amt, 0.0, 0.22));
 }
 
-fn apply_normal_map(n: vec3<f32>, t_frame: vec4<f32>, nm_sample: vec2<f32>) -> vec3<f32> {
+fn distribution_charlie(ndh: f32, rough: f32) -> f32 {
+    let a = max(rough * rough, 0.04);
+    let inv_a = 1.0 / a;
+    let sin2h = max(1.0 - ndh * ndh, 0.0078125);
+    return (2.0 + inv_a) * pow(sin2h, inv_a * 0.5) * (1.0 / (2.0 * PI));
+}
+
+fn visibility_neubelt(ndv: f32, ndl: f32) -> f32 {
+    return 1.0 / max(4.0 * (ndl + ndv - ndl * ndv), 1.0e-4);
+}
+
+fn multi_scatter_comp(f0: vec3<f32>, ndv: f32, rough: f32) -> vec3<f32> {
+    let r = rough * rough;
+    let ess = clamp(1.0 - r * (0.28 + 0.24 * (1.0 - ndv)), 0.45, 1.0);
+    return vec3<f32>(1.0) + f0 * ((1.0 - ess) / ess);
+}
+
+fn clamp_grad_min_mip(
+    gx: vec2<f32>,
+    gy: vec2<f32>,
+    min_mip: u32,
+    tex_dim: f32,
+) -> mat2x2<f32> {
+    if min_mip == 0u {
+        return mat2x2<f32>(gx, gy);
+    }
+    let min_len = exp2(f32(min_mip)) / max(tex_dim, 1.0);
+    let lx = length(gx);
+    let ly = length(gy);
+    let minor = min(lx, ly);
+    if minor >= min_len {
+        return mat2x2<f32>(gx, gy);
+    }
+    if minor > 1.0e-6 {
+        let scale = min_len / minor;
+        return mat2x2<f32>(gx * scale, gy * scale);
+    }
+    return mat2x2<f32>(vec2<f32>(min_len, 0.0), vec2<f32>(0.0, min_len));
+}
+
+fn eval_cloth_weave_xy(uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> vec2<f32> {
+    let foot = max(length(gx), length(gy));
+    let fade = 1.0 - smoothstep(0.0012, 0.009, foot);
+    if fade <= 0.005 {
+        return vec2<f32>(0.0);
+    }
+    let freq = 220.0 * 6.2831853;
+    let sx = sin(uv.x * freq);
+    let sy = sin(uv.y * freq);
+    let wx = cos(uv.x * freq) * (0.65 + 0.35 * sy);
+    let wy = cos(uv.y * freq) * (0.65 - 0.35 * sx);
+    return vec2<f32>(wx, wy) * (0.095 * fade);
+}
+
+fn apply_normal_map(n: vec3<f32>, t_frame: vec4<f32>, nm_xy_in: vec2<f32>) -> vec3<f32> {
     if t_frame.w == 0.0 {
         return n;
     }
     let b = cross(n, t_frame.xyz) * t_frame.w;
-    let tn_xy = nm_sample * 2.0 - vec2<f32>(1.0);
-    let tn_z = sqrt(max(1.0 - dot(tn_xy, tn_xy), 0.01));
-    let world_nm = t_frame.xyz * tn_xy.x + b * tn_xy.y + n * tn_z;
+    let tn_z = sqrt(max(1.0 - dot(nm_xy_in, nm_xy_in), 0.02));
+    let world_nm = t_frame.xyz * nm_xy_in.x + b * nm_xy_in.y + n * tn_z;
     let l2 = dot(world_nm, world_nm);
     return select(n, world_nm * inverseSqrt(l2), l2 > 1.0e-6);
 }
@@ -279,45 +333,41 @@ fn eval_material(
     let layer_flags = mat_params[mat_id].layer_flags;
     let base_cr = mat_params[mat_id].base_color_rough;
     let tex_layer = layer_flags.x;
+    let flags = layer_flags.y;
     let min_mip = layer_flags.z;
+    let is_fabric = (flags & 2u) != 0u;
 
     var albedo = base_cr.rgb;
     var rough = base_cr.w;
     var metallic = mat_params[mat_id].emissive_metal.w;
+    var mat_ao = 1.0;
     var shaded_n = geom_n;
 
     if tex_layer != NO_TEX_LAYER {
         let li = i32(tex_layer);
-        let grad_x = duv_dx * 0.70710678;
-        let grad_y = duv_dy * 0.70710678;
-        var nm_xy = vec2<f32>(0.5, 0.5);
-        var orm_gb = vec2<f32>(0.8, 0.0);
-        if min_mip == 0u {
-            albedo = textureSampleGrad(mat_albedo, pbr_sampler, uv_interp, li, grad_x, grad_y).rgb;
-            nm_xy = textureSampleGrad(mat_normal, pbr_sampler, uv_interp, li, grad_x, grad_y).rg;
-            orm_gb = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, grad_x, grad_y).gb;
-        } else {
-            let max_g = sqrt(max(dot(grad_x, grad_x), dot(grad_y, grad_y)));
-            let dim_f = f32(textureDimensions(mat_albedo).x);
-            let lod = max(log2(max(max_g * dim_f, 1.0)), f32(min_mip));
-            albedo = textureSampleLevel(mat_albedo, pbr_sampler, uv_interp, li, lod).rgb;
-            nm_xy = textureSampleLevel(mat_normal, pbr_sampler, uv_interp, li, lod).rg;
-            if min_mip == 1u {
-                orm_gb = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, grad_x, grad_y).gb;
-            } else {
-                let orm_dim = f32(textureDimensions(mat_orm).x);
-                let orm_lod = max(log2(max(max_g * orm_dim, 1.0)), f32(min_mip - 1u));
-                orm_gb = textureSampleLevel(mat_orm, pbr_sampler, uv_interp, li, orm_lod).gb;
-            }
+        let grad_x = duv_dx * 0.62;
+        let grad_y = duv_dy * 0.62;
+        let dim_f = f32(textureDimensions(mat_albedo).x);
+        let g_hi = clamp_grad_min_mip(grad_x, grad_y, min_mip, dim_f);
+        albedo = textureSampleGrad(mat_albedo, pbr_sampler, uv_interp, li, g_hi[0], g_hi[1]).rgb;
+        let nm_sample = textureSampleGrad(mat_normal, pbr_sampler, uv_interp, li, g_hi[0], g_hi[1]).rg;
+        let orm_min_mip = select(0u, min_mip - 1u, min_mip > 0u);
+        let orm_dim = f32(textureDimensions(mat_orm).x);
+        let g_orm = clamp_grad_min_mip(grad_x, grad_y, orm_min_mip, orm_dim);
+        let orm_rgb = textureSampleGrad(mat_orm, pbr_sampler, uv_interp, li, g_orm[0], g_orm[1]).rgb;
+        mat_ao = clamp(orm_rgb.r, 0.35, 1.0);
+        rough = clamp(orm_rgb.g * base_cr.w, 0.04, 0.98);
+        metallic = clamp(orm_rgb.b * metallic, 0.0, 1.0);
+        var nm_xy = nm_sample * 2.0 - vec2<f32>(1.0);
+        if is_fabric && metallic < 0.35 {
+            nm_xy += eval_cloth_weave_xy(uv_interp, grad_x, grad_y) * (1.0 - metallic);
         }
-        rough = clamp(orm_gb.x * base_cr.w, 0.04, 0.98);
-        metallic = clamp(orm_gb.y * metallic, 0.0, 1.0);
         shaded_n = apply_normal_map(geom_n, t_frame, nm_xy);
     }
 
     let normal_var = clamp(1.0 - ln_l2, 0.0, 0.30);
-    rough = sqrt(clamp(rough * rough + normal_var * 0.35, 0.03, 0.96));
-    return MaterialSample(albedo, shaded_n, rough, metallic);
+    rough = sqrt(clamp(rough * rough + normal_var * 0.30, 0.03, 0.96));
+    return MaterialSample(albedo, shaded_n, rough, metallic, mat_ao);
 }
 
 fn shade_sponza_pbr(
@@ -355,31 +405,47 @@ fn shade_sponza_pbr(
     let ndh = max(dot(n, h), 0.0);
     let vdh = max(dot(v, h), 0.0);
 
-    let f0_d = mix(vec3<f32>(0.04), albedo, metallic);
+    let f0_base = select(vec3<f32>(0.04), vec3<f32>(0.025), is_fabric);
+    let f0_d = mix(f0_base, albedo, metallic);
     let d_term = distribution_ggx(ndh, rough);
     let g_term = geometry_smith(ndv, ndl, rough);
     let f_term = fresnel_schlick(vdh, f0_d);
-    let spec = (d_term * g_term * f_term) / max(4.0 * ndv * ndl, 1.0e-4);
+    let ms_comp = multi_scatter_comp(f0_d, ndv, rough);
+    let cloth_mask = select(0.0, clamp(1.0 - metallic, 0.0, 1.0), is_fabric);
+    let spec_scale = mix(1.0, 0.32, cloth_mask);
+    let spec = ((d_term * g_term * f_term) / max(4.0 * ndv * ndl, 1.0e-4)) * ms_comp * spec_scale;
     let kd = (vec3<f32>(1.0) - f_term) * (1.0 - metallic);
-    let diff = kd * albedo * (1.0 / PI);
+    var diff = kd * albedo * (1.0 / PI);
 
-    var lit = (diff + spec) * sun_rad * (ndl * sh) + mat_params[mat_id].emissive_metal.rgb;
+    var sheen_direct = vec3<f32>(0.0);
+    var sheen_env = vec3<f32>(0.0);
+    if is_fabric && cloth_mask > 0.01 {
+        let sheen_col = mix(albedo * 1.15, vec3<f32>(0.96, 0.92, 0.84), 0.42);
+        let sheen_rough = clamp(rough * 0.72, 0.28, 0.68);
+        let d_ch = distribution_charlie(ndh, sheen_rough);
+        let v_nb = visibility_neubelt(ndv, ndl);
+        let st = clamp(1.0 - ndv, 0.0, 1.0);
+        let sheen_e = clamp(0.08 + 0.48 * st * st * st, 0.0, 0.52) * cloth_mask;
+        diff *= (1.0 - sheen_e * 0.45);
+        sheen_direct = sheen_col * (d_ch * v_nb * cloth_mask * 0.55);
+        sheen_env = sheen_col * (sheen_e * 0.34);
+    }
 
-    if is_fabric {
+    var lit = (diff + spec + sheen_direct) * sun_rad * (ndl * sh) + mat_params[mat_id].emissive_metal.rgb;
+
+    if is_fabric && cloth_mask > 0.01 {
         let back_n = max(dot(-n, l), 0.0);
         let bv = clamp(dot(-v, l), 0.0, 1.0);
         let back_view = bv * bv * sqrt(bv);
-        let st = clamp(1.0 - ndv, 0.0, 1.0);
-        let sheen = st * st * st * 0.22;
-        let trans = (back_n * 0.42 + back_view * 0.55) * (0.30 + 0.70 * sh);
-        lit += albedo * sun_rad * (trans * 0.36 * (1.0 / PI)) + albedo * (sheen * (0.25 + 0.75 * sh));
+        let trans = (back_n * 0.38 + back_view * 0.58) * (0.12 + 0.88 * sh) * cloth_mask;
+        lit += albedo * sun_rad * (trans * 0.34 * (1.0 / PI));
     }
     if is_foliage {
         let back_n = max(dot(-n, l), 0.0);
         let bv = clamp(dot(-v, l), 0.0, 1.0);
         let back_view = bv * bv * bv;
         let sss_col = albedo * vec3<f32>(1.15, 1.35, 0.65);
-        let trans = (back_n * 0.35 + back_view * 0.60) * (0.30 + 0.70 * sh);
+        let trans = (back_n * 0.35 + back_view * 0.60) * (0.20 + 0.80 * sh);
         lit += sss_col * sun_rad * (trans * 0.42 * (1.0 / PI));
     }
     lit += eval_lantern_glow(world_pos, n, albedo, metallic);
@@ -388,15 +454,15 @@ fn shade_sponza_pbr(
     let need_refl = rough <= 0.72 || metallic >= 0.05 || is_glass;
     let diff_w = albedo * ((1.0 - metallic * 0.82) * ao);
     let ao_spec = clamp(pow(ndv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
-    let f_env = fresnel_schlick(ndv, f0_d);
-    let spec_boost = select(0.65 + 0.85 * metallic, 1.40, is_glass);
+    let f_env = fresnel_schlick(ndv, f0_d) * ms_comp;
+    let spec_boost = select(0.65 + 0.85 * metallic, 1.40, is_glass) * spec_scale;
     let env_w = f_env * ((1.0 - rough * 0.70) * ao_spec * spec_boost);
     let open_z = 1.0 - smoothstep(2.8, 7.6, abs(world_pos.z));
     let open_x = 1.0 - smoothstep(9.5, 16.5, abs(world_pos.x - 1.0));
     let sky_w = clamp(open_z * open_x * smoothstep(-0.1, 0.55, refl.y), 0.0, 1.0) * (1.0 - rough * 0.7);
 
     let gi = eval_gi_pair(world_pos, geom_n, n, refl, need_refl);
-    lit += gi.diff * diff_w;
+    lit += gi.diff * (diff_w + sheen_env * ao);
 
     var env_col = gi.refl;
     if sky_w > 0.005 {
@@ -438,7 +504,6 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let ign = temporal_ign(pos.xy);
     let contact_ao = eval_contact_ao(vec2<i32>(px), size, hit.depth, ign);
     let mat_id = min(surf.material_id, 31u);
-    let ao = clamp(0.45 + 0.55 * surf.vertex_ao, 0.35, 1.0) * contact_ao;
     let mat = eval_material(
         mat_id,
         surf.uv,
@@ -448,6 +513,7 @@ fn fs_resolve(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         surf.geom_n,
         surf.normal_len2,
     );
+    let ao = clamp(0.45 + 0.55 * surf.vertex_ao, 0.35, 1.0) * contact_ao * mat.ao;
 
     let lit = shade_sponza_pbr(
         surf.world_pos,

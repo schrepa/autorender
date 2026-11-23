@@ -136,7 +136,8 @@ fn load_sanctuary_assets(mut p: NativeSanctuary<'_>) {
             return;
         };
         p.cfg.compressed_cache_mb = 192;
-        p.cfg.lod_max_viewport_h = 1080;
+        p.cfg.lod_error_px = 1.0;
+        p.cfg.lod_max_viewport_h = 1440;
         p.cfg.shadow.enabled = true;
         p.world.clear();
         p.page_store.files.clear();
@@ -252,7 +253,7 @@ mod web_loader {
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
     const CORE_ASSET_COUNT: usize = 5;
-    const ASSET_VERSION: &str = "v25";
+    const ASSET_VERSION: &str = "v26";
     const CDN_ASSET_BASE: &str = "https://d15rb9vgijd23p.cloudfront.net/monolith";
     const MIN_IN_FLIGHT_REQUESTS: usize = 8;
     const MAX_IN_FLIGHT_REQUESTS: usize = 24;
@@ -923,15 +924,21 @@ mod web_loader {
         if !should_apply {
             return;
         }
-        state.lod_error_scale = 1.5;
-        cfg.lod_error_px = 3.0;
-        cfg.lod_max_viewport_h = 1080;
-        cfg.compressed_cache_mb = 64;
-        cfg.shadow.enabled = true;
-        if limits.storage_room > 0 && limits.storage_room <= 128 * 1024 * 1024 {
+        let mobile_like =
+            limits.storage_room > 0 && limits.storage_room <= 128 * 1024 * 1024;
+        if mobile_like {
+            state.lod_error_scale = 1.5;
+            cfg.lod_error_px = 3.0;
+            cfg.lod_max_viewport_h = 1080;
             cfg.max_heap_mb = 64;
             cfg.heap_budget_mb = 64;
+        } else {
+            state.lod_error_scale = 1.0;
+            cfg.lod_error_px = 1.0;
+            cfg.lod_max_viewport_h = 1440;
         }
+        cfg.compressed_cache_mb = 64;
+        cfg.shadow.enabled = true;
     }
 }
 

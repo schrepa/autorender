@@ -205,7 +205,7 @@
           "type": "boolean"
         },
         "lod_px": {
-          "default": 2,
+          "default": 1,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"

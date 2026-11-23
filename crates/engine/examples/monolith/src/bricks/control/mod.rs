@@ -26,7 +26,7 @@ settings! {
         pub freeze_culling: bool = false => any,
         pub hw_only: bool = true => any,
         pub heap_mb: u32 = 128 => any,
-        pub lod_px: u32 = 2 => any,
+        pub lod_px: u32 = 1 => any,
         pub hud_hidden: bool = false => any,
         pub shadows: bool = true => any,
         pub dolly: bool = false => any,
@@ -644,10 +644,16 @@ fn update_control(
 
     let frame = input.views.frame();
     let logical = frame.logical_size();
+    let touch_active = input
+        .profile
+        .as_deref()
+        .is_some_and(|p| p.active == InputModality::Touch);
+    let constrained = touch_active
+        || (input.limits.storage_room > 0 && input.limits.storage_room <= 128 * 1024 * 1024);
     #[cfg(target_arch = "wasm32")]
     {
         let phys_px = (logical.x * frame.pixel_ratio) * (logical.y * frame.pixel_ratio);
-        let max_px = 950_000.0_f32;
+        let max_px = if constrained { 1_050_000.0_f32 } else { 2_600_000.0_f32 };
         state.render_scale = if phys_px > max_px {
             math::clamp((max_px / phys_px).sqrt(), 0.5, 1.0)
         } else {
@@ -659,7 +665,7 @@ fn update_control(
         state.render_scale = 1.0;
     }
     cfg.render_scale = state.render_scale;
-    cfg.lod_max_viewport_h = 1080;
+    cfg.lod_max_viewport_h = if constrained { 1080 } else { 1440 };
     cfg.shadow.c0_half = 14.0;
     cfg.shadow.c0_forward = 6.0;
     cfg.shadow.c0_depth = 48.0;

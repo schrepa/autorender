@@ -8,7 +8,7 @@ use cook_texture::{
     Encoding, Image, Texels, Wrap, byte, chain, decode, encode_level, linear_to_srgb,
     srgb_to_linear,
 };
-use engine_math::clamp;
+use engine_math::{clamp, max};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
 use serde::{Deserialize, Serialize};
@@ -52,6 +52,8 @@ pub struct MaterialPackEntry {
     pub roughness: Option<f32>,
     #[serde(default)]
     pub metallic: Option<f32>,
+    #[serde(default)]
+    pub normal_scale: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -136,6 +138,8 @@ struct LayerJob {
     bc_path: PathBuf,
     nm_path: Option<PathBuf>,
     mr_path: Option<PathBuf>,
+    occ_path: Option<PathBuf>,
+    normal_scale: f32,
 }
 
 struct EncodedLayer {
@@ -280,6 +284,154 @@ fn mean_linear_rgb(img: &Image) -> [f32; 3] {
     [(sum[0] / n) as f32, (sum[1] / n) as f32, (sum[2] / n) as f32]
 }
 
+struct NormalLevel {
+    dim: u32,
+    vecs: Vec<[f32; 3]>,
+}
+
+fn decode_normal_vecs(img: &Image, normal_scale: f32) -> NormalLevel {
+    let mut vecs = Vec::with_capacity((img.width as usize) * (img.height as usize));
+    for px in img.pixels.as_chunks::<4>().0 {
+        let nx = (f32::from(px[0]) / 255.0 * 2.0 - 1.0) * normal_scale;
+        let ny = (f32::from(px[1]) / 255.0 * 2.0 - 1.0) * normal_scale;
+        let nz = max(f32::from(px[2]) / 255.0 * 2.0 - 1.0, 0.05);
+        let len = max((nx * nx + ny * ny + nz * nz).sqrt(), 1.0e-6);
+        vecs.push([nx / len, ny / len, nz / len]);
+    }
+    NormalLevel {
+        dim: img.width,
+        vecs,
+    }
+}
+
+fn halve_normal_vecs(src: &NormalLevel) -> NormalLevel {
+    let sw = src.dim as usize;
+    let dw = (sw / 2).max(1);
+    let mut vecs = Vec::with_capacity(dw * dw);
+    for y in 0..dw {
+        let y0 = (y * 2).min(sw - 1);
+        let y1 = (y * 2 + 1).min(sw - 1);
+        for x in 0..dw {
+            let x0 = (x * 2).min(sw - 1);
+            let x1 = (x * 2 + 1).min(sw - 1);
+            let a = src.vecs[y0 * sw + x0];
+            let b = src.vecs[y0 * sw + x1];
+            let c = src.vecs[y1 * sw + x0];
+            let d = src.vecs[y1 * sw + x1];
+            vecs.push([
+                (a[0] + b[0] + c[0] + d[0]) * 0.25,
+                (a[1] + b[1] + c[1] + d[1]) * 0.25,
+                (a[2] + b[2] + c[2] + d[2]) * 0.25,
+            ]);
+        }
+    }
+    NormalLevel {
+        dim: dw as u32,
+        vecs,
+    }
+}
+
+struct NormalPyramid {
+    images: Vec<Image>,
+    toksvig_vars: Vec<(u32, Vec<f32>)>,
+    top_vecs: NormalLevel,
+}
+
+fn build_normal_pyramid(
+    nm_path: Option<&PathBuf>,
+    target_dim: u32,
+    normal_scale: f32,
+) -> Result<NormalPyramid, Refusal> {
+    let src_img = match nm_path {
+        Some(p) if p.is_file() => load_png_image(p)?,
+        _ => solid_image(target_dim, [128, 128, 255, 255]),
+    };
+    let mut cur = if src_img.width == src_img.height
+        && src_img.width.is_power_of_two()
+        && src_img.width >= target_dim
+    {
+        decode_normal_vecs(&src_img, normal_scale)
+    } else {
+        let resized = resize_image(&src_img, target_dim, Texels::Normal);
+        decode_normal_vecs(&resized, normal_scale)
+    };
+    while cur.dim > target_dim {
+        cur = halve_normal_vecs(&cur);
+    }
+    let mut nm_images = Vec::new();
+    let mut toksvig_vars = Vec::new();
+    let mut top_vecs = NormalLevel {
+        dim: cur.dim,
+        vecs: cur.vecs.clone(),
+    };
+    let mut is_first = true;
+    loop {
+        let d = cur.dim;
+        let mut pixels = Vec::with_capacity((d as usize) * (d as usize) * 4);
+        let mut vars = Vec::with_capacity((d as usize) * (d as usize));
+        for &v in &cur.vecs {
+            let r = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            let r_clamped = clamp(r, 0.05, 1.0);
+            let var = clamp((1.0 - r_clamped) / max(r_clamped, 0.08), 0.0, 2.5);
+            vars.push(var);
+            let damp = clamp(r_clamped * r_clamped, 0.30, 1.0);
+            let ux = v[0] * damp;
+            let uy = v[1] * damp;
+            let uz = max(v[2], 0.15);
+            let ulen = max((ux * ux + uy * uy + uz * uz).sqrt(), 1.0e-6);
+            pixels.extend_from_slice(&[
+                byte((ux / ulen) * 0.5 + 0.5),
+                byte((uy / ulen) * 0.5 + 0.5),
+                byte((uz / ulen) * 0.5 + 0.5),
+                255,
+            ]);
+        }
+        if is_first {
+            top_vecs = NormalLevel {
+                dim: d,
+                vecs: cur.vecs.clone(),
+            };
+            is_first = false;
+        }
+        nm_images.push(Image {
+            width: d,
+            height: d,
+            pixels,
+        });
+        toksvig_vars.push((d, vars));
+        if d <= 1 {
+            break;
+        }
+        cur = halve_normal_vecs(&cur);
+    }
+    Ok(NormalPyramid {
+        images: nm_images,
+        toksvig_vars,
+        top_vecs,
+    })
+}
+
+fn compute_cavity_ao(mut level: NormalLevel, dst_dim: u32) -> Vec<f32> {
+    while level.dim > dst_dim {
+        level = halve_normal_vecs(&level);
+    }
+    let w = level.dim as usize;
+    let mut out = vec![1.0_f32; w * w];
+    for y in 0..w {
+        let ym = (y + w - 1) % w;
+        let yp = (y + 1) % w;
+        for x in 0..w {
+            let xm = (x + w - 1) % w;
+            let xp = (x + 1) % w;
+            let dx = level.vecs[y * w + xp][0] - level.vecs[y * w + xm][0];
+            let dy = level.vecs[yp * w + x][1] - level.vecs[ym * w + x][1];
+            let crevice = clamp(-(dx + dy) * 0.32, 0.0, 0.42);
+            out[y * w + x] = 1.0 - crevice;
+        }
+    }
+    out
+}
+
 fn encode_layer_job(job: &LayerJob, dims: PackDims) -> Result<EncodedLayer, Refusal> {
     let bc_raw = load_png_image(&job.bc_path)?;
     let bc_top = resize_image(&bc_raw, dims.albedo, Texels::Srgb);
@@ -290,12 +442,9 @@ fn encode_layer_job(job: &LayerJob, dims: PackDims) -> Result<EncodedLayer, Refu
         .map(|lvl| encode_level(Encoding::Bc7Srgb, lvl, false))
         .collect();
 
-    let nm_top = match &job.nm_path {
-        Some(p) if p.is_file() => resize_image(&load_png_image(p)?, dims.normal, Texels::Normal),
-        _ => solid_image(dims.normal, [128, 128, 255, 255]),
-    };
-    let nm_chain = chain(Texels::Normal, &nm_top, [Wrap::Repeat, Wrap::Repeat]);
-    let nm_levels: Vec<Vec<u8>> = nm_chain
+    let nm_pyr = build_normal_pyramid(job.nm_path.as_ref(), dims.normal, job.normal_scale)?;
+    let nm_levels: Vec<Vec<u8>> = nm_pyr
+        .images
         .iter()
         .map(|lvl| encode_level(Encoding::Bc5, lvl, false))
         .collect();
@@ -304,11 +453,29 @@ fn encode_layer_job(job: &LayerJob, dims: PackDims) -> Result<EncodedLayer, Refu
         Some(p) if p.is_file() => resize_image(&load_png_image(p)?, dims.orm, Texels::Linear),
         _ => solid_image(dims.orm, [255, 200, 0, 255]),
     };
-    for px in orm_top.pixels.as_chunks_mut::<4>().0 {
-        px[0] = 255;
+    let occ_top = match &job.occ_path {
+        Some(p) if p.is_file() => Some(resize_image(&load_png_image(p)?, dims.orm, Texels::Linear)),
+        _ => None,
+    };
+    let cavity = compute_cavity_ao(nm_pyr.top_vecs, dims.orm);
+    for (idx, px) in orm_top.pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let occ_v = occ_top
+            .as_ref()
+            .map_or(1.0, |img| f32::from(img.pixels[idx * 4]) / 255.0);
+        let cav_v = cavity.get(idx).copied().unwrap_or(1.0);
+        px[0] = byte(clamp(occ_v * cav_v, 0.35, 1.0));
         px[3] = 255;
     }
-    let orm_chain = chain(Texels::Linear, &orm_top, [Wrap::Repeat, Wrap::Repeat]);
+    let mut orm_chain = chain(Texels::Linear, &orm_top, [Wrap::Repeat, Wrap::Repeat]);
+    for lvl in &mut orm_chain {
+        if let Some((_, vars)) = nm_pyr.toksvig_vars.iter().find(|(d, _)| *d == lvl.width) {
+            for (px, &var) in lvl.pixels.as_chunks_mut::<4>().0.iter_mut().zip(vars.iter()) {
+                let r = f32::from(px[1]) / 255.0;
+                let r_tok = clamp(r * r + var * 0.30, 0.0016, 0.96).sqrt();
+                px[1] = byte(r_tok);
+            }
+        }
+    }
     let orm_levels: Vec<Vec<u8>> = orm_chain
         .iter()
         .map(|lvl| encode_level(Encoding::Bc7, lvl, false))
@@ -413,12 +580,20 @@ fn collect_materials_and_jobs(
             })?;
         let pbr = mat_val.get("pbrMetallicRoughness");
         let bc_path = gltf_tex_path(gltf, pdir, pbr.and_then(|v| v.get("baseColorTexture")));
-        let nm_path = gltf_tex_path(gltf, pdir, mat_val.get("normalTexture"));
+        let nm_info = mat_val.get("normalTexture");
+        let nm_path = gltf_tex_path(gltf, pdir, nm_info);
+        let occ_path = gltf_tex_path(gltf, pdir, mat_val.get("occlusionTexture"));
         let mr_path = gltf_tex_path(
             gltf,
             pdir,
             pbr.and_then(|v| v.get("metallicRoughnessTexture")),
         );
+        let normal_scale = entry.normal_scale.unwrap_or_else(|| {
+            nm_info
+                .and_then(|v| v.get("scale"))
+                .and_then(serde_json::Value::as_f64)
+                .map_or(1.0, |f| f as f32)
+        });
         let rough = entry.roughness.unwrap_or_else(|| {
             pbr.and_then(|v| v.get("roughnessFactor"))
                 .and_then(serde_json::Value::as_f64)
@@ -436,6 +611,8 @@ fn collect_materials_and_jobs(
                 bc_path: bc,
                 nm_path,
                 mr_path,
+                occ_path,
+                normal_scale,
             });
             (Some(lidx), [0.6, 0.55, 0.5])
         } else {

@@ -89,8 +89,8 @@ impl HeapPreset {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum LodPreset {
-    Px1,
     #[default]
+    Px1,
     Px2,
     Px4,
 }

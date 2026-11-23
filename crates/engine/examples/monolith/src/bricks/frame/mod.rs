@@ -66,7 +66,7 @@ const PBR_ANISO_REPEAT: Sampler = Sampler {
     min_filter: Filter::Linear,
     mipmap_filter: Some(Filter::Linear),
     compare: None,
-    anisotropy: 4,
+    anisotropy: 16,
 };
 
 const SHADOW_CMP: Sampler = Sampler {
@@ -209,10 +209,10 @@ fn build_frame_uniforms(
     FrameUniforms {
         curr_unjittered_vp: state.view_projection.to_cols_array_2d(),
         prev_unjittered_vp: state.prev_unjittered_vp.to_cols_array_2d(),
-        sun_dir_illum: [sun_dir.x, sun_dir.y, sun_dir.z, 13.5],
+        sun_dir_illum: [sun_dir.x, sun_dir.y, sun_dir.z, 14.5],
         sun_color_shaft: [1.00, 0.91, 0.76, 0.22],
         sun_uv_vis: [uv_x, uv_y, vis, state.sim_time],
-        grade: [1.02, 0.055, 1.06, 0.09],
+        grade: [1.04, 0.055, 1.08, 0.09],
         fog_params: [0.0009, 0.04, 0.0, cfg.view_mode.index() as f32],
         fog_color: [0.88, 0.90, 0.95, 0.72],
         sky_zenith: [0.16, 0.38, 0.82, 1.0],

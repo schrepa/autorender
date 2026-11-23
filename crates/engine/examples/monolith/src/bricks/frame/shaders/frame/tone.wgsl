@@ -25,7 +25,7 @@ fn agx_tonemap(val_in: vec3<f32>) -> vec3<f32> {
     v = clamp((log2(v) + 12.47393) * (1.0 / 16.5), vec3<f32>(0.0), vec3<f32>(1.0));
     v = agx_default_contrast(v);
     v = max(outset * v, vec3<f32>(0.0));
-    return saturate(pow(v, vec3<f32>(2.2)));
+    return saturate(pow(v, vec3<f32>(2.32)));
 }
 
 fn rcas_luma(c: vec3<f32>) -> f32 {
@@ -64,8 +64,8 @@ fn sample_rcas_hdr(pixel: vec2<i32>, max_px: vec2<i32>) -> vec3<f32> {
     neigh_sum += t3;
 
     let amp = sqrt(clamp(mn / max(mx, 1.0e-4), 0.0, 1.0)) * (1.0 / (1.0 + mx * 0.35));
-    let w = -amp * 0.14;
-    let sharp = (e + neigh_sum * w) / max(1.0 + 4.0 * w, 0.1);
+    let w = -amp * 0.16;
+    let sharp = (e + neigh_sum * w) / max(1.0 + 4.0 * w, 0.25);
     return max(sharp, vec3<f32>(0.0));
 }
 
