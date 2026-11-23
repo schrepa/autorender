@@ -1,66 +1,75 @@
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use cook::Refusal;
-use cook_texture::{Encoding, Image, Texels, Wrap, byte, chain, decode, encode_level, linear_to_srgb, srgb_to_linear};
+use cook_texture::{
+    Encoding, Image, Texels, Wrap, byte, chain, decode, encode_level, linear_to_srgb,
+    srgb_to_linear,
+};
 use engine_math::clamp;
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const PBR_MAGIC: [u8; 4] = *b"SPB2";
 pub const PBR_VERSION: u32 = 2;
-pub const ALBEDO_DIM: u32 = 1024;
-pub const NORMAL_DIM: u32 = 1024;
-pub const ORM_DIM: u32 = 512;
-pub const BASE_DIM: u32 = 128;
 
-struct UnifiedMatSpec {
-    name: &'static str,
-    pkg: &'static str,
-    src_idx: usize,
-    flags: u32,
-    emissive: [f32; 3],
-    bcf_ov: Option<[f32; 3]>,
-    rough_ov: Option<f32>,
-    metal_ov: Option<f32>,
+fn default_out_stem() -> String {
+    "pbr".to_owned()
 }
 
-const UNIFIED_MATS: [UnifiedMatSpec; 32] = [
-    UnifiedMatSpec { name: "arch_stone_wall_01", pkg: "main", src_idx: 0, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "stone_trims_01", pkg: "main", src_idx: 1, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "metal_door", pkg: "main", src_idx: 2, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "brickwall_02", pkg: "main", src_idx: 3, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "stones_2ndfloor", pkg: "main", src_idx: 4, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "stone_trims_02", pkg: "main", src_idx: 5, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "ceiling_plaster_02", pkg: "main", src_idx: 6, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "window_frame_01", pkg: "main", src_idx: 7, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "stones_01_tile", pkg: "main", src_idx: 8, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "column_1stfloor", pkg: "main", src_idx: 9, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "column_head_1stfloor", pkg: "main", src_idx: 10, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "lamp_glass_01", pkg: "main", src_idx: 11, flags: 1 | 16, emissive: [2.2, 1.35, 0.58], bcf_ov: Some([0.85, 0.65, 0.42]), rough_ov: Some(0.35), metal_ov: Some(0.0) },
-    UnifiedMatSpec { name: "light_bulb", pkg: "main", src_idx: 12, flags: 16, emissive: [9.0, 6.2, 3.0], bcf_ov: Some([1.0, 0.92, 0.78]), rough_ov: Some(0.10), metal_ov: Some(0.0) },
-    UnifiedMatSpec { name: "door_stoneframe_02", pkg: "main", src_idx: 13, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "glass", pkg: "main", src_idx: 14, flags: 1 | 8, emissive: [0.0; 3], bcf_ov: Some([0.03, 0.04, 0.05]), rough_ov: Some(0.06), metal_ov: Some(0.15) },
-    UnifiedMatSpec { name: "door_stoneframe_01", pkg: "main", src_idx: 15, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "brickwall_01", pkg: "main", src_idx: 16, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "wood_door_01", pkg: "main", src_idx: 17, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "wood_01", pkg: "main", src_idx: 18, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "floor_01", pkg: "main", src_idx: 19, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "ornament_lion", pkg: "main", src_idx: 20, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "column_head_2ndfloor_02", pkg: "main", src_idx: 22, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "column_brickwall_01", pkg: "main", src_idx: 23, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "column_head_2ndfloor_03", pkg: "main", src_idx: 24, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "ceiling_plaster_01", pkg: "main", src_idx: 25, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "roof_tiles_01", pkg: "main", src_idx: 26, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "ornament_01", pkg: "main", src_idx: 27, flags: 0, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "curtain_01", pkg: "curtains", src_idx: 1, flags: 1 | 2, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "curtain_03", pkg: "curtains", src_idx: 2, flags: 1 | 2, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "curtain_02", pkg: "curtains", src_idx: 3, flags: 1 | 2, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "IvyLeaf", pkg: "ivy", src_idx: 0, flags: 1 | 4, emissive: [0.0; 3], bcf_ov: None, rough_ov: None, metal_ov: None },
-    UnifiedMatSpec { name: "Lianas", pkg: "ivy", src_idx: 1, flags: 1, emissive: [0.0; 3], bcf_ov: Some([0.0985, 0.0264, 0.008]), rough_ov: Some(0.65), metal_ov: Some(0.0) },
-];
+const fn default_albedo_dim() -> u32 {
+    1024
+}
+
+const fn default_normal_dim() -> u32 {
+    1024
+}
+
+const fn default_orm_dim() -> u32 {
+    512
+}
+
+const fn default_base_dim() -> u32 {
+    128
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialPackEntry {
+    pub name: String,
+    pub package: String,
+    pub source_index: usize,
+    #[serde(default)]
+    pub flags: u32,
+    #[serde(default)]
+    pub emissive: [f32; 3],
+    #[serde(default)]
+    pub base_color: Option<[f32; 3]>,
+    #[serde(default)]
+    pub roughness: Option<f32>,
+    #[serde(default)]
+    pub metallic: Option<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PbrPackSpec {
+    #[serde(default = "default_out_stem")]
+    pub out_stem: String,
+    #[serde(default = "default_albedo_dim")]
+    pub albedo_dim: u32,
+    #[serde(default = "default_normal_dim")]
+    pub normal_dim: u32,
+    #[serde(default = "default_orm_dim")]
+    pub orm_dim: u32,
+    #[serde(default = "default_base_dim")]
+    pub base_dim: u32,
+    pub packages: BTreeMap<String, String>,
+    pub materials: Vec<MaterialPackEntry>,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PackPbrOutput {
@@ -72,6 +81,45 @@ pub struct PackPbrOutput {
     pub base_bytes: usize,
     pub hd_bytes: usize,
     pub elapsed_ms: f64,
+}
+
+#[derive(Clone, Copy)]
+struct PackDims {
+    albedo: u32,
+    normal: u32,
+    orm: u32,
+    base: u32,
+}
+
+impl PackDims {
+    fn validate(self, file: &str) -> Result<(), Refusal> {
+        for (label, dim) in [
+            ("albedo_dim", self.albedo),
+            ("normal_dim", self.normal),
+            ("orm_dim", self.orm),
+            ("base_dim", self.base),
+        ] {
+            if dim < 4 || !dim.is_power_of_two() {
+                return Err(Refusal::new(
+                    "InvalidSpec",
+                    file,
+                    format!("{label} ({dim}) must be a power of two >= 4"),
+                ));
+            }
+        }
+        if self.albedo < self.base || self.normal < self.base || self.orm < self.base {
+            return Err(Refusal::new(
+                "InvalidSpec",
+                file,
+                "albedo_dim, normal_dim, and orm_dim must be >= base_dim",
+            ));
+        }
+        Ok(())
+    }
+
+    fn base_mip(self) -> u32 {
+        self.albedo.trailing_zeros() - self.base.trailing_zeros()
+    }
 }
 
 struct MatRecord {
@@ -111,8 +159,7 @@ fn deflate_bytes(data: &[u8]) -> Result<Vec<u8>, Refusal> {
 fn load_png_image(path: &Path) -> Result<Image, Refusal> {
     let bytes = std::fs::read(path)
         .map_err(|e| Refusal::new("ReadFailed", &path.display().to_string(), format!("{e}")))?;
-    decode(&bytes)
-        .map_err(|e| Refusal::new("DecodePng", &path.display().to_string(), e))
+    decode(&bytes).map_err(|e| Refusal::new("DecodePng", &path.display().to_string(), e))
 }
 
 fn resize_image(img: &Image, dst_dim: u32, texels: Texels) -> Image {
@@ -125,7 +172,10 @@ fn resize_image(img: &Image, dst_dim: u32, texels: Texels) -> Image {
         && img.width > dst_dim
     {
         let mips = chain(texels, img, [Wrap::Repeat, Wrap::Repeat]);
-        if let Some(found) = mips.into_iter().find(|m| m.width == dst_dim && m.height == dst_dim) {
+        if let Some(found) = mips
+            .into_iter()
+            .find(|m| m.width == dst_dim && m.height == dst_dim)
+        {
             return found;
         }
     }
@@ -134,12 +184,20 @@ fn resize_image(img: &Image, dst_dim: u32, texels: Texels) -> Image {
     let d = dst_dim as usize;
     let mut pixels = Vec::with_capacity(d * d * 4);
     for y in 0..d {
-        let sy = clamp((y as f32 + 0.5) * (sh as f32) / (d as f32) - 0.5, 0.0, (sh - 1) as f32);
+        let sy = clamp(
+            (y as f32 + 0.5) * (sh as f32) / (d as f32) - 0.5,
+            0.0,
+            (sh - 1) as f32,
+        );
         let y0 = sy.floor() as usize;
         let y1 = (y0 + 1).min(sh - 1);
         let fy = sy - y0 as f32;
         for x in 0..d {
-            let sx = clamp((x as f32 + 0.5) * (sw as f32) / (d as f32) - 0.5, 0.0, (sw - 1) as f32);
+            let sx = clamp(
+                (x as f32 + 0.5) * (sw as f32) / (d as f32) - 0.5,
+                0.0,
+                (sw - 1) as f32,
+            );
             let x0 = sx.floor() as usize;
             let x1 = (x0 + 1).min(sw - 1);
             let fx = sx - x0 as f32;
@@ -156,7 +214,9 @@ fn resize_image(img: &Image, dst_dim: u32, texels: Texels) -> Image {
                 for c in 0..4 {
                     let v = match (texels, c) {
                         (Texels::Srgb, 0..=2) => linear[usize::from(img.pixels[off + c])],
-                        (Texels::Normal, 0..=2) => f32::from(img.pixels[off + c]) / 255.0 * 2.0 - 1.0,
+                        (Texels::Normal, 0..=2) => {
+                            f32::from(img.pixels[off + c]) / 255.0 * 2.0 - 1.0
+                        }
                         _ => f32::from(img.pixels[off + c]) / 255.0,
                     };
                     acc[c] += v * wt;
@@ -220,9 +280,9 @@ fn mean_linear_rgb(img: &Image) -> [f32; 3] {
     [(sum[0] / n) as f32, (sum[1] / n) as f32, (sum[2] / n) as f32]
 }
 
-fn encode_layer_job(job: &LayerJob) -> Result<EncodedLayer, Refusal> {
+fn encode_layer_job(job: &LayerJob, dims: PackDims) -> Result<EncodedLayer, Refusal> {
     let bc_raw = load_png_image(&job.bc_path)?;
-    let bc_top = resize_image(&bc_raw, ALBEDO_DIM, Texels::Srgb);
+    let bc_top = resize_image(&bc_raw, dims.albedo, Texels::Srgb);
     let mean_lin = mean_linear_rgb(&bc_top);
     let bc_chain = chain(Texels::Srgb, &bc_top, [Wrap::Repeat, Wrap::Repeat]);
     let bc_levels: Vec<Vec<u8>> = bc_chain
@@ -231,8 +291,8 @@ fn encode_layer_job(job: &LayerJob) -> Result<EncodedLayer, Refusal> {
         .collect();
 
     let nm_top = match &job.nm_path {
-        Some(p) if p.is_file() => resize_image(&load_png_image(p)?, NORMAL_DIM, Texels::Normal),
-        _ => solid_image(NORMAL_DIM, [128, 128, 255, 255]),
+        Some(p) if p.is_file() => resize_image(&load_png_image(p)?, dims.normal, Texels::Normal),
+        _ => solid_image(dims.normal, [128, 128, 255, 255]),
     };
     let nm_chain = chain(Texels::Normal, &nm_top, [Wrap::Repeat, Wrap::Repeat]);
     let nm_levels: Vec<Vec<u8>> = nm_chain
@@ -241,8 +301,8 @@ fn encode_layer_job(job: &LayerJob) -> Result<EncodedLayer, Refusal> {
         .collect();
 
     let mut orm_top = match &job.mr_path {
-        Some(p) if p.is_file() => resize_image(&load_png_image(p)?, ORM_DIM, Texels::Linear),
-        _ => solid_image(ORM_DIM, [255, 200, 0, 255]),
+        Some(p) if p.is_file() => resize_image(&load_png_image(p)?, dims.orm, Texels::Linear),
+        _ => solid_image(dims.orm, [255, 200, 0, 255]),
     };
     for px in orm_top.pixels.as_chunks_mut::<4>().0 {
         px[0] = 255;
@@ -254,30 +314,41 @@ fn encode_layer_job(job: &LayerJob) -> Result<EncodedLayer, Refusal> {
         .map(|lvl| encode_level(Encoding::Bc7, lvl, false))
         .collect();
 
+    let bc_skip = (dims.albedo.trailing_zeros() - dims.base.trailing_zeros()) as usize;
+    let nm_skip = (dims.normal.trailing_zeros() - dims.base.trailing_zeros()) as usize;
+    let orm_skip = (dims.orm.trailing_zeros() - dims.base.trailing_zeros()) as usize;
+
     let mut bc_tail = Vec::new();
-    for lvl in bc_levels.iter().skip(3) {
+    for lvl in bc_levels.iter().skip(bc_skip) {
         bc_tail.extend_from_slice(lvl);
     }
     let mut nm_tail = Vec::new();
-    for lvl in nm_levels.iter().skip(3) {
+    for lvl in nm_levels.iter().skip(nm_skip) {
         nm_tail.extend_from_slice(lvl);
     }
     let mut orm_tail = Vec::new();
-    for lvl in orm_levels.iter().skip(2) {
+    for lvl in orm_levels.iter().skip(orm_skip) {
         orm_tail.extend_from_slice(lvl);
     }
 
     let mut mid_raw = Vec::new();
-    mid_raw.extend_from_slice(&bc_levels[1]);
-    mid_raw.extend_from_slice(&bc_levels[2]);
-    mid_raw.extend_from_slice(&nm_levels[1]);
-    mid_raw.extend_from_slice(&nm_levels[2]);
-    mid_raw.extend_from_slice(&orm_levels[0]);
-    mid_raw.extend_from_slice(&orm_levels[1]);
+    for lvl in bc_levels.iter().take(bc_skip).skip(1) {
+        mid_raw.extend_from_slice(lvl);
+    }
+    for lvl in nm_levels.iter().take(nm_skip).skip(1) {
+        mid_raw.extend_from_slice(lvl);
+    }
+    for lvl in orm_levels.iter().take(orm_skip) {
+        mid_raw.extend_from_slice(lvl);
+    }
 
     let mut hi_raw = Vec::new();
-    hi_raw.extend_from_slice(&bc_levels[0]);
-    hi_raw.extend_from_slice(&nm_levels[0]);
+    if bc_skip > 0 {
+        hi_raw.extend_from_slice(&bc_levels[0]);
+    }
+    if nm_skip > 0 {
+        hi_raw.extend_from_slice(&nm_levels[0]);
+    }
 
     Ok(EncodedLayer {
         uid: job.uid,
@@ -311,25 +382,34 @@ fn load_pkg_json(path: &Path) -> Result<(PathBuf, serde_json::Value), Refusal> {
 }
 
 fn collect_materials_and_jobs(
-    intel_sponza_dir: &Path,
+    spec: &PbrPackSpec,
+    src_dir: &Path,
 ) -> Result<(Vec<MatRecord>, Vec<LayerJob>), Refusal> {
-    let main_pkg = load_pkg_json(&intel_sponza_dir.join("main_sponza/NewSponza_Main_glTF_003.gltf"))?;
-    let curt_pkg = load_pkg_json(&intel_sponza_dir.join("pkg_a_curtains/NewSponza_Curtains_glTF.gltf"))?;
-    let ivy_pkg = load_pkg_json(&intel_sponza_dir.join("pkg_b_ivy/NewSponza_IvyGrowth_glTF.gltf"))?;
+    let mut loaded_pkgs: BTreeMap<String, (PathBuf, serde_json::Value)> = BTreeMap::new();
+    for (key, rel_path) in &spec.packages {
+        let full = src_dir.join(rel_path);
+        loaded_pkgs.insert(key.clone(), load_pkg_json(&full)?);
+    }
 
-    let mut mats = Vec::with_capacity(UNIFIED_MATS.len());
+    let mut mats = Vec::with_capacity(spec.materials.len());
     let mut jobs = Vec::new();
-    for (uid, spec) in UNIFIED_MATS.iter().enumerate() {
-        let (pdir, gltf) = match spec.pkg {
-            "main" => &main_pkg,
-            "curtains" => &curt_pkg,
-            _ => &ivy_pkg,
+    for (uid, entry) in spec.materials.iter().enumerate() {
+        let Some((pdir, gltf)) = loaded_pkgs.get(&entry.package) else {
+            return Err(Refusal::new(
+                "UnknownPackage",
+                &entry.name,
+                format!("package `{}` not listed in spec.packages", entry.package),
+            ));
         };
         let mat_val = gltf
             .get("materials")
-            .and_then(|v| v.get(spec.src_idx))
+            .and_then(|v| v.get(entry.source_index))
             .ok_or_else(|| {
-                Refusal::new("MissingMaterial", spec.name, format!("index {}", spec.src_idx))
+                Refusal::new(
+                    "MissingMaterial",
+                    &entry.name,
+                    format!("index {}", entry.source_index),
+                )
             })?;
         let pbr = mat_val.get("pbrMetallicRoughness");
         let bc_path = gltf_tex_path(gltf, pdir, pbr.and_then(|v| v.get("baseColorTexture")));
@@ -339,12 +419,12 @@ fn collect_materials_and_jobs(
             pdir,
             pbr.and_then(|v| v.get("metallicRoughnessTexture")),
         );
-        let rough = spec.rough_ov.unwrap_or_else(|| {
+        let rough = entry.roughness.unwrap_or_else(|| {
             pbr.and_then(|v| v.get("roughnessFactor"))
                 .and_then(serde_json::Value::as_f64)
                 .map_or(1.0, |f| f as f32)
         });
-        let metal = spec.metal_ov.unwrap_or_else(|| {
+        let metal = entry.metallic.unwrap_or_else(|| {
             pbr.and_then(|v| v.get("metallicFactor"))
                 .and_then(serde_json::Value::as_f64)
                 .map_or(1.0, |f| f as f32)
@@ -359,7 +439,7 @@ fn collect_materials_and_jobs(
             });
             (Some(lidx), [0.6, 0.55, 0.5])
         } else {
-            let col = spec.bcf_ov.unwrap_or_else(|| {
+            let col = entry.base_color.unwrap_or_else(|| {
                 let arr = pbr
                     .and_then(|v| v.get("baseColorFactor"))
                     .and_then(serde_json::Value::as_array);
@@ -379,11 +459,11 @@ fn collect_materials_and_jobs(
         };
         mats.push(MatRecord {
             layer,
-            flags: spec.flags,
+            flags: entry.flags,
             base_col,
             rough,
             metal,
-            emissive: spec.emissive,
+            emissive: entry.emissive,
         });
     }
     Ok((mats, jobs))
@@ -392,6 +472,8 @@ fn collect_materials_and_jobs(
 fn write_spbr_v2_files(
     mats: &[MatRecord],
     layers: &[EncodedLayer],
+    dims: PackDims,
+    out_stem: &str,
     out_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, usize, usize), Refusal> {
     let header_bytes = 32_usize;
@@ -422,13 +504,14 @@ fn write_spbr_v2_files(
         PBR_VERSION,
         mats.len() as u32,
         layers.len() as u32,
-        ALBEDO_DIM,
-        NORMAL_DIM,
-        ORM_DIM,
-        BASE_DIM,
+        dims.albedo,
+        dims.normal,
+        dims.orm,
+        dims.base,
     ] {
         base_out.extend_from_slice(&w.to_le_bytes());
     }
+    let base_mip = dims.base_mip();
     for m in mats {
         for f in [
             m.base_col[0],
@@ -443,7 +526,7 @@ fn write_spbr_v2_files(
             base_out.extend_from_slice(&f.to_le_bytes());
         }
         let layer_u = m.layer.unwrap_or(u32::MAX);
-        for u in [layer_u, m.flags, 3_u32, 0_u32] {
+        for u in [layer_u, m.flags, base_mip, 0_u32] {
             base_out.extend_from_slice(&u.to_le_bytes());
         }
     }
@@ -479,8 +562,8 @@ fn write_spbr_v2_files(
 
     std::fs::create_dir_all(out_dir)
         .map_err(|e| Refusal::new("OutputDir", &out_dir.display().to_string(), format!("{e}")))?;
-    let base_path = out_dir.join("sponza_pbr_base.bin");
-    let hd_path = out_dir.join("sponza_pbr_hd.bin");
+    let base_path = out_dir.join(format!("{out_stem}_base.bin"));
+    let hd_path = out_dir.join(format!("{out_stem}_hd.bin"));
     std::fs::write(&base_path, &base_out)
         .map_err(|e| Refusal::new("WriteFailed", &base_path.display().to_string(), format!("{e}")))?;
     std::fs::write(&hd_path, &hd_out)
@@ -488,16 +571,29 @@ fn write_spbr_v2_files(
     Ok((base_path, hd_path, base_out.len(), hd_out.len()))
 }
 
-pub fn pack_pbr(intel_sponza_dir: &Path, out_dir: &Path) -> Result<PackPbrOutput, Refusal> {
+pub fn pack_pbr(spec_path: &Path, src_dir: &Path, out_dir: &Path) -> Result<PackPbrOutput, Refusal> {
     let start = Instant::now();
-    let (mut mats, jobs) = collect_materials_and_jobs(intel_sponza_dir)?;
+    let spec_str = spec_path.display().to_string();
+    let text = std::fs::read_to_string(spec_path)
+        .map_err(|e| Refusal::new("ReadFailed", &spec_str, format!("{e}")))?;
+    let spec: PbrPackSpec = serde_json::from_str(&text)
+        .map_err(|e| Refusal::new("InvalidSpec", &spec_str, format!("{e}")))?;
+    let dims = PackDims {
+        albedo: spec.albedo_dim,
+        normal: spec.normal_dim,
+        orm: spec.orm_dim,
+        base: spec.base_dim,
+    };
+    dims.validate(&spec_str)?;
+    let (mut mats, jobs) = collect_materials_and_jobs(&spec, src_dir)?;
     let mut layers = Vec::with_capacity(jobs.len());
     for job in &jobs {
-        let encoded = encode_layer_job(job)?;
+        let encoded = encode_layer_job(job, dims)?;
         mats[encoded.uid].base_col = encoded.mean_lin;
         layers.push(encoded);
     }
-    let (base_path, hd_path, base_bytes, hd_bytes) = write_spbr_v2_files(&mats, &layers, out_dir)?;
+    let (base_path, hd_path, base_bytes, hd_bytes) =
+        write_spbr_v2_files(&mats, &layers, dims, &spec.out_stem, out_dir)?;
     Ok(PackPbrOutput {
         status: "pass",
         base_path: base_path.display().to_string(),

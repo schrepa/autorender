@@ -41,7 +41,7 @@ fn usage() -> ExitCode {
     emit_refusal(&Refusal::new(
         "Usage",
         "cook_meshlet",
-        "cook_meshlet cook <input.glb|.gltf> <output_dir> [--name <stem>] [--material <id>] | verify <manifest.mlm> | self-check | pack-pbr <intel_sponza_dir> <out_dir> | bake-gi <sponza_glbs_dir> <pbr_base.bin> <out_gi.bin>",
+        "cook_meshlet cook <input.glb|.gltf> <output_dir> [--name <stem>] [--material <id>] | verify <manifest.mlm> | self-check | pack-pbr <spec.json> <src_dir> <out_dir> | bake-gi <spec.json> <meshes_dir> <out_gi.bin> [--pbr <pbr_base.bin>]",
     ));
     ExitCode::from(2)
 }
@@ -98,12 +98,21 @@ fn main() -> ExitCode {
         ["cook", rest @ ..] => emit_result(run_cook(rest)),
         ["verify", manifest] => emit_result(verify_manifest_file(Path::new(manifest))),
         ["self-check"] => emit_result(run_self_check()),
-        ["pack-pbr", src_dir, out_dir] => {
-            emit_result(pack_pbr(Path::new(src_dir), Path::new(out_dir)))
-        }
-        ["bake-gi", glbs_dir, pbr_base, out_path] => emit_result(bake_gi(
-            Path::new(glbs_dir),
-            Path::new(pbr_base),
+        ["pack-pbr", spec, src_dir, out_dir] => emit_result(pack_pbr(
+            Path::new(spec),
+            Path::new(src_dir),
+            Path::new(out_dir),
+        )),
+        ["bake-gi", spec, meshes_dir, out_path] => emit_result(bake_gi(
+            Path::new(spec),
+            Path::new(meshes_dir),
+            None,
+            Path::new(out_path),
+        )),
+        ["bake-gi", spec, meshes_dir, out_path, "--pbr", pbr_base] => emit_result(bake_gi(
+            Path::new(spec),
+            Path::new(meshes_dir),
+            Some(Path::new(pbr_base)),
             Path::new(out_path),
         )),
         _ => usage(),

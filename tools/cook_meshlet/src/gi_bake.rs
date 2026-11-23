@@ -5,29 +5,70 @@ use std::time::Instant;
 use cook::Refusal;
 use engine_math::{clamp, cos, max, min, sin};
 use glam::Vec3;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::gltf_load::load_gltf_mesh;
 use crate::pbr_pack::PBR_MAGIC;
 
 pub const GI_MAGIC: [u8; 4] = *b"GIP1";
 pub const GI_VERSION: u32 = 1;
-pub const GRID_X: usize = 16;
-pub const GRID_Y: usize = 8;
-pub const GRID_Z: usize = 10;
-pub const GRID_MIN: [f32; 3] = [-17.0, 0.35, -8.8];
-pub const GRID_MAX: [f32; 3] = [19.0, 14.5, 9.6];
 
-const CHUNK_NAMES: [&str; 8] = [
-    "sponza_lower_w.glb",
-    "sponza_lower_e.glb",
-    "sponza_upper_w.glb",
-    "sponza_upper_e.glb",
-    "sponza_roof.glb",
-    "sponza_curtains.glb",
-    "sponza_ivy_low.glb",
-    "sponza_ivy_high.glb",
-];
+const fn default_sun_dir() -> [f32; 3] {
+    [0.2, 0.9, 0.3]
+}
+
+const fn default_sun_irradiance() -> [f32; 3] {
+    [11.5, 10.465, 8.74]
+}
+
+const fn default_sky_zenith() -> [f32; 3] {
+    [0.16, 0.38, 0.82]
+}
+
+const fn default_sky_horizon_sun() -> [f32; 3] {
+    [0.98, 0.90, 0.76]
+}
+
+const fn default_sky_horizon_opp() -> [f32; 3] {
+    [0.64, 0.76, 0.92]
+}
+
+const fn default_ground_color() -> [f32; 3] {
+    [0.28, 0.24, 0.19]
+}
+
+const fn default_rays_per_probe() -> usize {
+    128
+}
+
+const fn default_bounces() -> u32 {
+    3
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GiBakeSpec {
+    pub meshes: Vec<String>,
+    pub grid_dims: [usize; 3],
+    pub grid_min: [f32; 3],
+    pub grid_max: [f32; 3],
+    #[serde(default = "default_sun_dir")]
+    pub sun_dir: [f32; 3],
+    #[serde(default = "default_sun_irradiance")]
+    pub sun_irradiance: [f32; 3],
+    #[serde(default = "default_sky_zenith")]
+    pub sky_zenith: [f32; 3],
+    #[serde(default = "default_sky_horizon_sun")]
+    pub sky_horizon_sun: [f32; 3],
+    #[serde(default = "default_sky_horizon_opp")]
+    pub sky_horizon_opp: [f32; 3],
+    #[serde(default = "default_ground_color")]
+    pub ground_color: [f32; 3],
+    #[serde(default = "default_rays_per_probe")]
+    pub rays_per_probe: usize,
+    #[serde(default = "default_bounces")]
+    pub bounces: u32,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BakeGiOutput {
@@ -38,6 +79,18 @@ pub struct BakeGiOutput {
     pub triangle_count: u32,
     pub out_bytes: usize,
     pub elapsed_ms: f64,
+}
+
+#[derive(Clone, Copy)]
+struct LightEnv {
+    sun_dir: Vec3,
+    sun_irrad: Vec3,
+    sky_zenith: Vec3,
+    sky_horiz_sun: Vec3,
+    sky_horiz_opp: Vec3,
+    ground_col: Vec3,
+    rays: usize,
+    bounces: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -126,15 +179,15 @@ fn load_pbr_materials(path: &Path) -> Result<Vec<MatShade>, Refusal> {
     Ok(mats)
 }
 
-fn load_scene_triangles(glbs_dir: &Path) -> Result<Vec<RayTri>, Refusal> {
+fn load_scene_triangles(meshes_dir: &Path, mesh_files: &[String]) -> Result<Vec<RayTri>, Refusal> {
     let mut tris = Vec::new();
-    for name in CHUNK_NAMES {
-        let path = glbs_dir.join(name);
+    for name in mesh_files {
+        let path = meshes_dir.join(name);
         if !path.is_file() {
             return Err(Refusal::new(
-                "MissingChunk",
+                "MissingMesh",
                 &path.display().to_string(),
-                "expected Sponza GLB chunk",
+                "mesh listed in GI bake spec does not exist",
             ));
         }
         let src = load_gltf_mesh(&path, None)?;
@@ -299,8 +352,20 @@ impl SceneBvh {
             } else {
                 let left = node.left_or_first;
                 let right = node.right;
-                let tl = intersect_aabb(origin, inv_dir, self.nodes[left as usize].bmin, self.nodes[left as usize].bmax, best_t);
-                let tr = intersect_aabb(origin, inv_dir, self.nodes[right as usize].bmin, self.nodes[right as usize].bmax, best_t);
+                let tl = intersect_aabb(
+                    origin,
+                    inv_dir,
+                    self.nodes[left as usize].bmin,
+                    self.nodes[left as usize].bmax,
+                    best_t,
+                );
+                let tr = intersect_aabb(
+                    origin,
+                    inv_dir,
+                    self.nodes[right as usize].bmin,
+                    self.nodes[right as usize].bmax,
+                    best_t,
+                );
                 if tl < tr {
                     if tr < best_t && sp < 63 {
                         stack[sp] = right;
@@ -336,7 +401,8 @@ impl SceneBvh {
         );
         let mut stack = [0_u32; 64];
         let mut sp = 0_usize;
-        if intersect_aabb(origin, inv_dir, self.nodes[0].bmin, self.nodes[0].bmax, t_limit).is_finite()
+        if intersect_aabb(origin, inv_dir, self.nodes[0].bmin, self.nodes[0].bmax, t_limit)
+            .is_finite()
         {
             stack[0] = 0;
             sp = 1;
@@ -355,13 +421,25 @@ impl SceneBvh {
             } else {
                 let left = node.left_or_first;
                 let right = node.right;
-                if intersect_aabb(origin, inv_dir, self.nodes[left as usize].bmin, self.nodes[left as usize].bmax, t_limit) < t_limit
+                if intersect_aabb(
+                    origin,
+                    inv_dir,
+                    self.nodes[left as usize].bmin,
+                    self.nodes[left as usize].bmax,
+                    t_limit,
+                ) < t_limit
                     && sp < 63
                 {
                     stack[sp] = left;
                     sp += 1;
                 }
-                if intersect_aabb(origin, inv_dir, self.nodes[right as usize].bmin, self.nodes[right as usize].bmax, t_limit) < t_limit
+                if intersect_aabb(
+                    origin,
+                    inv_dir,
+                    self.nodes[right as usize].bmin,
+                    self.nodes[right as usize].bmax,
+                    t_limit,
+                ) < t_limit
                     && sp < 63
                 {
                     stack[sp] = right;
@@ -373,16 +451,16 @@ impl SceneBvh {
     }
 }
 
-fn eval_sky(dir: Vec3, sun_dir: Vec3) -> Vec3 {
+fn eval_sky(dir: Vec3, env: &LightEnv) -> Vec3 {
     let up_t = clamp(dir.y, 0.0, 1.0).powf(0.45);
     let d_xz = Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero();
-    let s_xz = Vec3::new(sun_dir.x, 0.0, sun_dir.z).normalize_or_zero();
+    let s_xz = Vec3::new(env.sun_dir.x, 0.0, env.sun_dir.z).normalize_or_zero();
     let sun_az = clamp(d_xz.dot(s_xz) * 0.5 + 0.5, 0.0, 1.0);
-    let horiz = Vec3::new(0.64, 0.76, 0.92).lerp(Vec3::new(0.98, 0.90, 0.76), sun_az.powf(1.4));
-    let mut col = horiz.lerp(Vec3::new(0.16, 0.38, 0.82), up_t) * 1.45;
+    let horiz = env.sky_horiz_opp.lerp(env.sky_horiz_sun, sun_az.powf(1.4));
+    let mut col = horiz.lerp(env.sky_zenith, up_t) * 1.45;
     if dir.y < 0.0 {
         let fade = clamp(-dir.y * 4.5, 0.0, 1.0);
-        col = (horiz * 1.1).lerp(Vec3::new(0.28, 0.24, 0.19), fade);
+        col = (horiz * 1.1).lerp(env.ground_col, fade);
     }
     col
 }
@@ -465,15 +543,15 @@ fn nudge_probe(scene: &SceneBvh, base: Vec3) -> Option<Vec3> {
     (best_ratio <= 0.30).then_some(best_p)
 }
 
-fn trace_radiance(scene: &SceneBvh, pos: Vec3, dir: Vec3, sun_dir: Vec3, seed: u32) -> Vec3 {
-    let sun_irrad = Vec3::new(1.00, 0.91, 0.76) * 11.5;
+fn trace_radiance(scene: &SceneBvh, pos: Vec3, dir: Vec3, env: &LightEnv, seed: u32) -> Vec3 {
     let mut ro = pos;
     let mut rd = dir;
     let mut throughput = Vec3::ONE;
     let mut total = Vec3::ZERO;
-    for bounce in 0..3_u32 {
+    let max_bounces = env.bounces.clamp(1, 8);
+    for bounce in 0..max_bounces {
         let Some(hit) = scene.trace(ro, rd, 80.0) else {
-            total += throughput * eval_sky(rd, sun_dir);
+            total += throughput * eval_sky(rd, env);
             break;
         };
         let m = scene.mats.get(usize::from(hit.mat)).copied().unwrap_or(MatShade {
@@ -483,17 +561,17 @@ fn trace_radiance(scene: &SceneBvh, pos: Vec3, dir: Vec3, sun_dir: Vec3, seed: u
         });
         total += throughput * m.emissive;
         let hit_pos = ro + rd * hit.t + hit.normal * 0.015;
-        let n_dot_l = max(hit.normal.dot(sun_dir), 0.0);
+        let n_dot_l = max(hit.normal.dot(env.sun_dir), 0.0);
         let trans = if (m.flags & (2 | 4)) != 0 {
-            max((-hit.normal).dot(sun_dir), 0.0) * 0.25
+            max((-hit.normal).dot(env.sun_dir), 0.0) * 0.25
         } else {
             0.0
         };
-        if (n_dot_l > 0.001 || trans > 0.001) && !scene.occluded(hit_pos, sun_dir, 80.0) {
-            total += throughput * (m.albedo / PI) * sun_irrad * (n_dot_l + trans);
+        if (n_dot_l > 0.001 || trans > 0.001) && !scene.occluded(hit_pos, env.sun_dir, 80.0) {
+            total += throughput * (m.albedo / PI) * env.sun_irrad * (n_dot_l + trans);
         }
         throughput *= m.albedo;
-        if bounce == 2 || throughput.max_element() < 0.02 {
+        if bounce + 1 >= max_bounces || throughput.max_element() < 0.02 {
             break;
         }
         ro = hit_pos;
@@ -510,11 +588,11 @@ struct ProbeSh {
     valid: bool,
 }
 
-fn bake_single_probe(scene: &SceneBvh, idx: usize, pos: Vec3, sun_dir: Vec3) -> ProbeSh {
+fn bake_single_probe(scene: &SceneBvh, idx: usize, pos: Vec3, env: &LightEnv) -> ProbeSh {
     let Some(sample_pos) = nudge_probe(scene, pos) else {
         return ProbeSh::default();
     };
-    let rays = 128_usize;
+    let rays = env.rays.clamp(16, 4096);
     let inv_n = 1.0 / (rays as f32);
     let mut r = [0.0_f32; 4];
     let mut g = [0.0_f32; 4];
@@ -522,7 +600,7 @@ fn bake_single_probe(scene: &SceneBvh, idx: usize, pos: Vec3, sun_dir: Vec3) -> 
     for ri in 0..rays {
         let dir = fibonacci_dir(ri, rays);
         let seed = ((idx as u32).wrapping_mul(1973)) ^ ((ri as u32).wrapping_mul(9277));
-        let rad = trace_radiance(scene, sample_pos, dir, sun_dir, seed);
+        let rad = trace_radiance(scene, sample_pos, dir, env, seed);
         r[0] += rad.x * inv_n;
         r[1] += rad.x * dir.x * inv_n;
         r[2] += rad.x * dir.y * inv_n;
@@ -544,14 +622,15 @@ fn bake_single_probe(scene: &SceneBvh, idx: usize, pos: Vec3, sun_dir: Vec3) -> 
     }
 }
 
-fn fill_invalid_probes(probes: &mut [ProbeSh]) {
-    let idx_of = |x: usize, y: usize, z: usize| (z * GRID_Y + y) * GRID_X + x;
+fn fill_invalid_probes(probes: &mut [ProbeSh], dims: [usize; 3]) {
+    let [gx, gy, gz] = dims;
+    let idx_of = |x: usize, y: usize, z: usize| (z * gy + y) * gx + x;
     for _ in 0..6 {
         let prev = probes.to_vec();
         let mut changed = false;
-        for z in 0..GRID_Z {
-            for y in 0..GRID_Y {
-                for x in 0..GRID_X {
+        for z in 0..gz {
+            for y in 0..gy {
+                for x in 0..gx {
                     let i = idx_of(x, y, z);
                     if prev[i].valid {
                         continue;
@@ -567,7 +646,7 @@ fn fill_invalid_probes(probes: &mut [ProbeSh]) {
                         (x, y, z + 1),
                     ];
                     for (nx, ny, nz) in neighbors {
-                        if nx < GRID_X && ny < GRID_Y && nz < GRID_Z {
+                        if nx < gx && ny < gy && nz < gz {
                             let nb = prev[idx_of(nx, ny, nz)];
                             if nb.valid {
                                 for c in 0..4 {
@@ -621,16 +700,21 @@ fn f32_to_f16(value: f32) -> u16 {
     sign | ((new_exp as u16) << 10) | ((frac >> 13) as u16)
 }
 
-fn serialize_gi(probes: &[ProbeSh]) -> Vec<u8> {
+fn serialize_gi(
+    probes: &[ProbeSh],
+    dims: [usize; 3],
+    grid_min: [f32; 3],
+    grid_max: [f32; 3],
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(40 + probes.len() * 24);
     out.extend_from_slice(&GI_MAGIC);
-    for u in [GI_VERSION, GRID_X as u32, GRID_Y as u32, GRID_Z as u32, 0] {
+    for u in [GI_VERSION, dims[0] as u32, dims[1] as u32, dims[2] as u32, 0] {
         out.extend_from_slice(&u.to_le_bytes());
     }
-    for f in GRID_MIN {
+    for f in grid_min {
         out.extend_from_slice(&f.to_le_bytes());
     }
-    for f in GRID_MAX {
+    for f in grid_max {
         out.extend_from_slice(&f.to_le_bytes());
     }
     for ch in 0..3 {
@@ -648,10 +732,38 @@ fn serialize_gi(probes: &[ProbeSh]) -> Vec<u8> {
     out
 }
 
-pub fn bake_gi(glbs_dir: &Path, pbr_base_path: &Path, out_path: &Path) -> Result<BakeGiOutput, Refusal> {
+pub fn bake_gi(
+    spec_path: &Path,
+    meshes_dir: &Path,
+    pbr_base_path: Option<&Path>,
+    out_path: &Path,
+) -> Result<BakeGiOutput, Refusal> {
     let start = Instant::now();
-    let mats = load_pbr_materials(pbr_base_path)?;
-    let mut tris = load_scene_triangles(glbs_dir)?;
+    let spec_str = spec_path.display().to_string();
+    let text = std::fs::read_to_string(spec_path)
+        .map_err(|e| Refusal::new("ReadFailed", &spec_str, format!("{e}")))?;
+    let spec: GiBakeSpec = serde_json::from_str(&text)
+        .map_err(|e| Refusal::new("InvalidSpec", &spec_str, format!("{e}")))?;
+    let [gx, gy, gz] = spec.grid_dims;
+    if gx == 0 || gy == 0 || gz == 0 {
+        return Err(Refusal::new(
+            "InvalidSpec",
+            &spec_str,
+            "grid_dims entries must be > 0",
+        ));
+    }
+    if spec.meshes.is_empty() {
+        return Err(Refusal::new(
+            "InvalidSpec",
+            &spec_str,
+            "meshes list must not be empty",
+        ));
+    }
+    let mats = match pbr_base_path {
+        Some(path) => load_pbr_materials(path)?,
+        None => Vec::new(),
+    };
+    let mut tris = load_scene_triangles(meshes_dir, &spec.meshes)?;
     let tri_count = tris.len() as u32;
     let mut nodes = Vec::with_capacity(tris.len() / 2);
     let total_tris = tris.len();
@@ -659,18 +771,27 @@ pub fn bake_gi(glbs_dir: &Path, pbr_base_path: &Path, out_path: &Path) -> Result
         build_bvh_node(&mut tris, 0, total_tris, &mut nodes);
     }
     let scene = SceneBvh { tris, nodes, mats };
-    let sun_dir = Vec3::new(0.18, 0.93, 0.32).normalize();
-    let total_probes = GRID_X * GRID_Y * GRID_Z;
+    let env = LightEnv {
+        sun_dir: Vec3::from_array(spec.sun_dir).normalize_or_zero(),
+        sun_irrad: Vec3::from_array(spec.sun_irradiance),
+        sky_zenith: Vec3::from_array(spec.sky_zenith),
+        sky_horiz_sun: Vec3::from_array(spec.sky_horizon_sun),
+        sky_horiz_opp: Vec3::from_array(spec.sky_horizon_opp),
+        ground_col: Vec3::from_array(spec.ground_color),
+        rays: spec.rays_per_probe,
+        bounces: spec.bounces,
+    };
+    let total_probes = gx * gy * gz;
     let mut positions = Vec::with_capacity(total_probes);
-    for z in 0..GRID_Z {
-        let fz = (z as f32 + 0.5) / (GRID_Z as f32);
-        let pz = GRID_MIN[2] + (GRID_MAX[2] - GRID_MIN[2]) * fz;
-        for y in 0..GRID_Y {
-            let fy = (y as f32 + 0.5) / (GRID_Y as f32);
-            let py = GRID_MIN[1] + (GRID_MAX[1] - GRID_MIN[1]) * fy;
-            for x in 0..GRID_X {
-                let fx = (x as f32 + 0.5) / (GRID_X as f32);
-                let px = GRID_MIN[0] + (GRID_MAX[0] - GRID_MIN[0]) * fx;
+    for z in 0..gz {
+        let fz = (z as f32 + 0.5) / (gz as f32);
+        let pz = spec.grid_min[2] + (spec.grid_max[2] - spec.grid_min[2]) * fz;
+        for y in 0..gy {
+            let fy = (y as f32 + 0.5) / (gy as f32);
+            let py = spec.grid_min[1] + (spec.grid_max[1] - spec.grid_min[1]) * fy;
+            for x in 0..gx {
+                let fx = (x as f32 + 0.5) / (gx as f32);
+                let px = spec.grid_min[0] + (spec.grid_max[0] - spec.grid_min[0]) * fx;
                 positions.push(Vec3::new(px, py, pz));
             }
         }
@@ -686,7 +807,7 @@ pub fn bake_gi(glbs_dir: &Path, pbr_base_path: &Path, out_path: &Path) -> Result
             handles.push(scope.spawn(move || {
                 let mut part = Vec::with_capacity(end - first);
                 for (offset, &pos) in pos_slice.iter().enumerate() {
-                    part.push(bake_single_probe(scene_ref, first + offset, pos, sun_dir));
+                    part.push(bake_single_probe(scene_ref, first + offset, pos, &env));
                 }
                 part
             }));
@@ -700,8 +821,8 @@ pub fn bake_gi(glbs_dir: &Path, pbr_base_path: &Path, out_path: &Path) -> Result
         all
     });
     let valid_probes = probes.iter().filter(|p| p.valid).count() as u32;
-    fill_invalid_probes(&mut probes);
-    let bytes = serialize_gi(&probes);
+    fill_invalid_probes(&mut probes, spec.grid_dims);
+    let bytes = serialize_gi(&probes, spec.grid_dims, spec.grid_min, spec.grid_max);
     if let Some(parent) = out_path.parent()
         && !parent.as_os_str().is_empty()
     {

@@ -1,0 +1,23 @@
+{
+  "meshes": [
+    "sponza_lower_w.glb",
+    "sponza_lower_e.glb",
+    "sponza_upper_w.glb",
+    "sponza_upper_e.glb",
+    "sponza_roof.glb",
+    "sponza_curtains.glb",
+    "sponza_ivy_low.glb",
+    "sponza_ivy_high.glb"
+  ],
+  "grid_dims": [16, 8, 10],
+  "grid_min": [-17.0, 0.35, -8.8],
+  "grid_max": [19.0, 14.5, 9.6],
+  "sun_dir": [0.18, 0.93, 0.32],
+  "sun_irradiance": [11.5, 10.465, 8.74],
+  "sky_zenith": [0.16, 0.38, 0.82],
+  "sky_horizon_sun": [0.98, 0.90, 0.76],
+  "sky_horizon_opp": [0.64, 0.76, 0.92],
+  "ground_color": [0.28, 0.24, 0.19],
+  "rays_per_probe": 128,
+  "bounces": 3
+}
