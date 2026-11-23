@@ -477,16 +477,16 @@ mod web_loader {
             let bw = st.link.bandwidth_bps();
             let cap: usize = if allow_hi {
                 if bw >= 8.0 * 1024.0 * 1024.0 {
-                    6
+                    8
                 } else {
                     4
                 }
             } else if bw >= 8.0 * 1024.0 * 1024.0 {
-                4
+                6
             } else if bw >= 3.0 * 1024.0 * 1024.0 {
-                3
+                4
             } else {
-                2
+                3
             };
             cap.saturating_sub(st.in_flight_pbr)
         });
@@ -552,12 +552,17 @@ mod web_loader {
         total_mounted
     }
 
+    struct DispatchFlags {
+        roots_only: bool,
+        all_manifests: bool,
+        mid_pbr_active: bool,
+        prefetch_throttled: bool,
+    }
+
     fn dispatch_page_runs(
         world: &NaniteWorld,
         streaming: &mut NaniteStreaming,
-        roots_only: bool,
-        all_manifests: bool,
-        prefetch_throttled: bool,
+        flags: DispatchFlags,
     ) {
         let stale: Vec<PageRun> = WEB_STATE.with(|cell| {
             cell.borrow_mut().queued_runs.drain(..).collect()
@@ -574,25 +579,22 @@ mod web_loader {
         let (req_cap, in_flight, coalesce_cfg) = WEB_STATE.with(|cell| {
             let mut st = cell.borrow_mut();
             let link = st.link;
-            let cap = if roots_only {
-                if link.bandwidth_bps() >= 8.0 * 1024.0 * 1024.0 {
-                    4
-                } else {
-                    2
-                }
-            } else if !all_manifests || prefetch_throttled {
-                if link.bandwidth_bps() >= 8.0 * 1024.0 * 1024.0 {
-                    12
-                } else {
-                    4
-                }
+            let bw = link.bandwidth_bps();
+            let cap = if flags.roots_only {
+                if bw >= 8.0 * 1024.0 * 1024.0 { 4 } else { 2 }
+            } else if flags.prefetch_throttled {
+                2
+            } else if !flags.all_manifests {
+                if bw >= 8.0 * 1024.0 * 1024.0 { 12 } else { 4 }
+            } else if flags.mid_pbr_active && bw < 8.0 * 1024.0 * 1024.0 {
+                if bw >= 3.0 * 1024.0 * 1024.0 { 6 } else { 4 }
             } else {
                 link.recommended_concurrency(MIN_IN_FLIGHT_REQUESTS, MAX_IN_FLIGHT_REQUESTS)
             };
             st.active_req_cap = cap;
             (cap, st.in_flight_requests, link.recommended_coalesce())
         });
-        let target_buffer = if roots_only {
+        let target_buffer = if flags.roots_only || flags.prefetch_throttled {
             req_cap
         } else {
             req_cap.saturating_mul(2)
@@ -606,7 +608,7 @@ mod web_loader {
             return;
         }
         let mut back = Vec::new();
-        let reqs = if roots_only {
+        let reqs = if flags.roots_only {
             let mut keep = Vec::new();
             for req in reqs {
                 if req.priority >= u32::MAX - 1 {
@@ -699,12 +701,19 @@ mod web_loader {
         let pbr_settled =
             pbr.pack_loaded || WEB_STATE.with(|cell| cell.borrow().pbr_base_failed);
         let roots_only = !pbr_settled || mounted < CORE_ASSET_COUNT;
+        let mid_pbr_active = pbr.base_done
+            && mounted >= CORE_ASSET_COUNT
+            && streaming.all_roots_resident(&world)
+            && pbr.mid_tier_pending();
         dispatch_page_runs(
             &world,
             &mut streaming,
-            roots_only,
-            mounted >= ASSET_COUNT,
-            prefetch_throttled,
+            DispatchFlags {
+                roots_only,
+                all_manifests: mounted >= ASSET_COUNT,
+                mid_pbr_active,
+                prefetch_throttled,
+            },
         );
         let active_requests = WEB_STATE.with(|cell| {
             let st = cell.borrow();
@@ -722,11 +731,7 @@ mod web_loader {
             let mut st = cell.borrow_mut();
             step_hd_idle_gate(&mut st.hd_idle_frames, state.assets_loaded, geom_busy)
         });
-        let allow_mid = allow_hi
-            || (pbr.base_done
-                && mounted >= CORE_ASSET_COUNT
-                && streaming.all_roots_resident(&world)
-                && pbr.mid_tier_pending());
+        let allow_mid = allow_hi || mid_pbr_active;
         pump_pbr_hd(pbr, allow_mid, allow_hi);
     }
 }
