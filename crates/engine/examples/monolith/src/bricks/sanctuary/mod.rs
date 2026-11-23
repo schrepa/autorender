@@ -125,11 +125,11 @@ fn load_sanctuary_assets(
 }
 
 #[cfg(target_arch = "wasm32")]
-const MAX_RUN_PAGES: usize = 40;
+const MAX_RUN_PAGES: usize = 24;
 #[cfg(target_arch = "wasm32")]
-const MAX_RUN_BYTES: u64 = 384 * 1024;
+const MAX_RUN_BYTES: u64 = 256 * 1024;
 #[cfg(target_arch = "wasm32")]
-const MAX_GAP_BYTES: u64 = 96 * 1024;
+const MAX_GAP_BYTES: u64 = 12 * 1024;
 #[cfg(target_arch = "wasm32")]
 const HD_IDLE_HYSTERESIS_FRAMES: u32 = 3;
 
@@ -318,9 +318,10 @@ mod web_loader {
     use crate::state::MonolithState;
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
+    const CORE_ASSET_COUNT: usize = 5;
     const ASSET_VERSION: &str = "v25";
     const CDN_ASSET_BASE: &str = "https://d15rb9vgijd23p.cloudfront.net/monolith";
-    const MAX_IN_FLIGHT_REQUESTS: usize = 10;
+    const MAX_IN_FLIGHT_REQUESTS: usize = 8;
     const MAX_IN_FLIGHT_PBR: usize = 4;
 
     fn asset_base() -> &'static str {
@@ -357,9 +358,11 @@ mod web_loader {
     #[derive(Default)]
     struct WebState {
         fetches_started: bool,
+        decor_fetches_started: bool,
         ready_manifests: VecDeque<(usize, MeshletManifest)>,
         total_mounted: usize,
         pbr_base_bytes: Option<Vec<u8>>,
+        pbr_base_failed: bool,
         gi_bytes: Option<Vec<u8>>,
         gi_submitted: bool,
         in_flight_requests: usize,
@@ -425,13 +428,20 @@ mod web_loader {
         });
         let pbr_url = format!("{base}/sponza_pbr_base.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(bytes) = fetch_bytes(&pbr_url, None).await {
-                WEB_STATE.with(|cell| {
-                    cell.borrow_mut().pbr_base_bytes = Some(bytes);
-                });
+            match fetch_bytes(&pbr_url, None).await {
+                Ok(bytes) => {
+                    WEB_STATE.with(|cell| {
+                        cell.borrow_mut().pbr_base_bytes = Some(bytes);
+                    });
+                }
+                Err(()) => {
+                    WEB_STATE.with(|cell| {
+                        cell.borrow_mut().pbr_base_failed = true;
+                    });
+                }
             }
         });
-        spawn_manifest_range(0, ASSET_COUNT);
+        spawn_manifest_range(0, CORE_ASSET_COUNT);
     }
 
     fn start_run_fetch(run: PageRun) {
@@ -553,10 +563,20 @@ mod web_loader {
             }
             streaming.sync_world(world);
         }
-        let (total_mounted, gi_submitted) = WEB_STATE.with(|cell| {
-            let st = cell.borrow();
-            (st.total_mounted, st.gi_submitted)
+        let (total_mounted, gi_submitted, start_decor) = WEB_STATE.with(|cell| {
+            let mut st = cell.borrow_mut();
+            let pbr_settled = pbr_pack_loaded || st.pbr_base_failed;
+            let trigger_decor = !st.decor_fetches_started
+                && pbr_settled
+                && st.total_mounted >= CORE_ASSET_COUNT;
+            if trigger_decor {
+                st.decor_fetches_started = true;
+            }
+            (st.total_mounted, st.gi_submitted, trigger_decor)
         });
+        if start_decor {
+            spawn_manifest_range(CORE_ASSET_COUNT, ASSET_COUNT);
+        }
         state.assets_loaded =
             all_assets_mounted(total_mounted, ASSET_COUNT, gi_submitted, pbr_pack_loaded);
         total_mounted
@@ -575,10 +595,13 @@ mod web_loader {
     fn dispatch_page_runs(
         world: &NaniteWorld,
         streaming: &mut NaniteStreaming,
+        roots_only: bool,
         all_manifests: bool,
         prefetch_throttled: bool,
     ) {
-        let req_cap = if !all_manifests || prefetch_throttled {
+        let req_cap = if roots_only {
+            2
+        } else if !all_manifests || prefetch_throttled {
             4
         } else {
             MAX_IN_FLIGHT_REQUESTS
@@ -592,8 +615,21 @@ mod web_loader {
         if reqs.is_empty() {
             return;
         }
-        let mut runs = coalesce_runs(reqs, world);
         let mut back = Vec::new();
+        let reqs = if roots_only {
+            let mut keep = Vec::new();
+            for req in reqs {
+                if req.priority >= u32::MAX - 1 {
+                    keep.push(req);
+                } else {
+                    back.push(req);
+                }
+            }
+            keep
+        } else {
+            reqs
+        };
+        let mut runs = coalesce_runs(reqs, world);
         if runs.len() > req_slots {
             for run in runs.split_off(req_slots) {
                 requeue_run_items(run, &mut back);
@@ -644,8 +680,11 @@ mod web_loader {
                 .map_or((false, true), |q| (q.gpu_queried, q.supports_bc));
             if queried
                 && let Some(bytes) = WEB_STATE.with(|cell| cell.borrow_mut().pbr_base_bytes.take())
+                && !pbr.load_base_bytes(bytes, supports_bc)
             {
-                let _ = pbr.load_base_bytes(bytes, supports_bc);
+                WEB_STATE.with(|cell| {
+                    cell.borrow_mut().pbr_base_failed = true;
+                });
             }
         }
         let mounted =
@@ -670,9 +709,13 @@ mod web_loader {
         let prefetch_only = streaming.is_prefetch_only();
         let prefetch_throttled =
             tel.page_faults == 0 && prefetch_only && (in_flight_pbr > 0 || pbr_hd_pending);
+        let pbr_settled =
+            pbr.pack_loaded || WEB_STATE.with(|cell| cell.borrow().pbr_base_failed);
+        let roots_only = !pbr_settled || mounted < CORE_ASSET_COUNT;
         dispatch_page_runs(
             &world,
             &mut streaming,
+            roots_only,
             mounted >= ASSET_COUNT,
             prefetch_throttled,
         );
@@ -689,13 +732,10 @@ mod web_loader {
             let mut st = cell.borrow_mut();
             step_hd_idle_gate(&mut st.hd_idle_frames, state.assets_loaded, geom_busy)
         });
-        let mid_req_ok =
-            in_flight_requests <= 2 || (tel.page_faults == 0 && in_flight_requests <= 4);
         let allow_mid = allow_hi
-            || (state.assets_loaded
-                && pbr.base_done
-                && mid_req_ok
-                && tel.page_faults < 128
+            || (pbr.base_done
+                && mounted >= CORE_ASSET_COUNT
+                && streaming.all_roots_resident(&world)
                 && pbr.mid_tier_pending());
         pump_pbr_hd(pbr, allow_mid, allow_hi);
     }
@@ -720,5 +760,5 @@ fn load_sanctuary_assets(
         &gi_bridge,
         state,
     );
-    pbr.pump_uploads(&pbr_bridge, 14);
+    pbr.pump_uploads(&pbr_bridge, 4);
 }
