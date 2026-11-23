@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use engine::prelude::*;
 use engine_core::DeviceLimits;
 
-use crate::types::{NaniteCamera, NaniteConfig, NaniteTelemetry, safe_heap_pages};
+use crate::stream::VisibleCutParams;
+use crate::types::{
+    NaniteCamera, NaniteConfig, NaniteTelemetry, extract_frustum_planes, safe_heap_pages,
+};
 use crate::world::{NaniteStreaming, NaniteWorld, PageUpload};
 
 #[derive(Default)]
@@ -57,22 +60,39 @@ pub fn pump_nanite_streaming(mut p: PumpNanite<'_>) {
         p.telemetry.hiz_culled = s[14];
     }
 
+    let render_scale = engine::math::clamp(p.config.render_scale, 0.25, 1.0);
+    let vp_h = engine::math::clamp(
+        (p.views.frame().display_size.y as f32 * render_scale).round(),
+        360.0,
+        1080.0,
+    );
+    let lod_scale = (vp_h * 0.5) * p.cam.cull_proj.y_axis.y.abs();
+    let max_new = (p.config.max_pages_per_frame * 8).max(1024);
+
     if let Some(priorities) = reqs {
-        let max_new = (p.config.max_pages_per_frame * 8).max(1024);
         p.streaming.ingest_gpu_requests(&p.world, &priorities, max_new);
+    }
+
+    if !p.world.instances.is_empty() {
+        let cull_vp = p.cam.cull_proj * p.cam.cull_view;
+        p.streaming.seed_visible_cut(
+            &p.world,
+            VisibleCutParams {
+                cam_pos: p.cam.cull_pos,
+                near_z: p.cam.near_z,
+                lod_scale,
+                lod_thresh: p.config.lod_preset.threshold_px() * 2.0,
+                frustum_planes: extract_frustum_planes(cull_vp),
+                double_sided_materials: p.config.double_sided_materials,
+            },
+            192,
+        );
     }
 
     if p.telemetry.page_faults == 0
         && !p.streaming.has_pending_work()
         && !p.world.instances.is_empty()
     {
-        let render_scale = engine::math::clamp(p.config.render_scale, 0.25, 1.0);
-        let vp_h = engine::math::clamp(
-            (p.views.frame().display_size.y as f32 * render_scale).round(),
-            360.0,
-            1080.0,
-        );
-        let lod_scale = (vp_h * 0.5) * p.cam.cull_proj.y_axis.y.abs();
         p.streaming.enqueue_prefetch_360(
             &p.world,
             p.cam.cull_pos,

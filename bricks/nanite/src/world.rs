@@ -13,6 +13,7 @@ use engine_meshlet::{
     decompress_page_words,
 };
 
+use crate::stream::{CutQuery, VisibleCutParams, collect_cut_pages};
 use crate::types::{
     GpuBvhNode, GpuClusterHeader, MAX_HEAP_PAGES, NaniteInstance, UNMAPPED_PAGE,
 };
@@ -71,6 +72,8 @@ struct PrefetchState {
     last_res_ver: u64,
     last_tick: u64,
     last_lod_bits: u64,
+    seeded_mesh_count: usize,
+    pump_ticks: u64,
     has_walked: bool,
     prefetch_only: bool,
 }
@@ -82,101 +85,12 @@ impl Default for PrefetchState {
             last_res_ver: u64::MAX,
             last_tick: 0,
             last_lod_bits: 0,
+            seeded_mesh_count: 0,
+            pump_ticks: 0,
             has_walked: false,
             prefetch_only: false,
         }
     }
-}
-
-#[derive(Clone, Copy)]
-struct PrefetchParams {
-    cam_pos: Vec3,
-    near_z: f32,
-    lod_scale: f32,
-}
-
-#[derive(Clone, Copy)]
-struct InstXform {
-    pos: Vec3,
-    rot: Quat,
-    scale: f32,
-    err_factor: f32,
-}
-
-fn bvh_child_needed(
-    node: &GpuBvhNode,
-    k: usize,
-    child: &GpuBvhNode,
-    xform: InstXform,
-    params: PrefetchParams,
-    thresh: f32,
-) -> bool {
-    let max_pe = node.max_parent_error[k];
-    let min_se = node.min_self_error[k];
-    if max_pe < 1.0e29 || min_se > 0.0 {
-        let child_c = Vec3::new(child.sphere[0], child.sphere[1], child.sphere[2]);
-        let world_c = xform.pos + xform.rot * (child_c * xform.scale);
-        let world_r = child.sphere[3] * xform.scale;
-        let dist_c = (params.cam_pos - world_c).length();
-        if max_pe < 1.0e29
-            && max_pe * xform.err_factor
-                <= thresh * engine::math::max(dist_c - world_r, params.near_z)
-        {
-            return false;
-        }
-        if min_se > 0.0
-            && min_se * xform.err_factor
-                > thresh * engine::math::max(dist_c + world_r, params.near_z)
-        {
-            return false;
-        }
-    }
-    true
-}
-
-fn eval_prefetch_cluster(
-    c: &GpuClusterHeader,
-    xform: InstXform,
-    params: PrefetchParams,
-    thresh: f32,
-) -> Option<f32> {
-    let pe = f32::from_bits(c.errors_and_cone[1]);
-    let p_proj = if pe < 1.0e29 {
-        let pls = c.parent_lod_sphere;
-        let pc = xform.pos + xform.rot * (Vec3::new(pls[0], pls[1], pls[2]) * xform.scale);
-        let p_dist = engine::math::max(
-            (params.cam_pos - pc).length() - pls[3] * xform.scale,
-            params.near_z,
-        );
-        let proj = (pe * xform.err_factor) / p_dist;
-        if proj <= thresh {
-            return None;
-        }
-        proj
-    } else {
-        1024.0
-    };
-    let se = f32::from_bits(c.errors_and_cone[0]);
-    if se > 0.0 {
-        let ls = c.lod_sphere;
-        let sc = xform.pos + xform.rot * (Vec3::new(ls[0], ls[1], ls[2]) * xform.scale);
-        let s_dist = engine::math::max(
-            (params.cam_pos - sc).length() - ls[3] * xform.scale,
-            params.near_z,
-        );
-        if se * xform.err_factor > thresh * s_dist {
-            return None;
-        }
-    }
-    let bs = c.bound_sphere;
-    let world_c = xform.pos + xform.rot * (Vec3::new(bs[0], bs[1], bs[2]) * xform.scale);
-    let world_r = bs[3] * xform.scale;
-    let dist = engine::math::max(
-        (params.cam_pos - world_c).length() - world_r,
-        params.near_z,
-    );
-    let boost = engine::math::clamp(12.0 / engine::math::max(dist, 1.5), 1.0, 8.0);
-    Some(engine::math::min(p_proj * boost, 65535.0))
 }
 
 #[derive(Resource, Default)]
@@ -604,7 +518,13 @@ impl NaniteStreaming {
             self.synced_mesh_count = world.meshes.len();
             self.table_dirty = true;
             self.residency_version = self.residency_version.wrapping_add(1);
-            self.prefetch = PrefetchState::default();
+            let seeded = self.prefetch.seeded_mesh_count;
+            let ticks = self.prefetch.pump_ticks;
+            self.prefetch = PrefetchState {
+                seeded_mesh_count: seeded,
+                pump_ticks: ticks,
+                ..PrefetchState::default()
+            };
             self.enqueue_mesh_range(world, start_mesh);
             #[cfg(not(target_arch = "wasm32"))]
             self.pump_native_io((world.meshes.len() - start_mesh).saturating_mul(4).max(8));
@@ -748,7 +668,11 @@ impl NaniteStreaming {
             requested && self.page_table[idx] == UNMAPPED_PAGE && !self.ready_mask[idx];
         if queue_decode {
             self.ready_mask[idx] = true;
-            self.pending_decode.push_back(global_page_id);
+            if self.pinned_mask.get(idx).copied().unwrap_or(false) {
+                self.pending_decode.push_front(global_page_id);
+            } else {
+                self.pending_decode.push_back(global_page_id);
+            }
         }
         self.insert_compressed_cache(global_page_id, compressed);
     }
@@ -926,7 +850,6 @@ impl NaniteStreaming {
         self.frame_tick = self.frame_tick.wrapping_add(1);
         let tick = self.frame_tick;
         let total = (world.total_pages as usize).min(priorities.len());
-        let mesh_roots_ready = self.mesh_roots_ready(world);
 
         let mut has_unmapped_fault = false;
         for (page_id, &prio) in priorities.iter().enumerate().take(total) {
@@ -940,11 +863,7 @@ impl NaniteStreaming {
                 }
                 continue;
             }
-            if !has_unmapped_fault
-                && !self.ready_mask.get(page_id).copied().unwrap_or(false)
-                && let Some((mesh_id, _, _)) = world.find_page_owner(page_id as u32)
-                && mesh_roots_ready.get(mesh_id as usize).copied().unwrap_or(false)
-            {
+            if !has_unmapped_fault && !self.ready_mask.get(page_id).copied().unwrap_or(false) {
                 has_unmapped_fault = true;
             }
         }
@@ -975,11 +894,7 @@ impl NaniteStreaming {
             {
                 continue;
             }
-            if let Some((mesh_id, _, _)) = world.find_page_owner(page_id as u32)
-                && mesh_roots_ready.get(mesh_id as usize).copied().unwrap_or(false)
-            {
-                wanted.push((prio, page_id as u32));
-            }
+            wanted.push((prio, page_id as u32));
         }
         let evictable = self.count_evictable_slots();
         let outstanding = self.count_outstanding();
@@ -1022,88 +937,75 @@ impl NaniteStreaming {
         }
     }
 
-    fn collect_prefetch_tier(
-        &self,
+    pub fn seed_visible_cut(
+        &mut self,
         world: &NaniteWorld,
-        roots_ready: &[bool],
-        params: PrefetchParams,
-        thresh: f32,
-    ) -> Vec<(u32, u32, f32)> {
-        let mut scores: HashMap<u32, (u32, f32)> = HashMap::default();
-        let mut stack: Vec<u32> = Vec::with_capacity(64);
-        for inst in &world.instances {
-            let mesh_id = inst.info[3];
-            if !roots_ready.get(mesh_id as usize).copied().unwrap_or(false) {
+        params: VisibleCutParams,
+        max_pages: usize,
+    ) -> usize {
+        self.prefetch.pump_ticks = self.prefetch.pump_ticks.saturating_add(1);
+        if self.prefetch.pump_ticks < 2
+            || self.prefetch.seeded_mesh_count >= world.meshes.len()
+            || world.instances.is_empty()
+            || max_pages == 0
+            || params.lod_scale <= 0.0
+        {
+            return 0;
+        }
+        let start_mesh = self.prefetch.seeded_mesh_count as u32;
+        self.prefetch.seeded_mesh_count = world.meshes.len();
+        let query = CutQuery {
+            cam_pos: params.cam_pos,
+            near_z: params.near_z,
+            lod_scale: params.lod_scale,
+            thresh: params.lod_thresh,
+            frustum_planes: Some(&params.frustum_planes),
+            double_sided_materials: params.double_sided_materials,
+            start_mesh_id: start_mesh,
+            roots_ready: None,
+        };
+        let mut candidates = collect_cut_pages(
+            world,
+            &self.page_table,
+            &self.in_flight,
+            &self.ready_mask,
+            query,
+        );
+        if candidates.is_empty() {
+            return 0;
+        }
+        candidates.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        let evictable = self.count_evictable_slots();
+        let outstanding = self.count_outstanding();
+        let slot_headroom = evictable.saturating_sub(outstanding);
+        let queue_headroom = 1024_usize.saturating_sub(self.pending_requests.len());
+        let budget = max_pages.min(slot_headroom).min(queue_headroom);
+        let mut queued = 0_usize;
+        for (pid, mesh_id, score) in candidates {
+            if queued >= budget {
+                break;
+            }
+            let idx = pid as usize;
+            if self.compressed_cache.contains_key(&pid) {
+                if idx < self.ready_mask.len() && !self.ready_mask[idx] {
+                    self.ready_mask[idx] = true;
+                    self.pending_decode.push_back(pid);
+                    self.touch_cache(pid);
+                    queued += 1;
+                }
                 continue;
             }
-            let root_node = inst.info[0];
-            if (root_node as usize) >= world.bvh.len() {
-                continue;
-            }
-            let scale = inst.pos_scale[3];
-            let xform = InstXform {
-                pos: Vec3::new(inst.pos_scale[0], inst.pos_scale[1], inst.pos_scale[2]),
-                rot: Quat::from_xyzw(
-                    inst.rot_quat[0],
-                    inst.rot_quat[1],
-                    inst.rot_quat[2],
-                    inst.rot_quat[3],
-                ),
-                scale,
-                err_factor: scale * params.lod_scale,
-            };
-            stack.clear();
-            stack.push(root_node);
-            while let Some(node_id) = stack.pop() {
-                let Some(node) = world.bvh.get(node_id as usize) else {
-                    continue;
-                };
-                if node.info[1] != 0 {
-                    let start = node.info[2] as usize;
-                    let end = start
-                        .saturating_add(node.info[3] as usize)
-                        .min(world.clusters.len());
-                    for c in &world.clusters[start..end] {
-                        let pid = c.page_and_fallback[0];
-                        let idx = pid as usize;
-                        if idx >= self.page_table.len()
-                            || self.page_table[idx] != UNMAPPED_PAGE
-                            || self.in_flight.get(idx).copied().unwrap_or(false)
-                            || self.ready_mask.get(idx).copied().unwrap_or(false)
-                        {
-                            continue;
-                        }
-                        if let Some(score) = eval_prefetch_cluster(c, xform, params, thresh) {
-                            scores
-                                .entry(pid)
-                                .and_modify(|e| {
-                                    if score > e.1 {
-                                        *e = (mesh_id, score);
-                                    }
-                                })
-                                .or_insert((mesh_id, score));
-                        }
-                    }
-                    continue;
-                }
-                let child_cnt = (node.info[0] as usize).min(4);
-                for k in 0..child_cnt {
-                    let child_id = node.child_or_cluster[k];
-                    if child_id == NO_BVH_CHILD {
-                        continue;
-                    }
-                    if let Some(child) = world.bvh.get(child_id as usize)
-                        && bvh_child_needed(node, k, child, xform, params, thresh)
-                    {
-                        stack.push(child_id);
-                    }
-                }
+            if let Some(mesh) = world.meshes.get(mesh_id as usize) {
+                let local_pid = pid.saturating_sub(mesh.page_offset);
+                let prio = ((score * 64.0) as u32).saturating_add(1).clamp(2, 0x7FFF_FFFF);
+                self.enqueue_fetch(mesh_id, mesh, local_pid, pid, prio);
+                queued += 1;
             }
         }
-        scores
-            .into_iter()
-            .map(|(pid, (mesh_id, score))| (pid, mesh_id, score))
-            .collect()
+        if queued > 0 {
+            self.prefetch.prefetch_only = false;
+        }
+        queued
     }
 
     pub fn enqueue_prefetch_360(
@@ -1142,15 +1044,34 @@ impl NaniteStreaming {
         self.prefetch.has_walked = true;
 
         let roots_ready = self.mesh_roots_ready(world);
-        let params = PrefetchParams {
+        let base_query = CutQuery {
             cam_pos,
             near_z,
             lod_scale,
+            thresh: lod_thresh * 2.0,
+            frustum_planes: None,
+            double_sided_materials: 0,
+            start_mesh_id: 0,
+            roots_ready: Some(&roots_ready),
         };
-        let mut candidates =
-            self.collect_prefetch_tier(world, &roots_ready, params, lod_thresh * 2.0);
+        let mut candidates = collect_cut_pages(
+            world,
+            &self.page_table,
+            &self.in_flight,
+            &self.ready_mask,
+            base_query,
+        );
         if candidates.is_empty() {
-            candidates = self.collect_prefetch_tier(world, &roots_ready, params, lod_thresh);
+            candidates = collect_cut_pages(
+                world,
+                &self.page_table,
+                &self.in_flight,
+                &self.ready_mask,
+                CutQuery {
+                    thresh: lod_thresh,
+                    ..base_query
+                },
+            );
         }
         if candidates.is_empty() {
             return 0;
