@@ -306,7 +306,7 @@ mod web_loader {
     use brick_nanite::{NaniteStreaming, NaniteTelemetry, NaniteWorld};
     use engine::prelude::*;
     use engine_meshlet::MeshletManifest;
-    use wasm_bindgen::JsCast;
+    use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
 
     use super::{
@@ -319,8 +319,40 @@ mod web_loader {
 
     const ASSET_COUNT: usize = HERO_ASSETS.len();
     const ASSET_VERSION: &str = "v25";
+    const CDN_ASSET_BASE: &str = "https://d15rb9vgijd23p.cloudfront.net/monolith";
     const MAX_IN_FLIGHT_REQUESTS: usize = 10;
     const MAX_IN_FLIGHT_PBR: usize = 4;
+
+    fn asset_base() -> &'static str {
+        let Some(window) = web_sys::window() else {
+            return "/monolith";
+        };
+        let Ok(loc) = js_sys::Reflect::get(&window, &JsValue::from_str("location")) else {
+            return "/monolith";
+        };
+        let search = js_sys::Reflect::get(&loc, &JsValue::from_str("search"))
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default();
+        if let Ok(params) = web_sys::UrlSearchParams::new_with_str(&search)
+            && let Some(mode) = params.get("cdn")
+        {
+            if mode == "0" || mode == "origin" || mode == "off" {
+                return "/monolith";
+            }
+            if mode == "1" || mode == "cf" || mode == "on" {
+                return CDN_ASSET_BASE;
+            }
+        }
+        let host = js_sys::Reflect::get(&loc, &JsValue::from_str("hostname"))
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default();
+        if host.is_empty() || host == "localhost" || host == "127.0.0.1" {
+            return "/monolith";
+        }
+        CDN_ASSET_BASE
+    }
 
     #[derive(Default)]
     struct WebState {
@@ -366,8 +398,9 @@ mod web_loader {
     }
 
     fn spawn_manifest_range(start: usize, end: usize) {
+        let base = asset_base();
         for (idx, &stem) in HERO_ASSETS.iter().enumerate().take(end).skip(start) {
-            let url = format!("/monolith/{stem}.mlm?v={ASSET_VERSION}");
+            let url = format!("{base}/{stem}.mlm?v={ASSET_VERSION}");
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(bytes) = fetch_bytes(&url, None).await
                     && let Ok(manifest) = MeshletManifest::from_bytes(&bytes)
@@ -381,7 +414,8 @@ mod web_loader {
     }
 
     fn start_asset_fetches() {
-        let gi_url = format!("/monolith/sponza_gi.bin?v={ASSET_VERSION}");
+        let base = asset_base();
+        let gi_url = format!("{base}/sponza_gi.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(bytes) = fetch_bytes(&gi_url, None).await {
                 WEB_STATE.with(|cell| {
@@ -389,7 +423,7 @@ mod web_loader {
                 });
             }
         });
-        let pbr_url = format!("/monolith/sponza_pbr_base.bin?v={ASSET_VERSION}");
+        let pbr_url = format!("{base}/sponza_pbr_base.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(bytes) = fetch_bytes(&pbr_url, None).await {
                 WEB_STATE.with(|cell| {
@@ -401,7 +435,8 @@ mod web_loader {
     }
 
     fn start_run_fetch(run: PageRun) {
-        let url = format!("/monolith/{}.mlp?v={ASSET_VERSION}", run.mesh_name);
+        let base = asset_base();
+        let url = format!("{base}/{}.mlp?v={ASSET_VERSION}", run.mesh_name);
         let total_len = run.total_bytes;
         let end = run.byte_offset.saturating_add(total_len).saturating_sub(1);
         wasm_bindgen_futures::spawn_local(async move {
@@ -433,11 +468,12 @@ mod web_loader {
     }
 
     fn start_pbr_hd_fetch(req: PbrHdRequest) {
+        let base = asset_base();
         let end = req
             .byte_offset
             .saturating_add(u64::from(req.byte_len))
             .saturating_sub(1);
-        let hd_url = format!("/monolith/sponza_pbr_hd.bin?v={ASSET_VERSION}");
+        let hd_url = format!("{base}/sponza_pbr_hd.bin?v={ASSET_VERSION}");
         wasm_bindgen_futures::spawn_local(async move {
             let fetched = fetch_bytes(&hd_url, Some((req.byte_offset, end)))
                 .await
