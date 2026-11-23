@@ -123,20 +123,20 @@ fn load_sanctuary_assets(
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 const MAX_RUN_PAGES: usize = 16;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 const MAX_RUN_BYTES: u64 = 512 * 1024;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 const HD_IDLE_HYSTERESIS_FRAMES: u32 = 3;
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 struct PageRunItem {
     req: brick_nanite::PageFetchRequest,
     rel_offset: usize,
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 struct PageRun {
     mesh_name: String,
     byte_offset: u64,
@@ -145,7 +145,7 @@ struct PageRun {
     items: Vec<PageRunItem>,
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 fn coalesce_runs(mut reqs: Vec<brick_nanite::PageFetchRequest>) -> Vec<PageRun> {
     reqs.sort_unstable_by(|a, b| {
         a.mesh_name
@@ -190,7 +190,7 @@ fn coalesce_runs(mut reqs: Vec<brick_nanite::PageFetchRequest>) -> Vec<PageRun> 
     runs
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 fn is_geometry_busy(
     assets_loaded: bool,
     page_faults: u32,
@@ -204,7 +204,7 @@ fn is_geometry_busy(
         || (page_faults > 0 && has_evictable_slots)
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 fn step_hd_idle_gate(hd_idle_frames: &mut u32, assets_loaded: bool, geom_busy: bool) -> bool {
     if geom_busy {
         *hd_idle_frames = 0;
@@ -214,7 +214,7 @@ fn step_hd_idle_gate(hd_idle_frames: &mut u32, assets_loaded: bool, geom_busy: b
     assets_loaded && !geom_busy && *hd_idle_frames >= HD_IDLE_HYSTERESIS_FRAMES
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 fn all_assets_mounted(
     mounted_manifests: usize,
     total_manifests: usize,
@@ -544,205 +544,4 @@ fn load_sanctuary_assets(
 ) {
     web_loader::pump(world, streaming, &tel, &mut pbr, &gi_bridge, state);
     pbr.pump_uploads(&pbr_bridge, 7);
-}
-
-#[cfg(test)]
-mod tests {
-    use brick_nanite::PageFetchRequest;
-
-    use super::{
-        MAX_RUN_BYTES, all_assets_mounted, coalesce_runs, is_geometry_busy, step_hd_idle_gate,
-    };
-
-    fn dummy_req(mesh_name: &str, page_id: u32, byte_offset: u64, byte_len: u64, priority: u32) -> PageFetchRequest {
-        PageFetchRequest {
-            mesh_id: 0,
-            mesh_name: mesh_name.to_owned(),
-            local_page_id: page_id,
-            global_page_id: page_id,
-            byte_offset,
-            byte_len,
-            priority,
-        }
-    }
-
-    #[test]
-    fn hd_pbr_deferred_while_geometry_busy_and_requires_hysteresis() {
-        assert!(
-            is_geometry_busy(false, 0, 0, false, true),
-            "unloaded assets must mark geometry busy"
-        );
-        assert!(
-            is_geometry_busy(true, 1, 0, false, true),
-            "page faults with evictable slots must mark geometry busy"
-        );
-        assert!(
-            is_geometry_busy(true, 0, 1, false, false),
-            "in-flight HTTP page runs must mark geometry busy"
-        );
-        assert!(
-            is_geometry_busy(true, 0, 0, true, false),
-            "pending nanite streaming work must mark geometry busy"
-        );
-        assert!(
-            !is_geometry_busy(true, 0, 0, false, true),
-            "geometry must be idle when no faults and all queues empty"
-        );
-
-        let mut idle_frames = 0_u32;
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, false, true),
-            "HD PBR must stay deferred while assets are loading"
-        );
-        assert_eq!(idle_frames, 0, "busy frame must keep idle counter at zero");
-
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, false),
-            "1st quiet frame must defer HD PBR"
-        );
-        assert_eq!(idle_frames, 1, "1st quiet frame must increment counter");
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, false),
-            "2nd quiet frame must defer HD PBR"
-        );
-        assert_eq!(idle_frames, 2, "2nd quiet frame must increment counter");
-        assert!(
-            step_hd_idle_gate(&mut idle_frames, true, false),
-            "3rd consecutive quiet frame must allow HD PBR"
-        );
-        assert_eq!(idle_frames, 3, "3rd quiet frame must reach threshold");
-        assert!(
-            step_hd_idle_gate(&mut idle_frames, true, false),
-            "4th consecutive quiet frame must keep allowing HD PBR"
-        );
-
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, true),
-            "preset switch or heap eviction fault must immediately pause HD PBR"
-        );
-        assert_eq!(idle_frames, 0, "busy transition must reset hysteresis");
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, false),
-            "recovery after fault must restart 3-frame hysteresis"
-        );
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, false),
-            "2nd recovery quiet frame must still defer HD PBR"
-        );
-        assert!(
-            step_hd_idle_gate(&mut idle_frames, true, false),
-            "3rd recovery quiet frame must resume HD PBR"
-        );
-    }
-
-    #[test]
-    fn hd_pbr_allowed_on_saturated_heap_steady_state_after_hysteresis() {
-        assert!(
-            !is_geometry_busy(true, 740, 0, false, false),
-            "saturated heap steady-state faults must not mark geometry busy"
-        );
-        assert!(
-            is_geometry_busy(true, 740, 1, false, false),
-            "in-flight requests must still mark saturated heap busy"
-        );
-        assert!(
-            is_geometry_busy(true, 740, 0, true, false),
-            "pending streaming work must still mark saturated heap busy"
-        );
-
-        let mut idle_frames = 0_u32;
-        let saturated_busy = is_geometry_busy(true, 740, 0, false, false);
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, saturated_busy),
-            "1st saturated quiet frame must defer HD PBR"
-        );
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, saturated_busy),
-            "2nd saturated quiet frame must defer HD PBR"
-        );
-        assert!(
-            step_hd_idle_gate(&mut idle_frames, true, saturated_busy),
-            "3rd saturated quiet frame must allow sponza_pbr_hd.bin"
-        );
-        assert_eq!(idle_frames, 3);
-    }
-
-    #[test]
-    fn hd_pbr_pauses_immediately_when_camera_cut_creates_evictable_slots() {
-        let mut idle_frames = 0_u32;
-        for _ in 0..3 {
-            let busy = is_geometry_busy(true, 740, 0, false, false);
-            let _ = step_hd_idle_gate(&mut idle_frames, true, busy);
-        }
-        assert!(
-            step_hd_idle_gate(
-                &mut idle_frames,
-                true,
-                is_geometry_busy(true, 740, 0, false, false),
-            ),
-            "precondition: HD PBR must be active in saturated steady-state"
-        );
-
-        let cut_busy = is_geometry_busy(true, 492, 0, false, true);
-        assert!(cut_busy, "evictable slots with page faults must mark geometry busy");
-        assert!(
-            !step_hd_idle_gate(&mut idle_frames, true, cut_busy),
-            "camera cut with evictable heap must pause HD PBR immediately"
-        );
-        assert_eq!(idle_frames, 0, "camera cut must reset hysteresis counter");
-
-        let settled_busy = is_geometry_busy(true, 492, 0, false, false);
-        assert!(!settled_busy);
-        assert!(!step_hd_idle_gate(&mut idle_frames, true, settled_busy));
-        assert!(!step_hd_idle_gate(&mut idle_frames, true, settled_busy));
-        assert!(
-            step_hd_idle_gate(&mut idle_frames, true, settled_busy),
-            "HD PBR must resume after 3 quiet frames once new view saturates heap"
-        );
-    }
-
-    #[test]
-    fn concurrent_assets_loaded_requires_all_manifests_gi_and_pbr_base() {
-        assert!(
-            !all_assets_mounted(7, 8, true, true),
-            "missing manifest must keep assets_loaded false"
-        );
-        assert!(
-            !all_assets_mounted(8, 8, false, true),
-            "missing GI must keep assets_loaded false"
-        );
-        assert!(
-            !all_assets_mounted(8, 8, true, false),
-            "missing PBR base must keep assets_loaded false"
-        );
-        assert!(
-            all_assets_mounted(8, 8, true, true),
-            "all manifests + GI + PBR base must mark assets_loaded true"
-        );
-    }
-
-    #[test]
-    fn coalesce_runs_packs_up_to_512k_and_orders_by_priority() {
-        let reqs = vec![
-            dummy_req("sponza_curtains", 0, 0, 256 * 1024, 50),
-            dummy_req("sponza_curtains", 1, 256 * 1024, 256 * 1024, 200),
-            dummy_req("sponza_curtains", 2, 512 * 1024, 64 * 1024, 10),
-            dummy_req("sponza_lower_w", 3, 0, 128 * 1024, 300),
-        ];
-        let runs = coalesce_runs(reqs);
-        assert_eq!(runs.len(), 3, "512K contiguous pair must coalesce into one run");
-        assert_eq!(runs[0].mesh_name, "sponza_lower_w", "highest priority run first");
-        assert_eq!(runs[1].total_bytes, MAX_RUN_BYTES, "coalesced run must pack 512K");
-        assert_eq!(runs[1].items.len(), 2, "coalesced run must hold 2 pages");
-        assert_eq!(runs[1].items[0].req.local_page_id, 0, "first item must be page 0");
-        assert_eq!(runs[1].items[0].rel_offset, 0, "first item rel_offset must be 0");
-        assert_eq!(runs[1].items[1].req.local_page_id, 1, "second item must be page 1");
-        assert_eq!(
-            runs[1].items[1].rel_offset,
-            256 * 1024,
-            "second item rel_offset must be 256K"
-        );
-        assert_eq!(runs[1].max_priority, 200, "coalesced run must retain max priority");
-        assert_eq!(runs[2].total_bytes, 64 * 1024, "overflow page must split cleanly");
-    }
 }

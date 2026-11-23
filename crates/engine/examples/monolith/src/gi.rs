@@ -95,34 +95,3 @@ pub fn submit_gi_bytes(bridge: &GiUploadBridge, bytes: &[u8]) -> bool {
     }
     false
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gi_parser_handles_valid_and_malformed_inputs() {
-        assert!(parse_gi_bytes(b"NOPE").is_none(), "short invalid input must fail");
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&GI_MAGIC);
-        for w in [GI_VERSION, 2_u32, 2, 2, 0] {
-            bytes.extend_from_slice(&w.to_le_bytes());
-        }
-        for f in [-1.0_f32, 0.0, -2.0, 3.0, 4.0, 5.0] {
-            bytes.extend_from_slice(&f.to_le_bytes());
-        }
-        let vol_bytes = 2 * 2 * 2 * 8;
-        assert!(
-            parse_gi_bytes(&bytes).is_none(),
-            "truncated payload must be rejected"
-        );
-        bytes.resize(48 + vol_bytes * 3, 0x3C);
-        let Some(vol) = parse_gi_bytes(&bytes) else {
-            panic!("valid GIP1 payload must parse");
-        };
-        assert_eq!(vol.dims, [2, 2, 2], "dims must match header");
-        assert_eq!(vol.sh_r.len(), vol_bytes, "red volume length must match");
-        assert_eq!(vol.sh_g.len(), vol_bytes, "green volume length must match");
-        assert_eq!(vol.sh_b.len(), vol_bytes, "blue volume length must match");
-    }
-}

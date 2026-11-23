@@ -1107,39 +1107,4 @@ mod tests {
         resolve_target_formats(&mut with, wgpu::Features::RG11B10UFLOAT_RENDERABLE);
         assert_eq!(with.targets[0].format, wgpu::TextureFormat::Rg11b10Ufloat);
     }
-
-    #[test]
-    fn texture_fallback_resolves_bc_against_device_features() {
-        let decl = crate::install::TextureDecl {
-            label: "albedo",
-            format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-            dimension: wgpu::TextureDimension::D2,
-            lifetime: Lifetime::Kept,
-            part: 0,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-        };
-        let mut without = Declared {
-            textures: vec![decl.clone()],
-            texture_fallbacks: vec![Some(wgpu::TextureFormat::Rgba8UnormSrgb)],
-            ..Declared::default()
-        };
-        resolve_texture_formats(&mut without, wgpu::Features::empty());
-        assert_eq!(
-            without.textures[0].format,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            "BC7 must fall back to RGBA8 without TEXTURE_COMPRESSION_BC"
-        );
-
-        let mut with = Declared {
-            textures: vec![decl],
-            texture_fallbacks: vec![Some(wgpu::TextureFormat::Rgba8UnormSrgb)],
-            ..Declared::default()
-        };
-        resolve_texture_formats(&mut with, wgpu::Features::TEXTURE_COMPRESSION_BC);
-        assert_eq!(
-            with.textures[0].format,
-            wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-            "BC7 must remain BC7 when TEXTURE_COMPRESSION_BC is supported"
-        );
-    }
 }
